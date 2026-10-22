@@ -13,16 +13,32 @@ este modulo existe en el proceso y el bridge hace exactamente lo de hoy.
   con ``p_force_legacy`` (principio 1.4 del diseno: ningun disparo termina
   ``failed`` por culpa del motor). Se borra en la primera respuesta y guarda a
   lo sumo 1.000 eventos.
+- ``DivergenceNotifier``: MOT-001, el aviso de una divergencia (el motor no
+  pudo y lo planifico el legado). Al arrancar y cada 60 s lee las que no se
+  avisaron, avisa una por una por el productor del conector de Slack y marca
+  ``notified_at`` solo despues de que el conector la admitio. Una sola via: el
+  aviso sale de esta lectura, no del ``divergence_first`` de la admision (D8).
+  Sin conector, no avisa y publica ``flow_engine_alerts: sin_slack`` (D10).
 """
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import logging
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
 
-from bridge.supabase import FlowEngineRoute, SupabaseClient, SupabaseError
+from bridge.slack_notifications import NotificationProducer
+from bridge.supabase import (
+    FlowEngineDivergence,
+    FlowEngineRoute,
+    SupabaseClient,
+    SupabaseError,
+)
+from slack_correlation.catalog import NotificationCommand
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +50,10 @@ READ_OK = "ok"
 READ_FAILING = "failing"
 ALERTS_SLACK = "slack"
 ALERTS_WITHOUT_SLACK = "sin_slack"
+DIVERGENCES_POLL_SECONDS = 60.0
+DIVERGENCES_PAGE = 20
+DIVERGENCE_EVENT_CODE = "MOT-001"
+_DIVERGENCE_DEDUPE_NAMESPACE = b"flow-engine-divergence-v1\0"
 
 
 class FlowEngineRoutes:
@@ -151,3 +171,115 @@ class FlowEngineRuntime:
             ),
             "flow_engine_alerts": self.alerts,
         }
+
+
+def divergence_command(divergence: FlowEngineDivergence) -> NotificationCommand:
+    """The MOT-001 of one divergence: no event or contact id goes in it."""
+    return NotificationCommand(
+        event_id=divergence.divergence_id,
+        event_code=DIVERGENCE_EVENT_CODE,
+        dedupe_key=hashlib.sha256(
+            _DIVERGENCE_DEDUPE_NAMESPACE + divergence.divergence_id.encode("ascii")
+        ).hexdigest(),
+        occurred_at=datetime.fromisoformat(divergence.first_at).astimezone(UTC),
+        reason_code=f"{divergence.kind}:{divergence.reason}"[:80],
+        component="flow_engine",
+        state="pending",
+        count=min(divergence.count, 1_000_000),
+    )
+
+
+class DivergenceNotifier:
+    """MOT-001: tell the operations channel each divergence, once."""
+
+    def __init__(
+        self,
+        *,
+        supabase: SupabaseClient,
+        runtime: FlowEngineRuntime,
+        producer: NotificationProducer | None,
+        poll_interval_seconds: float = DIVERGENCES_POLL_SECONDS,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self._supabase = supabase
+        self._runtime = runtime
+        self._producer = producer
+        self._poll_interval = poll_interval_seconds
+        self._clock = clock
+        self._stopped = asyncio.Event()
+        self._task: asyncio.Task[None] | None = None
+        runtime.alerts = ALERTS_SLACK if producer is not None else ALERTS_WITHOUT_SLACK
+
+    async def run_once(self) -> None:
+        try:
+            read = await self._supabase.read_flow_engine_divergences(
+                self._runtime.instance, only_unnotified=True, limit=DIVERGENCES_PAGE
+            )
+        except SupabaseError as exc:
+            self._runtime.divergences_unnotified = None
+            logger.warning(
+                "flow_engine_read_failed read=divergences error=%s", type(exc).__name__
+            )
+            return
+        unnotified = read.unnotified
+        self._runtime.divergences_unnotified = unnotified
+        if self._producer is None:
+            return
+        for divergence in read.divergences:
+            try:
+                await self._producer.admit(divergence_command(divergence))
+            except Exception as exc:
+                # Slack or the connector did not take it: no mark, and the
+                # next round reads it again.
+                logger.warning(
+                    "flow_engine_divergence_alert_failed divergence_id=%s error=%s",
+                    divergence.divergence_id,
+                    type(exc).__name__,
+                )
+                continue
+            try:
+                marked = await self._supabase.mark_flow_engine_divergence_notified(
+                    divergence.divergence_id, notified_at=self._clock().isoformat()
+                )
+            except SupabaseError as exc:
+                logger.warning(
+                    "flow_engine_divergence_mark_failed divergence_id=%s error=%s",
+                    divergence.divergence_id,
+                    type(exc).__name__,
+                )
+                continue
+            if marked:
+                unnotified = max(0, unnotified - 1)
+                self._runtime.divergences_unnotified = unnotified
+            logger.info(
+                "flow_engine_divergence_alerted divergence_id=%s kind=%s marked=%s",
+                divergence.divergence_id,
+                divergence.kind,
+                marked,
+            )
+
+    async def start(self) -> None:
+        if self._task is not None:
+            return
+        self._stopped.clear()
+        self._task = asyncio.create_task(self._run())
+
+    async def stop(self, *, timeout: float = 10.0) -> None:
+        self._stopped.set()
+        if self._task is not None:
+            try:
+                await asyncio.wait_for(self._task, timeout=timeout)
+            except asyncio.TimeoutError:
+                self._task.cancel()
+            self._task = None
+
+    async def _run(self) -> None:
+        while not self._stopped.is_set():
+            try:
+                await self.run_once()
+            except Exception:
+                logger.exception("flow_engine_divergence_notifier_unexpected_error")
+            try:
+                await asyncio.wait_for(self._stopped.wait(), timeout=self._poll_interval)
+            except asyncio.TimeoutError:
+                pass

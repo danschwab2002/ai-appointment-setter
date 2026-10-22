@@ -204,7 +204,7 @@ from bridge.payment_failure_variant import (
     PaymentFailureVariantsConfig,
 )
 from bridge.recovery_coupons import RecoveryCouponWorker
-from bridge.flow_engine_runtime import FlowEngineRuntime
+from bridge.flow_engine_runtime import DivergenceNotifier, FlowEngineRuntime
 from bridge.worker import (
     DurableDispatcher,
     HotmartAbandonmentTimerWorker,
@@ -4726,6 +4726,16 @@ def create_app(
                 "ally_ref": settings.instance_manifest.ally_ref,
             },
         )
+    # MOT-001 (flow-engine-v1, seccion 8): comparte el productor del conector
+    # de Slack; sin conector, no avisa y /ready dice sin_slack.
+    flow_engine_divergence_notifier: DivergenceNotifier | None = None
+    if flow_engine_runtime is not None:
+        assert shared_supabase is not None
+        flow_engine_divergence_notifier = DivergenceNotifier(
+            supabase=shared_supabase,
+            runtime=flow_engine_runtime,
+            producer=slack_runtime.producer if slack_runtime is not None else None,
+        )
     if settings.hotmart_abandonment_timer_worker_enabled:
         if shared_supabase is None:
             raise ValueError(
@@ -5226,9 +5236,15 @@ def create_app(
                 await conversation_reactivation_sweeper.start()
             if conversation_followup_sweeper is not None:
                 await conversation_followup_sweeper.start()
+            if flow_engine_divergence_notifier is not None:
+                await flow_engine_divergence_notifier.start()
             yield
         finally:
             for worker_name, worker in (
+                (
+                    "flow_engine_divergence_notifier",
+                    flow_engine_divergence_notifier,
+                ),
                 (
                     "conversation_followup_sweeper",
                     conversation_followup_sweeper,
@@ -5271,6 +5287,7 @@ def create_app(
     app = FastAPI(title="AI Appointment Setter Bridge", lifespan=lifespan)
     app.state.resolution_worker = resolution_worker
     app.state.flow_engine = flow_engine_runtime
+    app.state.flow_engine_divergence_notifier = flow_engine_divergence_notifier
     app.state.hotmart_abandonment_timer_worker = hotmart_abandonment_timer_worker
     app.state.recovery_coupon_worker = recovery_coupon_worker
     app.state.durable_dispatcher = durable_dispatcher

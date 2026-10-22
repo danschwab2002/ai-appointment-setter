@@ -658,6 +658,24 @@ Acción        Reconciliar configuración antes de activar
 Código        configuration_drift
 ```
 
+### `MOT-001 · El motor no pudo y lo planificó el legado`
+
+```text
+🟠 El motor de flujos cayó al legado
+{tenant_label} · flow_engine
+
+Qué pasó      El motor no pudo admitir un disparo y lo planificó el legado
+Impacto       El caso sigue, con la definición del legado y no con la del flujo
+Acción        Revisar el motivo antes de seguir moviendo rutas a motor
+Motivo        {kind}:{reason}
+Cantidad      {count}
+```
+
+Sale una vez por fila de `flow_engine_divergences` (una por flujo, clase y
+motivo), de la lectura del bridge con `notified_at` y no del momento de la
+admisión: si Slack falla, la vuelta siguiente (60 s) lo reintenta. No lleva ids
+de evento ni de contacto. Contrato: `docs/contracts/flow-engine-v1.md`, sección 8.
+
 ## 7. Seguridad y controles
 
 ### `SEC-001 · Inconsistencia de tenant, cuenta, inbox o identidad`
