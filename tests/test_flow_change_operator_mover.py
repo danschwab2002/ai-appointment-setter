@@ -44,15 +44,17 @@ IMAGE_ENV = {"SETTER_VERSION": "1.16.3", "GIT_SHA": "b4d6027"}
 def route_row(executor: str = "legado", generation: int = 0, **changes: object) -> dict:
     row = {"executor": executor, "generation": generation, "legacy_kind": "carrito",
            "legacy_scope_key": "att1-recuperacion", "state": CART["state"], "active_version": CART["active_version"],
-           "definition_sha256": SHA, "legacy_runtime_state": "armed", "person_cap_present": False,
+           "definition_sha256": SHA, "legacy_runtime_state": "armed", "legacy_scope_version": 7,
+           "kind_supported": True, "person_cap_present": False,
            "en_curso_legado": 67, "en_curso_motor": 0}
     row.update(changes)
     return row
 
 
 class FakeDocker:
-    def __init__(self, route: dict | None = None, flows: list | None = None) -> None:
+    def __init__(self, route: dict | None = None, flows: list | None = None, answer: dict | None = None) -> None:
         self.calls: list[tuple[list[str], str]] = []
+        self.answer = answer
         self.route = route_row() if route is None else route
         self.flows = copy.deepcopy(STORE["flows"]) if flows is None else flows
 
@@ -75,6 +77,8 @@ class FakeDocker:
             code = flow_route_revalidation.main(["revalidar"], stdin=io.StringIO(stdin), stdout=out, environ=IMAGE_ENV)
             return subprocess.CompletedProcess(argv, code, out.getvalue(), "")
         if "operator_route_flow_v1" in stdin:
+            if self.answer is not None:
+                return ok(json.dumps(self.answer) + "\n")
             executor = _copy_value(stdin, "executor")
             route = {**self.route, "executor": executor, "generation": self.route["generation"] + 1}
             return ok(json.dumps({"ok": True, "route": route}) + "\n")
@@ -181,6 +185,7 @@ def test_what_the_base_would_refuse_is_refused_before_the_code() -> None:
         (MOVE, route_row(person_cap_present=True), "tope por persona"),
         (BACK, route_row("motor", 1, legacy_runtime_state="paused"), "no esta armado"),
         (MOVE, route_row(active_version=2), "cambio entre las dos lecturas"),
+        (MOVE, route_row(kind_supported=False), "no ejecuta carrito"),
     ]
     for argv, route, message in cases:
         docker, terminal = FakeDocker(route), FakeTerminal()
@@ -206,3 +211,11 @@ def test_a_wrong_destination_or_someone_not_approver_does_not_reach_the_base() -
     assert code == script.EXIT_USAGE and docker.calls == []
     code, out = run(["mover", "att1/carrito", "motor", "--quien", "brayan", "--motivo", "x"], docker)
     assert code == script.EXIT_USAGE and "APROBADORES" in out and docker.calls == []
+
+
+def test_a_refusal_of_the_base_exits_blocked_and_the_way_back_names_the_scope_version() -> None:
+    docker = FakeDocker(answer={"ok": False, "reason_code": "flow_route_generation_stale", "generation": 1})
+    code, out = run(MOVE, docker)
+    assert code == script.EXIT_BLOCKED and "flow_route_generation_stale" in out
+    code, out = run(BACK, FakeDocker(route_row("motor", 1)))
+    assert code == script.EXIT_OK and "en la version 7" in out

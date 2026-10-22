@@ -109,3 +109,12 @@ def test_only_revalidar_is_a_subcommand() -> None:
     out = io.StringIO()
     assert module.main(["validar"], stdin=io.StringIO("{}"), stdout=out, environ=ENV) == module.EXIT_INPUT
     assert json.loads(out.getvalue()) == {"ok": False, "reason_code": "operator_usage"}
+
+
+def test_what_only_the_engine_refuses_goes_into_the_blocks(monkeypatch) -> None:
+    # La rama de flow_engine.not_supported, aislada: el validador acepta la v1 de ATT1 y el motor no.
+    monkeypatch.setattr(module, "not_supported", lambda definition, capabilities: ("engine_not_supported:prueba",))
+    code, out = call(payload())
+    assert code == module.EXIT_BLOCKED
+    assert out["revalidation"]["blocks"] == ["engine_not_supported:prueba"]
+    assert out["blocks_detail"] == [{"code": "engine_not_supported:prueba", "path": "", "rule": 14}]

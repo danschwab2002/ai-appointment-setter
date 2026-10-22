@@ -35,7 +35,7 @@ const main = async () => {
   const sql1 = async (text, params, label) => one((await db.query(text, params)).rows, label);
   const footprint = async (lead) => sql1(`
     select (select count(*)::int from public.recovery_cases c
-             where c.contact_id = $1 and c.status not in ('sequence_exhausted', 'closed', 'cancelled', 'purchased'))
+             where c.contact_id = $1 and c.status in ('grace_period', 'active', 'paused'))
              as open_cases,
            (select count(distinct c.id)::int from public.recovery_cases c where c.contact_id = $1) as cases,
            (select count(*)::int from public.scheduled_actions a
@@ -72,6 +72,9 @@ const main = async () => {
       fail('CASO DOBLE: la forzada planifico otro caso para el mismo carrito', results.forzada_despues_del_motor);
     }
     if (run === null || before.first_contacts !== 1) fail('el caso del motor no quedo como uno', results);
+    if (forced.outcome !== 'legado_por_divergencia' || forced.created !== false || after.divergences !== 1) {
+      fail('la forzada no dio legado_por_divergencia sobre el mismo caso con su divergencia', results);
+    }
   }
 
   // 3. El control: sin caso del motor, la forzada si planifica por el legado.

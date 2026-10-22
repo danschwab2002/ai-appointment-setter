@@ -408,6 +408,9 @@ SQL_ROUTE = f"""select coalesce((select jsonb_build_object(
                            where d.flow_id = c.flow_id and d.version = c.active_version),
     'legacy_runtime_state', (select rc.runtime_state from public.pilot_runtime_controls rc
                               where rc.scope_key = r.legacy_scope_key),
+    'legacy_scope_version', (select rc.scope_version from public.pilot_runtime_controls rc
+                              where rc.scope_key = r.legacy_scope_key),
+    'kind_supported', r.legacy_kind = any(public._flow_engine_route_kinds()),
     'person_cap_present', exists (select 1 from public.pilot_proactive_contact_caps k
                                    where k.tenant_key = c.tenant_ref),
     'en_curso_legado', public._flow_engine_legacy_in_flight(r.legacy_scope_key, r.legacy_kind),
@@ -819,7 +822,7 @@ def cmd_mover(ops: Ops, args: argparse.Namespace) -> int:
         raise Refused("la version activa cambio entre las dos lecturas: volve a correr el comando")
     ops.say(f"{args.flujo}: {flow['state']}, version {flow['active_version']}, generacion del flujo {flow['generation']}")
     ops.show("ruta hoy", {k: route.get(k) for k in ("executor", "generation", "legacy_kind", "legacy_scope_key",
-                                                     "legacy_runtime_state")})
+                                                     "legacy_runtime_state", "legacy_scope_version")})
     ops.show("en_curso", {"legado": route.get("en_curso_legado"), "motor": route.get("en_curso_motor")})
     if route["executor"] == args.ejecutor:
         ops.say(f"la ruta ya esta en {args.ejecutor}: no hay nada que mover")
@@ -831,6 +834,8 @@ def cmd_mover(ops: Ops, args: argparse.Namespace) -> int:
     if args.ejecutor == "motor":
         if flow["state"] == "apagado" or flow["active_version"] is None:
             raise Refused(f"{args.flujo} esta apagado: la base no mueve a motor un flujo apagado")
+        if route.get("kind_supported") is not True:
+            raise Refused(f"el motor de esta base no ejecuta {route.get('legacy_kind')}: la base no mueve esa ruta a motor")
         if route.get("person_cap_present") is True:
             raise Refused("la instancia tiene tope por persona (pilot_proactive_contact_caps): la base no mueve a motor")
         catalog = ops.read_catalog()
@@ -842,7 +847,7 @@ def cmd_mover(ops: Ops, args: argparse.Namespace) -> int:
         _, out = ops.module("revalidar", payload, name=ROUTE_MODULE)
         revalidation = out.get("revalidation")
         if not isinstance(revalidation, dict):
-            raise Refused("el validador no devolvio la revalidacion")
+            raise Refused(f"el validador no devolvio la revalidacion: {out.get('reason_code', '?')}")
         ops.show("revalidacion", {k: revalidation.get(k) for k in ("version", "rules_version", "capabilities",
                                                                     "blocks", "validator")})
         ops.show("advertencias", [(w.get("code"), w.get("path")) for w in out.get("warnings", [])])
@@ -852,6 +857,10 @@ def cmd_mover(ops: Ops, args: argparse.Namespace) -> int:
     elif route.get("legacy_runtime_state") != "armed":
         raise Refused(f"el scope {route.get('legacy_scope_key')} no esta armado: la base no vuelve la ruta a legado "
                       "(armalo con piloto.sh)")
+    else:
+        # La base no conoce la version del scope que tiene el bridge (flow-engine-v1 3.2): la verifica el operador.
+        ops.say(f"antes del codigo, verifica que el bridge corre el scope {route.get('legacy_scope_key')} en la version "
+                f"{route.get('legacy_scope_version')} (piloto.sh estado): con otra, el legado pierde los casos nuevos")
     ops.confirm(f"mover la ruta de {args.flujo} a {args.ejecutor}")
     moved = ops.sql_json(INSTANCE_ARGS + _call(
         "operator_route_flow_v1", ("instance", "jsonb"), ("product", "text"), ("flow", "text"),
@@ -861,8 +870,11 @@ def cmd_mover(ops: Ops, args: argparse.Namespace) -> int:
     ops.show("ruta", moved)
     if moved.get("ok") is not True or moved.get("unchanged") is True:
         return EXIT_BLOCKED
-    ops.say("despues:")
-    cmd_estado(ops, argparse.Namespace())
+    ops.say("despues (la ruta ya se movio; si esta lectura falla, no la vuelvas a mover):")
+    try:
+        cmd_estado(ops, argparse.Namespace())
+    except Refused as refused:
+        ops.say(f"no se pudo leer el estado despues: {refused}")
     return EXIT_OK
 
 
