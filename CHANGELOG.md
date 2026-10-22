@@ -12,6 +12,22 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.16.1] - 2026-10-22
+
+Un parche sobre la 1.16.0, con tres arreglos que salieron al usarla en ATT1: el comando del operador confirma con una terminal real (#300), la historia del motor entra entera en la simulación (#301) y `/flows` del Automation Expert deja de pasarse del tiempo (#302). Lleva dos migraciones, `20261021000300` y `20261021000400`, que no cambian nada de lo que se manda a los leads.
+
+### Arreglado
+
+- **El comando del operador no podía pedir el código de confirmación** (#300, `scripts/flow_change_operator.py`). Abría `/dev/tty` en modo `r+`, que una terminal no admite, y lo leía como «sin terminal»: `publicar`, `prender` y el resto frenaban con `sin terminal no se confirma` aunque se corrieran con `ssh -t`. Ahora la terminal se abre dos veces, una para escribir y otra para leer. La prueba corre la confirmación en un proceso hijo con una terminal de verdad (`pty`).
+- **La simulación de la vista previa salía siempre `failed`** (#301, migración `20261021000300`). `read_flow_engine_history_v1` cortaba en 1.000.000 bytes, y la semana de ATT1 pesa más: con la ventana de 8 días devolvía `flow_engine_history_too_large`. El tope pasa a 4.000.000 bytes, debajo de los 4 MiB con los que el bridge corta la respuesta. Medido en ATT1 el 22/10: la semana pesa 1.804.557 bytes y se lee en 1,4 s.
+- **`/flows` del Automation Expert daba `statement timeout`** (#302, migración `20261021000400`). `read_automation_expert_flows_v1` tardaba más que los 8 s del bridge (SQLSTATE `57014`, HTTP 500 o 503), porque leía las reevaluaciones de la ventana una vez por acción y por flujo. Ahora las lee una sola vez. Medido en ATT1 desde el bridge: de ≈8 s a 0,3–0,4 s.
+
+### Qué hace quien actualiza
+
+- **Correr las dos migraciones, en orden y como `postgres`:** `20261021000300` y después `20261021000400`. Cambian solo dos funciones de lectura. En ATT1 ya están aplicadas (22/10, 00:42Z y 13:35Z).
+- **Pasar el bridge y la revisión diaria a las imágenes 1.16.1** (`setter-bridge` y `setter-daily-feedback`). Sin flags, variables ni campos nuevos en el manifiesto.
+- **El comando del operador ya no necesita `PRODUCTO=`** apuntando a un árbol con el arreglo de #300: el árbol de la 1.16.1 lo trae.
+
 ## [1.16.0] - 2026-10-21
 
 Una versión menor sobre la 1.15.5. El Automation Expert puede proponer y validar un cambio de flujo (la T4: #288, #290, #296, #297 y #299), y dibuja los flujos (#295). La base suma las rutas, las lecturas y la guarda del motor de flujos (la T2.3a, #294), sobre el esquema de varios toques y la captura v3 (#287, #291 y #292). El instalador de Hermes instala un profile de Slack y se acota a uno (#289 y #293). Todo nace apagado. Lleva dos migraciones, `20261021000100` y `20261021000200`, que aplicadas no cambian nada de lo que corre.
