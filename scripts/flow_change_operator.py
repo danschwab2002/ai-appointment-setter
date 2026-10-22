@@ -11,7 +11,7 @@ con la biblioteca estandar, con el molde de ``piloto.sh``.
 el script muestra y lee por ``/dev/tty``; sin terminal se niega. La garantia
 real es ser root en el VPS: el codigo ataja un error, no a un root.
 **Andy no corre ``publicar``, ``volver``, ``prender``, ``apagar``, ``pausar``,
-``descartar``, ``registrar`` ni ``ruta``.**
+``descartar``, ``registrar``, ``ruta`` ni ``mover``.**
 
 Subcomandos::
 
@@ -27,6 +27,7 @@ Subcomandos::
     pausar <producto>/<flujo> --quien <q> --motivo "..."
     registrar <producto>/<flujo> --quien <q> --motivo "..."
     ruta <producto>/<flujo> --tipo carrito|pago_fallido|ficha --scope <scope del legado> --quien <q> --motivo "..."
+    mover <producto>/<flujo> motor|legado --quien <q> --motivo "..."
     descartar <propuesta> --quien <q> --motivo "..."
     descartar --todo-del-agente --quien <q> --motivo "..."
 
@@ -77,6 +78,8 @@ OPEN_STATUSES = ("borrador", "validada", "aprobada")
 GAP_SIMULATION = "simulation_not_built"
 REVALIDATE_AFTER = timedelta(minutes=8)  # la base acepta hasta 10 (c_revalidation_window)
 MODULE = "bridge.flow_change_operator"
+ROUTE_MODULE = "bridge.flow_route_revalidation"
+EXECUTORS = ("legado", "motor")
 _IMAGE = re.compile(r"^(?:[A-Za-z0-9][A-Za-z0-9._/:-]*@)?sha256:[0-9a-f]{64}$")
 _NAME = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -265,12 +268,12 @@ class Ops:
         return {"message_templates": templates} if isinstance(templates, list) else None
 
     # -- el validador, en un contenedor nuevo ----------------------------------
-    def module(self, subcommand: str, payload: Mapping[str, Any]) -> tuple[int, dict[str, Any]]:
+    def module(self, subcommand: str, payload: Mapping[str, Any], *, name: str = MODULE) -> tuple[int, dict[str, Any]]:
         result = self.docker.run(
             ["run", "--rm", "-i", "--read-only", "--network", "none", "--cap-drop", "ALL",
              "--security-opt", "no-new-privileges", "--user", "65534:65534",
              "-e", "PYTHONDONTWRITEBYTECODE=1", "--entrypoint", "python", self.config.image,
-             "-m", MODULE, subcommand],
+             "-m", name, subcommand],
             stdin=json.dumps(payload, ensure_ascii=True),
         )
         try:
@@ -396,6 +399,24 @@ SQL_ROUTES = f"""select coalesce(jsonb_agg(jsonb_build_object(
  where c.tenant_ref = {_arg('tenant')} and c.ally_ref = {_arg('ally')};"""
 # Los tipos del legado que frena la guarda del almacen (operator_create_flow_route_v1).
 ROUTE_KINDS = ("carrito", "pago_fallido", "ficha")
+# La ruta de un flujo, para ``mover``: la generacion (el CAS de operator_route_flow_v1), la huella de la
+# version activa (la revalidacion la lleva), lo en curso de cada lado y lo que la base exige para mover.
+SQL_ROUTE = f"""select coalesce((select jsonb_build_object(
+    'executor', r.executor, 'generation', r.generation, 'legacy_kind', r.legacy_kind,
+    'legacy_scope_key', r.legacy_scope_key, 'state', c.state, 'active_version', c.active_version,
+    'definition_sha256', (select d.definition_sha256 from public.flow_definitions d
+                           where d.flow_id = c.flow_id and d.version = c.active_version),
+    'legacy_runtime_state', (select rc.runtime_state from public.pilot_runtime_controls rc
+                              where rc.scope_key = r.legacy_scope_key),
+    'person_cap_present', exists (select 1 from public.pilot_proactive_contact_caps k
+                                   where k.tenant_key = c.tenant_ref),
+    'en_curso_legado', public._flow_engine_legacy_in_flight(r.legacy_scope_key, r.legacy_kind),
+    'en_curso_motor', (select count(*)::integer from public.flow_engine_runs fr
+                         join public.recovery_cases rc on rc.id = fr.recovery_case_id
+                        where fr.flow_id = c.flow_id and rc.status in ('grace_period', 'active', 'paused')))
+  from public.flow_engine_routes r join public.flow_controls c on c.flow_id = r.flow_id
+ where c.tenant_ref = {_arg('tenant')} and c.ally_ref = {_arg('ally')}
+   and c.product_ref = {_arg('product')} and c.flow_key = {_arg('flow')}), 'null'::jsonb)::text;"""
 
 # Las dos lecturas del motor (flow-engine-v1, secciones 1 y 2), para la simulacion de la vista previa.
 # La historia se pide con el now() de la base: 8 dias menos 5 minutos, lo que la funcion acepta.
@@ -775,6 +796,76 @@ def cmd_ruta(ops: Ops, args: argparse.Namespace) -> int:
     return EXIT_OK if created.get("ok") is True else EXIT_BLOCKED
 
 
+def cmd_mover(ops: Ops, args: argparse.Namespace) -> int:
+    """Mueve la ruta de un flujo entre ``legado`` y ``motor`` (operator_route_flow_v1, flow-engine-v1 §3.2).
+
+    A ``motor`` arma la revalidacion con el validador de la imagen fijada (``bridge.flow_route_revalidation``)
+    sobre la version activa, y no pide el codigo si tiene bloqueos. A ``legado`` no la lleva: la base exige el
+    scope del legado armado. En los dos sentidos, lo en curso no se mueve: lo que arranco el legado termina en
+    el legado y lo que arranco el motor termina en el motor. Es tambien la vuelta atras de la T5: apagar
+    ``FLOW_ENGINE_ENABLED`` no saca la ruta de ``motor``.
+    """
+    ops.check_approver(args.quien)
+    if args.ejecutor not in EXECUTORS:
+        raise Refused(f"el destino va como {' o '.join(EXECUTORS)}", EXIT_USAGE)
+    world = ops.read_world()
+    flow = _find_flow(world, args.flujo)
+    params = {"tenant": ops.config.tenant, "ally": ops.config.ally, "product": flow["product_ref"],
+              "flow": flow["flow_key"]}
+    route = ops.sql_json(SQL_ROUTE, params, read_only=True)
+    if not isinstance(route, dict):
+        raise Refused(f"{args.flujo} no tiene ruta: primero va ``ruta`` (la crea en legado)")
+    if route.get("active_version") != flow["active_version"]:
+        raise Refused("la version activa cambio entre las dos lecturas: volve a correr el comando")
+    ops.say(f"{args.flujo}: {flow['state']}, version {flow['active_version']}, generacion del flujo {flow['generation']}")
+    ops.show("ruta hoy", {k: route.get(k) for k in ("executor", "generation", "legacy_kind", "legacy_scope_key",
+                                                     "legacy_runtime_state")})
+    ops.show("en_curso", {"legado": route.get("en_curso_legado"), "motor": route.get("en_curso_motor")})
+    if route["executor"] == args.ejecutor:
+        ops.say(f"la ruta ya esta en {args.ejecutor}: no hay nada que mover")
+        return EXIT_OK
+    ops.say(f"la ruta pasa de {route['executor']} a {args.ejecutor} (generacion {route['generation']} -> "
+            f"{route['generation'] + 1}). Lo en curso no se mueve: cada caso termina en el camino que lo arranco; "
+            f"los carritos nuevos los arranca {args.ejecutor}")
+    revalidation = None
+    if args.ejecutor == "motor":
+        if flow["state"] == "apagado" or flow["active_version"] is None:
+            raise Refused(f"{args.flujo} esta apagado: la base no mueve a motor un flujo apagado")
+        if route.get("person_cap_present") is True:
+            raise Refused("la instancia tiene tope por persona (pilot_proactive_contact_caps): la base no mueve a motor")
+        catalog = ops.read_catalog()
+        if catalog is None:
+            raise Refused("no se pudo leer el catalogo de plantillas: no se arma la revalidacion")
+        payload = {**world, "catalog": catalog, "flow": {
+            "product_ref": flow["product_ref"], "flow_key": flow["flow_key"], "legacy_kind": route["legacy_kind"],
+            "definition_sha256": route["definition_sha256"]}}
+        _, out = ops.module("revalidar", payload, name=ROUTE_MODULE)
+        revalidation = out.get("revalidation")
+        if not isinstance(revalidation, dict):
+            raise Refused("el validador no devolvio la revalidacion")
+        ops.show("revalidacion", {k: revalidation.get(k) for k in ("version", "rules_version", "capabilities",
+                                                                    "blocks", "validator")})
+        ops.show("advertencias", [(w.get("code"), w.get("path")) for w in out.get("warnings", [])])
+        if out.get("ok") is not True or revalidation.get("blocks") != []:
+            ops.show("bloqueos", [(b.get("code"), b.get("path")) for b in out.get("blocks_detail", [])])
+            raise Refused("la version activa tiene bloqueos con el motor: no se mueve", EXIT_BLOCKED)
+    elif route.get("legacy_runtime_state") != "armed":
+        raise Refused(f"el scope {route.get('legacy_scope_key')} no esta armado: la base no vuelve la ruta a legado "
+                      "(armalo con piloto.sh)")
+    ops.confirm(f"mover la ruta de {args.flujo} a {args.ejecutor}")
+    moved = ops.sql_json(INSTANCE_ARGS + _call(
+        "operator_route_flow_v1", ("instance", "jsonb"), ("product", "text"), ("flow", "text"),
+        ("executor", "text"), ("generation", "bigint"), ("who", "text"), ("reason", "text"),
+        ("revalidation", "jsonb")), {**params, "executor": args.ejecutor, "generation": route["generation"],
+                                     "who": args.quien, "reason": args.motivo, "revalidation": revalidation})
+    ops.show("ruta", moved)
+    if moved.get("ok") is not True or moved.get("unchanged") is True:
+        return EXIT_BLOCKED
+    ops.say("despues:")
+    cmd_estado(ops, argparse.Namespace())
+    return EXIT_OK
+
+
 def _discard(ops: Ops, proposal_id: str, who: str, reason: str) -> dict[str, Any]:
     params = {"tenant": ops.config.tenant, "ally": ops.config.ally, "id": proposal_id, "who": who,
               "reason": reason}
@@ -848,6 +939,10 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--tipo", required=True)
     command.add_argument("--scope", required=True)
     command.add_argument("--motivo", required=True)
+    command = writer("mover")
+    command.add_argument("flujo")
+    command.add_argument("ejecutor")
+    command.add_argument("--motivo", required=True)
     command = writer("descartar")
     command.add_argument("propuesta", nargs="?")
     command.add_argument("--todo-del-agente", action="store_true")
@@ -860,6 +955,7 @@ COMMANDS: dict[str, Callable[[Ops, argparse.Namespace], int]] = {
     "validar": cmd_validar, "publicar": cmd_publicar, "volver": cmd_estado_o_version,
     "prender": cmd_estado_o_version, "apagar": cmd_estado_o_version, "pausar": cmd_pausar,
     "descartar": cmd_descartar, "registrar": cmd_registrar, "ruta": cmd_ruta,
+    "mover": cmd_mover,
 }
 
 

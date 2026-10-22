@@ -424,7 +424,7 @@ El comando del operador es la primera parte de las herramientas (la T4): `script
 - **La validación corre aparte del bridge vivo,** en un contenedor nuevo de la imagen fijada por digest, sin red y de solo lectura, con el almacén y el catálogo que el comando leyó con `psql`. El catálogo sale de la base de Chatwoot (`channel_whatsapp.message_templates` de la bandeja), con la misma forma que `GET /inboxes/{id}`. El diff que se muestra antes del sí lo calcula el comando con la biblioteca estándar, y el «para qué» de la propuesta se muestra escapado y cercado como texto no verificado.
 - **Sin simulación no se publica salvo que se pida.** Mientras la vista previa traiga `simulation_not_built`, publicar exige `--sin-simulacion`. La base sigue registrando `simulation: not_built` al aprobar hasta la migración de las herramientas del agente.
 - **Validar** registra solo las propuestas del operador; las del agente las valida su ruta del bridge.
-- **Mover la ruta de un flujo** (`operator_route_flow_v1`, contrato `flow-engine-v1`) va en este comando cuando exista.
+- **Mover la ruta de un flujo** (`operator_route_flow_v1`, contrato `flow-engine-v1`) va en este comando: es `mover`, más abajo («Mover la ruta de un flujo»).
 
 ## Lo que fijan las rutas del agente (1.3.0)
 
@@ -470,7 +470,7 @@ La tercera parte de las herramientas (la T4c): `src/bridge/flow_change_simulatio
     - el código de `not_supported` cuando la propuesta trae algo que el motor no ejecuta, como `engine_not_supported:…`.
 - **La vista previa.** Con la simulación, el hueco `simulation_not_built` se va. Si la simulación falló, queda `simulation_failed` con su motivo. **Validar no se frena por la simulación:** sin ella, la propuesta se valida igual y la vista previa dice por qué no está.
 - **Aprobar** registra la simulación de la validación guardada (migración `20261021000100`): `built` con el `summary_sha256`, o `failed` con el motivo. **El comando del operador** publica sin `--sin-simulacion` solo si esa simulación guardada está `built`; si no, frena y dice el motivo.
-- **Lo que no cambia:** el conteo de lo que está en curso (`in_flight_not_counted`) y el cambio de audiencia (`audience_change_not_computed`) siguen siendo huecos. Mover la ruta de un flujo (`operator_route_flow_v1`) todavía no está en el comando.
+- **Lo que no cambia:** el conteo de lo que está en curso (`in_flight_not_counted`) y el cambio de audiencia (`audience_change_not_computed`) siguen siendo huecos. Mover la ruta de un flujo (`operator_route_flow_v1`) es `mover` («Mover la ruta de un flujo»).
 
 ## Registrar un flujo y crear su ruta (1.5.0)
 
@@ -481,6 +481,17 @@ La cuarta parte de las herramientas (la T4d): dos subcomandos de `scripts/flow_c
 - **`estado`** muestra la ruta de cada flujo y si pausarlo frena el legado.
 - **La simulación necesita la ruta:** `read_flow_engine_history_v1` lee la historia por la ruta del carrito del producto. Sin ella, la simulación queda `failed` con `flow_engine_unavailable`.
 - **El orden para un flujo del legado:** `registrar`, `proponer` con su v1 y `prender`, `publicar --sin-simulacion` (todavía no hay historia que leer), y `ruta`. Desde ahí, cada propuesta se valida con su simulación.
+
+## Mover la ruta de un flujo (`mover`)
+
+El paso 4 de la T5: `scripts/flow_change_operator.py mover <producto>/<flujo> motor|legado --quien <q> --motivo "..."`, con el mismo código de confirmación que el resto, y `src/bridge/flow_route_revalidation.py`, que corre en un contenedor nuevo de la imagen fijada, como el validador de `validar`. Escrita el 2026-10-22, antes del merge; no afirma que nada esté desplegado ni activado.
+
+- **Lee en una consulta** la ruta (`executor`, `generation`, `legacy_kind`, `legacy_scope_key`), la huella de la versión activa (`flow_definitions.definition_sha256`), el estado del scope del legado, si la instancia tiene tope por persona, y lo en curso de cada lado (`_flow_engine_legacy_in_flight` y los recorridos abiertos del motor). Si la versión activa cambió entre esa lectura y la del almacén, no sigue.
+- **A `motor`** arma la revalidación de `flow-engine-v1` §3.2 con las seis claves exactas. El módulo valida la versión activa, tal cual está publicada, en fase `publish` con `operador`, con el `legacy_kind` de la ruta (la regla 14 de la forma del legado) y con `flow_engine.not_supported` con `ENGINE_CAPABILITIES_V1` (la regla 14 del motor). `rules_version` es 2: las reglas del validador más las capacidades v1 del motor, el `engine.rules_version` de `read_flow_engine_v1`. Sin catálogo de plantillas no se arma (la regla 13 no se puede mirar). La regla 16 (el manifiesto como techo) no la mira, igual que el validador al publicar. Con bloqueos, con el flujo apagado o con tope por persona, frena antes del código.
+- **A `legado`** no lleva revalidación (`p_revalidation` nulo). Frena antes del código si el scope del legado no está `armed`. Es la vuelta atrás de la T5: apagar `FLOW_ENGINE_ENABLED` no saca la ruta de `motor`.
+- **Pasa la generación que leyó** como `p_expected_generation`: si otro la movió en el medio, la base contesta `flow_route_generation_stale` y el comando sale con 3. Con la ruta ya en el destino, no escribe ni pide el código.
+- **Lo en curso no se mueve**, y el comando lo dice antes del código, con los dos conteos.
+- **Andy no lo corre.** Lo corre una persona en una terminal (`ssh -t`).
 
 ## Lo que se confirma al construir
 

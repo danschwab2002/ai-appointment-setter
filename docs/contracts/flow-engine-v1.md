@@ -126,7 +126,7 @@ operator_route_flow_v1(p_instance jsonb, p_product_ref text, p_flow_key text, p_
     p_expected_generation bigint, p_actor_name text, p_reason text, p_revalidation jsonb) returns jsonb
 ```
 
-- La ejecuta solo el dueño de la base, `security invoker`. La corre el comando del operador, que en la T4 es de C y que hoy corre Dan, como `piloto.sh`.
+- La ejecuta solo el dueño de la base, `security invoker`. La corre el comando del operador (`mover`, en `flow-change-cycle-v1`, «Mover la ruta de un flujo»), que en la T4 es de C y que hoy corre Dan, como `piloto.sh`.
 - `p_expected_generation` es la `generation` de la ruta que leyó quien la mueve. Si no coincide, `{"ok": false, "reason_code": "flow_route_generation_stale"}`.
 - **A `motor`** exige, en este orden:
   1. que el `legacy_kind` esté en las capacidades de esta versión del motor. En la v1, solo `carrito` (desde la T2.3b; en la T2.3a no había ninguno). Si no, `flow_route_kind_not_supported`;
