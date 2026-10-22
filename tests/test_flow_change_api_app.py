@@ -292,7 +292,7 @@ def test_proposing_a_wait_in_the_cart_saves_the_normalized_draft_with_the_role_k
     response = client.post(f"{PREFIX}/flow-changes", headers=AUTH, json=_propose_body())
     assert response.status_code == 201, response.text
     body = response.json()
-    assert (body["contract"], body["contract_version"]) == ("flow-change-cycle-v1", "1.4.0")
+    assert (body["contract"], body["contract_version"]) == ("flow-change-cycle-v1", "1.6.0")
     assert body["instance"] == {"tenant_ref": "lancemos", "ally_ref": "att1"}
     assert body["data"]["status"] == "borrador" and body["data"]["revision"] == 1
     [read, save] = emulator.requests
@@ -493,3 +493,124 @@ def test_without_the_engine_functions_it_validates_and_the_simulation_says_why(
     preview = response.json()["data"]["preview"]
     assert preview["simulacion"] == {"status": "failed", "reason_code": "flow_engine_unavailable"}
     assert {"code": "simulation_failed", "reason_code": "flow_engine_unavailable"} in preview["huecos"]
+
+
+# ----------------------------------------------------------------- el pedido del E2E de la T4 (22/10)
+# El almacen real de ATT1 (tests/fixtures/flow_change/att1_read_flow_store_v1_20261022.json, leido en
+# solo lectura): el carrito v1 prendido, con A1, 24 h, A2, 48 h y Z, y pago_fallido y precheckout
+# registrados sin version. El 22/10 el agente pidio el A2 a 36 h y el Z a 72 h, y POST /flow-changes le
+# contesto 422 flow_change_items_invalid ocho veces, sin decir por que.
+
+ATT1_STORE = json.loads((FIXTURES / "flow_change" / "att1_read_flow_store_v1_20261022.json").read_text())["response"]
+
+
+def _att1_store_client() -> tuple[TestClient, PostgrestEmulator]:
+    emulator = PostgrestEmulator()
+    emulator.flows = copy.deepcopy(ATT1_STORE["flows"])
+    return _client(emulator)
+
+
+def _att1_cart(client: TestClient) -> dict:
+    store = client.get(f"{PREFIX}/flow-store", headers=AUTH)
+    assert store.status_code == 200, store.text
+    [cart] = [flow for flow in store.json()["data"]["flows"] if flow["flow_key"] == "carrito"]
+    return cart
+
+
+def test_an_item_with_a_key_that_does_not_go_says_which_one_and_the_bridge_logs_it(
+        caplog: pytest.LogCaptureFixture) -> None:
+    # Una de las variantes que probo el agente: la version activa adentro del item de una version nueva.
+    client, emulator = _att1_store_client()
+    cart = _att1_cart(client)
+    item = {"producto": cart["product_ref"], "flujo": cart["flow_key"], "flow_id": cart["flow_id"],
+            "tipo": "version", "version": 1, "definicion": cart["active_definition"], "en_curso": "seguir"}
+    with caplog.at_level("INFO", logger="bridge.flow_change_api"):
+        response = client.post(f"{PREFIX}/flow-changes", headers=AUTH, json=_propose_body(
+            items=[item], base={cart["flow_id"]: {"active_version": 1}}))
+    assert response.status_code == 422
+    assert response.json() == {"detail": "flow_change_items_invalid",
+                               "reason": {"field": "items", "code": "keys_invalid", "item": 0, "extra": ["version"]}}
+    assert any("route=propose status=422 code=flow_change_items_invalid" in r.getMessage()
+               and '"extra":["version"]' in r.getMessage() for r in caplog.records)
+    # Con los nombres del almacen en vez de los del item: dice cuales faltan y cuales sobran.
+    item = {"product_ref": "att1", "flow_key": "carrito", "flow_id": cart["flow_id"], "tipo": "version",
+            "definicion": cart["active_definition"], "en_curso": "seguir"}
+    response = client.post(f"{PREFIX}/flow-changes", headers=AUTH, json=_propose_body(
+        items=[item], base={cart["flow_id"]: {"active_version": 1}}))
+    assert response.json()["reason"] == {"field": "items", "code": "keys_invalid", "item": 0,
+                                         "missing": ["flujo", "producto"], "extra": ["flow_key", "product_ref"]}
+    assert [function for function, _, _ in emulator.requests] == ["read_flow_store_v1"]
+
+
+def test_a_body_that_does_not_close_says_which_field_without_its_value() -> None:
+    client, _ = _client()
+    response = client.post(f"{PREFIX}/flow-changes", headers=AUTH, json=_propose_body(extra=True))
+    assert response.json() == {"detail": "invalid_body", "reason": {"field": "body", "extra": ["extra"]}}
+    response = client.post(f"{PREFIX}/flow-changes", headers=AUTH,
+                           json=_propose_body(requested_by={"slack_user": "5512345678"}))
+    assert response.json() == {"detail": "invalid_body",
+                               "reason": {"field": "requested_by", "problem": "not_a_slack_user"}}
+    assert "5512345678" not in response.text
+    response = client.post(f"{PREFIX}/flow-changes", headers=AUTH, json=_propose_body(**{"Ana 5512345678": 1}))
+    assert response.json()["reason"] == {"field": "body", "extra": ["<otra>"]}
+
+
+def test_the_flow_store_gives_the_item_and_the_base_ready_to_copy_and_when_each_message_goes() -> None:
+    client, _ = _att1_store_client()
+    flows = {flow["flow_key"]: flow for flow in client.get(f"{PREFIX}/flow-store", headers=AUTH).json()["data"]["flows"]}
+    cart = flows["carrito"]
+    assert cart["draft_base"] == {cart["flow_id"]: {"active_version": 1}}
+    item = cart["draft_item"]
+    assert set(item) == {"producto", "flujo", "flow_id", "tipo", "definicion", "en_curso"}
+    assert (item["producto"], item["flujo"], item["tipo"], item["en_curso"]) == ("att1", "carrito", "version", "seguir")
+    assert "version" not in item["definicion"] and item["definicion"]["estado"] == "borrador"
+    assert [(t["plantilla"], t["horas_desde_el_primero"]) for t in cart["toques"]] == [
+        ("att1_carrito_descuento_01", 0), ("att1_carrito_dudas_01", 24), ("att1_ultima_renovacion_01", 72)]
+    # Sin version activa no hay de donde partir.
+    assert flows["pago_fallido"]["draft_item"] is None and flows["pago_fallido"]["toques"] == []
+
+
+def test_the_a2_at_36_hours_and_the_z_at_72_shows_when_each_message_goes_before_and_after() -> None:
+    client, emulator = _att1_store_client()
+    cart = _att1_cart(client)
+
+    def propose(second_wait: str) -> dict:
+        item = copy.deepcopy(cart["draft_item"])
+        steps = item["definicion"]["pasos"]
+        assert (steps[1], steps[3]) == ({"esperar": "24h"}, {"esperar": "48h"})
+        steps[1] = {"esperar": "36h"}
+        steps[3] = {"esperar": second_wait}
+        response = client.post(f"{PREFIX}/flow-changes", headers=AUTH, json=_propose_body(
+            items=[item], base=cart["draft_base"],
+            purpose="el A2 a las 36 h del primero en vez de a las 24, el Z sigue a las 72 h"))
+        assert response.status_code == 201, response.text
+        [touches] = response.json()["data"]["toques"]
+        assert touches["flujo"] == "carrito"
+        assert [t["horas_desde_el_primero"] for t in touches["antes"]] == [0, 24, 72]
+        return touches
+
+    # La cuenta que hizo el agente el 22/10: el 4.o paso en 48 h. El Z queda a las 84 h, y se ve.
+    wrong = propose("48h")
+    assert [t["horas_desde_el_primero"] for t in wrong["despues"]] == [0, 36, 84]
+    # Lo pedido: el 4.o paso en 36 h deja el Z a las 72 h, como antes.
+    right = propose("36h")
+    assert [(t["plantilla"], t["horas_desde_el_primero"]) for t in right["despues"]] == [
+        ("att1_carrito_descuento_01", 0), ("att1_carrito_dudas_01", 36), ("att1_ultima_renovacion_01", 72)]
+    saved = [body for function, body, _ in emulator.requests if function == "save_flow_change_draft_v1"]
+    assert saved[-1]["p_base"] == cart["draft_base"]
+    assert [step for step in saved[-1]["p_items"][0]["definicion"]["pasos"] if "esperar" in step] == [
+        {"esperar": "36h"}, {"esperar": "36h"}]
+
+
+def test_the_touches_stop_where_the_lead_decides() -> None:
+    from bridge.flow_definition import touch_times
+    steps = [{"esperar": "2h"}, {"plantilla": "a"}, {"esperar": "1d"}, {"plantilla": "b"},
+             {"condicion": "contesto", "si": [], "no": []}, {"esperar": "1h"}, {"plantilla": "c"}]
+    # La espera antes del primero no cuenta: las horas son desde el primer mensaje.
+    assert touch_times({"pasos": steps}) == [
+        {"paso": 2, "plantilla": "a", "horas_desde_el_primero": 0},
+        {"paso": 4, "plantilla": "b", "horas_desde_el_primero": 24},
+        {"paso": 5, "sigue": "depende_del_lead"}]
+    assert touch_times({"pasos": [{"plantilla": "a"}, {"esperar": "a_medir"}, {"plantilla": "b"}]}) == [
+        {"paso": 1, "plantilla": "a", "horas_desde_el_primero": 0}]
+    assert touch_times({}) == []

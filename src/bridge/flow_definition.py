@@ -39,6 +39,7 @@ _FLOW_KEY = re.compile(r"[a-z][a-z0-9_]{1,39}")
 _PRODUCT = re.compile(r"[a-z0-9][a-z0-9-]{0,127}")
 _POOL = re.compile(r"[a-z][a-z0-9_-]{1,39}")
 _DURATION = re.compile(r"(0|[1-9][0-9]{0,4})(m|h|d)")
+_KEY_NAME = re.compile(r"[a-z][a-z0-9_]{0,39}")
 _HOUR = re.compile(r"([01][0-9]|2[0-3]):([0-5][0-9])")
 _TEMPLATE_NAME = re.compile(r"[a-z0-9_]{1,512}")
 _LANGUAGE = re.compile(r"[a-z]{2}(?:_[A-Z]{2})?")
@@ -863,9 +864,28 @@ class ProposalItemsInvalid(ValueError):
 
     code = "flow_change_items_invalid"
 
-    def __init__(self, detail: str) -> None:
+    def __init__(self, detail: str, *, missing: Sequence[str] = (), extra: Sequence[str] = ()) -> None:
         super().__init__(f"{self.code}:{detail}")
         self.detail = detail
+        self.item: int | None = None
+        self.missing = tuple(sorted(missing))
+        self.extra = tuple(sorted(extra))
+
+    def reason(self) -> dict[str, Any]:
+        """El motivo para quien armo los items: el codigo, el item y los nombres de las claves, nunca un valor."""
+        out: dict[str, Any] = {"field": "items", "code": self.detail}
+        if self.item is not None:
+            out["item"] = self.item
+        if self.missing:
+            out["missing"] = list(self.missing)
+        if self.extra:
+            out["extra"] = [_key_name(key) for key in self.extra[:10]]
+        return out
+
+
+def _key_name(key: object) -> str:
+    """Una clave que sobra, tal cual si tiene forma de clave; si no, sin su texto (lo escribio el modelo)."""
+    return key if isinstance(key, str) and _KEY_NAME.fullmatch(key) else "<otra>"
 
 
 @dataclass(frozen=True)
@@ -909,7 +929,7 @@ class ProposalItem:
         else:
             required = allowed = identity
         if not required <= keys or not keys <= allowed:
-            raise ProposalItemsInvalid("keys_invalid")
+            raise ProposalItemsInvalid("keys_invalid", missing=required - keys, extra=keys - allowed)
         return cls(
             producto=value["producto"], flujo=value["flujo"], flow_id=value["flow_id"], tipo=tipo,
             definicion=value.get("definicion"), version=value.get("version"),
@@ -981,7 +1001,14 @@ def parse_items(value: object) -> tuple[ProposalItem, ...]:
     """Los items de una propuesta: de 1 a 10, y por flujo a lo sumo uno de contenido y uno de estado."""
     if not isinstance(value, list) or not 1 <= len(value) <= ITEMS_MAX:
         raise ProposalItemsInvalid("items_count_invalid")
-    items = tuple(ProposalItem.from_json(item) for item in value)
+    parsed = []
+    for index, item in enumerate(value):
+        try:
+            parsed.append(ProposalItem.from_json(item))
+        except ProposalItemsInvalid as error:
+            error.item = index
+            raise
+    items = tuple(parsed)
     check_item_classes(items)
     return items
 
@@ -1005,6 +1032,41 @@ def as_draft(definition: Mapping[str, Any]) -> dict[str, Any]:
     draft = {key: copy.deepcopy(value) for key, value in definition.items() if key != "version"}
     draft["estado"] = DRAFT
     return draft
+
+
+def touch_times(definition: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Cuando sale cada plantilla de los pasos de arriba, en horas desde la primera.
+
+    Es la cuenta que el agente tiene que comparar con lo que le pidieron: una
+    espera que cambia mueve todos los toques que vienen despues. Se cuenta solo
+    el camino de arriba: desde una ``condicion``, una conversacion o una
+    derivacion, lo que sigue depende del lead, y la lista termina ahi con
+    ``sigue: "depende_del_lead"``. Sin una espera legible no se cuenta nada.
+    """
+    steps = definition.get("pasos")
+    if not isinstance(steps, list):
+        return []
+    out: list[dict[str, Any]] = []
+    minutes = 0
+    started = False
+    for index, step in enumerate(steps):
+        if not isinstance(step, Mapping):
+            return out
+        if "esperar" in step:
+            wait = parse_duration(step.get("esperar"))
+            if wait is None:
+                return out
+            if started:
+                minutes += wait
+        elif "plantilla" in step:
+            started = True
+            out.append({"paso": index + 1, "plantilla": step.get("plantilla"),
+                        "horas_desde_el_primero": round(minutes / 60, 2)})
+        else:
+            if out:
+                out.append({"paso": index + 1, "sigue": "depende_del_lead"})
+            return out
+    return out
 
 
 def as_published(definition: Mapping[str, Any], version: int) -> dict[str, Any]:
