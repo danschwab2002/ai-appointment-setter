@@ -1,0 +1,270 @@
+{
+  "_capture": {
+    "date": "2026-10-16T23:29:00Z",
+    "source": "arnes del paso 3 de varios productos, dentro del contenedor del bridge de ATT1 en el VPS: z-ai/glm-5.3-flash por OpenRouter, el SOUL comun de main en 9fc0a22 (despues de la 2c, #252), el conocimiento v8 de ATT1 (tests/fixtures/att1_knowledge_v8_20261016.toml) con el segundo producto de prueba de tests/test_commercial_knowledge.py, y el contexto con la forma de la 2c. Tres pedidos por caso. Vault: documentacion/2026-10-16-paso-3-el-agente-con-dos-productos.md",
+    "data": "lo que hizo la persona sale de filas reales de att1-db (tests/fixtures/att1_person_activity_20261016.json); lo del segundo producto se deriva de esas filas, porque ATT2 nunca mando nada a att1-db. El pago rechazado es el PURCHASE_CANCELED real de tests/fixtures/hotmart_purchase_canceled_att1_20261012.json. Sin datos personales: las respuestas nombran solo a la Dra. Nina y los productos."
+  },
+  "cases": [
+    {
+      "id": "01-precio-del-segundo",
+      "turns": [
+        [
+          "prospect",
+          "Hola, cuánto cuesta?"
+        ]
+      ],
+      "contexto": {
+        "products": [
+          {
+            "key": "att1",
+            "name": "Alimenta Tu Tiroides"
+          },
+          {
+            "key": "att2",
+            "name": "Producto de prueba"
+          }
+        ],
+        "person_activity": [
+          {
+            "activity": "form",
+            "product": "att2",
+            "at": "2026-10-15T05:41:12Z"
+          },
+          {
+            "activity": "payment_slip_printed",
+            "product": "att2",
+            "at": "2026-10-15T05:44:00Z"
+          }
+        ]
+      },
+      "espera": {
+        "decision": "ask_question",
+        "producto_del_precio": "att2"
+      },
+      "responses": [
+        "{\"decision\": \"ask_question\", \"qualification_status\": \"in_progress\", \"reason_code\": \"commercial_response\", \"reply\": \"Hola, soy el asistente virtual del equipo de la Dra. Nina. El Producto de prueba cuesta USD 27.\", \"captured_fields\": {\"person_name\": null, \"location\": null, \"role\": null, \"company_name\": null, \"company_size\": null, \"business_model\": null, \"company_operational\": null, \"can_invest_in_education\": null}, \"missing_fields\": [\"person_name\", \"location\", \"role\", \"company_name\", \"company_size\", \"business_model\", \"company_operational\", \"can_invest_in_education\"]}",
+        "{\"decision\": \"ask_question\", \"qualification_status\": \"in_progress\", \"reason_code\": \"commercial_response\", \"reply\": \"¡Hola! Un gusto saludarte. Soy el asistente virtual del equipo de la Dra. Nina. El Producto de prueba cuesta USD 27. ¿Quieres que te cuente qué incluye?\", \"captured_fields\": {\"person_name\": null, \"location\": null, \"role\": null, \"company_name\": null, \"company_size\": null, \"business_model\": null, \"company_operational\": null, \"can_invest_in_education\": null}, \"missing_fields\": [\"person_name\", \"location\", \"role\", \"company_name\", \"company_size\", \"business_model\", \"company_operational\", \"can_invest_in_education\"]}",
+        "{\"decision\": \"ask_question\", \"qualification_status\": \"in_progress\", \"reason_code\": \"commercial_response\", \"reply\": \"¡Hola! Soy el asistente virtual del equipo de la Dra. Nina. El Producto de prueba cuesta USD 27. Si tienes otra pregunta, con gusto te ayudo.\", \"captured_fields\": {\"person_name\": null, \"location\": null, \"role\": null, \"company_name\": null, \"company_size\": null, \"business_model\": null, \"company_operational\": null, \"can_invest_in_education\": null}, \"missing_fields\": [\"person_name\", \"location\", \"role\", \"company_name\", \"company_size\", \"business_model\", \"company_operational\", \"can_invest_in_education\"]}"
+      ]
+    },
+    {
+      "id": "02-enlace-del-segundo",
+      "turns": [
+        [
+          "prospect",
+          "Envíame el enlace"
+        ]
+      ],
+      "contexto": {
+        "products": [
+          {
+            "key": "att1",
+            "name": "Alimenta Tu Tiroides"
+          },
+          {
+            "key": "att2",
+            "name": "Producto de prueba"
+          }
+        ],
+        "person_activity": [
+          {
+            "activity": "cart",
+            "product": "att2",
+            "at": "2026-10-16T00:13:57Z"
+          }
+        ]
+      },
+      "espera": {
+        "decision": "send_payment_link",
+        "product": "att2"
+      },
+      "responses": [
+        "{\"decision\":\"send_payment_link\",\"qualification_status\":\"in_progress\",\"reason_code\":\"payment_link_requested\",\"reply\":\"¡Hola! Soy el asistente virtual del equipo de la Dra. Nina. Con gusto te envío el enlace de Producto de prueba, que cuesta USD 27:\",\"product\":\"att2\",\"captured_fields\":{\"person_name\":null,\"location\":null,\"role\":null,\"company_name\":null,\"company_size\":null,\"business_model\":null,\"company_operational\":null,\"can_invest_in_education\":null},\"missing_fields\":[\"person_name\",\"location\",\"role\",\"company_name\",\"company_size\",\"business_model\",\"company_operational\",\"can_invest_in_education\"]}",
+        "{\"decision\":\"send_payment_link\",\"qualification_status\":\"in_progress\",\"reason_code\":\"payment_link_requested\",\"reply\":\"Hola, un gusto. Soy el asistente virtual del equipo de la Dra. Nina y con gusto te envío el enlace de compra del Producto de prueba, que cuesta USD 27:\",\"product\":\"att2\",\"captured_fields\":{\"person_name\":null,\"location\":null,\"role\":null,\"company_name\":null,\"company_size\":null,\"business_model\":null,\"company_operational\":null,\"can_invest_in_education\":null},\"missing_fields\":[\"person_name\",\"location\",\"role\",\"company_name\",\"company_size\",\"business_model\",\"company_operational\",\"can_invest_in_education\"]}",
+        "{\"decision\":\"send_payment_link\",\"qualification_status\":\"in_progress\",\"reason_code\":\"payment_link_requested\",\"product\":\"att2\",\"reply\":\"¡Hola! Un gusto. Soy el asistente virtual del equipo de la Dra. Nina. Con gusto te envío el enlace de pago del Producto de prueba, que cuesta USD 27:\",\"captured_fields\":{\"person_name\":null,\"location\":null,\"role\":null,\"company_name\":null,\"company_size\":null,\"business_model\":null,\"company_operational\":null,\"can_invest_in_education\":null},\"missing_fields\":[\"person_name\",\"location\",\"role\",\"company_name\",\"company_size\",\"business_model\",\"company_operational\",\"can_invest_in_education\"]}"
+      ]
+    },
+    {
+      "id": "03-enlace-del-primero-nombrado",
+      "turns": [
+        [
+          "prospect",
+          "Pasame el link del programa de tiroides de la doctora Nina"
+        ]
+      ],
+      "contexto": {
+        "products": [
+          {
+            "key": "att1",
+            "name": "Alimenta Tu Tiroides"
+          },
+          {
+            "key": "att2",
+            "name": "Producto de prueba"
+          }
+        ],
+        "person_activity": [
+          {
+            "activity": "form",
+            "product": "att2",
+            "at": "2026-10-01T13:20:55Z"
+          },
+          {
+            "activity": "form",
+            "product": "att2",
+            "at": "2026-10-03T00:52:14Z"
+          },
+          {
+            "activity": "form",
+            "product": "att2",
+            "at": "2026-10-05T18:05:30Z"
+          },
+          {
+            "activity": "cart",
+            "product": "att1",
+            "at": "2026-10-16T00:13:57Z"
+          }
+        ]
+      },
+      "espera": {
+        "decision": "send_payment_link",
+        "product": "att1"
+      },
+      "responses": [
+        "{\n  \"decision\": \"send_payment_link\",\n  \"qualification_status\": \"in_progress\",\n  \"reason_code\": \"payment_link_requested\",\n  \"reply\": \"Hola, soy el asistente virtual del equipo de la Dra. Nina. Con gusto te envío el enlace de Alimenta Tu Tiroides, el protocolo de alimentación para la tiroides que creó la doctora (USD 47):\",\n  \"product\": \"att1\",\n  \"captured_fields\": {\n    \"person_name\": null,\n    \"location\": null,\n    \"role\": null,\n    \"company_name\": null,\n    \"company_size\": null,\n    \"business_model\": null,\n    \"company_operational\": null,\n    \"can_invest_in_education\": null\n  },\n  \"missing_fields\": [\n    \"person_name\",\n    \"location\",\n    \"role\",\n    \"company_name\",\n    \"company_size\",\n    \"business_model\",\n    \"company_operational\",\n    \"can_invest_in_education\"\n  ]\n}",
+        "{\"decision\":\"send_payment_link\",\"qualification_status\":\"in_progress\",\"reason_code\":\"payment_link_requested\",\"reply\":\"¡Hola! Un gusto. Soy el asistente virtual del equipo de la Dra. Nina. Aquí te envío el enlace de Alimenta Tu Tiroides, el protocolo de alimentación para la tiroides (USD 47):\",\"captured_fields\":{\"person_name\":null,\"location\":null,\"role\":null,\"company_name\":null,\"company_size\":null,\"business_model\":null,\"company_operational\":null,\"can_invest_in_education\":null},\"missing_fields\":[\"person_name\",\"location\",\"role\",\"company_name\",\"company_size\",\"business_model\",\"company_operational\",\"can_invest_in_education\"],\"product\":\"att1\"}",
+        "{\"decision\":\"send_payment_link\",\"qualification_status\":\"in_progress\",\"reason_code\":\"payment_link_requested\",\"reply\":\"Hola, un gusto. Soy el asistente virtual del equipo de la Dra. Nina. Con gusto te envío el enlace de Alimenta Tu Tiroides, su protocolo de alimentación para la tiroides. El precio es USD 47:\",\"product\":\"att1\",\"captured_fields\":{\"person_name\":null,\"location\":null,\"role\":null,\"company_name\":null,\"company_size\":null,\"business_model\":null,\"company_operational\":null,\"can_invest_in_education\":null},\"missing_fields\":[\"person_name\",\"location\",\"role\",\"company_name\",\"company_size\",\"business_model\",\"company_operational\",\"can_invest_in_education\"]}"
+      ]
+    },
+    {
+      "id": "04-cambia-de-producto",
+      "turns": [
+        [
+          "prospect",
+          "Hola, me interesa el programa de tiroides"
+        ],
+        [
+          "agent",
+          "¡Hola! Qué bueno. Alimenta Tu Tiroides es el programa de la Dra. Nina Garza. ¿Qué te gustaría saber?"
+        ],
+        [
+          "prospect",
+          "Mejor el otro, el producto de prueba. Pasame ese link"
+        ]
+      ],
+      "contexto": {
+        "products": [
+          {
+            "key": "att1",
+            "name": "Alimenta Tu Tiroides"
+          },
+          {
+            "key": "att2",
+            "name": "Producto de prueba"
+          }
+        ],
+        "person_activity": [
+          {
+            "activity": "cart",
+            "product": "att1",
+            "at": "2026-10-16T00:13:57Z"
+          }
+        ]
+      },
+      "espera": {
+        "decision": "send_payment_link",
+        "product": "att2"
+      },
+      "responses": [
+        "{\"decision\": \"send_payment_link\", \"qualification_status\": \"in_progress\", \"reason_code\": \"payment_link_requested\", \"reply\": \"¡Con gusto! Aquí te envío el enlace de Producto de prueba, que cuesta USD 27:\", \"captured_fields\": {\"person_name\": null, \"location\": null, \"role\": null, \"company_name\": null, \"company_size\": null, \"business_model\": null, \"company_operational\": null, \"can_invest_in_education\": null}, \"missing_fields\": [\"person_name\", \"location\", \"role\", \"company_name\", \"company_size\", \"business_model\", \"company_operational\", \"can_invest_in_education\"], \"product\": \"att2\"}",
+        "{\"decision\":\"send_payment_link\",\"qualification_status\":\"in_progress\",\"reason_code\":\"payment_link_requested\",\"reply\":\"Con gusto, aquí te envío el enlace de Producto de prueba, que cuesta USD 27:\",\"product\":\"att2\",\"captured_fields\":{\"person_name\":null,\"location\":null,\"role\":null,\"company_name\":null,\"company_size\":null,\"business_model\":null,\"company_operational\":null,\"can_invest_in_education\":null},\"missing_fields\":[\"person_name\",\"location\",\"role\",\"company_name\",\"company_size\",\"business_model\",\"company_operational\",\"can_invest_in_education\"]}",
+        "{\"decision\":\"send_payment_link\",\"qualification_status\":\"in_progress\",\"reason_code\":\"payment_link_requested\",\"product\":\"att2\",\"reply\":\"Claro, con gusto te envío el enlace de Producto de prueba, que cuesta USD 27:\",\"captured_fields\":{\"person_name\":null,\"location\":null,\"role\":null,\"company_name\":null,\"company_size\":null,\"business_model\":null,\"company_operational\":null,\"can_invest_in_education\":null},\"missing_fields\":[\"person_name\",\"location\",\"role\",\"company_name\",\"company_size\",\"business_model\",\"company_operational\",\"can_invest_in_education\"]}"
+      ]
+    },
+    {
+      "id": "05-enlace-sin-saber-cual",
+      "turns": [
+        [
+          "prospect",
+          "Quiero pagar, pasame el link"
+        ]
+      ],
+      "contexto": {
+        "products": [
+          {
+            "key": "att1",
+            "name": "Alimenta Tu Tiroides"
+          },
+          {
+            "key": "att2",
+            "name": "Producto de prueba"
+          }
+        ]
+      },
+      "espera": {
+        "decision": "ask_question",
+        "pregunta_cual": true
+      },
+      "responses": [
+        "{\n  \"decision\": \"ask_question\",\n  \"qualification_status\": \"in_progress\",\n  \"reason_code\": \"commercial_response\",\n  \"reply\": \"Hola, soy el asistente virtual del equipo de la Dra. Nina. Con gusto te envío el enlace de pago. ¿Quieres el de Alimenta Tu Tiroides (USD 47) o el de Producto de prueba (USD 27)?\",\n  \"captured_fields\": {\n    \"person_name\": null,\n    \"location\": null,\n    \"role\": null,\n    \"company_name\": null,\n    \"company_size\": null,\n    \"business_model\": null,\n    \"company_operational\": null,\n    \"can_invest_in_education\": null\n  },\n  \"missing_fields\": [\n    \"person_name\",\n    \"location\",\n    \"role\",\n    \"company_name\",\n    \"company_size\",\n    \"business_model\",\n    \"company_operational\",\n    \"can_invest_in_education\"\n  ]\n}",
+        "{\"decision\": \"ask_question\", \"qualification_status\": \"in_progress\", \"reason_code\": \"commercial_response\", \"reply\": \"Hola, soy el asistente virtual del equipo de la Dra. Nina. Con gusto te envío el enlace de pago: ¿lo quieres para Alimenta Tu Tiroides o para el Producto de prueba?\", \"captured_fields\": {\"person_name\": null, \"location\": null, \"role\": null, \"company_name\": null, \"company_size\": null, \"business_model\": null, \"company_operational\": null, \"can_invest_in_education\": null}, \"missing_fields\": [\"person_name\", \"location\", \"role\", \"company_name\", \"company_size\", \"business_model\", \"company_operational\", \"can_invest_in_education\"]}",
+        "{\n  \"decision\": \"ask_question\",\n  \"qualification_status\": \"in_progress\",\n  \"reason_code\": \"commercial_response\",\n  \"reply\": \"Hola, un gusto. Soy el asistente virtual del equipo de la Dra. Nina. Con gusto te envío el enlace para pagar. ¿Para cuál programa lo quieres: Alimenta Tu Tiroides (USD 47) o Producto de prueba (USD 27)?\",\n  \"captured_fields\": {\n    \"person_name\": null,\n    \"location\": null,\n    \"role\": null,\n    \"company_name\": null,\n    \"company_size\": null,\n    \"business_model\": null,\n    \"company_operational\": null,\n    \"can_invest_in_education\": null\n  },\n  \"missing_fields\": [\n    \"person_name\",\n    \"location\",\n    \"role\",\n    \"company_name\",\n    \"company_size\",\n    \"business_model\",\n    \"company_operational\",\n    \"can_invest_in_education\"\n  ]\n}"
+      ]
+    },
+    {
+      "id": "06-pago-rechazado-del-segundo",
+      "turns": [
+        [
+          "prospect",
+          "Me rechazaron la tarjeta, me pasás el link de nuevo?"
+        ]
+      ],
+      "contexto": {
+        "products": [
+          {
+            "key": "att1",
+            "name": "Alimenta Tu Tiroides"
+          },
+          {
+            "key": "att2",
+            "name": "Producto de prueba"
+          }
+        ],
+        "person_activity": [
+          {
+            "activity": "form",
+            "product": "att2",
+            "at": "2026-10-11T18:51:05Z"
+          },
+          {
+            "activity": "form",
+            "product": "att2",
+            "at": "2026-10-11T18:54:28Z"
+          },
+          {
+            "activity": "payment_rejected",
+            "product": "att2",
+            "at": "2026-10-16T19:02:41Z"
+          }
+        ],
+        "recent_payment_failure": {
+          "failed_at": "2026-10-11T15:07:00Z",
+          "payment_method": "CREDIT_CARD",
+          "installments": 3,
+          "refusal_reason": "Transaction refused",
+          "checkout_country": "MX",
+          "product": "att2"
+        }
+      },
+      "espera": {
+        "decision": "send_payment_link",
+        "product": "att2"
+      },
+      "responses": [
+        "{\"decision\":\"send_payment_link\",\"qualification_status\":\"in_progress\",\"reason_code\":\"payment_link_requested\",\"reply\":\"Hola, soy el asistente virtual del equipo de la Dra. Nina. Puedo ver tu caso: el pago no pasó porque el banco no lo aprobó y no indicó el motivo. Antes de reintentar con esa tarjeta, habilita las compras en línea en la app de tu banco o llámalo; si no, puedes usar otra tarjeta o pagar con PayPal. Te dejo el enlace para que lo intentes cuando quieras:\",\"captured_fields\":{\"person_name\":null,\"location\":null,\"role\":null,\"company_name\":null,\"company_size\":null,\"business_model\":null,\"company_operational\":null,\"can_invest_in_education\":null},\"missing_fields\":[\"person_name\",\"location\",\"role\",\"company_name\",\"company_size\",\"business_model\",\"company_operational\",\"can_invest_in_education\"],\"product\":\"att2\"}",
+        "{\"decision\":\"send_payment_link\",\"qualification_status\":\"in_progress\",\"reason_code\":\"payment_link_requested\",\"reply\":\"Hola, soy el asistente virtual del equipo de la Dra. Nina. Puedo ver tu caso: el pago no pasó porque el banco no aprobó la transacción y no indicó por qué. Antes de otro intento con esa tarjeta, habilítala para compras en línea desde la app de tu banco o comunícate con ellos; también puedes pagar con otra tarjeta o en efectivo en OXXO (eliges OXXO como forma de pago en la página, confirmas la compra y pagas la ficha en la tienda antes de su fecha de vencimiento; el acceso te llega por correo cuando se acredita). Te envío el enlace para que lo intentes de nuevo:\",\"captured_fields\":{\"person_name\":null,\"location\":null,\"role\":null,\"company_name\":null,\"company_size\":null,\"business_model\":null,\"company_operational\":null,\"can_invest_in_education\":null},\"missing_fields\":[\"person_name\",\"location\",\"role\",\"company_name\",\"company_size\",\"business_model\",\"company_operational\",\"can_invest_in_education\"],\"product\":\"att2\"}",
+        "{\"decision\":\"send_payment_link\",\"qualification_status\":\"in_progress\",\"reason_code\":\"payment_link_requested\",\"reply\":\"Soy el asistente virtual del equipo de la Dra. Nina. Puedo ver tu caso: el pago no pasó porque el banco no aprobó la tarjeta y no indicó el motivo. Antes de reintentar con esa tarjeta, activa las compras en línea en la app de tu banco o llama al banco; también puedes usar otra tarjeta, PayPal o pagar en efectivo en OXXO. Te envío de nuevo el enlace para que lo intentes:\",\"product\":\"att2\",\"captured_fields\":{\"person_name\":null,\"location\":null,\"role\":null,\"company_name\":null,\"company_size\":null,\"business_model\":null,\"company_operational\":null,\"can_invest_in_education\":null},\"missing_fields\":[\"person_name\",\"location\",\"role\",\"company_name\",\"company_size\",\"business_model\",\"company_operational\",\"can_invest_in_education\"]}"
+      ]
+    }
+  ]
+}
