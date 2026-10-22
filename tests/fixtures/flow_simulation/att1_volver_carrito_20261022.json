@@ -1,0 +1,275 @@
+{
+ "_generated": {
+  "by": "E-017, con as_published sobre att1_definitions_by_scope_version.json (captura del 21/10)",
+  "case": "ATT1 v1.16.2, 22/10 19:45Z: volver att1/carrito 1 con el carrito en la v2 gen3, versiones [1, 2], ruta en legado, 0 recorridos del motor. La validacion dio simulation_failed con proposal_version_unknown y salio con --sin-simulacion (propuesta 33ceb395-63b2-4c22-a728-e9feef1b95cd). Evidencia: docs/operations/2026-10-22-e2e-t4-att1.md",
+  "date": "2026-10-22",
+  "not_real": "las definiciones: la v1 y la v2 reales de ATT1 no se leyeron (el encargo no toca ATT1); son la v5 del fixture del 21/10 y esa misma con una espera de 6 h antes del A1",
+  "regenerate": "uv run python <este generador> <repo>; el generador va en el reporte E-017",
+  "shape": "engine: lo que devuelve read_flow_engine_v1 (20261021000200, seccion 7: la activa y las versiones con recorridos del motor abiertos); store: lo que devuelve read_flow_store_v1 (todas las versiones publicadas)"
+ },
+ "engine": {
+  "contract": "flow-engine-v1",
+  "contract_version": "1.0.0",
+  "database_at": "2026-10-22T19:45:00.000000Z",
+  "engine": {
+   "capabilities": "v1",
+   "rules_version": 2
+  },
+  "flows": [
+   {
+    "active_version": 2,
+    "flow_id": "1b000003-0000-4000-8000-0000000c0001",
+    "flow_key": "carrito",
+    "generation": 3,
+    "product_ref": "att1",
+    "route": {
+     "changed_at": "2026-10-21T20:00:00.000000Z",
+     "executor": "legado",
+     "generation": 0,
+     "legacy_kind": "carrito",
+     "legacy_scope_key": "att1-recuperacion"
+    },
+    "state": "prendido",
+    "versions": [
+     {
+      "definition": {
+       "dispara": {
+        "evento": "carrito"
+       },
+       "entra": {
+        "contesto_a": [],
+        "permiso": "formulario"
+       },
+       "esquema": "setter-flujo/v1",
+       "estado": "publicada",
+       "flujo": "carrito",
+       "horario": {
+        "desde": "09:00",
+        "hasta": "21:00",
+        "zona": "America/Mexico_City"
+       },
+       "nombre": "Carrito abandonado",
+       "pasos": [
+        {
+         "esperar": "6h"
+        },
+        {
+         "idioma": "es_MX",
+         "plantilla": "att1_carrito_abandonado_01",
+         "variables": [
+          "nombre",
+          "producto"
+         ]
+        }
+       ],
+       "prioridad": {
+        "le_gana_a": [
+         "precheckout"
+        ],
+        "no_arranca_mientras": [
+         "pago_fallido"
+        ]
+       },
+       "producto": "att1",
+       "termina": {
+        "si": [
+         "compra"
+        ],
+        "vence": "1d"
+       },
+       "topes": {
+        "bolsa": "att1-recuperacion",
+        "por_dia": 80,
+        "repeticion": {
+         "otra_despues_de": "0m",
+         "una_por": "persona_y_oferta"
+        },
+        "total": 1000
+       },
+       "version": 2
+      },
+      "definition_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "in_flight": 0,
+      "pool": "att1-recuperacion",
+      "published_at": "2026-10-22T19:43:00.000000Z",
+      "version": 2
+     }
+    ]
+   },
+   {
+    "active_version": null,
+    "flow_id": "1b000003-0000-4000-8000-0000000c0002",
+    "flow_key": "pago_fallido",
+    "generation": 0,
+    "product_ref": "att1",
+    "route": null,
+    "state": "apagado",
+    "versions": []
+   },
+   {
+    "active_version": null,
+    "flow_id": "1b000003-0000-4000-8000-0000000c0003",
+    "flow_key": "precheckout",
+    "generation": 0,
+    "product_ref": "att1",
+    "route": null,
+    "state": "apagado",
+    "versions": []
+   }
+  ],
+  "next": null
+ },
+ "item": {
+  "en_curso": "seguir",
+  "flow_id": "1b000003-0000-4000-8000-0000000c0001",
+  "flujo": "carrito",
+  "producto": "att1",
+  "tipo": "volver",
+  "version": 1
+ },
+ "store": {
+  "database_at": "2026-10-22T19:45:00.000000Z",
+  "flows": [
+   {
+    "active_version": 2,
+    "flow_id": "1b000003-0000-4000-8000-0000000c0001",
+    "flow_key": "carrito",
+    "generation": 3,
+    "product_ref": "att1",
+    "state": "prendido",
+    "versions": {
+     "1": {
+      "dispara": {
+       "evento": "carrito"
+      },
+      "entra": {
+       "contesto_a": [],
+       "permiso": "formulario"
+      },
+      "esquema": "setter-flujo/v1",
+      "estado": "publicada",
+      "flujo": "carrito",
+      "horario": {
+       "desde": "09:00",
+       "hasta": "21:00",
+       "zona": "America/Mexico_City"
+      },
+      "nombre": "Carrito abandonado",
+      "pasos": [
+       {
+        "idioma": "es_MX",
+        "plantilla": "att1_carrito_abandonado_01",
+        "variables": [
+         "nombre",
+         "producto"
+        ]
+       }
+      ],
+      "prioridad": {
+       "le_gana_a": [
+        "precheckout"
+       ],
+       "no_arranca_mientras": [
+        "pago_fallido"
+       ]
+      },
+      "producto": "att1",
+      "termina": {
+       "si": [
+        "compra"
+       ],
+       "vence": "1d"
+      },
+      "topes": {
+       "bolsa": "att1-recuperacion",
+       "por_dia": 80,
+       "repeticion": {
+        "otra_despues_de": "0m",
+        "una_por": "persona_y_oferta"
+       },
+       "total": 1000
+      },
+      "version": 1
+     },
+     "2": {
+      "dispara": {
+       "evento": "carrito"
+      },
+      "entra": {
+       "contesto_a": [],
+       "permiso": "formulario"
+      },
+      "esquema": "setter-flujo/v1",
+      "estado": "publicada",
+      "flujo": "carrito",
+      "horario": {
+       "desde": "09:00",
+       "hasta": "21:00",
+       "zona": "America/Mexico_City"
+      },
+      "nombre": "Carrito abandonado",
+      "pasos": [
+       {
+        "esperar": "6h"
+       },
+       {
+        "idioma": "es_MX",
+        "plantilla": "att1_carrito_abandonado_01",
+        "variables": [
+         "nombre",
+         "producto"
+        ]
+       }
+      ],
+      "prioridad": {
+       "le_gana_a": [
+        "precheckout"
+       ],
+       "no_arranca_mientras": [
+        "pago_fallido"
+       ]
+      },
+      "producto": "att1",
+      "termina": {
+       "si": [
+        "compra"
+       ],
+       "vence": "1d"
+      },
+      "topes": {
+       "bolsa": "att1-recuperacion",
+       "por_dia": 80,
+       "repeticion": {
+        "otra_despues_de": "0m",
+        "una_por": "persona_y_oferta"
+       },
+       "total": 1000
+      },
+      "version": 2
+     }
+    }
+   },
+   {
+    "active_version": null,
+    "flow_id": "1b000003-0000-4000-8000-0000000c0002",
+    "flow_key": "pago_fallido",
+    "generation": 0,
+    "product_ref": "att1",
+    "state": "apagado",
+    "versions": {}
+   },
+   {
+    "active_version": null,
+    "flow_id": "1b000003-0000-4000-8000-0000000c0003",
+    "flow_key": "precheckout",
+    "generation": 0,
+    "product_ref": "att1",
+    "state": "apagado",
+    "versions": {}
+   }
+  ],
+  "products": [
+   "att1"
+  ]
+ }
+}

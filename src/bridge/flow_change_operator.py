@@ -189,7 +189,7 @@ def validate_proposal(payload: object, *, environ: Mapping[str, str]) -> dict[st
             simulacion = {"status": "failed", "reason_code": unavailable}
         elif "engine" in data:
             simulacion = build_simulation(data.get("engine"), data.get("history"), items,
-                                          time_zone=instance.time_zone)
+                                          time_zone=instance.time_zone, store=data.get("store"))
         preview = build_preview(items, world, purpose=purpose, warnings=result_json["warnings"],
                                 simulacion=simulacion)
     except ValueError as error:
