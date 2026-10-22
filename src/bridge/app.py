@@ -5022,6 +5022,7 @@ def create_app(
             waba_template=waba_template,
         )
         durable_dispatcher = DurableDispatcher(
+            flow_engine_enabled=settings.flow_engine_enabled,
             supabase=shared_supabase,
             worker_id=settings.dispatcher_worker_id,
             poll_interval_seconds=settings.dispatcher_poll_interval_seconds,
