@@ -32,6 +32,8 @@ MAX_TRACKED_ADMISSION_FAILURES = 1000
 READ_PENDING = "pending"
 READ_OK = "ok"
 READ_FAILING = "failing"
+ALERTS_SLACK = "slack"
+ALERTS_WITHOUT_SLACK = "sin_slack"
 
 
 class FlowEngineRoutes:
@@ -127,3 +129,25 @@ class FlowEngineRuntime:
         self.instance: dict[str, object] = dict(instance)
         self.routes = FlowEngineRoutes(supabase=supabase, instance=instance, clock=clock)
         self.admission_failures = FlowEngineAdmissionFailures()
+        # Los escribe el aviso de las divergencias (MOT-001) con su ultima
+        # lectura; hasta la primera, unknown.
+        self.divergences_unnotified: int | None = None
+        self.alerts = ALERTS_WITHOUT_SLACK
+
+    def readiness(self) -> dict[str, str]:
+        """The flow_engine keys of /ready, from what is already in memory.
+
+        It makes no call to the base and none of them gives 503 (decisions D1
+        and D6 of the T2.4): a failing optional read is published and seen.
+        """
+        unnotified = self.divergences_unnotified
+        return {
+            "flow_engine": "enabled",
+            "flow_engine_routes_motor": str(self.routes.count("motor")),
+            "flow_engine_routes_legado": str(self.routes.count("legado")),
+            "flow_engine_read": self.routes.state,
+            "flow_engine_divergences_unnotified": (
+                str(unnotified) if unnotified is not None else "unknown"
+            ),
+            "flow_engine_alerts": self.alerts,
+        }

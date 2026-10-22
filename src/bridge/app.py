@@ -8151,6 +8151,11 @@ def create_app(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail=audience_block,
                 )
+        # flow-engine-v1, seccion 8: solo con el flag (que exige la frontera
+        # del piloto), de lo que ya esta en memoria, y nunca 503.
+        flow_engine_readiness = (
+            flow_engine_runtime.readiness() if flow_engine_runtime is not None else {}
+        )
         return {
             "status": "ready",
             "pilot_boundary": "configured",
@@ -8162,6 +8167,7 @@ def create_app(
             **payment_slip_readiness,
             **handoff_readiness,
             **stalled_monitor_readiness,
+            **flow_engine_readiness,
         }
 
     @app.post("/webhooks/chatwoot", status_code=status.HTTP_202_ACCEPTED)
