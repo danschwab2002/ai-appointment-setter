@@ -1,7 +1,7 @@
 {
   "_capture": {
     "source": "GET /api/v1/accounts/<cuenta>/inboxes/9 (Chatwoot 4.13, produccion)",
-    "captured_at": "2026-10-01T16:35:30Z",
+    "captured_at": "2026-10-01T19:58:07Z",
     "kept_fields": [
       "id",
       "channel_type",
@@ -14,6 +14,36 @@
   "id": 9,
   "channel_type": "Channel::Whatsapp",
   "message_templates": [
+    {
+      "id": "2612650369186200",
+      "name": "johanna_enlace_pago_01",
+      "status": "APPROVED",
+      "category": "MARKETING",
+      "language": "es_EC",
+      "components": [
+        {
+          "text": "Aquí tienes tu enlace de pago. Toca el botón de abajo para ir directo al pago seguro en Hotmart!\nSi tienes alguna duda antes de pagar, escríbeme por aquí.",
+          "type": "BODY"
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "url": "https://pay.hotmart.com/{{1}}",
+              "text": "Ir al pago",
+              "type": "URL",
+              "example": [
+                "https://pay.hotmart.com/F106691755G?off=mgbgpp19&checkoutMode=10"
+              ]
+            }
+          ]
+        }
+      ],
+      "sub_category": "CUSTOM",
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    },
     {
       "id": "1366360281995578",
       "name": "johanna_seguimiento_descuento_01",

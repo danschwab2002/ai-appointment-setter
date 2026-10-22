@@ -6,11 +6,9 @@ plantillas del inbox 9 tal como lo devuelve la API de Chatwoot
 mando en la conversacion 201 (mensaje 2507 de
 ``chatwoot_followup_resolved_conversations_inbox_9_20261001.json``).
 
-La plantilla del link, ``johanna_enlace_pago_01``, todavia no esta aprobada por
-Meta. Hasta capturarla, su entrada se arma sobre la del seguimiento capturada:
-se cambian el nombre, el idioma, la categoria, el texto y el boton, y se
-conservan las demas claves tal como las devuelve Chatwoot. PENDIENTE: cambiarla
-por la captura real cuando Meta la apruebe.
+La plantilla del link, ``johanna_enlace_pago_01``, esta en el catalogo tal como
+la aprobo Meta (captura del 2026-10-01 a las 19:58Z). Se cargo como UTILITY y
+Meta la aprobo como MARKETING: el bridge manda la categoria que dice el catalogo.
 """
 
 from __future__ import annotations
@@ -38,7 +36,7 @@ CONVERSATION_FIXTURE = (
 LINK_TEMPLATE = "johanna_enlace_pago_01"
 LINK_BODY = (
     "Aquí tienes tu enlace de pago. Toca el botón de abajo para ir directo al "
-    "pago seguro en Hotmart. Si tienes alguna duda antes de pagar, escríbeme "
+    "pago seguro en Hotmart!\nSi tienes alguna duda antes de pagar, escríbeme "
     "por aquí."
 )
 
@@ -47,43 +45,16 @@ def captured_catalog() -> dict[str, object]:
     return json.loads(CATALOG_FIXTURE.read_text(encoding="utf-8"))
 
 
-def catalog_with_link_template(**changes: object) -> dict[str, object]:
-    """El catalogo capturado mas la plantilla del link, armada sobre el seguimiento."""
-    catalog = captured_catalog()
+def link_template_entry(catalog: dict[str, object]) -> dict[str, object]:
     templates = catalog["message_templates"]
     assert isinstance(templates, list)
-    followup = next(
-        template
-        for template in templates
-        if template["name"] == "johanna_seguimiento_descuento_01"
-    )
-    link = copy.deepcopy(followup)
-    link.update(
-        {
-            "name": LINK_TEMPLATE,
-            "language": "es_EC",
-            "category": "UTILITY",
-            "components": [
-                {"type": "BODY", "text": LINK_BODY},
-                {
-                    "type": "BUTTONS",
-                    "buttons": [
-                        {
-                            "type": "URL",
-                            "text": "Ir al pago",
-                            "url": PAYMENT_LINK_BUTTON_URL,
-                            "example": [
-                                "https://pay.hotmart.com/F106691755G"
-                                "?off=mgbgpp19&checkoutMode=10"
-                            ],
-                        }
-                    ],
-                },
-            ],
-        }
-    )
-    link.update(changes)
-    templates.append(link)
+    return next(template for template in templates if template["name"] == LINK_TEMPLATE)
+
+
+def catalog_with_link_template(**changes: object) -> dict[str, object]:
+    """El catalogo capturado, con ``changes`` aplicados a la plantilla del link."""
+    catalog = captured_catalog()
+    link_template_entry(catalog).update(changes)
     return catalog
 
 
@@ -99,14 +70,15 @@ def captured_agent_link() -> str:
 
 def test_reads_the_link_template_from_the_captured_catalog() -> None:
     template = parse_payment_link_template(
-        catalog_with_link_template(),
+        captured_catalog(),
         template_name=LINK_TEMPLATE,
         expected_language="es_EC",
     )
 
     assert template.name == LINK_TEMPLATE
     assert template.language == "es_EC"
-    assert template.category == "UTILITY"
+    # Se cargo como UTILITY; la categoria es la que le dio Meta.
+    assert template.category == "MARKETING"
     assert template.body == LINK_BODY
 
 
@@ -124,7 +96,7 @@ def test_the_button_carries_the_whole_emitted_link() -> None:
         assert parameter in suffix
     assert template.params(button_suffix=suffix) == {
         "name": LINK_TEMPLATE,
-        "category": "UTILITY",
+        "category": "MARKETING",
         "language": "es_EC",
         "processed_params": {"buttons": [{"type": "url", "parameter": suffix}]},
     }
@@ -215,11 +187,11 @@ def test_a_template_the_bridge_cannot_fill_is_refused(
         ("johanna_seguimiento_descuento_01", "payment_link_template_unexpected_placeholders"),
         # hello_world, real y de utilidad: no tiene boton.
         ("hello_world", "payment_link_template_button_missing"),
-        # Hoy la del link no esta en el catalogo: Meta todavia no la aprobo.
-        (LINK_TEMPLATE, "payment_link_template_not_found"),
+        # Un nombre que no esta, como la del link antes de que Meta la aprobara.
+        ("johanna_enlace_pago_02", "payment_link_template_not_found"),
     ],
 )
-def test_the_captured_catalog_has_no_usable_link_template_yet(
+def test_the_other_captured_templates_are_refused(
     template_name: str, reason: str
 ) -> None:
     with pytest.raises(ChatwootProtocolError, match=reason):
@@ -238,10 +210,10 @@ def test_a_language_other_than_the_expected_one_is_refused() -> None:
 
 
 def test_two_templates_with_the_same_name_are_refused() -> None:
-    catalog = catalog_with_link_template()
+    catalog = captured_catalog()
     templates = catalog["message_templates"]
     assert isinstance(templates, list)
-    templates.append(copy.deepcopy(templates[-1]))
+    templates.append(copy.deepcopy(link_template_entry(catalog)))
 
     with pytest.raises(ChatwootProtocolError, match="payment_link_template_not_found"):
         parse_payment_link_template(catalog, template_name=LINK_TEMPLATE)
