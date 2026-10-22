@@ -308,6 +308,9 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # Las rutas de cambio del Automation Expert (flow-change-cycle-v1), con la
     # misma marca de instancia.
     "automation_expert_change_enabled",
+    # El bridge del motor de flujos (flow-engine-v1, seccion 8): la instancia
+    # sale del manifiesto, y lo que ejecuta cada flujo, de su ruta en la base.
+    "flow_engine_enabled",
     "slack_connector_projection_enabled",
     "correlation_preresolution_enabled",
     # Transcribir un audio no depende del aliado: la key y el host de Chatwoot
@@ -808,6 +811,9 @@ class Settings:
     automation_expert_change_enabled: bool = False
     automation_expert_change_token: str | None = None
     automation_expert_change_db_key: str | None = None
+    # flow-engine-v1, seccion 8: el bridge del motor de flujos (la T2.4).
+    # Apagado, el bridge no lee nada del motor y hace exactamente lo de hoy.
+    flow_engine_enabled: bool = False
     slack_connector_projection_enabled: bool = False
     slack_connector_base_url: str | None = None
     slack_connector_bearer_token: str | None = None
@@ -2052,6 +2058,9 @@ class Settings:
             automation_expert_change_db_key=(
                 os.getenv("AUTOMATION_EXPERT_CHANGE_DB_KEY", "").strip() or None
             ),
+            flow_engine_enabled=(
+                os.getenv("FLOW_ENGINE_ENABLED", "false").lower() == "true"
+            ),
         )
 
 
@@ -2698,6 +2707,40 @@ def _validate_precheckout_first_contact(settings: Settings) -> None:
         raise ValueError(
             f"{flag} requires CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED"
         )
+
+
+FLOW_ENGINE_REQUIRED_FLAGS = (
+    ("pilot_boundary_enabled", "LANCEMOS_PILOT_BOUNDARY_ENABLED"),
+    ("worker_enabled", "RESOLUTION_WORKER_ENABLED"),
+    ("dispatcher_enabled", "DURABLE_DISPATCHER_ENABLED"),
+    (
+        "dispatcher_approved_template_direct_enabled",
+        "DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED",
+    ),
+    ("recovery_discount_first_touch_enabled", "RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED"),
+    ("recovery_cart_followups_enabled", "RECOVERY_CART_FOLLOWUPS_ENABLED"),
+)
+
+
+def _validate_flow_engine(settings: Settings) -> None:
+    """Startup gates of the flow engine bridge (flow-engine-v1, section 8).
+
+    The engine runs the cart with its three touches: the bridge needs the
+    instance manifest (the instance mark of every read), the pilot boundary
+    (the legacy scope of the admission), the resolution worker (the batch that
+    admits the cart), the dispatcher in direct template mode (without it the
+    step does not use the template of the pinned version) and A1 with its
+    coupon plus A2 and Z (without them an engine A2 would close as
+    unsupported). Off, nothing is read.
+    """
+    if not settings.flow_engine_enabled:
+        return
+    flag = "FLOW_ENGINE_ENABLED"
+    if settings.instance_manifest is None:
+        raise ValueError(f"{flag} requires an instance manifest")
+    for field_name, env_name in FLOW_ENGINE_REQUIRED_FLAGS:
+        if getattr(settings, field_name) is not True:
+            raise ValueError(f"{flag} requires {env_name}")
 
 
 def _validate_payment_failure_own_scope(settings: Settings) -> None:
@@ -3895,6 +3938,7 @@ def create_app(
     _validate_payment_slip_first_contact(settings)
     _validate_payment_failure_own_scope(settings)
     _validate_payment_failure_followup(settings)
+    _validate_flow_engine(settings)
     waba_template = _waba_template_config(settings)
     _validate_approved_template_direct(
         settings,
