@@ -153,6 +153,9 @@ EVENT_TEMPLATES: dict[str, EventTemplate] = {
     "DIG-001": EventTemplate("p4", "Resumen operativo diario"),
     "DIG-002": EventTemplate("p4", "Resumen de pendientes por turno"),
     "REV-001": EventTemplate("p4", "Reporte diario listo"),
+    # flow-engine-v1, seccion 8: el motor de flujos no pudo admitir un disparo
+    # y lo planifico el legado (una fila de flow_engine_divergences).
+    "MOT-001": EventTemplate("p2", "El motor no pudo y lo planificó el legado"),
 }
 
 

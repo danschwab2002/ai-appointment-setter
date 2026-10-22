@@ -622,6 +622,22 @@ def test_deployment_declares_automation_expert_change_default_off(tmp_path: Path
     assert settings.automation_expert_change_db_key is None
 
 
+def test_deployment_declares_flow_engine_default_off(tmp_path: Path) -> None:
+    # flow-engine-v1, seccion 8: el flag del bridge del motor llega al
+    # contenedor por compose.yaml, apagado por defecto.
+    env_lines = (PROJECT_ROOT / ".env.example").read_text().splitlines()
+    compose = (PROJECT_ROOT / "compose.yaml").read_text()
+    assert "FLOW_ENGINE_ENABLED=false" in env_lines
+    assert "FLOW_ENGINE_ENABLED: ${FLOW_ENGINE_ENABLED:-false}" in compose
+    settings = Settings(
+        webhook_secret="test-secret",
+        allowed_jid="12025550123@s.whatsapp.net",
+        capture_dir=tmp_path,
+        max_age_seconds=300,
+    )
+    assert settings.flow_engine_enabled is False
+
+
 def test_deployment_declares_portable_precheckout_first_contact_default_off(
     tmp_path: Path,
 ) -> None:

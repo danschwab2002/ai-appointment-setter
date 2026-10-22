@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass, field, fields
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -172,6 +172,51 @@ class PilotRequestStartRejectedError(SupabaseError):
     def __init__(self, reason: str) -> None:
         self.reason = reason
         super().__init__(f"pilot_request_start_rejected:{reason}")
+
+
+class FlowEngineRunTerminated(SupabaseError):
+    """The engine closed the attempt itself: its flow was turned off.
+
+    ``mark_flow_engine_request_started_v1`` answered ``terminado``: the base
+    already completed the attempt (``failed_before_request``), cancelled the
+    action, completed the sequence and cancelled the case, and committed
+    (contract flow-engine-v1, section 7.2). The dispatcher must not finalize it
+    again.
+    """
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(f"flow_engine_run_terminated:{reason}")
+
+
+class FlowEngineAdmissionUnavailable(SupabaseError):
+    """The engine admission did not answer: a timeout, a connection or a 5xx.
+
+    Nothing about the event is known, so it is not marked: it stays in
+    ``received`` and the batch tries again (design, principle 1.4). The
+    admission is idempotent per event, so a retry after a commit that did not
+    reach the bridge answers the same case.
+    """
+
+
+FLOW_ENGINE_ADMISSION_OUTCOMES = frozenset({
+    "motor_arranco", "motor_no_arranca", "legado", "legado_por_divergencia",
+    "legado_rechazo",
+})
+FLOW_ENGINE_REQUEST_START_OUTCOMES = frozenset({
+    "request_started", "rechazado", "terminado",
+})
+# The reasons of the engine functions (contract flow-engine-v1, section 7):
+# always a code, with ':' (no_entra:permiso, pilot_scope_rejected:<detail>).
+_FLOW_ENGINE_REASON = re.compile(r"[a-z0-9_:]{1,80}")
+# legado_rechazo carries <message>:<detail> of the rejection of today, each a
+# code of up to 80 (_flow_engine_plan_legacy_cart in 20261022000100).
+_FLOW_ENGINE_ADMISSION_REASON = re.compile(r"[a-z0-9_:]{1,161}")
+_FLOW_ENGINE_EXECUTORS = frozenset({"legado", "motor"})
+_FLOW_ENGINE_FLOW_STATES = frozenset({"apagado", "prendido", "pausado"})
+_FLOW_ENGINE_DIVERGENCE_KINDS = frozenset({
+    "admision_al_legado", "politica_compilada", "producto", "ruta", "transitorio",
+})
 
 
 _PILOT_PLAN_REJECTION_SQLSTATE = "55000"
@@ -886,6 +931,79 @@ class CartRecoveryPlan:
 
 
 @dataclass(frozen=True)
+class FlowEngineAdmission:
+    """What ``admit_flow_engine_hotmart_v1`` answered for one cart.
+
+    The case columns come with ``motor_arranco``, ``legado`` and
+    ``legado_por_divergencia``; ``reason`` with ``motor_no_arranca`` and
+    ``legado_rechazo``; the divergence with ``legado_por_divergencia`` (and
+    with ``legado_rechazo`` when there was one).
+    """
+
+    outcome: str
+    recovery_case_id: str | None
+    created: bool | None
+    reason: str | None
+    divergence_id: str | None
+    divergence_first: bool | None
+    followup_sequence_id: str | None
+    scheduled_action_id: str | None
+
+
+@dataclass(frozen=True)
+class FlowEngineStepContext:
+    """The send of one engine step in the pinned version of its run."""
+
+    flow_id: str
+    version: int
+    product_ref: str
+    flow_key: str
+    step_key: str
+    send_ordinal: int
+    template_name: str
+    template_language: str
+    template_variables: tuple[str, ...]
+    template_button: dict[str, str] | None
+    legacy_dispatch_ok: bool
+
+
+@dataclass(frozen=True)
+class FlowEngineRoute:
+    """Who runs one flow of the instance (contract flow-engine-v1, 7.4)."""
+
+    product_ref: str
+    flow_key: str
+    executor: str
+    legacy_kind: str
+    legacy_scope_key: str | None
+    generation: int
+    flow_state: str
+
+
+@dataclass(frozen=True)
+class FlowEngineDivergence:
+    """One row of flow_engine_divergences, without event ids."""
+
+    divergence_id: str
+    kind: str
+    reason: str
+    flow_key: str
+    product_ref: str
+    version: int | None
+    count: int
+    first_at: str
+    last_at: str
+
+
+@dataclass(frozen=True)
+class FlowEngineDivergences:
+    """A page of divergences and how many of the instance were not notified."""
+
+    unnotified: int
+    divergences: tuple[FlowEngineDivergence, ...]
+
+
+@dataclass(frozen=True)
 class PilotBoundaryConfig:
     """Non-secret identity of one published pilot scope."""
 
@@ -1513,6 +1631,88 @@ def _automation_expert_value(response: httpx.Response, *, operation: str) -> Any
     if payload is not None and not isinstance(payload, dict):
         raise SupabaseError(f"{operation}_invalid_shape")
     return payload
+
+
+# A gateway that did not reach the base, or a SQLSTATE of a call that did not
+# finish (statement or lock timeout, serialization, deadlock, connection):
+# nothing about the event is known. Any other error of the function (PostgREST
+# answers a raise with HTTP 500 too) is an answer, and marks the event failed
+# as today.
+_FLOW_ENGINE_TRANSIENT_STATUS = frozenset({502, 503, 504})
+_FLOW_ENGINE_TRANSIENT_SQLSTATES = frozenset({
+    "57014", "55P03", "40001", "40P01", "53300", "57P01", "08000", "08003", "08006",
+})
+
+
+def _flow_engine_transient_response(response: httpx.Response) -> bool:
+    if response.status_code in _FLOW_ENGINE_TRANSIENT_STATUS:
+        return True
+    if response.status_code < 500:
+        return False
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    return isinstance(body, dict) and body.get("code") in _FLOW_ENGINE_TRANSIENT_SQLSTATES
+
+
+def _flow_engine_admission(row: dict[str, Any]) -> FlowEngineAdmission:
+    """Check one admission row against the contract, or fail as committed."""
+    operation = "admit_flow_engine_hotmart_v1"
+
+    def invalid() -> SupabaseCommittedResponseError:
+        return SupabaseCommittedResponseError(f"{operation}_invalid_row")
+
+    outcome = row.get("outcome")
+    if outcome not in FLOW_ENGINE_ADMISSION_OUTCOMES:
+        raise invalid()
+
+    def optional_string(key: str) -> str | None:
+        value = row.get(key)
+        if value is not None and (not isinstance(value, str) or not value):
+            raise invalid()
+        return value
+
+    def optional_bool(key: str) -> bool | None:
+        value = row.get(key)
+        if value is not None and not isinstance(value, bool):
+            raise invalid()
+        return value
+
+    admission = FlowEngineAdmission(
+        outcome=outcome,
+        recovery_case_id=optional_string("recovery_case_id"),
+        created=optional_bool("created"),
+        reason=optional_string("reason"),
+        divergence_id=optional_string("divergence_id"),
+        divergence_first=optional_bool("divergence_first"),
+        followup_sequence_id=optional_string("followup_sequence_id"),
+        scheduled_action_id=optional_string("scheduled_action_id"),
+    )
+    planned = outcome in {"motor_arranco", "legado", "legado_por_divergencia"}
+    case_columns = (
+        admission.recovery_case_id,
+        admission.followup_sequence_id,
+        admission.scheduled_action_id,
+        admission.created,
+    )
+    if planned and any(value is None for value in case_columns):
+        raise invalid()
+    if not planned and any(value is not None for value in case_columns):
+        raise invalid()
+    if planned and admission.reason is not None:
+        raise invalid()
+    if not planned and (
+        admission.reason is None
+        or _FLOW_ENGINE_ADMISSION_REASON.fullmatch(admission.reason) is None
+    ):
+        raise invalid()
+    # legado_por_divergencia may come without its row: when the route is no
+    # longer found after the rollback of the engine path, the function plans
+    # the legacy without writing a divergence. The case is planned either way.
+    if (admission.divergence_id is None) != (admission.divergence_first is None):
+        raise invalid()
+    return admission
 
 
 def _response_rows(
@@ -5715,6 +5915,337 @@ class SupabaseClient:
             ),
             created=created,
         )
+
+    async def admit_flow_engine_cart(
+        self,
+        *,
+        webhook_event_id: str,
+        contact_id: str,
+        external_product_id: str,
+        product_name: str,
+        offer_code: str | None,
+        abandoned_at: str,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        destination_phone: str,
+        pilot_boundary: PilotBoundaryConfig,
+        legacy_policy_key: str,
+        legacy_policy_version: int,
+        force_legacy: bool = False,
+    ) -> FlowEngineAdmission:
+        """Admit one cart through the flow engine (contract flow-engine-v1, 7.1).
+
+        The arguments are those of ``plan_cart_recovery`` with the pilot
+        boundary: ``destination_phone`` is what goes as ``p_external_user_id``
+        there, and the ``p_legacy_*`` are what the fall to the legacy uses. The
+        function never raises because of the engine. A call that does not
+        answer raises ``FlowEngineAdmissionUnavailable``; an answer that is not
+        one of the contract raises ``SupabaseCommittedResponseError`` (the
+        admission commits).
+        """
+        operation = "admit_flow_engine_hotmart_v1"
+        body = json.dumps({
+            "p_webhook_event_id": webhook_event_id,
+            "p_contact_id": contact_id,
+            "p_external_product_id": external_product_id,
+            "p_product_name": product_name,
+            "p_offer_code": offer_code,
+            "p_abandoned_at": abandoned_at,
+            "p_chatwoot_account_id": chatwoot_account_id,
+            "p_chatwoot_inbox_id": chatwoot_inbox_id,
+            "p_destination_phone": destination_phone,
+            "p_legacy_scope_key": pilot_boundary.scope_key,
+            "p_legacy_scope_version": pilot_boundary.scope_version,
+            "p_legacy_policy_key": legacy_policy_key,
+            "p_legacy_policy_version": legacy_policy_version,
+            "p_force_legacy": force_legacy,
+        }, ensure_ascii=False)
+        try:
+            response = await self._request(
+                "POST", f"/rest/v1/rpc/{operation}", content=body
+            )
+        except SupabaseError as exc:
+            raise FlowEngineAdmissionUnavailable(f"{operation}_unavailable") from exc
+        if _flow_engine_transient_response(response):
+            raise FlowEngineAdmissionUnavailable(
+                f"{operation}_unavailable: HTTP {response.status_code}"
+            )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _committed_response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseCommittedResponseError(f"{operation}_invalid_shape")
+        return _flow_engine_admission(rows[0])
+
+    async def mark_flow_engine_request_started(
+        self,
+        *,
+        action_id: str,
+        attempt_id: str,
+        worker_id: str,
+        lease_generation: int,
+        now: str,
+    ) -> DeliveryAttempt:
+        """Start one attempt of an engine run (contract flow-engine-v1, 7.2).
+
+        ``request_started`` is the attempt of ``mark_followup_request_started``,
+        with the same checks. ``rechazado`` raises
+        ``PilotRequestStartRejectedError`` (the attempt stays reserved and the
+        dispatcher goes on with the batch, as today), and ``terminado`` raises
+        ``FlowEngineRunTerminated`` (the base already closed the attempt).
+        """
+        operation = "mark_flow_engine_request_started_v1"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps({
+                "p_action_id": action_id,
+                "p_attempt_id": attempt_id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": lease_generation,
+                "p_now": now,
+            }, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        # The function commits before answering (request_started, and the
+        # rejection or the close it records): an answer that does not parse is
+        # a committed response, never a plain failure, so the dispatcher does
+        # not strand the attempt at request_started (as in the legacy start).
+        try:
+            outcome, reason, attempt = self._flow_engine_started_row(
+                response, action_id=action_id, attempt_id=attempt_id,
+                lease_generation=lease_generation, operation=operation,
+            )
+        except SupabaseError as exc:
+            raise SupabaseCommittedResponseError(
+                f"{operation}_committed_response_invalid"
+            ) from exc
+        if outcome == "rechazado":
+            assert reason is not None
+            raise PilotRequestStartRejectedError(reason)
+        if outcome == "terminado":
+            assert reason is not None
+            raise FlowEngineRunTerminated(reason)
+        assert attempt is not None
+        return attempt
+
+    @staticmethod
+    def _flow_engine_started_row(
+        response: httpx.Response,
+        *,
+        action_id: str,
+        attempt_id: str,
+        lease_generation: int,
+        operation: str,
+    ) -> tuple[str, str | None, DeliveryAttempt | None]:
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        outcome = _required_enum(
+            row, "outcome", set(FLOW_ENGINE_REQUEST_START_OUTCOMES), operation=operation
+        )
+        if outcome != "request_started":
+            reason = _required_string(row, "reason", operation=operation)
+            if _FLOW_ENGINE_REASON.fullmatch(reason) is None:
+                raise SupabaseError(f"{operation}_invalid_row")
+            return outcome, reason, None
+        returned_attempt_id = _required_string(row, "id", operation=operation)
+        returned_action_id = _required_string(row, "action_id", operation=operation)
+        returned_generation = _required_int(row, "lease_generation", operation=operation)
+        phase = _required_enum(row, "phase", {"request_started"}, operation=operation)
+        if returned_attempt_id != attempt_id:
+            raise SupabaseError(f"{operation}_attempt_mismatch")
+        if returned_action_id != action_id:
+            raise SupabaseError(f"{operation}_action_mismatch")
+        if returned_generation != lease_generation:
+            raise SupabaseError(f"{operation}_lease_mismatch")
+        _required_string(row, "flow_authorization_id", operation=operation)
+        _required_int(row, "flow_generation", operation=operation)
+        _required_bool(row, "authorization_replayed", operation=operation)
+        return outcome, None, DeliveryAttempt(
+            attempt_id=returned_attempt_id,
+            action_id=returned_action_id,
+            idempotency_key=_required_string(row, "idempotency_key", operation=operation),
+            attempt_number=_required_int(row, "attempt_number", operation=operation),
+            channel=_required_enum(row, "channel", {"whatsapp"}, operation=operation),
+            mode=_required_enum(
+                row, "mode", {"freeform", "approved_template"}, operation=operation
+            ),
+            phase=phase,
+            lease_generation=returned_generation,
+            expected_case_version=_required_int(
+                row, "expected_case_version", operation=operation
+            ),
+            expected_sequence_revision=_required_int(
+                row, "expected_sequence_revision", operation=operation
+            ),
+        )
+
+    async def get_flow_engine_step_context(
+        self, action_id: str
+    ) -> FlowEngineStepContext | None:
+        """The send of an engine step in its pinned version, or None (7.3)."""
+        operation = "flow_engine_execution_context_v1"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps({"p_action_id": action_id}),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if not rows:
+            return None
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        variables = row.get("template_variables")
+        if not isinstance(variables, list) or any(
+            not isinstance(item, str) or not item for item in variables
+        ):
+            raise SupabaseError(f"{operation}_invalid_row")
+        button = row.get("template_button")
+        if button is not None and (
+            not isinstance(button, dict)
+            or any(
+                not isinstance(key, str) or not isinstance(value, str)
+                for key, value in button.items()
+            )
+        ):
+            raise SupabaseError(f"{operation}_invalid_row")
+        return FlowEngineStepContext(
+            flow_id=_required_string(row, "flow_id", operation=operation),
+            version=_required_positive_int(row, "version", operation=operation),
+            product_ref=_required_string(row, "product_ref", operation=operation),
+            flow_key=_required_string(row, "flow_key", operation=operation),
+            step_key=_required_string(row, "step_key", operation=operation),
+            send_ordinal=_required_positive_int(row, "send_ordinal", operation=operation),
+            template_name=_required_string(row, "template_name", operation=operation),
+            template_language=_required_string(row, "template_language", operation=operation),
+            template_variables=tuple(variables),
+            template_button=dict(button) if button is not None else None,
+            legacy_dispatch_ok=_required_bool(row, "legacy_dispatch_ok", operation=operation),
+        )
+
+    async def read_flow_engine_routes(
+        self, instance: Mapping[str, object]
+    ) -> tuple[FlowEngineRoute, ...]:
+        """The routes of the flows of the instance (7.4), the cheap read."""
+        operation = "read_flow_engine_routes_v1"
+        payload = await self._flow_engine_object(
+            operation, {"p_instance": dict(instance)}
+        )
+        routes = payload.get("routes")
+        if not isinstance(routes, list) or any(not isinstance(row, dict) for row in routes):
+            raise SupabaseError(f"{operation}_invalid_shape")
+        result = []
+        for row in routes:
+            scope = row.get("legacy_scope_key")
+            if scope is not None and (not isinstance(scope, str) or not scope):
+                raise SupabaseError(f"{operation}_invalid_row")
+            generation = _required_int(row, "generation", operation=operation)
+            if generation < 0:
+                raise SupabaseError(f"{operation}_invalid_row")
+            result.append(FlowEngineRoute(
+                product_ref=_required_string(row, "product_ref", operation=operation),
+                flow_key=_required_string(row, "flow_key", operation=operation),
+                executor=_required_enum(
+                    row, "executor", set(_FLOW_ENGINE_EXECUTORS), operation=operation
+                ),
+                legacy_kind=_required_string(row, "legacy_kind", operation=operation),
+                legacy_scope_key=scope,
+                generation=generation,
+                flow_state=_required_enum(
+                    row, "flow_state", set(_FLOW_ENGINE_FLOW_STATES), operation=operation
+                ),
+            ))
+        return tuple(result)
+
+    async def read_flow_engine_divergences(
+        self,
+        instance: Mapping[str, object],
+        *,
+        only_unnotified: bool,
+        limit: int,
+    ) -> FlowEngineDivergences:
+        """The divergences of the instance and the unnotified count (7.4)."""
+        operation = "read_flow_engine_divergences_v1"
+        if not 1 <= limit <= 50:
+            raise ValueError("limit must be between 1 and 50")
+        payload = await self._flow_engine_object(operation, {
+            "p_instance": dict(instance),
+            "p_only_unnotified": only_unnotified,
+            "p_limit": limit,
+        })
+        unnotified = _required_int(payload, "unnotified", operation=operation)
+        rows = payload.get("divergences")
+        if unnotified < 0 or not isinstance(rows, list) or any(
+            not isinstance(row, dict) for row in rows
+        ):
+            raise SupabaseError(f"{operation}_invalid_shape")
+        result = []
+        for row in rows:
+            reason = _required_string(row, "reason", operation=operation)
+            version = row.get("version")
+            if _FLOW_ENGINE_REASON.fullmatch(reason) is None or (
+                version is not None
+                and (not isinstance(version, int) or isinstance(version, bool) or version < 1)
+            ):
+                raise SupabaseError(f"{operation}_invalid_row")
+            result.append(FlowEngineDivergence(
+                divergence_id=_required_string(row, "id", operation=operation),
+                kind=_required_enum(
+                    row, "kind", set(_FLOW_ENGINE_DIVERGENCE_KINDS), operation=operation
+                ),
+                reason=reason,
+                flow_key=_required_string(row, "flow_key", operation=operation),
+                product_ref=_required_string(row, "product_ref", operation=operation),
+                version=version,
+                count=_required_positive_int(row, "count", operation=operation),
+                first_at=_required_string(row, "first_at", operation=operation),
+                last_at=_required_string(row, "last_at", operation=operation),
+            ))
+        return FlowEngineDivergences(unnotified=unnotified, divergences=tuple(result))
+
+    async def mark_flow_engine_divergence_notified(
+        self, divergence_id: str, *, notified_at: str
+    ) -> bool:
+        """Set notified_at once; True when this call set it (7.4)."""
+        operation = "mark_flow_engine_divergence_notified_v1"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps({"p_id": divergence_id, "p_notified_at": notified_at}),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise SupabaseError(f"{operation}_invalid_json") from exc
+        if not isinstance(payload, bool):
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return payload
+
+    async def _flow_engine_object(
+        self, operation: str, body: dict[str, object]
+    ) -> dict[str, Any]:
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps(body, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise SupabaseError(f"{operation}_invalid_json") from exc
+        if not isinstance(payload, dict):
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return payload
 
     async def plan_payment_failure_recovery(
         self,

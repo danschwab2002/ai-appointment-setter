@@ -5421,6 +5421,34 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         5,
         'flow_engine_motor_carrito'
+    union all
+    select
+        '20261022000200',
+        '20261022000200_flow_engine_bridge_reads_v1.sql',
+        -- Las tres del bridge de la T2.4: security definer, con search_path
+        -- fijo y solo de service_role.
+        (
+            select count(*) = 3
+            from functions
+            where oid in (
+                to_regprocedure('public.read_flow_engine_routes_v1(jsonb)'),
+                to_regprocedure('public.read_flow_engine_divergences_v1(jsonb,boolean,integer)'),
+                to_regprocedure('public.mark_flow_engine_divergence_notified_v1(uuid,timestamptz)')
+            )
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- La marca pone notified_at solo si estaba en null.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.mark_flow_engine_divergence_notified_v1(uuid,timestamptz)')
+              and position('notified_at is null' in definition) > 0
+        )::int,
+        2,
+        'flow_engine_bridge_reads'
 )
 select
     version,
