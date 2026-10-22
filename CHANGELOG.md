@@ -12,6 +12,26 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.16.2] - 2026-10-22
+
+Un parche sobre la 1.16.1, con dos piezas. El Automation Expert puede guardar una propuesta de cambio de flujo sin chocar con un 422 mudo (#304), y la base suma el camino del motor para el carrito, la T2.3b, que no se usa hasta mover la ruta del carrito a `motor` (#305, migración `20261022000100`). Con la ruta del carrito en `legado` no cambia nada de lo que se manda a los leads.
+
+### Arreglado
+
+- **Un 422 de entrada de `POST /flow-changes` no decía por qué** (#304, `src/bridge/flow_change_api.py`). El Automation Expert probó seis variantes del ítem sin saber cuál era el problema. Ahora el 422 trae `reason` (`field`, `code`, `item`, `missing`, `extra` o `problem`) y el log del bridge lo anota. Lleva nombres de claves, nunca valores: lo que escribe el modelo puede traer un teléfono.
+- **El Automation Expert armaba el ítem con una forma que el bridge no acepta** (#304). `GET /flow-store` trae por flujo `draft_item` y `draft_base`, armados con la misma función que define un borrador: el agente copia el ítem y cambia solo los pasos.
+- **El Automation Expert hacía mal las cuentas de las esperas** (#304). Con el A2 a 36 h dejaba el Z a las 84 h y no a las 72 h, porque cada espera es relativa al paso anterior. `GET /flow-store` y el 201 de `POST /flow-changes` traen `toques`: cuándo sale cada mensaje, en horas desde el primero, antes y después del cambio. El SOUL del agente (paso 3, nuevo) le pide comparar `toques.despues` con la hora que dijo la persona y rehacer la propuesta si no coincide. El plugin `automation-expert-change` le pasa el `reason` de un 422 solo si tiene la forma cerrada. El contrato `flow-change-cycle-v1` pasa a 1.6.0, con cambios aditivos.
+
+### Agregado
+
+- **El camino del motor para el carrito abandonado** (#305, la T2.3b, migración `20261022000100`, contrato `docs/contracts/flow-engine-v1.md`): la admisión, la autorización y el contexto de cada paso (A1, A2 y Z), el apagado y la pausa del flujo, y que la ruta del carrito pueda pasar de `legado` a `motor`. Suma 15 funciones y cambia 7, con el método del ancla sobre `pg_get_functiondef`. Con la ruta en `legado`, cada cambio suma solo un `EXISTS` o una búsqueda por clave que da falso, sin locks nuevos. Mover la ruta a `motor` es un paso humano (`operator_route_flow_v1`, la T5) que esta versión no da. Con la ruta en `motor`, `piloto.sh pausar` no frena al motor: lo frena el estado del flujo en el almacén (D-002, para revisar antes de la T5). En la Etapa 1, el pago rechazado y la ficha siguen en el legado.
+
+### Qué hace quien actualiza
+
+- **Correr la migración `20261022000100`, como `postgres`.** Va entera en una transacción, y una segunda corrida aborta. Con la ruta del carrito en `legado`, no cambia nada de lo que corre. En ATT1 ya está aplicada (22/10, 15:14Z).
+- **Pasar el bridge y la revisión diaria a las imágenes 1.16.2** (`setter-bridge` y `setter-daily-feedback`). Sin flags, variables ni campos nuevos en el manifiesto.
+- **Después del bridge, y no antes, instalar el profile del Automation Expert desde el árbol de la 1.16.2:** `python3 scripts/hermes_instancia.py aplicar --reiniciar --solo automation-expert --instancia <hermes.toml>`, con `plan` antes y `chequear` después. Cambian el SOUL y el plugin `automation-expert-change`, así que el gateway del AE se reinicia; el agente comercial no se toca. **Al revés no funciona:** el SOUL nuevo le pide al agente un `draft_item` que el bridge de la 1.16.1 no trae.
+
 ## [1.16.1] - 2026-10-22
 
 Un parche sobre la 1.16.0, con tres arreglos que salieron al usarla en ATT1: el comando del operador confirma con una terminal real (#300), la historia del motor entra entera en la simulación (#301) y `/flows` del Automation Expert deja de pasarse del tiempo (#302). Lleva dos migraciones, `20261021000300` y `20261021000400`, que no cambian nada de lo que se manda a los leads.
