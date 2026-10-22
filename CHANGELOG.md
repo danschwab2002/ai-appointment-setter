@@ -12,6 +12,34 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.16.3] - 2026-10-22
+
+Un parche sobre la 1.16.2, con lo que falta para mover el carrito al motor (la T5). El bridge suma el motor de flujos detrás de `FLOW_ENGINE_ENABLED`, apagado por defecto (#308, la T2.4, migración `20261022000200`); el comando del operador suma `mover`, que pasa la ruta de un flujo entre `legado` y `motor` (#311); y el `volver` del operador deja de fallar en la simulación (#310). Trae también la evidencia del E2E de la T4 en ATT1 (#309, solo documentación). Con el flag prendido y la ruta del carrito en `legado`, no cambia nada de lo que se manda a los leads.
+
+### Agregado
+
+- **El bridge del motor de flujos** (#308, la T2.4, migración `20261022000200`, contrato `docs/contracts/flow-engine-v1.md` §8), detrás de `FLOW_ENGINE_ENABLED`, apagado por defecto. Apagado, el bridge no lee nada del motor y `/ready` no cambia. Prendido:
+  - un carrito cuya ruta está en `motor` entra por la admisión del motor, y un paso del motor sale con la plantilla de su versión fijada;
+  - el bridge lee las rutas cada 60 s (`read_flow_engine_routes_v1`, en el lote del worker) y las divergencias cada 60 s (`read_flow_engine_divergences_v1`);
+  - `/ready` suma seis claves: `flow_engine`, `flow_engine_routes_motor`, `flow_engine_routes_legado`, `flow_engine_read` (`pending`, `ok` o `failing`), `flow_engine_divergences_unnotified` y `flow_engine_alerts` (`slack` o `sin_slack`). Ninguna da 503;
+  - una divergencia (el motor no pudo y lo planificó el legado) avisa con el código `MOT-001` por el conector de Slack. El conector la rechaza hasta que se redespliegue con el catálogo de esta versión, y la divergencia queda contada en `/ready`.
+
+  La migración suma tres funciones y no cambia ninguna. Para arrancar con el flag, el bridge exige el manifiesto de la instancia, Supabase, la frontera de piloto, el worker de resolución, el despachador en modo de plantilla directa, A1 con cupón y A2/Z (`LANCEMOS_PILOT_BOUNDARY_ENABLED`, `RESOLUTION_WORKER_ENABLED`, `DURABLE_DISPATCHER_ENABLED`, `DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED`, `RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED` y `RECOVERY_CART_FOLLOWUPS_ENABLED` en `true`). Si falta alguno, no arranca y dice cuál.
+- **`mover <producto>/<flujo> motor|legado --quien … --motivo …`** en el comando del operador (#311, `scripts/flow_change_operator.py`), que llama a `operator_route_flow_v1`. A `motor`, arma la revalidación de seis claves (`flow-engine-v1` §3.2) con el módulo nuevo `bridge.flow_route_revalidation`, en un contenedor de la imagen de `IMAGEN_BRIDGE`, sin red, como `validar`. Muestra lo en curso de cada lado y pide el código por la terminal. A `legado` (la vuelta), va sin revalidación y exige el scope del legado `armed`. La revalidación certifica la imagen de `IMAGEN_BRIDGE`, no la del bridge vivo: su `git_sha` se muestra antes del código y tiene que ser el del bridge que corre. Trae la prueba del caso doble: una admisión forzada al legado (`p_force_legacy`) sobre un carrito que el motor ya arrancó devuelve el mismo caso, sin duplicarlo.
+- **La evidencia del E2E de la T4 en ATT1** (#309, `docs/operations/2026-10-22-e2e-t4-att1.md`): el Automation Expert propuso y validó el A2 a 36 h, y el operador lo publicó y volvió a la v1.
+
+### Arreglado
+
+- **La simulación de un `volver` salía `failed` con `proposal_version_unknown`** (#310, `src/bridge/flow_change_simulation.py`). La lectura del motor trae solo la versión activa y las que tienen recorridos abiertos, así que la versión a la que se volvía no estaba. Ahora la simulación toma ese destino del almacén, que quien valida ya lee. `publicar` de un `volver` ya no necesita `--sin-simulacion`.
+
+### Qué hace quien actualiza
+
+- **Correr la migración `20261022000200`, como `postgres`.** Suma tres funciones de lectura para el bridge y no cambia ninguna. En ATT1 ya está aplicada (22/10, 20:18Z).
+- **Pasar el bridge y la revisión diaria a las imágenes 1.16.3** (`setter-bridge` y `setter-daily-feedback`). Sin campos nuevos en el manifiesto.
+- **`FLOW_ENGINE_ENABLED` es una variable nueva del bridge, `false` por defecto.** Sin ella no cambia nada. Para prenderla, con la `20261022000200` aplicada, se agrega `FLOW_ENGINE_ENABLED=true` a mano en las variables del bridge, con los seis flags que exige en `true`, y se redespliega. Prenderla con la ruta en `legado` no cambia lo que se manda: suma las dos lecturas cada 60 s y las seis claves de `/ready`.
+- **Mover una ruta a `motor` es un paso aparte** (`mover … motor`, con el código de una persona), no de la subida. Apagar el flag no vuelve atrás una ruta en `motor`: la vuelta es `mover … legado`.
+- **El conector de Slack** conoce `MOT-001` desde esta versión (`setter-slack-connector` 1.16.3). Sin redesplegarlo, una divergencia no llega a Slack y se ve en `/ready`.
+
 ## [1.16.2] - 2026-10-22
 
 Un parche sobre la 1.16.1, con dos piezas. El Automation Expert puede guardar una propuesta de cambio de flujo sin chocar con un 422 mudo (#304), y la base suma el camino del motor para el carrito, la T2.3b, que no se usa hasta mover la ruta del carrito a `motor` (#305, migración `20261022000100`). Con la ruta del carrito en `legado` no cambia nada de lo que se manda a los leads.
