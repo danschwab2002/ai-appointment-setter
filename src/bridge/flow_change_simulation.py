@@ -118,6 +118,48 @@ def engine_flows_from_read(document: Mapping[str, Any], *, time_zone: str | None
     return MappingProxyType({ref: MappingProxyType(by_version) for ref, by_version in out.items()})
 
 
+def _with_return_targets(engine: Mapping[str, Any], store: Any, items: Sequence[ProposalItem]) -> Mapping[str, Any]:
+    """La lectura del motor con el destino de cada ``volver`` que no trae, sacado del almacen.
+
+    ``read_flow_engine_v1`` devuelve de cada flujo la activa y las versiones con
+    recorridos del motor abiertos (20261021000200, seccion 7): un ``volver`` a
+    una version publicada que ya no corre no esta ahi, y la simulacion daba
+    ``proposal_version_unknown`` (ATT1, 22/10, ``volver att1/carrito 1`` con la
+    v2 activa). El almacen (``read_flow_store_v1``) trae todas las versiones
+    publicadas: la que falta entra con su definicion y la bolsa como la arma la
+    lectura del motor (``topes.bolsa`` o el ``legacy_scope_key`` de la ruta).
+    Sin ``volver``, sin almacen o sin esa version en el almacen, la lectura
+    queda tal cual.
+    """
+    wanted = {(item.flow_id, item.version) for item in items if item.tipo == "volver"}
+    flows = engine.get("flows")
+    if not wanted or not isinstance(store, Mapping) or not isinstance(store.get("flows"), list) \
+            or not isinstance(flows, list):
+        return engine
+    published = {flow.get("flow_id"): flow.get("versions") for flow in store["flows"]
+                 if isinstance(flow, Mapping) and isinstance(flow.get("versions"), Mapping)}
+    out = []
+    for flow in flows:
+        if not isinstance(flow, Mapping) or not isinstance(flow.get("versions"), list):
+            out.append(flow)
+            continue
+        present = {row.get("version") for row in flow["versions"] if isinstance(row, Mapping)}
+        route = flow.get("route")
+        scope = route.get("legacy_scope_key") if isinstance(route, Mapping) else None
+        added = []
+        for flow_id, number in sorted(wanted, key=lambda pair: (str(pair[0]), pair[1] or 0)):
+            definition = (published.get(flow_id) or {}).get(str(number))
+            if flow_id != flow.get("flow_id") or number in present or not isinstance(definition, Mapping):
+                continue
+            topes = definition.get("topes")
+            pool = topes.get("bolsa") if isinstance(topes, Mapping) else None
+            pool = pool if isinstance(pool, str) else scope
+            if isinstance(pool, str):
+                added.append({"version": number, "definition": definition, "pool": pool, "in_flight": 0})
+        out.append({**flow, "versions": [*flow["versions"], *added]} if added else flow)
+    return {**engine, "flows": out}
+
+
 def _current(document: Mapping[str, Any], versions: Versions) -> dict[tuple[str, str], int | None]:
     """La vigente de cada flujo: la activa de la lectura, si el flujo esta prendido."""
     out: dict[tuple[str, str], int | None] = {}
@@ -134,9 +176,9 @@ def summary_sha256(summary: Mapping[str, Any]) -> str:
 
 
 def _simulate(engine: Mapping[str, Any], history_in: Any, items: Sequence[ProposalItem],
-              time_zone: str | None) -> dict[str, Any]:
+              time_zone: str | None, store: Any) -> dict[str, Any]:
     try:
-        versions = engine_flows_from_read(engine, time_zone=time_zone)
+        versions = engine_flows_from_read(_with_return_targets(engine, store, items), time_zone=time_zone)
     except (ValueError, KeyError, TypeError) as error:
         raise _Failed(READ_INVALID) from error
     if (engine.get("engine") or {}).get("capabilities") != ENGINE_CAPABILITIES:
@@ -175,8 +217,12 @@ def _simulate(engine: Mapping[str, Any], history_in: Any, items: Sequence[Propos
 
 
 def build_simulation(engine: Any, history: Any, items: Sequence[ProposalItem], *,
-                     time_zone: str | None = None) -> dict[str, Any]:
+                     time_zone: str | None = None, store: Any = None) -> dict[str, Any]:
     """La simulacion de los items sobre la historia: ``built`` con su resumen, o ``failed`` con el motivo.
+
+    ``store`` es la foto del almacen (``read_flow_store_v1``) que ya leyo quien
+    valida: de ahi sale el destino de un ``volver`` que la lectura del motor no
+    trae (``_with_return_targets``).
 
     Nunca levanta: lo que no se puede simular es un ``failed`` y la vista previa
     lo muestra como «la simulacion no se pudo armar».
@@ -184,7 +230,7 @@ def build_simulation(engine: Any, history: Any, items: Sequence[ProposalItem], *
     try:
         if not isinstance(engine, Mapping):
             raise _Failed(READ_INVALID)
-        return _simulate(engine, history, items, time_zone)
+        return _simulate(engine, history, items, time_zone, store)
     except _Failed as failed:
         return {"status": "failed", "reason_code": failed.reason_code}
     except Exception:  # noqa: BLE001 - la vista previa no se cae por la simulacion
