@@ -54,6 +54,7 @@ def test_it_is_one_transaction_and_comes_right_after_the_t4b() -> None:
     assert names[position + 2:] == [
         "20261021000400_automation_expert_flows_speed_v1.sql",
         "20261022000100_flow_engine_motor_carrito_v1.sql",
+        "20261022000200_flow_engine_bridge_reads_v1.sql",
     ]
 
 

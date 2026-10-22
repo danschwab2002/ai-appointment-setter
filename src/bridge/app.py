@@ -204,6 +204,7 @@ from bridge.payment_failure_variant import (
     PaymentFailureVariantsConfig,
 )
 from bridge.recovery_coupons import RecoveryCouponWorker
+from bridge.flow_engine_runtime import DivergenceNotifier, FlowEngineRuntime
 from bridge.worker import (
     DurableDispatcher,
     HotmartAbandonmentTimerWorker,
@@ -308,6 +309,9 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # Las rutas de cambio del Automation Expert (flow-change-cycle-v1), con la
     # misma marca de instancia.
     "automation_expert_change_enabled",
+    # El bridge del motor de flujos (flow-engine-v1, seccion 8): la instancia
+    # sale del manifiesto, y lo que ejecuta cada flujo, de su ruta en la base.
+    "flow_engine_enabled",
     "slack_connector_projection_enabled",
     "correlation_preresolution_enabled",
     # Transcribir un audio no depende del aliado: la key y el host de Chatwoot
@@ -808,6 +812,9 @@ class Settings:
     automation_expert_change_enabled: bool = False
     automation_expert_change_token: str | None = None
     automation_expert_change_db_key: str | None = None
+    # flow-engine-v1, seccion 8: el bridge del motor de flujos (la T2.4).
+    # Apagado, el bridge no lee nada del motor y hace exactamente lo de hoy.
+    flow_engine_enabled: bool = False
     slack_connector_projection_enabled: bool = False
     slack_connector_base_url: str | None = None
     slack_connector_bearer_token: str | None = None
@@ -2052,6 +2059,9 @@ class Settings:
             automation_expert_change_db_key=(
                 os.getenv("AUTOMATION_EXPERT_CHANGE_DB_KEY", "").strip() or None
             ),
+            flow_engine_enabled=(
+                os.getenv("FLOW_ENGINE_ENABLED", "false").lower() == "true"
+            ),
         )
 
 
@@ -2698,6 +2708,40 @@ def _validate_precheckout_first_contact(settings: Settings) -> None:
         raise ValueError(
             f"{flag} requires CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED"
         )
+
+
+FLOW_ENGINE_REQUIRED_FLAGS = (
+    ("pilot_boundary_enabled", "LANCEMOS_PILOT_BOUNDARY_ENABLED"),
+    ("worker_enabled", "RESOLUTION_WORKER_ENABLED"),
+    ("dispatcher_enabled", "DURABLE_DISPATCHER_ENABLED"),
+    (
+        "dispatcher_approved_template_direct_enabled",
+        "DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED",
+    ),
+    ("recovery_discount_first_touch_enabled", "RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED"),
+    ("recovery_cart_followups_enabled", "RECOVERY_CART_FOLLOWUPS_ENABLED"),
+)
+
+
+def _validate_flow_engine(settings: Settings) -> None:
+    """Startup gates of the flow engine bridge (flow-engine-v1, section 8).
+
+    The engine runs the cart with its three touches: the bridge needs the
+    instance manifest (the instance mark of every read), the pilot boundary
+    (the legacy scope of the admission), the resolution worker (the batch that
+    admits the cart), the dispatcher in direct template mode (without it the
+    step does not use the template of the pinned version) and A1 with its
+    coupon plus A2 and Z (without them an engine A2 would close as
+    unsupported). Off, nothing is read.
+    """
+    if not settings.flow_engine_enabled:
+        return
+    flag = "FLOW_ENGINE_ENABLED"
+    if settings.instance_manifest is None:
+        raise ValueError(f"{flag} requires an instance manifest")
+    for field_name, env_name in FLOW_ENGINE_REQUIRED_FLAGS:
+        if getattr(settings, field_name) is not True:
+            raise ValueError(f"{flag} requires {env_name}")
 
 
 def _validate_payment_failure_own_scope(settings: Settings) -> None:
@@ -3895,6 +3939,7 @@ def create_app(
     _validate_payment_slip_first_contact(settings)
     _validate_payment_failure_own_scope(settings)
     _validate_payment_failure_followup(settings)
+    _validate_flow_engine(settings)
     waba_template = _waba_template_config(settings)
     _validate_approved_template_direct(
         settings,
@@ -4666,6 +4711,31 @@ def create_app(
     resolution_worker: ResolutionWorker | None = None
     hotmart_abandonment_timer_worker: HotmartAbandonmentTimerWorker | None = None
     durable_dispatcher: DurableDispatcher | None = None
+    # flow-engine-v1, seccion 8: lo que el bridge guarda del motor. Solo con el
+    # flag; apagado es None y ningun worker lo recibe.
+    flow_engine_runtime: FlowEngineRuntime | None = None
+    if settings.flow_engine_enabled:
+        if shared_supabase is None or settings.instance_manifest is None:
+            raise ValueError(
+                "FLOW_ENGINE_ENABLED requires Supabase and an instance manifest"
+            )
+        flow_engine_runtime = FlowEngineRuntime(
+            supabase=shared_supabase,
+            instance={
+                "tenant_ref": settings.instance_manifest.tenant_ref,
+                "ally_ref": settings.instance_manifest.ally_ref,
+            },
+        )
+    # MOT-001 (flow-engine-v1, seccion 8): comparte el productor del conector
+    # de Slack; sin conector, no avisa y /ready dice sin_slack.
+    flow_engine_divergence_notifier: DivergenceNotifier | None = None
+    if flow_engine_runtime is not None:
+        assert shared_supabase is not None
+        flow_engine_divergence_notifier = DivergenceNotifier(
+            supabase=shared_supabase,
+            runtime=flow_engine_runtime,
+            producer=slack_runtime.producer if slack_runtime is not None else None,
+        )
     if settings.hotmart_abandonment_timer_worker_enabled:
         if shared_supabase is None:
             raise ValueError(
@@ -4826,6 +4896,7 @@ def create_app(
             ),
             pilot_boundary=pilot_boundary,
             product_routes=commercial_ally_routes,
+            flow_engine=flow_engine_runtime,
             commercial_ally_config=(
                 settings.commercial_ally_config
                 if portable_dynamic_recipient
@@ -4961,6 +5032,7 @@ def create_app(
             waba_template=waba_template,
         )
         durable_dispatcher = DurableDispatcher(
+            flow_engine_enabled=settings.flow_engine_enabled,
             supabase=shared_supabase,
             worker_id=settings.dispatcher_worker_id,
             poll_interval_seconds=settings.dispatcher_poll_interval_seconds,
@@ -5164,9 +5236,15 @@ def create_app(
                 await conversation_reactivation_sweeper.start()
             if conversation_followup_sweeper is not None:
                 await conversation_followup_sweeper.start()
+            if flow_engine_divergence_notifier is not None:
+                await flow_engine_divergence_notifier.start()
             yield
         finally:
             for worker_name, worker in (
+                (
+                    "flow_engine_divergence_notifier",
+                    flow_engine_divergence_notifier,
+                ),
                 (
                     "conversation_followup_sweeper",
                     conversation_followup_sweeper,
@@ -5208,6 +5286,8 @@ def create_app(
 
     app = FastAPI(title="AI Appointment Setter Bridge", lifespan=lifespan)
     app.state.resolution_worker = resolution_worker
+    app.state.flow_engine = flow_engine_runtime
+    app.state.flow_engine_divergence_notifier = flow_engine_divergence_notifier
     app.state.hotmart_abandonment_timer_worker = hotmart_abandonment_timer_worker
     app.state.recovery_coupon_worker = recovery_coupon_worker
     app.state.durable_dispatcher = durable_dispatcher
@@ -8088,6 +8168,11 @@ def create_app(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail=audience_block,
                 )
+        # flow-engine-v1, seccion 8: solo con el flag (que exige la frontera
+        # del piloto), de lo que ya esta en memoria, y nunca 503.
+        flow_engine_readiness = (
+            flow_engine_runtime.readiness() if flow_engine_runtime is not None else {}
+        )
         return {
             "status": "ready",
             "pilot_boundary": "configured",
@@ -8099,6 +8184,7 @@ def create_app(
             **payment_slip_readiness,
             **handoff_readiness,
             **stalled_monitor_readiness,
+            **flow_engine_readiness,
         }
 
     @app.post("/webhooks/chatwoot", status_code=status.HTTP_202_ACCEPTED)

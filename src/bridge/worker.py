@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import multiprocessing
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any, Callable
 
@@ -20,6 +20,7 @@ import httpx
 
 from bridge.cart_first_touch import (
     CART_ABANDONMENT_TRIGGER,
+    CART_DISCOUNT_VARIABLES,
     CartDiscountConfig,
     CartDiscountDefer,
     CartDiscountOutcome,
@@ -101,6 +102,7 @@ from bridge.payment_slip_first_touch import (
     compose_payment_slip_first_touch,
     payment_slip_ingestion_reason,
 )
+from bridge.flow_engine_runtime import FlowEngineRuntime
 from bridge.followup_steps import FOLLOWING_STEP_TRIGGERS
 from bridge.payment_slip_reminders import PAYMENT_SLIP_STEPS
 from bridge.phones import equivalent_whatsapp_phones, whatsapp_phone_region
@@ -115,6 +117,8 @@ from bridge.recovery_agent import (
 from bridge.resolution import ResolutionError, resolve_event
 from bridge.supabase import (
     DeliveryAttempt,
+    FlowEngineRunTerminated,
+    FlowEngineStepContext,
     FollowupExecutionContext,
     PilotBoundaryConfig,
     PilotRequestStartRejectedError,
@@ -146,6 +150,33 @@ def _first_touch_template_name(
 APPROVED_TEMPLATE_DIRECT_UNSUPPORTED_ACTION = (
     "approved_template_direct_unsupported_action"
 )
+# flow-engine-v1, seccion 8: una accion del motor se reconoce por su politica
+# (la admision la pone en flujo:<flow_id>), sin preguntarle a la base.
+FLOW_ENGINE_POLICY_PREFIX = "flujo:"
+# Una version cuyas variables o boton el bridge no sabe armar (decision D5 de
+# la T2.4): cierra sin mandar y sin reintento.
+FLOW_ENGINE_STEP_UNSUPPORTED = "flow_engine_step_unsupported"
+_FLOW_ENGINE_CART_BUTTON = {"link": "checkout", "cupon": "personal"}
+# Lo que el bridge arma a mano para cada paso del carrito: las variables, en
+# orden, y el boton (cart_first_touch.py y cart_followups.py).
+FLOW_ENGINE_CART_STEPS: dict[str, tuple[tuple[str, ...], dict[str, str] | None]] = {
+    "first_contact": (CART_DISCOUNT_VARIABLES, _FLOW_ENGINE_CART_BUTTON),
+    "cart_second_touch": (CART_SECOND_TOUCH_VARIABLES, None),
+    CART_LAST_TOUCH_STEP: (CART_LAST_TOUCH_VARIABLES, _FLOW_ENGINE_CART_BUTTON),
+}
+
+
+def _flow_engine_step_supported(
+    action: ScheduledAction, step: FlowEngineStepContext
+) -> bool:
+    """Whether the bridge knows how to build the send of this engine step."""
+    shape = FLOW_ENGINE_CART_STEPS.get(action.step_key)
+    if shape is None or step.step_key != action.step_key:
+        return False
+    if _flow_trigger(action) != CART_ABANDONMENT_TRIGGER:
+        return False
+    variables, button = shape
+    return step.template_variables == variables and step.template_button == button
 
 
 def _flow_trigger(action: ScheduledAction) -> str:
@@ -800,6 +831,7 @@ class DurableDispatcher:
         payment_slip: PaymentSlipFirstTouchConfig | None = None,
         payment_failure_variants: PaymentFailureVariantsConfig | None = None,
         payment_failure_followup: PaymentFailureFollowupConfig | None = None,
+        flow_engine_enabled: bool = False,
     ) -> None:
         if payment_failure_followup is not None and (
             not approved_template_direct or payment_failure_variants is None
@@ -922,6 +954,11 @@ class DurableDispatcher:
         self._approved_template_direct = approved_template_direct
         self._cart_discount = cart_discount
         self._cart_followups = cart_followups
+        # flow-engine-v1, seccion 8: con el flag, una accion con politica
+        # flujo:<flow_id> sale con la plantilla de su version fijada y arranca
+        # por mark_flow_engine_request_started_v1. Sin el flag, o con otra
+        # politica, ninguna llamada nueva.
+        self._flow_engine_enabled = flow_engine_enabled
         self._payment_slip = payment_slip
         self._payment_failure_variants = payment_failure_variants
         self._payment_failure_followup = payment_failure_followup
@@ -1246,12 +1283,37 @@ class DurableDispatcher:
             )
         return evidence
 
+    async def _flow_engine_step(
+        self, action: ScheduledAction
+    ) -> FlowEngineStepContext | None:
+        """The send of an engine step, or None to go the way of today (D3).
+
+        Only with the flag and a policy flujo:<flow_id>: any other action makes
+        no new call. A failed call also goes the way of today: with the first
+        version the template of the manifest is the right one, and with
+        another the base refuses with flow_engine_needs_engine_image.
+        """
+        if not self._flow_engine_enabled or not action.policy_key.startswith(
+            FLOW_ENGINE_POLICY_PREFIX
+        ):
+            return None
+        try:
+            return await self._supabase.get_flow_engine_step_context(action.action_id)
+        except SupabaseError as exc:
+            logger.warning(
+                "flow_engine_step_context_unavailable action_id=%s error=%s",
+                action.action_id,
+                type(exc).__name__,
+            )
+            return None
+
     async def _compose_approved_template_proposal(
         self,
         *,
         action: ScheduledAction,
         execution_context: FollowupExecutionContext,
         attempt: DeliveryAttempt | None = None,
+        step_template: FlowEngineStepContext | None = None,
     ) -> _ApprovedTemplateComposition:
         """Build the first contact from the approved template, without Hermes.
 
@@ -1260,8 +1322,48 @@ class DurableDispatcher:
         when the flag is on), so the final Meta gate hashes what Meta will
         show. Every catalog or data problem returns a reason instead of
         raising: the caller closes the reserved attempt with it.
+
+        ``step_template`` is the send of an engine step in its pinned version
+        (flow-engine-v1, 7.3): its template and language replace those of the
+        configuration; the price, the currency, the waits of the coupon and the
+        category stay those of today.
         """
         trigger_kind = _flow_trigger(action)
+        cart_discount = self._cart_discount
+        cart_followups = self._cart_followups
+        if step_template is not None:
+            if not _flow_engine_step_supported(action, step_template) or (
+                cart_discount is None
+                if action.step_key == "first_contact"
+                else cart_followups is None
+            ):
+                logger.warning(
+                    "flow_engine_step_unsupported action_id=%s step=%s version=%s",
+                    action.action_id,
+                    action.step_key,
+                    step_template.version,
+                )
+                return _ApprovedTemplateComposition(
+                    failure_reason=FLOW_ENGINE_STEP_UNSUPPORTED, retryable=False
+                )
+            if action.step_key == "first_contact":
+                assert cart_discount is not None
+                cart_discount = replace(
+                    cart_discount,
+                    template_name=step_template.template_name,
+                    language=step_template.template_language,
+                )
+            else:
+                assert cart_followups is not None
+                cart_followups = replace(
+                    cart_followups,
+                    language=step_template.template_language,
+                    **(
+                        {"last_touch_template": step_template.template_name}
+                        if action.step_key == CART_LAST_TOUCH_STEP
+                        else {"second_touch_template": step_template.template_name}
+                    ),
+                )
         step_key: str | None = None
         if action.action_type != "first_contact_review":
             # The only following steps this mode sends are the reminders of a
@@ -1273,7 +1375,7 @@ class DurableDispatcher:
                 and action.step_key in PAYMENT_SLIP_STEPS
             )
             cart_step = (
-                self._cart_followups is not None
+                cart_followups is not None
                 and trigger_kind == CART_ABANDONMENT_TRIGGER
                 and action.step_key in CART_FOLLOWUP_STEPS
             )
@@ -1296,8 +1398,8 @@ class DurableDispatcher:
         assert self._chatwoot is not None
         assert self._chatwoot_inbox_id is not None
         if step_key is not None and step_key in CART_FOLLOWUP_STEPS:
-            assert self._cart_followups is not None
-            template_name = self._cart_followups.template_for(step_key)
+            assert cart_followups is not None
+            template_name = cart_followups.template_for(step_key)
             declared = (
                 CART_LAST_TOUCH_VARIABLES
                 if step_key == CART_LAST_TOUCH_STEP
@@ -1406,7 +1508,9 @@ class DurableDispatcher:
                 greeting_name=greeting_name,
             )
         if step_key is not None and step_key in CART_FOLLOWUP_STEPS:
+            assert cart_followups is not None
             return await self._compose_cart_followup_proposal(
+                config=cart_followups,
                 action=action,
                 attempt=attempt,
                 step_key=step_key,
@@ -1486,12 +1590,12 @@ class DurableDispatcher:
                     failure_reason="payment_failure_send_context_unavailable"
                 )
         elif (
-            self._cart_discount is not None
+            cart_discount is not None
             and trigger_kind == CART_ABANDONMENT_TRIGGER
             and attempt is not None
         ):
             discount = await compose_cart_discount_first_touch(
-                config=self._cart_discount,
+                config=cart_discount,
                 supabase=self._supabase,
                 inbox=inbox,
                 action=action,
@@ -1732,6 +1836,7 @@ class DurableDispatcher:
     async def _compose_cart_followup_proposal(
         self,
         *,
+        config: CartFollowupConfig,
         action: ScheduledAction,
         attempt: DeliveryAttempt | None,
         step_key: str,
@@ -1746,8 +1851,6 @@ class DurableDispatcher:
         closes without a message. Only an unreadable catalog, a catalog that
         does not close, or coupon 2 still being created retries.
         """
-        config = self._cart_followups
-        assert config is not None
         assert self._chatwoot is not None
         assert self._chatwoot_inbox_id is not None
         if step_key == CART_LAST_TOUCH_STEP and attempt is None:
@@ -2022,6 +2125,7 @@ class DurableDispatcher:
                     direct_template_params: dict[str, object] | None = None
                     direct_issuance_id: str | None = None
                     greeting_name: str | None = None
+                    engine_step: FlowEngineStepContext | None = None
                     try:
                         execution_context = (
                             await self._supabase.get_followup_execution_context(
@@ -2036,11 +2140,13 @@ class DurableDispatcher:
                             execution_context,
                         )
                         if self._approved_template_direct:
+                            engine_step = await self._flow_engine_step(action)
                             composition = (
                                 await self._compose_approved_template_proposal(
                                     action=action,
                                     execution_context=execution_context,
                                     attempt=attempt,
+                                    step_template=engine_step,
                                 )
                             )
                             proposal = composition.proposal
@@ -2348,8 +2454,15 @@ class DurableDispatcher:
                                         ),
                                         content=proposal.message,
                                         template_name=template_name or "",
+                                        # The language of the pinned version
+                                        # only goes with its template: A1 that
+                                        # falls back without its coupon sends
+                                        # the template of the manifest.
                                         template_language=(
-                                            self._waba_template.language
+                                            engine_step.template_language
+                                            if engine_step is not None
+                                            and direct_template_name is not None
+                                            else self._waba_template.language
                                             if self._waba_template is not None
                                             else ""
                                         ),
@@ -2366,7 +2479,17 @@ class DurableDispatcher:
                             try:
                                 started, request_start_cancelled = (
                                     await _await_with_cancellation_state(
-                                        self._supabase.mark_followup_request_started(
+                                        # An engine step starts by the engine
+                                        # authorization (flow-engine-v1, 7.2).
+                                        self._supabase.mark_flow_engine_request_started(
+                                            action_id=action.action_id,
+                                            attempt_id=attempt.attempt_id,
+                                            worker_id=self._worker_id,
+                                            lease_generation=action.lease_generation,
+                                            now=final_now,
+                                        )
+                                        if engine_step is not None
+                                        else self._supabase.mark_followup_request_started(
                                             action_id=action.action_id,
                                             attempt_id=attempt.attempt_id,
                                             worker_id=self._worker_id,
@@ -2380,6 +2503,20 @@ class DurableDispatcher:
                                         )
                                     )
                                 )
+                            except FlowEngineRunTerminated as exc:
+                                # The flow was turned off after the run
+                                # started: the base already closed the attempt,
+                                # the action, the sequence and the case, and
+                                # committed. Nothing to finalize here.
+                                logger.info(
+                                    "flow_engine_run_terminated action_id=%s "
+                                    "attempt_id=%s reason=%s",
+                                    action.action_id,
+                                    attempt.attempt_id,
+                                    exc.reason,
+                                )
+                                decisions.append(decision)
+                                continue
                             except PilotRequestStartRejectedError as exc:
                                 # The base refused to start: a cap of the
                                 # scope, a disarmed runtime, or a stop that
@@ -3149,9 +3286,13 @@ class ResolutionWorker:
         product_routes: ProductRoutes | None = None,
         payment_slip: PaymentSlipPlanningConfig | None = None,
         payment_failure_planning: PaymentFailurePlanningConfig | None = None,
+        flow_engine: FlowEngineRuntime | None = None,
     ) -> None:
         self._supabase = supabase
         self._poll_interval = poll_interval_seconds
+        # flow-engine-v1, seccion 8: solo con FLOW_ENGINE_ENABLED. Con None,
+        # el lote no lee nada del motor y el carrito se planifica como hoy.
+        self._flow_engine = flow_engine
         self._batch_size = batch_size
         self._recovery_agent = recovery_agent
         self._message_sender = message_sender
@@ -3212,6 +3353,10 @@ class ResolutionWorker:
                 pass
 
     async def _process_batch(self) -> None:
+        if self._flow_engine is not None:
+            # A lo sumo cada 60 s; una falla deja la cache failing y el
+            # carrito va por el envoltorio de hoy.
+            await self._flow_engine.routes.refresh_if_due()
         events = await self._supabase.fetch_pending_events(
             limit=self._batch_size,
             excluded_event_types=(
@@ -3349,6 +3494,10 @@ class ResolutionWorker:
             resolver_kwargs: dict[str, Any] = {}
             if self._commercial_ally_config is not None:
                 resolver_kwargs["commercial_ally_config"] = self._commercial_ally_config
+            if self._flow_engine is not None and event_type == EVENT_CART_ABANDONMENT:
+                # Solo el carrito: el pago rechazado y la ficha nunca pasan
+                # por la admision del motor.
+                resolver_kwargs["flow_engine"] = self._flow_engine
             report = await resolve_event(
                 webhook_event_id=event_id,
                 payload=payload,
