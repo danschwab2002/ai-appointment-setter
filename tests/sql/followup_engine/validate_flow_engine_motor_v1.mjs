@@ -41,7 +41,20 @@
 //      ya_en_curso, no_arranca_mientras:ficha, y la repeticion created=false;
 //  13. la bolsa compartida en los dos sentidos;
 //  14. read_flow_engine_v1 cuenta lo en curso del motor por version;
-//  15. el disparador del tope por persona (decision 4).
+//  15. el disparador del tope por persona (decision 4), en el INSERT y en el
+//      UPDATE;
+//  16. la baja entre la reevaluacion y el arranque, por la imagen nueva y por
+//      la vieja: rechazada, sin autorizacion y sin cupo consumido;
+//  17. la audiencia vuelta a mirar al arrancar (la intencion ya no esta viva);
+//  18. decision 2: otra oferta, otro inbox u otra cuenta es motor_no_arranca
+//      con el codigo estatico, sin divergencia;
+//  19. decision 5: cohorte, repeticion distinta de 0m y bolsa distinta del
+//      scope caen al legado con su divergencia de ruta;
+//  20. la delegacion del envoltorio con una entrada fuera de forma decide
+//      como el legado;
+//  21. p_force_legacy sin ruta del carrito es legado, sin divergencia;
+//  22. la re-entrada: cerrado el caso del motor, otro carrito arranca otro
+//      recorrido.
 //
 // Datos sinteticos: personas de example.test con telefonos 1202555xxxx (rango
 // de ficcion), el manifiesto de ATT1 de tests/fixtures/instances/att1/ y el
@@ -681,32 +694,44 @@ const main = async () => {
     const blockRe = (marker) => (marker === 'flow_engine_turned_off_close'
       ? new RegExp(`,\\n {12}-- ${marker}: begin\\n[\\s\\S]*? {12}-- ${marker}: end`)
       : new RegExp(` {4}-- ${marker}: begin\\n[\\s\\S]*? {4}-- ${marker}: end\\n\\n?`));
-    for (const [signature, blocks] of Object.entries(PATCHED)) {
-      let current = after.get(signature).definition;
-      for (const [marker, follows] of blocks) {
+    // El problema de forma de una definicion parchada: null si es la vigente
+    // con sus bloques insertados (cada uno una vez, antes de su ancla) y nada mas.
+    const shapeProblem = (signature, definition) => {
+      let current = definition;
+      for (const [marker, follows] of PATCHED[signature]) {
         const match = current.match(blockRe(marker));
         if (match === null || !current.slice(match.index + match[0].length).startsWith(follows)
             || (current.match(new RegExp(`${marker}: begin`, 'g')) || []).length !== 1) {
-          fail(`${signature}: el bloque ${marker} no esta, o no esta antes de su ancla`);
+          return `el bloque ${marker} no esta, o no esta antes de su ancla`;
         }
         current = current.replace(blockRe(marker), '');
       }
-      if (current !== before.get(signature).definition
+      return current === before.get(signature).definition ? null : 'no es su definicion vigente con sus bloques insertados';
+    };
+    for (const signature of Object.keys(PATCHED)) {
+      const problem = shapeProblem(signature, after.get(signature).definition);
+      if (problem !== null
           || after.get(signature).service_x !== before.get(signature).service_x
           || after.get(signature).api_x !== before.get(signature).api_x) {
-        fail(`${signature} no es su definicion vigente con sus bloques insertados`);
+        fail(`${signature}: ${problem ?? 'cambio un permiso'}`);
       }
     }
     if (!after.get(KINDS).definition.includes("select array['carrito']::text[]")
         || before.get(KINDS).definition.includes("'carrito'")) {
       fail('_flow_engine_route_kinds no es {carrito}');
     }
-    // El rojo de la forma: un bloque de mas en una funcion lo ve esta prueba.
+    // El rojo de la forma: una sentencia de mas fuera de los bloques, o un
+    // bloque que falta, lo ve el mismo chequeo de arriba (shapeProblem). Antes
+    // comparaba contra `before` un string adulterado a mano, y eso pasaba
+    // siempre aunque el chequeo estuviera roto; ahora el adulterado pasa por
+    // el chequeo real y tiene que dar un problema.
     {
-      const tampered = after.get(`mark_followup_request_started(uuid,uuid,text,bigint,${TZ})`).definition
-        .replace("    if not exists (\n", "    perform 1;\n    if not exists (\n")
-        .replace(blockRe('flow_engine_motor_authorization'), '');
-      if (tampered === before.get(`mark_followup_request_started(uuid,uuid,text,bigint,${TZ})`).definition) {
+      const signature = `mark_followup_request_started(uuid,uuid,text,bigint,${TZ})`;
+      const real = after.get(signature).definition;
+      const extra = real.replace('\nbegin\n', '\nbegin\n    perform 1;\n');
+      const missing = real.replace(blockRe('flow_engine_motor_authorization'), '');
+      if (extra === real || missing === real
+          || shapeProblem(signature, extra) === null || shapeProblem(signature, missing) === null) {
         fail('el rojo de la forma no es rojo');
       }
     }
@@ -1422,7 +1447,296 @@ const main = async () => {
       await db.exec('rollback');
     }
     if (red !== null) fail('el rojo del tope por persona no es rojo', red.message);
+    // El UPDATE de un renglon que ya estaba (cargado con el disparador
+    // apagado, en una transaccion que se deshace) tambien se rechaza.
+    await db.exec('begin');
+    let updated;
+    try {
+      await db.exec('alter table public.pilot_proactive_contact_caps disable trigger pilot_proactive_contact_caps_no_engine_route');
+      await insertCap();
+      await db.exec('alter table public.pilot_proactive_contact_caps enable trigger pilot_proactive_contact_caps_no_engine_route');
+      updated = await errOf(() => db.query(
+        'update public.pilot_proactive_contact_caps set max_request_starts = 3 where tenant_key = $1', [A.tenant]));
+    } finally {
+      await db.exec('rollback');
+    }
+    if (updated?.code !== '55000' || updated.message !== 'pilot_proactive_contact_cap_with_engine_route') {
+      fail('el UPDATE del tope por persona con la ruta en motor', updated ? { code: updated.code, message: updated.message } : 'paso');
+    }
     results.tope_por_persona = 'pilot_proactive_contact_cap_with_engine_route';
+    results.tope_por_persona_update = updated.message;
+  }
+
+  const usedToday = async () => Number((await sql1(`select count(*)::int as n from public.flow_engine_request_authorizations
+    where pool = $1 and local_budget_date = (now() at time zone $2)::date`, [SCOPE, A.timezone], 'cupo del dia')).n);
+  const authorizationsOf = async (attemptId) => (await db.query(
+    'select id from public.flow_engine_request_authorizations where attempt_id = $1', [attemptId])).rows;
+
+  // -------------------------------------------------------------------------
+  // 16. La baja entre la reevaluacion y el arranque, por las dos imagenes.
+  // -------------------------------------------------------------------------
+  // La baja que llega despues de leer la audiencia y de autorizar: la simula
+  // un disparador que, al escribirse la autorizacion del motor, registra el
+  // opt-out de Chatwoot (unmatched) con el wa_id textual 521... de una persona
+  // de Mexico. Asi solo la ve el chequeo con las dos formas del telefono
+  // (_portable_chatwoot_opt_out_stop) que corre despues de autorizar; el freno
+  // del arranque compartido busca el id exacto de la identidad y no la ve.
+  {
+    const mexican = async (label) => {
+      const lead = person(label, A, '5255550400');
+      lead.country = '52';
+      lead.iso = 'MX';
+      await cartFor(lead);
+      const row = await admit(lead);
+      if (row.outcome !== 'motor_arranco') fail(`${label}: la admision`, row);
+      return lead;
+    };
+    const lateOptOut = async () => db.exec(`
+      create function pg_temp.baja_tardia() returns trigger language plpgsql as $f$
+      begin
+        insert into public.contact_opt_out_events (channel, purpose, source, canonical_account_id, canonical_inbox_id,
+          canonical_conversation_id, canonical_message_id, external_user_id, occurred_at, normalized_rule_key,
+          correlation_status)
+        select 'whatsapp', 'cart_recovery', 'chatwoot', ${Number(A.accountId)}, ${Number(A.inboxId)},
+               883000 + (select count(*) from public.contact_opt_out_events), 9883000, '521' || substr(c.phone, 3),
+               clock_timestamp(), 'unsubscribe', 'unmatched'
+          from public.contacts c where c.id = new.contact_id;
+        return new;
+      end $f$;
+      create trigger baja_tardia after insert on public.flow_engine_request_authorizations
+        for each row execute function pg_temp.baja_tardia();`);
+    // La imagen nueva: rechazado por baja, la fila del despacho, sin
+    // autorizacion y sin cupo consumido; el intento sigue reservado.
+    const fresh = await mexican('baja-tardia-nueva');
+    const freshReserved = await reserve(fresh, fresh.plan.scheduled_action_id);
+    await db.exec('begin');
+    let viaNew;
+    try {
+      await lateOptOut();
+      const used = await usedToday();
+      const started = await startNew(freshReserved);
+      viaNew = { started, auth: await authorizationsOf(freshReserved.attempt.id), used, usedAfter: await usedToday(),
+        rows: await rejectionsOf(freshReserved.actionId) };
+    } finally {
+      await db.exec('rollback');
+    }
+    if (viaNew.started.outcome !== 'rechazado' || viaNew.started.reason !== 'baja'
+        || viaNew.started.phase !== 'reserved' || viaNew.started.flow_authorization_id !== null
+        || viaNew.auth.length !== 0 || viaNew.usedAfter !== viaNew.used
+        || viaNew.rows.length !== 1 || viaNew.rows[0].reason !== 'baja' || viaNew.rows[0].phase !== 'despacho') {
+      fail('la baja tardia por la imagen nueva', viaNew);
+    }
+    // La imagen vieja (la delegacion en mark_lancemos_pilot_request_started).
+    const old = await mexican('baja-tardia-vieja');
+    const oldReserved = await reserve(old, old.plan.scheduled_action_id);
+    await db.exec('begin');
+    let viaOld;
+    try {
+      await lateOptOut();
+      const used = await usedToday();
+      const error = await errOf(() => startOld(oldReserved));
+      const attempt = await sql1('select phase from public.followup_delivery_attempts where id = $1',
+        [oldReserved.attempt.id], 'intento');
+      viaOld = { error: error && { code: error.code, message: error.message, detail: error.detail },
+        auth: await authorizationsOf(oldReserved.attempt.id), used, usedAfter: await usedToday(), phase: attempt.phase };
+    } finally {
+      await db.exec('rollback');
+    }
+    if (viaOld.error?.code !== '55000' || viaOld.error.message !== 'pilot_request_start_rejected'
+        || viaOld.error.detail !== 'pilot_chatwoot_opt_out_stop' || viaOld.auth.length !== 0
+        || viaOld.usedAfter !== viaOld.used || viaOld.phase !== 'reserved') {
+      fail('la baja tardia por la imagen vieja', viaOld);
+    }
+    results.baja_al_arrancar = { nueva: viaNew.started.reason, vieja: viaOld.error.detail };
+  }
+
+  // -------------------------------------------------------------------------
+  // 17. La audiencia otra vez al arrancar: la intencion ya no esta viva.
+  // -------------------------------------------------------------------------
+  {
+    const lead = await motorCart('audiencia-al-arrancar');
+    const reserved = await reserve(lead, lead.plan.scheduled_action_id);
+    const intent = (await sql1('select audience_purchase_intent_id as id from public.pilot_recovery_case_bindings where recovery_case_id = $1',
+      [lead.plan.recovery_case_id], 'binding')).id;
+    await db.exec('begin');
+    let outcome;
+    try {
+      await db.query("update public.purchase_intents set lifecycle_state = 'cancelled' where id = $1", [intent]);
+      const used = await usedToday();
+      const started = await startNew(reserved);
+      outcome = { started, auth: await authorizationsOf(reserved.attempt.id), used, usedAfter: await usedToday(),
+        rows: await rejectionsOf(reserved.actionId) };
+    } finally {
+      await db.exec('rollback');
+    }
+    if (outcome.started.outcome !== 'rechazado' || outcome.started.reason !== 'ya_no_entra'
+        || outcome.auth.length !== 0 || outcome.usedAfter !== outcome.used
+        || outcome.rows.find((row) => row.reason === 'ya_no_entra')?.phase !== 'despacho') {
+      fail('la audiencia al arrancar', outcome);
+    }
+    results.audiencia_al_arrancar = outcome.started.reason;
+  }
+
+  // -------------------------------------------------------------------------
+  // 18. Decision 2: lo estatico no es divergencia (el evento es del producto
+  //     del flujo, asi que pasa el chequeo del producto y llega al estatico).
+  // -------------------------------------------------------------------------
+  {
+    const divergences = async () => Number((await sql1('select count(*)::int as n from public.flow_engine_divergences where flow_id = $1',
+      [FLOWS.carrito], 'divergencias')).n);
+    const cases = {
+      pilot_offer_mismatch: (args) => { args[4] = 'offzz9999'; },
+      pilot_chatwoot_inbox_mismatch: (args) => { args[7] = Number(A.inboxId) + 1000; },
+      pilot_chatwoot_account_mismatch: (args) => { args[6] = Number(A.accountId) + 1000; },
+    };
+    const seen = {};
+    for (const [code, edit] of Object.entries(cases)) {
+      const lead = await cartFor(`estatico-${code}`);
+      edit(lead.admitArgs);
+      const before = await divergences();
+      const row = await admit(lead);
+      const after = await divergences();
+      if (row.outcome !== 'motor_no_arranca' || row.reason !== code || row.divergence_id !== null
+          || row.recovery_case_id !== null || after !== before || (await rejectionsOf(lead.event)).length !== 0
+          || (await db.query('select 1 from public.flow_engine_runs where trigger_source_ref = $1', [lead.event])).rows.length !== 0) {
+        fail(`lo estatico: ${code}`, { row, before, after });
+      }
+      seen[code] = row.outcome;
+    }
+    results.estatico = seen;
+  }
+
+  // -------------------------------------------------------------------------
+  // 19. Decision 5: lo que la v1 no ejecuta cae al legado con su divergencia.
+  // -------------------------------------------------------------------------
+  {
+    const expectFallback = async (label, reason) => {
+      const lead = await cartFor(label);
+      const row = await admit(lead);
+      const div = await divergenceOf('ruta', reason);
+      if (row.outcome !== 'legado_por_divergencia' || row.created !== true || div === null || row.divergence_id !== div.id
+          || div.last_source_ref !== lead.event || await runOf(row.recovery_case_id)
+          || (await caseOf(lead)).policy_key !== world.THREE_TOUCHES.policy) {
+        fail(`${label}: ${reason}`, { row, div });
+      }
+      return div.count;
+    };
+    // (a) Un scope del legado con cohorte (en una transaccion que se deshace;
+    // el scope publicado es inmutable, asi que se apaga su validacion).
+    await db.exec('begin');
+    let cohort;
+    let cohortError = null;
+    try {
+      await db.exec('alter table public.pilot_scope_versions disable trigger pilot_scope_versions_validate');
+      await db.query("update public.pilot_scope_versions set audience_mode = 'consented_intent_in_cohort' where scope_key = $1",
+        [SCOPE]);
+      await db.exec('alter table public.pilot_scope_versions enable trigger pilot_scope_versions_validate');
+      const lead = await cartFor('con-cohorte');
+      // La persona en la cohorte, para que el legado planifique.
+      await db.query(`insert into public.pilot_cohort_memberships (scope_key, scope_version, contact_id, member_status,
+          enrolled_by, enrollment_reason, last_runtime_generation)
+        values ($1, 1, $2, 'active', 'dan', 'cohorte de prueba', $3)`, [SCOPE, lead.contact, await world.generationOf(SCOPE)]);
+      const row = await admit(lead);
+      cohort = { row, div: await divergenceOf('ruta', 'ruta:audiencia_con_cohorte'), run: await runOf(row.recovery_case_id) };
+    } catch (error) {
+      cohortError = error;
+    } finally {
+      await db.exec('rollback');
+    }
+    if (cohortError) throw cohortError;
+    if (cohort.row.outcome !== 'legado_por_divergencia' || cohort.row.created !== true || cohort.div === null
+        || cohort.row.divergence_id !== cohort.div.id || cohort.run !== null) {
+      fail('(a) audiencia con cohorte', cohort);
+    }
+    // (b) La repeticion despues de un recorrido.
+    await publishCart({ topes: { repeticion: { una_por: 'persona_y_oferta', otra_despues_de: '1d' } } }, 'repeticion 1d');
+    const repetition = await expectFallback('repeticion-1d', 'ruta:repeticion_no_soportada');
+    await publishCart({}, 'de vuelta sin repeticion');
+    // (c) Una bolsa distinta del scope del legado.
+    await publishCart({ topes: { bolsa: B.scope } }, 'bolsa de B');
+    const pool = await expectFallback('bolsa-de-b', 'ruta:bolsa_distinta_del_scope');
+    await publishCart({}, 'de vuelta a la bolsa del scope');
+    // Y con la definicion normal, otra vez el motor.
+    await motorCart('despues-de-la-decision-5');
+    results.decision_5 = { cohorte: cohort.row.outcome, repeticion: repetition, bolsa: pool };
+  }
+
+  // -------------------------------------------------------------------------
+  // 20. La delegacion del envoltorio con una entrada que la admision no acepta:
+  //     el legado decide como hoy, no un 22023 de la admision.
+  // -------------------------------------------------------------------------
+  {
+    const lead = await cartFor('telefono-con-mas');
+    lead.cartArgs[9] = `+${lead.phone}`;
+    const outcomeOf = async (executor) => {
+      await db.exec('begin');
+      try {
+        if (executor === 'legado') {
+          const back = await route(A.funnel, 'carrito', FLOWS.carrito, 'legado');
+          if (!back.ok) fail('de vuelta a legado', back);
+        }
+        let row = null;
+        const error = await errOf(async () => { row = one((await db.query(PLAN_CART, lead.cartArgs)).rows, 'plan'); });
+        return {
+          error: error && { code: error.code, message: error.message, detail: error.detail ?? null },
+          created: row?.created ?? null,
+          run: row?.recovery_case_id ? (await runOf(row.recovery_case_id)) !== null : null,
+        };
+      } finally {
+        await db.exec('rollback');
+      }
+    };
+    const legacy = await outcomeOf('legado');
+    const motor = await outcomeOf('motor');
+    if (JSON.stringify(motor) !== JSON.stringify(legacy) || motor.error?.message === 'invalid_flow_engine_admission_parameters'
+        || motor.run === true) {
+      fail('la delegacion con un telefono que no es de digitos', { legacy, motor });
+    }
+    results.delegacion_fuera_de_forma = legacy.error ? legacy.error.message : 'planificado';
+  }
+
+  // -------------------------------------------------------------------------
+  // 21. p_force_legacy sin ruta del carrito: legado, sin divergencia.
+  // -------------------------------------------------------------------------
+  {
+    const lead = await cartFor('forzado-sin-ruta', { P: B });
+    await db.exec('begin');
+    let forced;
+    try {
+      // Las rutas son permanentes: se borra la de B con su guarda apagada.
+      await db.exec('alter table public.flow_engine_routes disable trigger flow_engine_routes_permanent');
+      await db.query("delete from public.flow_engine_routes where legacy_scope_key = $1 and legacy_kind = 'carrito'", [B.scope]);
+      await db.exec('alter table public.flow_engine_routes enable trigger flow_engine_routes_permanent');
+      const row = await admit(lead, true);
+      forced = { row, divergences: Number((await sql1(
+        'select count(*)::int as n from public.flow_engine_divergences where last_source_ref = $1', [lead.event], 'div')).n),
+      run: row.recovery_case_id ? await runOf(row.recovery_case_id) : 'sin caso' };
+    } finally {
+      await db.exec('rollback');
+    }
+    if (forced.row.outcome !== 'legado' || forced.row.divergence_id !== null || forced.row.divergence_first !== null
+        || forced.row.created !== true || forced.divergences !== 0 || forced.run !== null) {
+      fail('p_force_legacy sin ruta', forced);
+    }
+    results.forzado_sin_ruta = forced.row.outcome;
+  }
+
+  // -------------------------------------------------------------------------
+  // 22. La re-entrada: con el caso del motor cerrado (otra_despues_de 0m), un
+  //     carrito nuevo de la misma persona y oferta arranca otro recorrido.
+  // -------------------------------------------------------------------------
+  {
+    // viaAdmit cerro por policy_exhausted en la seccion 3.
+    const closed = viaAdmit.plan.recovery_case_id;
+    if ((await caseOf(viaAdmit)).status !== 'sequence_exhausted') fail('la re-entrada: el caso no esta cerrado');
+    await cartFor(viaAdmit);
+    const row = await admit(viaAdmit);
+    const run = row.recovery_case_id ? await runOf(row.recovery_case_id) : null;
+    if (row.outcome !== 'motor_arranco' || row.created !== true || row.recovery_case_id === closed
+        || run?.flow_id !== FLOWS.carrito || run.trigger_source_ref !== viaAdmit.event) {
+      fail('la re-entrada', { row, run });
+    }
+    results.re_entrada = row.outcome;
   }
 
   console.log(JSON.stringify(results));
