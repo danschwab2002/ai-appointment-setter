@@ -25,7 +25,7 @@ Un parche sobre la 1.16.0, con tres arreglos que salieron al usarla en ATT1: el 
 ### Qué hace quien actualiza
 
 - **Correr las dos migraciones, en orden y como `postgres`:** `20261021000300` y después `20261021000400`. Cambian solo dos funciones de lectura. En ATT1 ya están aplicadas (22/10, 00:42Z y 13:35Z).
-- **Pasar el bridge a la imagen 1.16.1**, y con él el servicio de revisión diaria que usa la misma imagen. Sin flags, variables ni campos nuevos en el manifiesto.
+- **Pasar el bridge y la revisión diaria a las imágenes 1.16.1** (`setter-bridge` y `setter-daily-feedback`). Sin flags, variables ni campos nuevos en el manifiesto.
 - **El comando del operador ya no necesita `PRODUCTO=`** apuntando a un árbol con el arreglo de #300: el árbol de la 1.16.1 lo trae.
 
 ## [1.16.0] - 2026-10-21
