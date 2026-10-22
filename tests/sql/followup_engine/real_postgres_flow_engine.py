@@ -100,10 +100,16 @@ def seed_scope() -> None:
 
 
 def cart_definition() -> dict:
-    """The cart of one send, with the pool of the legacy scope and its daily cap."""
-    return store.definition("carrito", topes={
-        "bolsa": SCOPE, "por_dia": 50, "total": 1000,
-        "repeticion": {"una_por": "persona_y_oferta", "otra_despues_de": "0m"}})
+    """The cart of one send, with the pool of the legacy scope and its daily cap.
+
+    All day, like the legacy policy of seed_scope: with the real 09:00-21:00 of
+    ATT1 the reevaluation defers (business_window_closed) whenever the CI runs
+    outside those hours in Mexico City, and the races never start.
+    """
+    return store.definition("carrito", horario={"zona": "America/Mexico_City", "desde": "00:00", "hasta": "23:59"},
+                            topes={
+                                "bolsa": SCOPE, "por_dia": 50, "total": 1000,
+                                "repeticion": {"una_por": "persona_y_oferta", "otra_despues_de": "0m"}})
 
 
 def row(function: str, *params: object) -> dict:

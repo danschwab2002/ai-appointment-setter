@@ -521,6 +521,12 @@ begin
     if v_definition.definition #> '{topes,repeticion,otra_despues_de}' is distinct from '"0m"'::jsonb then
         raise exception using errcode = '55000', message = 'flow_engine_divergence', detail = 'ruta:repeticion_no_soportada';
     end if;
+    -- La bolsa es el scope del legado: el tope compartido se cuenta por
+    -- scope_key de los dos lados, y una bolsa sin control rechazaria cada
+    -- arranque (flow_engine_pool_unknown) hasta vencer.
+    if coalesce(v_definition.definition #>> '{topes,bolsa}', p_legacy_scope_key) is distinct from p_legacy_scope_key then
+        raise exception using errcode = '55000', message = 'flow_engine_divergence', detail = 'ruta:bolsa_distinta_del_scope';
+    end if;
 
     -- El producto (principio 11): el evento es del producto del flujo.
     select event_binding.* into v_event_binding
@@ -816,8 +822,10 @@ begin
             select d.divergence_id, d.divergence_first into v_divergence_id, v_divergence_first
               from public._flow_engine_record_divergence(
                   'transitorio', v_flow_id, null, 'transitorio:forzado_al_legado', null, p_webhook_event_id) d;
+            v_path := 'divergencia';
+        else
+            v_path := 'legado';
         end if;
-        v_path := 'divergencia';
     else
         begin
             select motor.* into v_motor
@@ -916,6 +924,9 @@ begin
         || E'                where engine_route.legacy_scope_key = p_scope_key\n'
         || E'                  and engine_route.legacy_kind = ''carrito''\n'
         || E'                  and engine_route.executor = ''motor'')\n'
+        || E'           and nullif(btrim(p_product_name), '''') is not null\n'
+        || E'           and nullif(btrim(p_offer_code), '''') is not null\n'
+        || E'           and coalesce(p_external_user_id ~ ''^[0-9]+$'', false)\n'
         || E'           and coalesce(current_setting(''flow_engine.legacy_fallback_event'', true), '''')\n'
         || E'               is distinct from p_webhook_event_id::text then\n'
         || E'            select admission.outcome as engine_outcome, admission.reason as engine_reason,\n'
