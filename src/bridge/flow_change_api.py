@@ -48,7 +48,7 @@ from fastapi import FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
 from .flow_change_operator import OperatorInputError, validate_proposal, world_from_store
-from .flow_definition import InstanceView, ProposalItemsInvalid, loads_strict, parse_items
+from .flow_definition import InstanceView, ProposalItemsInvalid, as_draft, loads_strict, parse_items, touch_times
 from .flow_validator import FlowValidationInputError, validate
 
 __all__ = [
@@ -67,7 +67,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 CONTRACT = "flow-change-cycle-v1"
-CONTRACT_VERSION = "1.4.0"
+CONTRACT_VERSION = "1.6.0"
 PREFIX = "/internal/automation-expert/v1"
 DB_ROLE = "automation_expert_change"
 MAX_BODY_BYTES = 256 * 1024
@@ -300,6 +300,55 @@ def _finding(finding: Mapping[str, Any]) -> dict[str, Any]:
             if key in finding}
 
 
+class EntryRefused(Exception):
+    """Un 422 de entrada con su motivo: el codigo cerrado y que campo o que clave no cierra.
+
+    El motivo lleva nombres de campos y de claves, nunca un valor: lo que escribio
+    el modelo puede traer un telefono. Lo arma el manejador de la app en
+    ``{"detail": code, "reason": {...}}`` y lo anota en el log.
+    """
+
+    def __init__(self, code: str, reason: Mapping[str, Any]) -> None:
+        super().__init__(code)
+        self.code = code
+        self.reason = dict(reason)
+
+
+def _keys(keys: Any) -> list[str]:
+    return sorted(key if isinstance(key, str) and _KEY.fullmatch(key) else "<otra>" for key in keys)[:10]
+
+
+_KEY = re.compile(r"[a-z][a-z0-9_]{0,39}")
+
+
+def _check_keys(body: Any, *, required: set[str], allowed: set[str]) -> Mapping[str, Any]:
+    if not isinstance(body, Mapping):
+        raise EntryRefused("invalid_body", {"field": "body", "problem": "not_object"})
+    missing, extra = required - set(body), set(body) - allowed
+    if missing or extra:
+        reason: dict[str, Any] = {"field": "body"}
+        if missing:
+            reason["missing"] = sorted(missing)
+        if extra:
+            reason["extra"] = _keys(extra)
+        raise EntryRefused("invalid_body", reason)
+    return body
+
+
+def _touches(item: Mapping[str, Any], snapshot: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Cuando sale cada toque antes y despues del cambio, en horas desde el primero."""
+    if item.get("tipo") != "version" or not isinstance(item.get("definicion"), Mapping):
+        return None
+    flow = next((f for f in snapshot.get("flows", []) if isinstance(f, Mapping)
+                 and f.get("flow_id") == item.get("flow_id")), None)
+    active = None
+    if flow is not None and flow.get("active_version") is not None:
+        active = (flow.get("versions") or {}).get(str(flow.get("active_version")))
+    return {"flujo": item.get("flujo"),
+            "antes": touch_times(active) if isinstance(active, Mapping) else [],
+            "despues": touch_times(item["definicion"])}
+
+
 async def _body(request: Request) -> Any:
     declared = request.headers.get("content-length")
     if declared is not None and (not declared.isdigit() or int(declared) > MAX_BODY_BYTES):
@@ -312,7 +361,7 @@ async def _body(request: Request) -> Any:
     try:
         return loads_strict(raw)
     except ValueError:
-        raise HTTPException(status_code=422, detail="invalid_body") from None
+        raise EntryRefused("invalid_body", {"field": "body", "problem": "not_json"}) from None
 
 
 def _requested_by(body: Mapping[str, Any]) -> str:
@@ -320,7 +369,7 @@ def _requested_by(body: Mapping[str, Any]) -> str:
     user = requested.get("slack_user") if isinstance(requested, Mapping) else None
     if not isinstance(requested, Mapping) or set(requested) != {"slack_user"} or not isinstance(user, str) \
             or not _SLACK_USER.fullmatch(user):
-        raise HTTPException(status_code=422, detail="invalid_body")
+        raise EntryRefused("invalid_body", {"field": "requested_by", "problem": "not_a_slack_user"})
     return user
 
 
@@ -338,6 +387,13 @@ def register_flow_change_routes(app: FastAPI, *, token: str, store: FlowChangeSt
     context = _Context(instance={"tenant_ref": tenant_ref, "ally_ref": ally_ref}, time_zone=time_zone,
                        inbox_id=inbox_id, git_sha=git_sha or os.getenv("GIT_SHA", "") or "unknown")
     slots = asyncio.Semaphore(2)
+
+    @app.exception_handler(EntryRefused)
+    async def entry_refused(request: Request, error: EntryRefused) -> JSONResponse:
+        route = "validate" if request.url.path.endswith("/validate") else "propose"
+        logger.info("automation_expert_change route=%s status=422 code=%s reason=%s", route, error.code,
+                    json.dumps(error.reason, sort_keys=True, separators=(",", ":")))
+        return JSONResponse(status_code=422, content={"detail": error.code, "reason": error.reason})
 
     def authenticate(authorization: str | None) -> None:
         expected = f"Bearer {token}"
@@ -393,37 +449,46 @@ def register_flow_change_routes(app: FastAPI, *, token: str, store: FlowChangeSt
         for flow in snapshot.get("flows", []):
             versions = flow.get("versions") or {}
             active = flow.get("active_version")
+            definition = versions.get(str(active)) if active is not None else None
+            # El item de una version nueva, ya con la forma que pide POST /flow-changes, y su base:
+            # el agente los copia y cambia solo los pasos. Sin version activa no hay de donde partir.
+            draft_item = None if not isinstance(definition, Mapping) else {
+                "producto": flow.get("product_ref"), "flujo": flow.get("flow_key"), "flow_id": flow.get("flow_id"),
+                "tipo": "version", "definicion": as_draft(definition), "en_curso": "seguir"}
             flows.append({key: flow.get(key) for key in ("flow_id", "product_ref", "flow_key", "state",
                                                           "active_version", "generation", "changed_at")}
                          | {"versions": sorted(int(number) for number in versions),
-                            "active_definition": versions.get(str(active)) if active is not None else None})
+                            "active_definition": definition,
+                            "toques": touch_times(definition) if isinstance(definition, Mapping) else [],
+                            "draft_item": draft_item,
+                            "draft_base": {flow.get("flow_id"): {"active_version": active}}})
         logger.info("automation_expert_change route=flow_store status=200 flows=%s", len(flows))
         return envelope({"products": snapshot.get("products"), "flows": flows})
 
     @app.post(f"{PREFIX}/flow-changes", status_code=201)
     async def propose(request: Request, authorization: str | None = Header(default=None)) -> Any:
         authenticate(authorization)
-        body = await _body(request)
-        if not isinstance(body, Mapping) or not {"items", "base", "purpose", "requested_by"} <= set(body) \
-                or not set(body) <= {"items", "base", "purpose", "requested_by", "proposal_id", "revision"}:
-            raise HTTPException(status_code=422, detail="invalid_body")
+        body = _check_keys(await _body(request), required={"items", "base", "purpose", "requested_by"},
+                           allowed={"items", "base", "purpose", "requested_by", "proposal_id", "revision"})
         requested_by = _requested_by(body)
         purpose, base = body["purpose"], body["base"]
-        if not isinstance(purpose, str) or not 1 <= len(purpose) <= 500 or not isinstance(base, Mapping):
-            raise HTTPException(status_code=422, detail="invalid_body")
+        if not isinstance(purpose, str) or not 1 <= len(purpose) <= 500:
+            raise EntryRefused("invalid_body", {"field": "purpose", "problem": "length_1_to_500"})
+        if not isinstance(base, Mapping):
+            raise EntryRefused("invalid_body", {"field": "base", "problem": "not_object"})
         if looks_like_identifier(purpose):
-            raise HTTPException(status_code=422, detail="identifier_not_allowed")
+            raise EntryRefused("identifier_not_allowed", {"field": "purpose", "problem": "phone_or_mail"})
         proposal_id = body.get("proposal_id")
         revision = body.get("revision")
         if (proposal_id is None) != (revision is None) or (
                 revision is not None and (type(revision) is not int or revision < 1)):
-            raise HTTPException(status_code=422, detail="invalid_body")
+            raise EntryRefused("invalid_body", {"field": "revision", "problem": "proposal_id_and_revision_together"})
         if proposal_id is not None:
             proposal_id = _proposal_id(proposal_id) if isinstance(proposal_id, str) else _proposal_id("")
         try:
             items = parse_items(body["items"])
-        except ProposalItemsInvalid:
-            raise HTTPException(status_code=422, detail="flow_change_items_invalid") from None
+        except ProposalItemsInvalid as error:
+            raise EntryRefused("flow_change_items_invalid", error.reason()) from None
         busy()
         async with slots:
             try:
@@ -456,19 +521,21 @@ def register_flow_change_routes(app: FastAPI, *, token: str, store: FlowChangeSt
             raise refused
         logger.info("automation_expert_change route=propose proposal_id=%s status=201 items=%s warnings=%s",
                     saved.get("proposal_id"), len(items), len(result.warnings))
+        touches = [t for t in (_touches(item, snapshot) for item in result.items_json()) if t is not None]
         return envelope({"proposal_id": saved.get("proposal_id"), "revision": saved.get("revision"),
                          "status": saved.get("status"),
-                         "warnings": [_finding(f.to_json()) for f in result.warnings]})
+                         "warnings": [_finding(f.to_json()) for f in result.warnings],
+                         "toques": touches})
 
     @app.post(f"{PREFIX}/flow-changes/{{proposal_id}}/validate")
     async def validate_change(proposal_id: str, request: Request,
                               authorization: str | None = Header(default=None)) -> Any:
         authenticate(authorization)
         checked = _proposal_id(proposal_id)
-        body = await _body(request)
-        if not isinstance(body, Mapping) or set(body) != {"revision", "requested_by"} \
-                or type(body["revision"]) is not int:
-            raise HTTPException(status_code=422, detail="invalid_body")
+        body = _check_keys(await _body(request), required={"revision", "requested_by"},
+                           allowed={"revision", "requested_by"})
+        if type(body["revision"]) is not int:
+            raise EntryRefused("invalid_body", {"field": "revision", "problem": "not_an_integer"})
         requested_by = _requested_by(body)
         busy()
         async with slots:
