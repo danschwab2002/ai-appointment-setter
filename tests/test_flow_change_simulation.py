@@ -142,3 +142,53 @@ def test_a_proposal_over_two_products_is_not_simulated() -> None:
     other = {"producto": "otro", "flujo": "pago_fallido", "flow_id": FAILED_ID, "tipo": "apagar"}
     simulation = build_simulation(_read_doc(), HISTORY, _items(_version_item(_cart()), other), time_zone=ZONE)
     assert simulation == {"status": "failed", "reason_code": "simulation_multi_product"}
+
+
+# El caso de ATT1 del 22/10 19:45Z (v1.16.2): ``volver att1/carrito 1`` con el carrito en la v2. La lectura del
+# motor trae la activa y las versiones con recorridos abiertos, y la v1 no estaba: la simulacion daba
+# ``proposal_version_unknown`` y la vuelta salio con ``--sin-simulacion``. El almacen trae las dos.
+VOLVER = json.loads((FIXTURES / "flow_simulation/att1_volver_carrito_20261022.json").read_text())
+
+
+def _engine_versions(engine: dict, key: str) -> list[int]:
+    return [row["version"] for flow in engine["flows"] if flow["flow_key"] == key for row in flow["versions"]]
+
+
+def test_going_back_to_a_version_the_engine_read_does_not_bring_fails_without_the_store() -> None:
+    assert _engine_versions(VOLVER["engine"], "carrito") == [2]
+    assert sorted(next(f for f in VOLVER["store"]["flows"] if f["flow_key"] == "carrito")["versions"]) == ["1", "2"]
+    simulation = build_simulation(VOLVER["engine"], HISTORY, _items(VOLVER["item"]), time_zone=ZONE)
+    assert simulation == {"status": "failed", "reason_code": "proposal_version_unknown"}
+
+
+def test_going_back_to_a_version_the_engine_read_does_not_bring_is_simulated_from_the_store() -> None:
+    engine = copy.deepcopy(VOLVER["engine"])
+    simulation = build_simulation(engine, HISTORY, _items(VOLVER["item"]), time_zone=ZONE, store=VOLVER["store"])
+    assert simulation["status"] == "built"
+    summary = simulation["summary"]
+    # La v2 espera 6 h antes del A1 y la v1 no: es la espera de 6 horas al reves (52 cambios). Uno menos que
+    # alli en cada lado porque aca el pago fallido esta apagado, como en ATT1, y su recorrido no recibe.
+    assert (summary["disparos"], summary["cambios"]) == (79, 52)
+    assert (summary["vigente"]["recibieron"], summary["propuesta"]["recibieron"]) == (52, 59)
+    assert "pago_fallido" not in summary["vigente"]["flujos"]
+    assert simulation["summary_sha256"] == summary_sha256(summary)
+    # La lectura que recibio no se toca.
+    assert engine == VOLVER["engine"]
+
+
+def test_the_store_changes_nothing_for_a_new_version_or_a_return_to_the_active_one() -> None:
+    wait = _cart([{"esperar": "6h"}, *_cart()["pasos"]])
+    back = {"producto": "att1", "flujo": "carrito", "flow_id": CART_ID, "tipo": "volver", "version": 5,
+            "en_curso": "seguir"}
+    store = {"flows": [{"flow_id": CART_ID, "versions": {"1": _cart()}}]}
+    for item in (_version_item(wait), back):
+        assert build_simulation(_read_doc(), HISTORY, _items(item), time_zone=ZONE, store=store) == \
+            build_simulation(_read_doc(), HISTORY, _items(item), time_zone=ZONE)
+
+
+def test_a_return_target_missing_from_the_store_too_is_still_unknown() -> None:
+    store = copy.deepcopy(VOLVER["store"])
+    for flow in store["flows"]:
+        flow["versions"].pop("1", None)
+    simulation = build_simulation(VOLVER["engine"], HISTORY, _items(VOLVER["item"]), time_zone=ZONE, store=store)
+    assert simulation == {"status": "failed", "reason_code": "proposal_version_unknown"}

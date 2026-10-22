@@ -140,3 +140,22 @@ def test_it_runs_as_a_module_like_in_the_fresh_container() -> None:
                             env={"PYTHONPATH": str(ROOT / "src"), **IMAGE}, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(result.stdout)["ok"] is True
+
+
+def test_volver_to_a_version_the_engine_read_does_not_bring_validates_with_the_simulation_built() -> None:
+    # ATT1, 22/10 19:45Z: ``volver att1/carrito 1`` con la v2 activa daba ``simulation_failed`` con
+    # ``proposal_version_unknown``. La foto del almacen que ya lee quien valida trae la v1, y la simulacion sale de ahi.
+    case = json.loads((ROOT / "tests/fixtures/flow_simulation/att1_volver_carrito_20261022.json")
+                      .read_text(encoding="utf-8"))
+    history = json.loads((ROOT / "tests/fixtures/flow_engine/att1_recovery_capture_v3_20261021.json")
+                         .read_text(encoding="utf-8"))
+    cart_id = case["item"]["flow_id"]
+    body = {"instance": copy.deepcopy(INSTANCE), "store": case["store"], "catalog": CATALOG,
+            "engine": case["engine"], "history": history, "proposal": {
+                "id": "33ceb395-63b2-4c22-a728-e9feef1b95cd", "revision": 1, "items": [case["item"]],
+                "draft_base": {cart_id: {"active_version": 2}}, "purpose": "volver el carrito a la v1",
+                "requested_by_kind": "operador"}}
+    code, out = run(["validar"], body)
+    assert code == op.EXIT_OK and out["ok"] is True, out["result"]
+    assert out["preview"]["simulacion"]["status"] == "built"
+    assert out["preview"]["simulacion"]["summary"]["cambios"] == 52
