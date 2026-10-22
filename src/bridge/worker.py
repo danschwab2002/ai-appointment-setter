@@ -101,6 +101,7 @@ from bridge.payment_slip_first_touch import (
     compose_payment_slip_first_touch,
     payment_slip_ingestion_reason,
 )
+from bridge.flow_engine_runtime import FlowEngineRuntime
 from bridge.followup_steps import FOLLOWING_STEP_TRIGGERS
 from bridge.payment_slip_reminders import PAYMENT_SLIP_STEPS
 from bridge.phones import equivalent_whatsapp_phones, whatsapp_phone_region
@@ -3149,9 +3150,13 @@ class ResolutionWorker:
         product_routes: ProductRoutes | None = None,
         payment_slip: PaymentSlipPlanningConfig | None = None,
         payment_failure_planning: PaymentFailurePlanningConfig | None = None,
+        flow_engine: FlowEngineRuntime | None = None,
     ) -> None:
         self._supabase = supabase
         self._poll_interval = poll_interval_seconds
+        # flow-engine-v1, seccion 8: solo con FLOW_ENGINE_ENABLED. Con None,
+        # el lote no lee nada del motor y el carrito se planifica como hoy.
+        self._flow_engine = flow_engine
         self._batch_size = batch_size
         self._recovery_agent = recovery_agent
         self._message_sender = message_sender
@@ -3212,6 +3217,10 @@ class ResolutionWorker:
                 pass
 
     async def _process_batch(self) -> None:
+        if self._flow_engine is not None:
+            # A lo sumo cada 60 s; una falla deja la cache failing y el
+            # carrito va por el envoltorio de hoy.
+            await self._flow_engine.routes.refresh_if_due()
         events = await self._supabase.fetch_pending_events(
             limit=self._batch_size,
             excluded_event_types=(
@@ -3349,6 +3358,10 @@ class ResolutionWorker:
             resolver_kwargs: dict[str, Any] = {}
             if self._commercial_ally_config is not None:
                 resolver_kwargs["commercial_ally_config"] = self._commercial_ally_config
+            if self._flow_engine is not None and event_type == EVENT_CART_ABANDONMENT:
+                # Solo el carrito: el pago rechazado y la ficha nunca pasan
+                # por la admision del motor.
+                resolver_kwargs["flow_engine"] = self._flow_engine
             report = await resolve_event(
                 webhook_event_id=event_id,
                 payload=payload,

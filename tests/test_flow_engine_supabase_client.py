@@ -145,7 +145,9 @@ def test_a_no_start_with_case_columns_is_a_committed_error() -> None:
     [
         lambda request: (_ for _ in ()).throw(httpx.ConnectTimeout("timeout", request=request)),
         lambda request: httpx.Response(503, json={"message": "unavailable"}),
+        lambda request: httpx.Response(504, text="gateway timeout"),
         lambda request: httpx.Response(500, json={"code": "57014", "message": "canceling statement"}),
+        lambda request: httpx.Response(500, json={"code": "55P03", "message": "lock_not_available"}),
     ],
 )
 def test_an_admission_without_an_answer_is_unavailable(responder: Any) -> None:
@@ -153,10 +155,22 @@ def test_an_admission_without_an_answer_is_unavailable(responder: Any) -> None:
         asyncio.run(_client(responder).admit_flow_engine_cart(**ADMIT_ARGS))
 
 
-def test_an_invalid_input_is_a_plain_error_not_unavailable() -> None:
-    responder = lambda request: httpx.Response(  # noqa: E731
-        400, json={"code": "22023", "message": "invalid_flow_engine_admission_parameters"}
-    )
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [
+        (400, {"code": "22023", "message": "invalid_flow_engine_admission_parameters"}),
+        # PostgREST contesta un raise con 500: es una respuesta, no una caida.
+        (500, {"code": "XX000", "message": "internal"}),
+        (500, {"code": "55000", "message": "pilot_scope_rejected"}),
+        (500, "no es json"),
+    ],
+)
+def test_an_error_of_the_function_is_a_plain_error_not_unavailable(status: int, body: object) -> None:
+    def responder(request: httpx.Request) -> httpx.Response:
+        if isinstance(body, str):
+            return httpx.Response(status, text=body)
+        return httpx.Response(status, json=body)
+
     with pytest.raises(SupabaseError) as raised:
         asyncio.run(_client(responder).admit_flow_engine_cart(**ADMIT_ARGS))
     assert not isinstance(raised.value, FlowEngineAdmissionUnavailable)

@@ -1630,6 +1630,29 @@ def _automation_expert_value(response: httpx.Response, *, operation: str) -> Any
     return payload
 
 
+# A gateway that did not reach the base, or a SQLSTATE of a call that did not
+# finish (statement or lock timeout, serialization, deadlock, connection):
+# nothing about the event is known. Any other error of the function (PostgREST
+# answers a raise with HTTP 500 too) is an answer, and marks the event failed
+# as today.
+_FLOW_ENGINE_TRANSIENT_STATUS = frozenset({502, 503, 504})
+_FLOW_ENGINE_TRANSIENT_SQLSTATES = frozenset({
+    "57014", "55P03", "40001", "40P01", "53300", "57P01", "08000", "08003", "08006",
+})
+
+
+def _flow_engine_transient_response(response: httpx.Response) -> bool:
+    if response.status_code in _FLOW_ENGINE_TRANSIENT_STATUS:
+        return True
+    if response.status_code < 500:
+        return False
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    return isinstance(body, dict) and body.get("code") in _FLOW_ENGINE_TRANSIENT_SQLSTATES
+
+
 def _flow_engine_admission(row: dict[str, Any]) -> FlowEngineAdmission:
     """Check one admission row against the contract, or fail as committed."""
     operation = "admit_flow_engine_hotmart_v1"
@@ -5940,7 +5963,7 @@ class SupabaseClient:
             )
         except SupabaseError as exc:
             raise FlowEngineAdmissionUnavailable(f"{operation}_unavailable") from exc
-        if response.status_code >= 500:
+        if _flow_engine_transient_response(response):
             raise FlowEngineAdmissionUnavailable(
                 f"{operation}_unavailable: HTTP {response.status_code}"
             )

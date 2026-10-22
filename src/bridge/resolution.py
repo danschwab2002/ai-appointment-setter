@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 from bridge.commercial_ally import CommercialAllyConfig
 from bridge.hotmart import (
+    EVENT_CART_ABANDONMENT,
     EVENT_PURCHASE_BILLET_PRINTED,
     EVENT_PURCHASE_CANCELED,
     HotmartBuyerData,
@@ -24,6 +26,8 @@ from bridge.messaging import is_allowed_whatsapp_target
 from bridge.phones import equivalent_whatsapp_phones, whatsapp_phone_region
 from bridge.supabase import (
     ContactMatch,
+    FlowEngineAdmission,
+    FlowEngineAdmissionUnavailable,
     PilotBoundaryConfig,
     PilotPlanRejectedError,
     SituationReport,
@@ -31,8 +35,16 @@ from bridge.supabase import (
     SupabaseError,
 )
 
+if TYPE_CHECKING:
+    from bridge.flow_engine_runtime import FlowEngineRuntime
+
 # Grace period before the first contact attempt (hours).
 DEFAULT_GRACE_HOURS = 1
+# The legacy_kind of the cart route (contract flow-engine-v1, section 3).
+FLOW_ENGINE_CART_KIND = "carrito"
+# What an engine admission that did not answer leaves: the event is not
+# marked, it stays received and the batch tries again.
+FLOW_ENGINE_ADMISSION_PENDING = "flow_engine_admission_unavailable"
 
 
 logger = logging.getLogger(__name__)
@@ -102,6 +114,80 @@ async def _stored_whatsapp_identity(
     return phone
 
 
+async def _admit_through_engine(
+    supabase: SupabaseClient,
+    *,
+    flow_engine: FlowEngineRuntime,
+    webhook_event_id: str,
+    contact_id: str,
+    external_product_id: str,
+    product_name: str,
+    offer_code: str | None,
+    abandoned_at: str,
+    chatwoot_account_id: int,
+    chatwoot_inbox_id: int,
+    destination_phone: str,
+    pilot_boundary: PilotBoundaryConfig,
+    policy_key: str,
+    policy_version: int,
+) -> FlowEngineAdmission:
+    """Admit the cart through the engine; return only when it was planned.
+
+    ``motor_arranco``, ``legado`` and ``legado_por_divergencia`` planned a case
+    (the event ends processed, as today). ``legado_rechazo`` leaves the event
+    failed with the reason of the legacy (what ``PilotPlanRejectedError``
+    leaves today), ``motor_no_arranca`` with ``flow_engine_no_start:<reason>``
+    (design, principle 1.5). An admission that did not answer leaves the event
+    received, unmarked, and counts a failure: from the fourth consecutive one
+    on, the call goes with ``p_force_legacy`` (principle 1.4).
+    """
+    force_legacy = flow_engine.admission_failures.should_force_legacy(webhook_event_id)
+    try:
+        admission = await supabase.admit_flow_engine_cart(
+            webhook_event_id=webhook_event_id,
+            contact_id=contact_id,
+            external_product_id=external_product_id,
+            product_name=product_name,
+            offer_code=offer_code,
+            abandoned_at=abandoned_at,
+            chatwoot_account_id=chatwoot_account_id,
+            chatwoot_inbox_id=chatwoot_inbox_id,
+            destination_phone=destination_phone,
+            pilot_boundary=pilot_boundary,
+            legacy_policy_key=policy_key,
+            legacy_policy_version=policy_version,
+            force_legacy=force_legacy,
+        )
+    except FlowEngineAdmissionUnavailable as exc:
+        failures = flow_engine.admission_failures.record_failure(webhook_event_id)
+        logger.warning(
+            "flow_engine_admission_unavailable event_id=%s failures=%s forced=%s",
+            webhook_event_id,
+            failures,
+            force_legacy,
+        )
+        raise ResolutionError(FLOW_ENGINE_ADMISSION_PENDING) from exc
+    flow_engine.admission_failures.clear(webhook_event_id)
+    logger.info(
+        "flow_engine_admission event_id=%s outcome=%s forced=%s",
+        webhook_event_id,
+        admission.outcome,
+        force_legacy,
+    )
+    if admission.outcome in {"legado_rechazo", "motor_no_arranca"}:
+        assert admission.reason is not None
+        error = (
+            admission.reason
+            if admission.outcome == "legado_rechazo"
+            else f"flow_engine_no_start:{admission.reason}"
+        )
+        await supabase.update_event_status(
+            event_id=webhook_event_id, status="failed", error=error
+        )
+        raise ResolutionError(error)
+    return admission
+
+
 async def resolve_event(
     *,
     webhook_event_id: str,
@@ -116,6 +202,7 @@ async def resolve_event(
     pilot_boundary: PilotBoundaryConfig | None = None,
     commercial_ally_config: CommercialAllyConfig | None = None,
     event_type: str | None = None,
+    flow_engine: FlowEngineRuntime | None = None,
 ) -> SituationReport:
     """Resolve identity for one webhook event and return a situation report.
 
@@ -340,23 +427,62 @@ async def resolve_event(
                 planner = supabase.plan_payment_slip_recovery
             else:
                 planner = supabase.plan_cart_recovery
-            plan = await planner(
-                webhook_event_id=webhook_event_id,
-                contact_id=contact_id,
-                external_product_id=str(buyer.product_id),
-                product_name=buyer.product_name,
-                offer_code=buyer.offer_code,
-                policy_key=policy_key,
-                policy_version=policy_version,
-                abandoned_at=abandoned_at,
-                chatwoot_account_id=(
-                    chatwoot_account_id if identity_allowed else None
-                ),
-                chatwoot_inbox_id=(chatwoot_inbox_id if identity_allowed else None),
-                external_user_id=external_user_id,
-                pilot_boundary=pilot_boundary,
-            )
-            recovery_case_id = plan.recovery_case_id
+            # flow-engine-v1, seccion 8: solo con el flag, solo el carrito, y
+            # solo con la ruta del scope de la frontera en motor. Con la ruta
+            # en legado, sin ruta, sin lectura buena o sin flag, la llamada es
+            # exactamente la de hoy.
+            engine_pilot_boundary = pilot_boundary
+            if (
+                flow_engine is not None
+                and buyer.event_type == EVENT_CART_ABANDONMENT
+                and engine_pilot_boundary is not None
+                and identity_allowed
+                and external_user_id is not None
+                and chatwoot_account_id is not None
+                and chatwoot_inbox_id is not None
+                and flow_engine.routes.executor(
+                    engine_pilot_boundary.scope_key, FLOW_ENGINE_CART_KIND
+                )
+                == "motor"
+            ):
+                admission = await _admit_through_engine(
+                    supabase,
+                    flow_engine=flow_engine,
+                    webhook_event_id=webhook_event_id,
+                    contact_id=contact_id,
+                    external_product_id=str(buyer.product_id),
+                    product_name=buyer.product_name,
+                    offer_code=buyer.offer_code,
+                    abandoned_at=abandoned_at,
+                    chatwoot_account_id=chatwoot_account_id,
+                    chatwoot_inbox_id=chatwoot_inbox_id,
+                    destination_phone=external_user_id,
+                    pilot_boundary=engine_pilot_boundary,
+                    policy_key=policy_key,
+                    policy_version=policy_version,
+                )
+                assert admission.recovery_case_id is not None
+                recovery_case_id = admission.recovery_case_id
+            else:
+                plan = await planner(
+                    webhook_event_id=webhook_event_id,
+                    contact_id=contact_id,
+                    external_product_id=str(buyer.product_id),
+                    product_name=buyer.product_name,
+                    offer_code=buyer.offer_code,
+                    policy_key=policy_key,
+                    policy_version=policy_version,
+                    abandoned_at=abandoned_at,
+                    chatwoot_account_id=(
+                        chatwoot_account_id if identity_allowed else None
+                    ),
+                    chatwoot_inbox_id=(
+                        chatwoot_inbox_id if identity_allowed else None
+                    ),
+                    external_user_id=external_user_id,
+                    pilot_boundary=pilot_boundary,
+                )
+                recovery_case_id = plan.recovery_case_id
         else:
             grace_expires = datetime.now(timezone.utc) + timedelta(
                 hours=grace_hours

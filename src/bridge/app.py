@@ -204,6 +204,7 @@ from bridge.payment_failure_variant import (
     PaymentFailureVariantsConfig,
 )
 from bridge.recovery_coupons import RecoveryCouponWorker
+from bridge.flow_engine_runtime import FlowEngineRuntime
 from bridge.worker import (
     DurableDispatcher,
     HotmartAbandonmentTimerWorker,
@@ -4710,6 +4711,21 @@ def create_app(
     resolution_worker: ResolutionWorker | None = None
     hotmart_abandonment_timer_worker: HotmartAbandonmentTimerWorker | None = None
     durable_dispatcher: DurableDispatcher | None = None
+    # flow-engine-v1, seccion 8: lo que el bridge guarda del motor. Solo con el
+    # flag; apagado es None y ningun worker lo recibe.
+    flow_engine_runtime: FlowEngineRuntime | None = None
+    if settings.flow_engine_enabled:
+        if shared_supabase is None or settings.instance_manifest is None:
+            raise ValueError(
+                "FLOW_ENGINE_ENABLED requires Supabase and an instance manifest"
+            )
+        flow_engine_runtime = FlowEngineRuntime(
+            supabase=shared_supabase,
+            instance={
+                "tenant_ref": settings.instance_manifest.tenant_ref,
+                "ally_ref": settings.instance_manifest.ally_ref,
+            },
+        )
     if settings.hotmart_abandonment_timer_worker_enabled:
         if shared_supabase is None:
             raise ValueError(
@@ -4870,6 +4886,7 @@ def create_app(
             ),
             pilot_boundary=pilot_boundary,
             product_routes=commercial_ally_routes,
+            flow_engine=flow_engine_runtime,
             commercial_ally_config=(
                 settings.commercial_ally_config
                 if portable_dynamic_recipient
@@ -5252,6 +5269,7 @@ def create_app(
 
     app = FastAPI(title="AI Appointment Setter Bridge", lifespan=lifespan)
     app.state.resolution_worker = resolution_worker
+    app.state.flow_engine = flow_engine_runtime
     app.state.hotmart_abandonment_timer_worker = hotmart_abandonment_timer_worker
     app.state.recovery_coupon_worker = recovery_coupon_worker
     app.state.durable_dispatcher = durable_dispatcher
