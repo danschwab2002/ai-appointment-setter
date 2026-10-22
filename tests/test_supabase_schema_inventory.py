@@ -1148,11 +1148,11 @@ def test_flow_engine_routes_fingerprint_reads_are_the_only_grants() -> None:
     assert "'automation_expert_change'" not in fingerprint.replace("to_regrole('automation_expert_change')", "")
 
 
-def test_flow_engine_history_cap_fingerprint_comes_before_the_motor() -> None:
+def test_flow_engine_history_cap_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261021000300 (el tope de read_flow_engine_history_v1 en
-    # 4.000.000 bytes) va justo antes de la del camino del motor.
-    fingerprint = sql.split("'20261021000300'", 1)[1].split("    union all\n    select\n        '20261022000100'", 1)[0]
+    # 4.000.000 bytes).
+    fingerprint = sql.split("'20261021000300'", 1)[1].split("    union all\n    select\n        '20261021000400'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261021000300_flow_engine_history_cap_v1.sql'" in fingerprint
@@ -1163,6 +1163,26 @@ def test_flow_engine_history_cap_fingerprint_comes_before_the_motor() -> None:
         "position('c_max_bytesconstantinteger:=1000000'indefinition)=0",
         "andhas_function_privilege('service_role',oid,'EXECUTE')",
         "andnothas_function_privilege('anon',oid,'EXECUTE')",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_automation_expert_flows_speed_fingerprint() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261021000400 (la lectura de /flows que lee las
+    # reevaluaciones una sola vez) va justo antes de la del camino del motor.
+    fingerprint = sql.split("'20261021000400'", 1)[1].split("    union all\n    select\n        '20261022000100'", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261021000400_automation_expert_flows_speed_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",1,'automation_expert_flows_speed'")
+    for marker in (
+        "to_regprocedure('public.read_automation_expert_flows_v1(jsonb)')",
+        "position('reevaluatedasmaterialized'indefinition)>0",
+        "andprovolatile='s'",
+        "andhas_function_privilege('service_role',oid,'EXECUTE')",
+        "andnothas_function_privilege('anon',oid,'EXECUTE')",
+        "andnothas_function_privilege('authenticated',oid,'EXECUTE')",
     ):
         assert marker in compact_fingerprint, marker
 

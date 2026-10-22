@@ -48,9 +48,11 @@ def test_it_is_one_transaction_and_the_last_migration() -> None:
     assert "\nbegin;\n" in sql and sql.rstrip().endswith("commit;")
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
     assert names[-1] == MIGRATION.name
-    # Va despues de las rutas de la T2.3a y del tope de la historia.
-    assert names[-2] == "20261021000300_flow_engine_history_cap_v1.sql"
-    assert names[-3] == "20261021000200_flow_engine_routes_v1.sql"
+    # Va despues de las rutas de la T2.3a, del tope de la historia y de la
+    # lectura de /flows mas rapida.
+    assert names[-2] == "20261021000400_automation_expert_flows_speed_v1.sql"
+    assert names[-3] == "20261021000300_flow_engine_history_cap_v1.sql"
+    assert names[-4] == "20261021000200_flow_engine_routes_v1.sql"
     # Correrla dos veces aborta.
     assert "flow_engine_motor_already_applied" in sql
 

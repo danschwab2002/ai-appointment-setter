@@ -1020,6 +1020,48 @@ if (invalidInstance?.code !== '22023' || !/automation_expert_invalid_instance/.t
 // son los fixtures con los que se prueba el bridge
 // (tests/fixtures/automation_expert/rpc_*.json). Ya pasaron el filtro de los
 // canarios de arriba.
+// ---------------------------------------------------------------------------
+// La lectura de /flows de 20261021000400 lee las reevaluaciones una sola vez
+// (en ATT1 la de 20261015000200 pasaba los 8 s). La salida tiene que ser la
+// misma: la version anterior se recrea con otro nombre desde su migracion y
+// las dos se comparan sobre los mismos datos, sin database_at.
+// ---------------------------------------------------------------------------
+{
+  const original = readFileSync(join(root, 'supabase/migrations/20261015000200_automation_expert_read_v1.sql'), 'utf8');
+  const start = original.indexOf('create or replace function public.read_automation_expert_flows_v1(');
+  const end = original.indexOf('create or replace function public.find_automation_expert_lead_v1(');
+  if (start < 0 || end < start) fail('the 20261015000200 flows function was not found');
+  const before = original.slice(start, end).replace(
+    'public.read_automation_expert_flows_v1(', 'public.read_automation_expert_flows_before_speed(',
+  );
+  const current = one((await db.query(
+    "select pg_get_functiondef('public.read_automation_expert_flows_v1(jsonb)'::regprocedure) as definition",
+  )).rows, 'current flows definition').definition;
+  if (!current.includes('reevaluated as materialized')
+      || current.split('public.conversation_events').length !== 2) {
+    fail('the current flows function does not read the reevaluations once');
+  }
+  await db.exec(before);
+  try {
+    for (const [label, instance] of [['ATT1', ATT1], ['OTRA', OTRA]]) {
+      const [previous, current_] = await readOnly(async () => {
+        const row = one((await db.query(`
+          select public.read_automation_expert_flows_before_speed($1::jsonb) as previous,
+                 public.read_automation_expert_flows_v1($1::jsonb) as current_
+        `, [JSON.stringify(instance)])).rows, `flows parity ${label}`);
+        return [row.previous, row.current_];
+      });
+      delete previous.database_at;
+      delete current_.database_at;
+      if (JSON.stringify(previous) !== JSON.stringify(current_)) {
+        fail(`flows parity ${label}: ${JSON.stringify({ previous, current_ })}`);
+      }
+    }
+  } finally {
+    await db.exec('drop function public.read_automation_expert_flows_before_speed(jsonb)');
+  }
+}
+
 if (process.env.AUTOMATION_EXPERT_FIXTURE_DIR) {
   const { writeFileSync } = await import('node:fs');
   const dir = process.env.AUTOMATION_EXPERT_FIXTURE_DIR;

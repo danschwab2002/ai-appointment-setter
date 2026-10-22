@@ -34,11 +34,13 @@ def test_it_is_one_transaction_and_comes_right_after_the_routes() -> None:
     sql = _sql()
     assert "\nbegin;\n" in sql and sql.rstrip().endswith("commit;")
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
-    position = names.index(MIGRATION.name)
-    assert names[position - 1] == ROUTES.name
-    # Despues va el camino del motor para el carrito (la T2.3b), que no
-    # redefine read_flow_engine_history_v1.
-    assert names[position + 1:] == ["20261022000100_flow_engine_motor_carrito_v1.sql"]
+    assert names[names.index(ROUTES.name) + 1] == MIGRATION.name
+    # Lo que viene despues no vuelve a definir la historia del motor: la
+    # lectura de /flows mas rapida (20261021000400) solo reemplaza
+    # read_automation_expert_flows_v1, y el camino del motor para el carrito
+    # (20261022000100, la T2.3b) no la toca.
+    for later in names[names.index(MIGRATION.name) + 1:]:
+        assert "read_flow_engine_history_v1" not in (MIGRATIONS / later).read_text(encoding="utf-8")
 
 
 def test_the_anchor_is_the_routes_constant_and_appears_once() -> None:
