@@ -38,7 +38,8 @@
 //   6. read_flow_engine_history_v1: la ventana (8 dias, too_wide y
 //      since_invalid), la misma captura que la consulta v3 sobre la misma base
 //      (salvo la sal, el origen y la siembra), una sal por llamada, y
-//      flow_engine_history_too_large con mas de 1 MB.
+//      con el tope de 20261021000300: mas de 1 MB se lee entera y con mas
+//      de 4 MB, flow_engine_history_too_large.
 //
 // Con --salida <ruta> escribe la historia a ese archivo, para correrle la
 // prueba de forma de Python:
@@ -1264,20 +1265,33 @@ const SECRETS = new Set();
     }
   }
   if (/@|https?:\/\//i.test(historyText)) fail('la historia trae una arroba o una URL');
-  // Mas de 1 MB: corta.
-  await db.exec('begin');
-  try {
-    await db.query(`
+  // El tope (20261021000300): 4.000.000 bytes. Una historia de mas de 1 MB
+  // (el tope de la T2.3a, que la semana real del carrito de ATT1 pasa) se lee
+  // entera; pasados los 4 MB, corta.
+  const relleno = async (desde, hasta) => db.query(`
       insert into public.webhook_events (source, external_event_id, event_type, payload, received_at, processing_status)
       select 'hotmart', 'motor-relleno-' || n, 'PURCHASE_OUT_OF_SHOPPING_CART',
              jsonb_build_object('creation_date', 1760000000000 + n, 'data', jsonb_build_object('product',
                jsonb_build_object('id', $1::bigint))), clock_timestamp(), 'processed'
-        from generate_series(1, 4000) n
-    `, [ATT1.productId]);
+        from generate_series($2::integer, $3::integer) n
+    `, [ATT1.productId, desde, hasta]);
+  await db.exec('begin');
+  try {
+    await relleno(1, 4000);
+    const grande = await history(sinceActivation.toISOString());
+    const bytesGrande = Buffer.byteLength(JSON.stringify(grande));
+    if (grande.ok === false || bytesGrande <= 1000000 || bytesGrande >= 4000000) {
+      fail('una historia de mas de 1 MB y menos de 4 MB no se lee entera', { ok: grande.ok, reason_code: grande.reason_code, bytes: bytesGrande });
+    }
+    // Cuantos eventos faltan para pasar los 4 MB, con lo que peso cada uno.
+    const porEvento = (bytesGrande - Buffer.byteLength(historyText)) / 4000;
+    const faltan = Math.ceil(((4000000 - bytesGrande) / porEvento) * 1.2);
+    await relleno(4001, 4000 + faltan);
     const tooLarge = await history(sinceActivation.toISOString());
     if (canonical(tooLarge) !== canonical({ ok: false, reason_code: 'flow_engine_history_too_large' })) {
-      fail('mas de 1 MB', Object.keys(tooLarge));
+      fail('mas de 4 MB', Object.keys(tooLarge));
     }
+    results.tope = { bytes_de_mas_de_1_mb: bytesGrande, eventos_para_pasar_4_mb: 4000 + faltan };
   } finally {
     await db.exec('rollback');
   }

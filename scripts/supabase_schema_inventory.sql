@@ -5315,6 +5315,26 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         6,
         'flow_engine_routes'
+    union all
+    select
+        '20261021000300',
+        '20261021000300_flow_engine_history_cap_v1.sql',
+        -- El tope de la historia en 4.000.000 bytes, con los permisos de la
+        -- T2.3a intactos.
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.read_flow_engine_history_v1(jsonb,text,timestamptz)')
+              and position('c_max_bytes constant integer := 4000000' in definition) > 0
+              and position('flow_engine_history_cap_v1' in definition) > 0
+              and position('c_max_bytes constant integer := 1000000' in definition) = 0
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        1,
+        'flow_engine_history_cap'
 )
 select
     version,

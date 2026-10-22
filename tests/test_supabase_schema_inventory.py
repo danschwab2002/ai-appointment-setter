@@ -1114,15 +1114,15 @@ def test_automation_expert_change_fingerprint_names_the_role_only_through_to_reg
     assert code.count("'automation_expert_change'") == code.count("to_regrole('automation_expert_change')") + 1
 
 
-def test_flow_engine_routes_fingerprint_is_last_and_reads_are_the_only_grants() -> None:
+def test_flow_engine_routes_fingerprint_reads_are_the_only_grants() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261021000200 (las rutas, las lecturas y la guarda del
-    # almacen, la T2.3a del motor de flujos) es la ultima.
-    fingerprint = sql.split("'20261021000200'", 1)[1].split("select\n    version,", 1)[0]
+    # almacen, la T2.3a del motor de flujos), hasta la del tope de la historia.
+    fingerprint = sql.split("'20261021000200'", 1)[1].split("    union all\n    select\n        '20261021000300'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261021000200_flow_engine_routes_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",6,'flow_engine_routes')")
+    assert compact_fingerprint.endswith(",6,'flow_engine_routes'")
     for marker in (
         "to_regclass('public.flow_engine_routes')",
         "to_regclass('public.flow_engine_divergences')",
@@ -1139,3 +1139,22 @@ def test_flow_engine_routes_fingerprint_is_last_and_reads_are_the_only_grants() 
     # El rol de la T4 se nombra solo a traves de to_regrole: el inventario
     # corre tambien antes de aplicar.
     assert "'automation_expert_change'" not in fingerprint.replace("to_regrole('automation_expert_change')", "")
+
+
+def test_flow_engine_history_cap_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261021000300 (el tope de read_flow_engine_history_v1 en
+    # 4.000.000 bytes) es la ultima.
+    fingerprint = sql.split("'20261021000300'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261021000300_flow_engine_history_cap_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",1,'flow_engine_history_cap')")
+    for marker in (
+        "to_regprocedure('public.read_flow_engine_history_v1(jsonb,text,timestamptz)')",
+        "position('c_max_bytesconstantinteger:=4000000'indefinition)>0",
+        "position('c_max_bytesconstantinteger:=1000000'indefinition)=0",
+        "andhas_function_privilege('service_role',oid,'EXECUTE')",
+        "andnothas_function_privilege('anon',oid,'EXECUTE')",
+    ):
+        assert marker in compact_fingerprint, marker
