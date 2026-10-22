@@ -6,8 +6,9 @@ GET_FLOW_DEFINITIONS = {
     "name": "get_flow_definitions",
     "description": (
         "Lee los flujos del almacén: su flow_id, su estado, su versión activa, las versiones que "
-        "tiene y la definición activa completa (setter-flujo/v1). Es de donde se copia el flujo "
-        "antes de proponer un cambio. Solo lee."
+        "tiene, la definición activa completa (setter-flujo/v1) y sus toques (cuándo sale cada "
+        "mensaje, en horas desde el primero). Cada flujo trae draft_item y draft_base: el ítem y la "
+        "base de propose_flow_change, listos para copiar. Solo lee."
     ),
     "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
 }
@@ -17,10 +18,13 @@ PROPOSE_FLOW_CHANGE = {
     "description": (
         "Guarda un borrador de cambio de uno o varios flujos, con el formato setter-flujo/v1: una "
         "versión nueva (la definición completa), volver a una versión publicada, prender o apagar. "
-        "Antes, leé el flujo con get_flow_definitions y copiá su definición activa: el cambio se escribe "
-        "sobre esa. En base va la versión activa que leíste de cada flujo. Si hay bloqueos, no "
-        "guarda y los devuelve para corregirlos. No aprueba ni publica: eso lo hace un aprobador "
-        "con el comando del operador. Para rehacer un borrador, mandá su proposal_id y su revision."
+        "Para una versión nueva: copiá draft_item de get_flow_definitions en items, cambiá solo lo "
+        "pedido en draft_item.definicion.pasos, y mandá draft_base en base. La respuesta trae toques: "
+        "cuándo sale cada mensaje antes y después, en horas desde el primero; comparalos con lo "
+        "pedido. Si hay bloqueos, no guarda y los devuelve para corregirlos; si el pedido no cierra, "
+        "reason dice qué campo, qué ítem y qué claves faltan o sobran. No aprueba ni publica: eso lo "
+        "hace un aprobador con el comando del operador. Para rehacer un borrador, mandá su "
+        "proposal_id y su revision."
     ),
     "parameters": {
         "type": "object",
@@ -29,13 +33,17 @@ PROPOSE_FLOW_CHANGE = {
                 "type": "array",
                 "minItems": 1,
                 "maxItems": 10,
-                "description": "Los ítems: {producto, flujo, flow_id, tipo: version|volver|prender|apagar, "
-                               "definicion (si es version), version (si es volver), en_curso: seguir}.",
+                "description": "Los ítems, con estas claves exactas: version → {producto, flujo, flow_id, "
+                               "tipo: \"version\", definicion, en_curso: \"seguir\"} (es draft_item); "
+                               "volver → {producto, flujo, flow_id, tipo: \"volver\", version, en_curso}; "
+                               "prender o apagar → {producto, flujo, flow_id, tipo}. producto y flujo son el "
+                               "product_ref y el flow_key del almacén.",
                 "items": {"type": "object"},
             },
             "base": {
                 "type": "object",
-                "description": "Por cada flow_id de los ítems, {active_version: n | null}: la versión que leíste.",
+                "description": "Por cada flow_id de los ítems, {active_version: n | null}: la versión que "
+                               "leíste (es draft_base).",
             },
             "purpose": {
                 "type": "string",

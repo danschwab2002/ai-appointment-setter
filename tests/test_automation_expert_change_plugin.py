@@ -174,6 +174,22 @@ def test_a_blocked_draft_comes_back_with_its_blocks(bridge: type[_Bridge]) -> No
     assert result == {"error": "flow_change_draft_blocked", "blocks": blocks, "warnings": []}
 
 
+def test_a_request_that_does_not_close_comes_back_with_its_reason(bridge: type[_Bridge]) -> None:
+    # La forma que contesta el bridge desde el 22/10 (flow-change-cycle-v1 1.6.0).
+    reason = {"field": "items", "code": "keys_invalid", "item": 0, "missing": ["flujo"], "extra": ["flow_key"]}
+    bridge.routes[f"POST {PREFIX}/flow-changes"] = (422, {"detail": "flow_change_items_invalid", "reason": reason})
+    result = json.loads(_tools().propose_flow_change({"items": [_item()], "base": {}, "purpose": "x"}))
+    assert result == {"error": "flow_change_items_invalid", "reason": reason}
+    # Lo que no tiene la forma cerrada no pasa: un texto largo, un numero, una clave con espacios.
+    bridge.routes[f"POST {PREFIX}/flow-changes"] = (422, {"detail": "invalid_body", "reason": {
+        "field": "requested_by por Ana 5512345678", "item": "0", "extra": ["Ana 5512345678", "version"]}})
+    result = json.loads(_tools().propose_flow_change({"items": [_item()], "base": {}, "purpose": "x"}))
+    assert result == {"error": "invalid_body", "reason": {"extra": ["version"]}}
+    bridge.routes[f"POST {PREFIX}/flow-changes"] = (422, {"detail": "invalid_body", "reason": "texto libre"})
+    assert json.loads(_tools().propose_flow_change({"items": [_item()], "base": {}, "purpose": "x"})) == {
+        "error": "invalid_body"}
+
+
 def test_validate_and_read_send_only_what_they_need(bridge: type[_Bridge]) -> None:
     bridge.routes[f"POST {PREFIX}/flow-changes/{PROPOSAL}/validate"] = (200, _envelope({"preview": {}}))
     bridge.routes[f"GET {PREFIX}/flow-changes/{PROPOSAL}"] = (200, _envelope({"status": "validada"}))
