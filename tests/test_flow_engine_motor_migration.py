@@ -43,16 +43,21 @@ def _code() -> str:
     return re.sub(r"--[^\n]*", "", _sql())
 
 
-def test_it_is_one_transaction_and_the_last_migration() -> None:
+def test_it_is_one_transaction_and_comes_before_the_bridge_reads() -> None:
     sql = _sql()
     assert "\nbegin;\n" in sql and sql.rstrip().endswith("commit;")
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
-    assert names[-1] == MIGRATION.name
+    position = names.index(MIGRATION.name)
     # Va despues de las rutas de la T2.3a, del tope de la historia y de la
     # lectura de /flows mas rapida.
-    assert names[-2] == "20261021000400_automation_expert_flows_speed_v1.sql"
-    assert names[-3] == "20261021000300_flow_engine_history_cap_v1.sql"
-    assert names[-4] == "20261021000200_flow_engine_routes_v1.sql"
+    assert names[position - 1] == "20261021000400_automation_expert_flows_speed_v1.sql"
+    assert names[position - 2] == "20261021000300_flow_engine_history_cap_v1.sql"
+    assert names[position - 3] == "20261021000200_flow_engine_routes_v1.sql"
+    # Despues va lo que el bridge del motor lee y marca (la T2.4), que solo
+    # crea tres funciones nuevas y no redefine ninguna de esta.
+    assert names[position + 1:] == ["20261022000200_flow_engine_bridge_reads_v1.sql"]
+    later = (MIGRATIONS / names[position + 1]).read_text(encoding="utf-8")
+    assert "create or replace" not in later.lower()
     # Correrla dos veces aborta.
     assert "flow_engine_motor_already_applied" in sql
 

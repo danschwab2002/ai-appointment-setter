@@ -445,8 +445,13 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261021000200 (las rutas del motor de flujos) suma sus dos lecturas, y
     # 20261022000100 (el camino del motor para el carrito) la admision, el
     # arranque, el contexto del paso y el apagado que llama la reevaluacion.
-    assert len(allowlisted) == 153
+    # 20261022000200 (el bridge del motor) suma las rutas, las divergencias y
+    # la marca de una divergencia avisada.
+    assert len(allowlisted) == 156
     for signature in (
+        "read_flow_engine_routes_v1(jsonb)",
+        "read_flow_engine_divergences_v1(jsonb, boolean, integer)",
+        "mark_flow_engine_divergence_notified_v1(uuid, timestamp with time zone)",
         "read_flow_engine_v1(jsonb, text)",
         "read_flow_engine_history_v1(jsonb, text, timestamp with time zone)",
         "_flow_engine_run_turned_off(uuid)",
@@ -1187,15 +1192,15 @@ def test_automation_expert_flows_speed_fingerprint() -> None:
         assert marker in compact_fingerprint, marker
 
 
-def test_flow_engine_motor_fingerprint_is_last_and_grants_four_to_service_role() -> None:
+def test_flow_engine_motor_fingerprint_grants_four_to_service_role() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261022000100 (el camino del motor para el carrito, la T2.3b)
-    # es la ultima.
-    fingerprint = sql.split("'20261022000100'", 1)[1].split("select\n    version,", 1)[0]
+    # va justo antes de la del bridge del motor.
+    fingerprint = sql.split("'20261022000100'", 1)[1].split("    union all\n    select\n        '20261022000200'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261022000100_flow_engine_motor_carrito_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",5,'flow_engine_motor_carrito')")
+    assert compact_fingerprint.endswith(",5,'flow_engine_motor_carrito'")
     for marker in (
         "to_regprocedure('public.admit_flow_engine_hotmart_v1(uuid,uuid,text,text,text,timestamptz,bigint,bigint,"
         "text,text,integer,text,integer,boolean)')",
@@ -1208,5 +1213,25 @@ def test_flow_engine_motor_fingerprint_is_last_and_grants_four_to_service_role()
         "position('flow_engine_route_flow_on:begin'indefinition)>0",
         "position('flow_engine_motor_guard:begin'indefinition)>0",
         "tgname='pilot_proactive_contact_caps_no_engine_route'",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_flow_engine_bridge_reads_fingerprint_is_last_and_grants_three_to_service_role() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261022000200 (lo que el bridge del motor lee y marca, la
+    # T2.4) es la ultima.
+    fingerprint = sql.split("'20261022000200'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261022000200_flow_engine_bridge_reads_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'flow_engine_bridge_reads')")
+    for marker in (
+        "to_regprocedure('public.read_flow_engine_routes_v1(jsonb)')",
+        "to_regprocedure('public.read_flow_engine_divergences_v1(jsonb,boolean,integer)')",
+        "to_regprocedure('public.mark_flow_engine_divergence_notified_v1(uuid,timestamptz)')",
+        "andprosecdef",
+        "andnothas_function_privilege('anon',oid,'EXECUTE')",
+        "position('notified_atisnull'indefinition)>0",
     ):
         assert marker in compact_fingerprint, marker

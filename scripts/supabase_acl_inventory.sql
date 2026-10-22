@@ -157,7 +157,10 @@ expected_service_role(signature) as (
         ('public._flow_engine_run_turned_off(uuid)'),
         ('public.admit_flow_engine_hotmart_v1(uuid, uuid, text, text, text, timestamp with time zone, bigint, bigint, text, text, integer, text, integer, boolean)'),
         ('public.mark_flow_engine_request_started_v1(uuid, uuid, text, bigint, timestamp with time zone)'),
-        ('public.flow_engine_execution_context_v1(uuid)')
+        ('public.flow_engine_execution_context_v1(uuid)'),
+        ('public.read_flow_engine_routes_v1(jsonb)'),
+        ('public.read_flow_engine_divergences_v1(jsonb, boolean, integer)'),
+        ('public.mark_flow_engine_divergence_notified_v1(uuid, timestamp with time zone)')
 ),
 functions as (
     select

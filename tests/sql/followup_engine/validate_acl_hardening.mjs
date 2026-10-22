@@ -231,7 +231,10 @@ const rows = await db.query(`
       ('_flow_engine_run_turned_off(uuid)'),
       ('admit_flow_engine_hotmart_v1(uuid,uuid,text,text,text,timestamp with time zone,bigint,bigint,text,text,integer,text,integer,boolean)'),
       ('mark_flow_engine_request_started_v1(uuid,uuid,text,bigint,timestamp with time zone)'),
-      ('flow_engine_execution_context_v1(uuid)')
+      ('flow_engine_execution_context_v1(uuid)'),
+      ('read_flow_engine_routes_v1(jsonb)'),
+      ('read_flow_engine_divergences_v1(jsonb,boolean,integer)'),
+      ('mark_flow_engine_divergence_notified_v1(uuid,timestamp with time zone)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -284,9 +287,11 @@ const result = rows.rows[0];
 // and the context of the follow-up, and the two reads of the flow engine
 // (20261021000200) add two, and the engine path of the cart (20261022000100)
 // adds four: the admission, the request start, the execution context and the
-// turned-off check that reevaluate_followup_action calls as service_role.
+// turned-off check that reevaluate_followup_action calls as service_role,
+// and the bridge of the engine (20261022000200) adds three: the routes, the
+// divergences and the mark of a notified divergence.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 153) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 156) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper
