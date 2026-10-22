@@ -5335,6 +5335,26 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         1,
         'flow_engine_history_cap'
+    union all
+    select
+        '20261021000400',
+        '20261021000400_automation_expert_flows_speed_v1.sql',
+        -- La lectura de /flows lee las reevaluaciones una sola vez, con la
+        -- forma y los permisos de 20261015000200 intactos.
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.read_automation_expert_flows_v1(jsonb)')
+              and position('reevaluated as materialized' in definition) > 0
+              and prosecdef
+              and provolatile = 's'
+              and array_to_string(proconfig, ',') = 'search_path=pg_catalog, public, pg_temp'
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        1,
+        'automation_expert_flows_speed'
 )
 select
     version,

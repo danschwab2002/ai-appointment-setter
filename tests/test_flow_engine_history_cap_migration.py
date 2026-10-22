@@ -30,12 +30,16 @@ def _cap() -> int:
     return int(match.group(1))
 
 
-def test_it_is_one_transaction_and_the_last_migration() -> None:
+def test_it_is_one_transaction_and_comes_right_after_the_routes() -> None:
     sql = _sql()
     assert "\nbegin;\n" in sql and sql.rstrip().endswith("commit;")
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
-    assert names[-1] == MIGRATION.name
-    assert names[-2] == ROUTES.name
+    assert names[names.index(ROUTES.name) + 1] == MIGRATION.name
+    # Lo que viene despues no vuelve a definir la historia del motor: la
+    # lectura de /flows mas rapida (20261021000400) solo reemplaza
+    # read_automation_expert_flows_v1.
+    for later in names[names.index(MIGRATION.name) + 1:]:
+        assert "read_flow_engine_history_v1" not in (MIGRATIONS / later).read_text(encoding="utf-8")
 
 
 def test_the_anchor_is_the_routes_constant_and_appears_once() -> None:
