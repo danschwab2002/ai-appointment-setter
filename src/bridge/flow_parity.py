@@ -279,7 +279,7 @@ EXCEPTIONS_V1: tuple[FlowException, ...] = (
     ),
     FlowException(
         "nombre_inseguro_cierra", _CON_PRIMER_CONTACTO, "despacho",
-        "src/bridge/worker.py:1382-1398",
+        "src/bridge/worker.py:1484-1500",
         "El nombre que no pasa el filtro cierra la accion sin reintento (D1).",
     ),
     FlowException(
@@ -302,7 +302,7 @@ EXCEPTIONS_V1: tuple[FlowException, ...] = (
     ),
     FlowException(
         "a1_cupon_por_flag", _CARRITO, "despacho",
-        "src/bridge/app.py:4927-4928",
+        "src/bridge/app.py:4998-4999",
         "Que A1 lleve el cupon personal lo decide RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED, no la"
         " politica: el primer paso no tiene coupon_ordinal.",
         step_keys=frozenset({"first_contact"}),
