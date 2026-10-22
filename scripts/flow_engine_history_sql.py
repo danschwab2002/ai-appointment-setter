@@ -21,6 +21,11 @@ que corre Andy en att1-db. La funcion de la base es esa misma consulta con:
   producto de su evento. El censo de ``webhook_events`` queda como esta: es de
   la base de la instancia, sin personas ni ventana.
 
+La migracion 20261022000300 le suma despues, por ancla sobre la definicion
+vigente, las autorizaciones del motor (en la lista, el conteo y los contactos).
+Esas anclas son texto de esta salida, y la migracion aborta si alguna falta: si
+cambia la salida, hay que mirar tambien esa migracion.
+
 Cada reemplazo tiene que aparecer exactamente una vez en la consulta: si la v3
 cambia y un ancla se pierde, esto falla en voz alta. La migracion lleva la
 salida entre dos marcas, y ``--check`` (que corre pytest) verifica que sea

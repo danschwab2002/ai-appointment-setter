@@ -3,10 +3,15 @@ motivos y el cursor (docs/contracts/automation-expert-read-v1.md)."""
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from bridge import automation_expert_read as reader
 from bridge.automation_expert_read import LookupRejected
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize(
@@ -137,6 +142,21 @@ def test_an_unknown_but_well_formed_code_leaves_its_gap() -> None:
     assert moment.data["reason"] is None and moment.data["explanation"] is None
     assert moment.data["reason_code"] == "algo_nuevo_del_motor"
     assert [gap["code"] for gap in gaps] == ["unknown_reason_code"]
+
+
+def test_a_start_authorized_by_the_motor_is_a_known_moment() -> None:
+    # 20261022000300: el momento start_authorized de una autorizacion del
+    # motor, como lo da la cadena real (PGlite). Sin la tabla del motor en la
+    # lista de evidencias, la lectura rechazaba la historia entera.
+    fixture = json.loads((ROOT / "tests" / "fixtures" / "flow_engine" / "motor_authorization_reads.json")
+                         .read_text(encoding="utf-8"))
+    gaps: list[dict[str, object]] = []
+    moment = reader._moment_from_database(
+        fixture["momento_del_motor"], zone=reader.ZoneInfo("America/Mexico_City"), gaps=gaps)
+    assert gaps == []
+    assert moment.data["kind"] == "start_authorized"
+    assert moment.data["reason_code"] == "flow_engine_request_start_authorized"
+    assert moment.data["explanation"] == "El motor autorizó el arranque y gastó cupo del día."
 
 
 def test_the_reasons_that_depend_on_the_moment() -> None:

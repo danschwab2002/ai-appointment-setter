@@ -54,10 +54,17 @@ def test_it_is_one_transaction_and_comes_before_the_bridge_reads() -> None:
     assert names[position - 2] == "20261021000300_flow_engine_history_cap_v1.sql"
     assert names[position - 3] == "20261021000200_flow_engine_routes_v1.sql"
     # Despues va lo que el bridge del motor lee y marca (la T2.4), que solo
-    # crea tres funciones nuevas y no redefine ninguna de esta.
-    assert names[position + 1:] == ["20261022000200_flow_engine_bridge_reads_v1.sql"]
+    # crea tres funciones nuevas y no redefine ninguna de esta. Y las lecturas
+    # que cuentan lo del motor (20261022000300), que parchan tres lecturas por
+    # ancla y no redefinen ninguna funcion de esta.
+    assert names[position + 1:] == [
+        "20261022000200_flow_engine_bridge_reads_v1.sql",
+        "20261022000300_flow_engine_reads_see_motor_v1.sql",
+    ]
     later = (MIGRATIONS / names[position + 1]).read_text(encoding="utf-8")
     assert "create or replace" not in later.lower()
+    reads = re.sub(r"--[^\n]*", "", (MIGRATIONS / names[position + 2]).read_text(encoding="utf-8")).lower()
+    assert "create or replace" not in reads and "create function" not in reads
     # Correrla dos veces aborta.
     assert "flow_engine_motor_already_applied" in sql
 

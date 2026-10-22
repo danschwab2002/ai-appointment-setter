@@ -1217,15 +1217,16 @@ def test_flow_engine_motor_fingerprint_grants_four_to_service_role() -> None:
         assert marker in compact_fingerprint, marker
 
 
-def test_flow_engine_bridge_reads_fingerprint_is_last_and_grants_three_to_service_role() -> None:
+def test_flow_engine_bridge_reads_fingerprint_grants_three_to_service_role() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261022000200 (lo que el bridge del motor lee y marca, la
-    # T2.4) es la ultima.
-    fingerprint = sql.split("'20261022000200'", 1)[1].split("select\n    version,", 1)[0]
+    # T2.4) va justo antes de la de las lecturas que ven el motor.
+    fingerprint = sql.split("'20261022000200'", 1)[1].split(
+        "    union all\n    select\n        '20261022000300'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261022000200_flow_engine_bridge_reads_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",2,'flow_engine_bridge_reads')")
+    assert compact_fingerprint.endswith(",2,'flow_engine_bridge_reads'")
     for marker in (
         "to_regprocedure('public.read_flow_engine_routes_v1(jsonb)')",
         "to_regprocedure('public.read_flow_engine_divergences_v1(jsonb,boolean,integer)')",
@@ -1233,5 +1234,26 @@ def test_flow_engine_bridge_reads_fingerprint_is_last_and_grants_three_to_servic
         "andprosecdef",
         "andnothas_function_privilege('anon',oid,'EXECUTE')",
         "position('notified_atisnull'indefinition)>0",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_flow_engine_reads_see_motor_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261022000300 (las tres lecturas que cuentan lo que
+    # autoriza el motor) es la ultima.
+    fingerprint = sql.split("'20261022000300'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261022000300_flow_engine_reads_see_motor_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'flow_engine_reads_see_motor')")
+    for marker in (
+        "to_regprocedure('public.read_flow_engine_history_v1(jsonb,text,timestamptz)')",
+        "to_regprocedure('public.read_automation_expert_flows_v1(jsonb)')",
+        "to_regprocedure('public.read_automation_expert_lead_history_v1(jsonb,uuid)')",
+        "position('flow_engine_reads_see_motor_v1'indefinition)>0",
+        "position('public.flow_engine_request_authorizations'indefinition)>0",
+        "andnothas_function_privilege('anon',oid,'EXECUTE')",
+        "position('flow_engine_request_start_authorized'indefinition)>0",
     ):
         assert marker in compact_fingerprint, marker

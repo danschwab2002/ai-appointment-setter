@@ -70,7 +70,8 @@ _KINDS_FROM_DATABASE = frozenset(MOMENT_KINDS) - {"meta_delivery", "conversation
 _EVIDENCE_TABLES = frozenset({
     "purchase_intents", "portable_precheckout_first_contact_plans", "webhook_events", "recovery_cases",
     "conversation_events", "scheduled_actions", "pilot_outbound_request_authorizations",
-    "followup_delivery_attempts", "agent_turn_provenance", "checkout_link_issuances",
+    "flow_engine_request_authorizations", "followup_delivery_attempts", "agent_turn_provenance",
+    "checkout_link_issuances",
     "conversation_followup_events", "conversation_reactivation_events", "human_handoff_requests",
     "conversation_resume_events", "contact_opt_out_events", "chatwoot.messages",
 })
@@ -140,6 +141,8 @@ EXPLANATIONS = {
     "policy_exhausted": "Ya salieron todos los pasos del flujo.",
     "eligible_for_execution": "Nada lo frena: le toca salir.",
     "pilot_request_start_authorized": "El piloto autorizó el arranque y gastó cupo del día.",
+    # 20261022000300: el mismo momento cuando lo autoriza el motor de flujos.
+    "flow_engine_request_start_authorized": "El motor autorizó el arranque y gastó cupo del día.",
     "precheckout_binding_unavailable": "La instancia no tenía una configuración comercial activa para el primer contacto.",
     "precheckout_prior_opt_out": "La persona se había dado de baja antes del formulario.",
     "contact_blocked": "El contacto está bloqueado.",
