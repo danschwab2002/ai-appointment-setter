@@ -227,7 +227,11 @@ const rows = await db.query(`
       ('record_payment_failure_first_touch_v1(uuid,uuid,text,bigint,text,text,timestamp with time zone)'),
       ('get_payment_failure_followup_context_v1(uuid,text,bigint,timestamp with time zone)'),
       ('read_flow_engine_v1(jsonb,text)'),
-      ('read_flow_engine_history_v1(jsonb,text,timestamp with time zone)')
+      ('read_flow_engine_history_v1(jsonb,text,timestamp with time zone)'),
+      ('_flow_engine_run_turned_off(uuid)'),
+      ('admit_flow_engine_hotmart_v1(uuid,uuid,text,text,text,timestamp with time zone,bigint,bigint,text,text,integer,text,integer,boolean)'),
+      ('mark_flow_engine_request_started_v1(uuid,uuid,text,bigint,timestamp with time zone)'),
+      ('flow_engine_execution_context_v1(uuid)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -278,9 +282,11 @@ const result = rows.rows[0];
 // template and a coupon (20261019000600) add three, and the follow-up of the
 // payment failure (20261019000700) adds two: the record of the variant of B1
 // and the context of the follow-up, and the two reads of the flow engine
-// (20261021000200) add two.
+// (20261021000200) add two, and the engine path of the cart (20261022000100)
+// adds four: the admission, the request start, the execution context and the
+// turned-off check that reevaluate_followup_action calls as service_role.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 149) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 153) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

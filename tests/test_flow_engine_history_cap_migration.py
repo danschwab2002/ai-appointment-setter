@@ -30,12 +30,15 @@ def _cap() -> int:
     return int(match.group(1))
 
 
-def test_it_is_one_transaction_and_the_last_migration() -> None:
+def test_it_is_one_transaction_and_comes_right_after_the_routes() -> None:
     sql = _sql()
     assert "\nbegin;\n" in sql and sql.rstrip().endswith("commit;")
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
-    assert names[-1] == MIGRATION.name
-    assert names[-2] == ROUTES.name
+    position = names.index(MIGRATION.name)
+    assert names[position - 1] == ROUTES.name
+    # Despues va el camino del motor para el carrito (la T2.3b), que no
+    # redefine read_flow_engine_history_v1.
+    assert names[position + 1:] == ["20261022000100_flow_engine_motor_carrito_v1.sql"]
 
 
 def test_the_anchor_is_the_routes_constant_and_appears_once() -> None:

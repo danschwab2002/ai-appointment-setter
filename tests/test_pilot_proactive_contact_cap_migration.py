@@ -65,7 +65,9 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
     # intento ya arrancado (20261020000100) y el rol del Automation Expert para
     # proponer cambios de flujo (20261021000100) y las rutas del motor de flujos,
     # que suman la bolsa de los dos caminos a la puerta comun (20261021000200),
-    # y el tope de la historia del motor en 4 MB (20261021000300).
+    # y el tope de la historia del motor en 4 MB (20261021000300), y el camino
+    # del motor para el carrito, que no toca el tope por persona de la puerta
+    # comun y le suma un disparador a la tabla (20261022000100).
     assert versions[position + 1:] == [
         "20261009000200",
         "20261010000100",
@@ -90,6 +92,7 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261021000100",
         "20261021000200",
         "20261021000300",
+        "20261022000100",
     ]
 
     sql = _sql()

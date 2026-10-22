@@ -62,6 +62,8 @@
     "node validate_flow_engine_legacy.mjs --check": 1.9,
     "node validate_portable_precheckout_first_contact.mjs": 1.7,
     "node validate_pilot_boundary.mjs": 11.2,
-    "node validate_pilot_boundary_runtime.mjs": 1.1
+    "node validate_pilot_boundary_runtime.mjs": 1.1,
+    "node validate_flow_engine_motor_v1.mjs": 12.1,
+    "node validate_flow_engine_motor_parity.mjs": 12.0
   }
 }

@@ -442,11 +442,18 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # freno por la compra de cualquier oferta, que llama la reevaluacion
     # (security invoker) como service_role. 20261019000700 (el seguimiento del
     # pago rechazado) suma el registro de B1 y el contexto del seguimiento.
-    # 20261021000200 (las rutas del motor de flujos) suma sus dos lecturas.
-    assert len(allowlisted) == 149
+    # 20261021000200 (las rutas del motor de flujos) suma sus dos lecturas, y
+    # 20261022000100 (el camino del motor para el carrito) la admision, el
+    # arranque, el contexto del paso y el apagado que llama la reevaluacion.
+    assert len(allowlisted) == 153
     for signature in (
         "read_flow_engine_v1(jsonb, text)",
         "read_flow_engine_history_v1(jsonb, text, timestamp with time zone)",
+        "_flow_engine_run_turned_off(uuid)",
+        "admit_flow_engine_hotmart_v1(uuid, uuid, text, text, text, timestamp with time zone, bigint, bigint, "
+        "text, text, integer, text, integer, boolean)",
+        "mark_flow_engine_request_started_v1(uuid, uuid, text, bigint, timestamp with time zone)",
+        "flow_engine_execution_context_v1(uuid)",
     ):
         assert signature in allowlisted, signature
     for signature in (
@@ -1141,20 +1148,45 @@ def test_flow_engine_routes_fingerprint_reads_are_the_only_grants() -> None:
     assert "'automation_expert_change'" not in fingerprint.replace("to_regrole('automation_expert_change')", "")
 
 
-def test_flow_engine_history_cap_fingerprint_is_last() -> None:
+def test_flow_engine_history_cap_fingerprint_comes_before_the_motor() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261021000300 (el tope de read_flow_engine_history_v1 en
-    # 4.000.000 bytes) es la ultima.
-    fingerprint = sql.split("'20261021000300'", 1)[1].split("select\n    version,", 1)[0]
+    # 4.000.000 bytes) va justo antes de la del camino del motor.
+    fingerprint = sql.split("'20261021000300'", 1)[1].split("    union all\n    select\n        '20261022000100'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261021000300_flow_engine_history_cap_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",1,'flow_engine_history_cap')")
+    assert compact_fingerprint.endswith(",1,'flow_engine_history_cap'")
     for marker in (
         "to_regprocedure('public.read_flow_engine_history_v1(jsonb,text,timestamptz)')",
         "position('c_max_bytesconstantinteger:=4000000'indefinition)>0",
         "position('c_max_bytesconstantinteger:=1000000'indefinition)=0",
         "andhas_function_privilege('service_role',oid,'EXECUTE')",
         "andnothas_function_privilege('anon',oid,'EXECUTE')",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_flow_engine_motor_fingerprint_is_last_and_grants_four_to_service_role() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261022000100 (el camino del motor para el carrito, la T2.3b)
+    # es la ultima.
+    fingerprint = sql.split("'20261022000100'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261022000100_flow_engine_motor_carrito_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",5,'flow_engine_motor_carrito')")
+    for marker in (
+        "to_regprocedure('public.admit_flow_engine_hotmart_v1(uuid,uuid,text,text,text,timestamptz,bigint,bigint,"
+        "text,text,integer,text,integer,boolean)')",
+        "to_regprocedure('public.mark_flow_engine_request_started_v1(uuid,uuid,text,bigint,timestamptz)')",
+        "to_regprocedure('public.flow_engine_execution_context_v1(uuid)')",
+        "to_regprocedure('public._flow_engine_run_turned_off(uuid)')",
+        "position('flow_engine_motor_delegation:begin'indefinition)>0",
+        "position('flow_engine_motor_authorization:begin'indefinition)>0",
+        "position('flow_engine_turned_off:begin'indefinition)>0",
+        "position('flow_engine_route_flow_on:begin'indefinition)>0",
+        "position('flow_engine_motor_guard:begin'indefinition)>0",
+        "tgname='pilot_proactive_contact_caps_no_engine_route'",
     ):
         assert marker in compact_fingerprint, marker
