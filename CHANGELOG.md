@@ -12,6 +12,33 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.17.1] - 2026-10-23
+
+Un parche sobre la 1.17.0, que cierra lo que esa versión dejaba sin cubrir: la revisión diaria (`setter-daily-feedback`) le puede hablar por `http` al conector de Slack de su mismo stack (#319, F-133), con la misma variable y la misma regla que el bridge. Sin la variable, todo igual que en la 1.17.0. Trae también la guía de instalación reescrita para la plantilla de hoy (#318). Sin migraciones.
+
+### Arreglado
+
+- **La revisión diaria acepta el conector de Slack del stack por `http` interno** (#319, `src/bridge/daily_feedback_app.py`, contratos `docs/contracts/daily-feedback-production-v1.md` y `slack-operations-connector-v1.md` §10). En la 1.17.0 validaba `SLACK_CONNECTOR_BASE_URL` como `https` por su cuenta, así que una instancia con su propio conector no podía levantar la revisión. Ahora, con `SLACK_CONNECTOR_INTERNAL_HOST=<servicio>:<puerto>` en su entorno (la regla de `src/slack_correlation/internal_http.py`, la del productor del bridge), la URL puede ser exactamente `http://<ese host:puerto>`, con o sin `/` final:
+  - otro servicio, otro puerto, una ruta, un usuario, un dominio o una IP siguen dando `invalid_slack_connector_origin`, y una variable mal escrita, `invalid_slack_connector_internal_host`;
+  - la revisión le pasa al productor lo declarado en su entorno y nunca toma la variable del proceso por su cuenta;
+  - `/ready` lo declara como la cuarta excepción, `slack_connector_internal_http`, después de `authority_internal_http`, `storage_unencrypted_risk_accepted` y `chatwoot_agent_bot_unlinked`.
+
+  La variable también entra en `deploy/daily-feedback-compose.yaml` y `deploy/daily-feedback.env.example`, vacía por defecto. Lo prueba `tests/test_daily_feedback_connector_internal_http.py`.
+
+### Cambiado
+
+- **`docs/instalar.md`, reescrita para la plantilla de la instancia** (#318, E-034): dos tiempos, *instalar* (pasos 1 a 15, el día 0 en «solo escucha», sin número de WhatsApp) y *prender* (pasos 16 y 17), en el orden real de la plantilla y terminando en `despliegue/chequear.sh` en `INSTALADA`. Suma el Automation Expert, las alertas, el respaldo y qué queda apagado el día 0. La base pasó del paso 6 al 8, y dos contratos (`instance-runtime-v2.md` y `commercial-ally-runtime-v1.md`) cambian solo ese enlace. Es documentación: no cambia código.
+
+### Qué hace quien actualiza
+
+- **ATT1 y Johanna: nada.** Subir a la 1.17.1 es opcional y no cambia comportamiento: sin migraciones, sin campos nuevos en el manifiesto y sin variables que cargar. Con el conector compartido por `https`, la revisión sigue igual y `/ready` no suma ninguna excepción.
+- **Una instancia con su propio conector:** en la revisión diaria, la misma pareja que en el bridge, con los nombres de servicio del stack:
+  ```
+  SLACK_CONNECTOR_BASE_URL=http://slack-connector:8000
+  SLACK_CONNECTOR_INTERNAL_HOST=slack-connector:8000
+  ```
+  Después del redeploy, el 200 de `/ready` de la revisión lista `slack_connector_internal_http` en `"exceptions"`. El resto (las variables del conector y del bridge y las dos apps de Slack) es lo de la 1.17.0.
+
 ## [1.17.0] - 2026-10-23
 
 Una versión menor sobre la 1.16.4, con dos piezas para instalar una instancia nueva con su propio Slack: el conector de Slack puede correr como servicio de una sola instancia, en el mismo stack que su bridge (#315, F-133), y el Automation Expert trae el manifiesto de su app de Slack (#316). Las dos variables nuevas vienen vacías: sin ellas, el conector compartido de Johanna y ATT1 y el bridge se comportan igual que en la 1.16.4. Sin migraciones.
