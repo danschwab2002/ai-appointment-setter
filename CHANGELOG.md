@@ -12,6 +12,39 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.17.0] - 2026-10-23
+
+Una versión menor sobre la 1.16.4, con dos piezas para instalar una instancia nueva con su propio Slack: el conector de Slack puede correr como servicio de una sola instancia, en el mismo stack que su bridge (#315, F-133), y el Automation Expert trae el manifiesto de su app de Slack (#316). Las dos variables nuevas vienen vacías: sin ellas, el conector compartido de Johanna y ATT1 y el bridge se comportan igual que en la 1.16.4. Sin migraciones.
+
+### Agregado
+
+- **Un conector de Slack por instancia** (#315, F-133, contrato `docs/contracts/slack-operations-connector-v1.md` §10, runbook `docs/operations/slack-app-connection-runbook.md` §8). Es el mismo conector, con una sola clave (la `ally_ref` de la instancia) en cada mapa `SLACK_TENANT_*_JSON`. Para hablarse por `http` dentro del stack, cada punta acepta una excepción declarada:
+  - `SLACK_OPERATOR_INTERNAL_HOST`, del conector (`src/slack_correlation/internal_http.py` y `operator_client.py`): el `host:puerto` exacto del bridge del mismo stack (`appointment-bridge:8000`), el único backend al que le habla por `http`. Con otra forma (un dominio con puntos, una IP, sin puerto) no arranca: `invalid_operator_internal_host`. También en `deploy/slack-connector-compose.yaml`;
+  - `SLACK_CONNECTOR_INTERNAL_HOST`, del bridge (`src/slack_correlation/producer.py`): el `host:puerto` exacto del conector del mismo stack (`slack-connector:8000`), con la misma regla. El código de `src/bridge/` no cambia.
+
+  Las dos tienen default vacío, y vacías todo backend sigue exigiendo `https`. Trae el manifiesto de la app de una instancia, `deploy/slack-app-manifest-instancia-v1.json`: solo `chat:write`, Interactivity por HTTP firmado en `/slack/interactions`, sin Socket Mode, Events API, Incoming Webhooks ni slash commands, y dos marcadores que Slack rechaza mientras queden (`INSTANCIA` y `<COMPLETAR-host-del-conector-de-INSTANCIA>`).
+- **El manifiesto de la app de Slack del Automation Expert** (#316, `deploy/slack-app-manifest-automation-expert-v1.json`, runbook `docs/operations/automation-expert-slack-app-runbook.md`). Una app por instancia, por mensaje directo y con Socket Mode, sin URL pública. Cada scope sale del adaptador de Slack de Hermes 0.21.0 y el runbook dice qué lo usa; suma `reactions:write`, que el manifiesto de Hermes no pide. Lo prueba `tests/test_automation_expert_slack_manifest.py`.
+
+### Cambiado
+
+- **El canal de Johanna deja de estar fijo en el código del conector** (#315, `src/slack_correlation/app.py`): sale `reserved_johanna_channel`, y el canal de cada tenant sale solo de `SLACK_TENANT_CHANNELS_JSON`. En el conector compartido la configuración sigue siendo `{"johanna":"C0C0YEACVT2"}`, así que no cambia nada; dos tenants del mismo conector siguen sin poder compartir canal.
+
+### Qué hace quien actualiza
+
+- **ATT1 y Johanna: nada.** Subir a la 1.17.0 es opcional y no cambia comportamiento: sin migraciones, sin campos nuevos en el manifiesto y sin variables que cargar. El conector compartido sigue con sus backends por `https`, y el bridge le sigue hablando al conector por `https`.
+- **Una instancia nueva con su propio conector:**
+  1. **Las variables.** En el conector de la instancia, una sola clave (`<ally_ref>`) en cada mapa, y el bridge del stack como backend:
+     ```
+     SLACK_TENANT_CHANNELS_JSON={"<ally_ref>":"<Channel ID de la instancia>"}
+     SLACK_TENANT_OPERATOR_USER_IDS_JSON={"<ally_ref>":["<User ID>"]}
+     SLACK_TENANT_OPERATOR_BACKENDS_JSON={"<ally_ref>":{"base_url":"http://appointment-bridge:8000","read_token":"…","write_token":"…"}}
+     SLACK_OPERATOR_INTERNAL_HOST=appointment-bridge:8000
+     ```
+     más `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET` y `SLACK_TEAM_ID` de su app. En el bridge, `SLACK_CONNECTOR_BASE_URL=http://slack-connector:8000` y `SLACK_CONNECTOR_INTERNAL_HOST=slack-connector:8000`. Los nombres de servicio tienen que ser los del stack.
+  2. **La app de Slack del conector**, desde `deploy/slack-app-manifest-instancia-v1.json`: reemplazar los dos marcadores en una copia (el nombre de la instancia y el host público del conector), **Create New App** → **From an app manifest** en el workspace de la instancia, **Install to Workspace**, guardar el bot token y el signing secret en el gestor de secretos de la instancia, crear el canal, invitar al bot y copiar su Channel ID al mapa. Paso a paso en `docs/operations/slack-app-connection-runbook.md` §8.
+  3. **La app del Automation Expert**, desde `deploy/slack-app-manifest-automation-expert-v1.json`, tal cual: **From an app manifest**, **Install to Workspace** (bot token `xoxb-…`), y un App-Level Token con `connections:write` (`xapp-…`) para Socket Mode. Los dos tokens se cargan con `despliegue/hermes/cargar-automation-expert.py` del repo de la instancia, que los prueba contra Slack antes de escribir. Paso a paso en `docs/operations/automation-expert-slack-app-runbook.md`.
+- **Lo que esta versión no cubre todavía:** la revisión diaria (`setter-daily-feedback`) valida `SLACK_CONNECTOR_BASE_URL` como `https` por su cuenta, así que todavía no le habla por `http` a un conector del mismo stack (contrato §10, «Lo que no cubre todavía»).
+
 ## [1.16.4] - 2026-10-23
 
 Un parche sobre la 1.16.3, con una pieza (#313, migración `20261022000300`). Con la ruta del carrito en `motor`, tres lecturas no veían los arranques que autoriza el motor: la historia de la simulación, el `/flows` del Automation Expert y la historia de un lead. Ahora los cuentan. Son lecturas: no cambia nada de lo que se manda a los leads ni del freno de los topes.
