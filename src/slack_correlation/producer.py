@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import UTC
+import os
 import re
 from typing import Any
 from urllib.parse import urlsplit
@@ -11,6 +12,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from slack_correlation.catalog import NotificationCommand
+from slack_correlation.internal_http import is_declared_internal_http, validate_internal_host
 
 _INTERNAL_TOKEN = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 _TERMINAL_REJECTIONS = {400, 401, 403, 404, 409, 413}
@@ -47,8 +49,17 @@ class SlackConnectorProducer:
         expected_tenant_ref: str,
         timeout_seconds: float = 5.0,
         transport: httpx.AsyncBaseTransport | None = None,
+        internal_host: str | None = None,
     ) -> None:
-        normalized_url = _validate_base_url(base_url)
+        # El conector del mismo stack (http://slack-connector:8000) se acepta solo con
+        # su host:puerto exacto declarado. Sin parametro, se lee SLACK_CONNECTOR_INTERNAL_HOST
+        # del entorno del bridge: asi el bridge no cambia de codigo para usarlo.
+        if internal_host is None:
+            internal_host = os.getenv("SLACK_CONNECTOR_INTERNAL_HOST")
+        internal_host = validate_internal_host(
+            internal_host, error="invalid_connector_internal_host"
+        )
+        normalized_url = _validate_base_url(base_url, internal_host=internal_host)
         if _INTERNAL_TOKEN.fullmatch(bearer_token) is None:
             raise ValueError("invalid_connector_bearer_token")
         if not isinstance(expected_tenant_ref, str) or not expected_tenant_ref.strip():
@@ -134,12 +145,13 @@ class SlackConnectorProducer:
         await self._client.aclose()
 
 
-def _validate_base_url(value: str) -> str:
+def _validate_base_url(value: str, *, internal_host: str | None = None) -> str:
     parsed = urlsplit(value)
     loopback = parsed.hostname in {"127.0.0.1", "::1", "localhost"}
+    internal_stack = is_declared_internal_http(value, internal_host)
     if (
         parsed.scheme not in {"http", "https"}
-        or (parsed.scheme == "http" and not loopback)
+        or (parsed.scheme == "http" and not loopback and not internal_stack)
         or not parsed.hostname
         or parsed.username is not None
         or parsed.password is not None

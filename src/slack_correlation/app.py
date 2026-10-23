@@ -26,6 +26,7 @@ from slack_correlation.catalog import (
     NotificationCommand,
     validate_conversation_base_url,
 )
+from slack_correlation.internal_http import is_declared_internal_http, validate_internal_host
 from slack_correlation.client import SlackClient, SlackProtocolError, SlackRejectedError
 from slack_correlation.store import NotificationCapacityError, NotificationStore
 from slack_correlation.worker import NotificationWorker, SlackMessageSender
@@ -50,7 +51,6 @@ _TENANT_REF = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
 # quedan iguales. Un tenant nuevo sin etiqueta muestra su ref en mayusculas.
 _LEGACY_TENANT_LABELS = {"johanna": "Johanna", "att1": "ATT1"}
 _MAX_TENANT_LABEL_CHARS = 40
-_JOHANNA_CHANNEL_ID = "C0C0YEACVT2"
 _MAX_BODY_BYTES = 8192
 
 
@@ -89,6 +89,9 @@ class SlackConnectorSettings:
     activation_generation: int = 0
     operator_bearer_token: str | None = None
     storage_preflight_enabled: bool = False
+    # El host:puerto exacto del bridge del mismo stack (appointment-bridge:8000), el
+    # unico al que el conector le habla por http. Sin el, el backend exige https.
+    operator_internal_host: str | None = None
 
     @classmethod
     def from_env(cls) -> "SlackConnectorSettings":
@@ -134,6 +137,7 @@ class SlackConnectorSettings:
             ),
             operator_bearer_token=_env_value("SLACK_OPERATOR_BEARER_TOKEN"),
             storage_preflight_enabled=_env_flag("SLACK_STORAGE_PREFLIGHT_ENABLED"),
+            operator_internal_host=_env_value("SLACK_OPERATOR_INTERNAL_HOST"),
         )
 
 
@@ -320,6 +324,9 @@ def _resolved_tenant_labels(settings: SlackConnectorSettings) -> dict[str, str]:
 
 
 def _validate_settings(settings: SlackConnectorSettings) -> None:
+    operator_internal_host = validate_internal_host(
+        settings.operator_internal_host, error="invalid_operator_internal_host"
+    )
     interactive_or_backfill = (
         settings.interactions_enabled or settings.correlation_backfill_enabled
     )
@@ -351,12 +358,17 @@ def _validate_settings(settings: SlackConnectorSettings) -> None:
         producer_tokens.add(settings.bot_token)
         operator_tokens: list[str] = []
         for backend in settings.operator_backends.values():
-            parsed = urlsplit(backend.get("base_url", ""))
+            base_url = backend.get("base_url", "")
+            parsed = urlsplit(base_url)
             read_token = backend.get("read_token", "")
             write_token = backend.get("write_token", "")
             operator_tokens.extend((read_token, write_token))
             if (
-                parsed.scheme != "https" or not parsed.hostname or parsed.username
+                (
+                    parsed.scheme != "https"
+                    and not is_declared_internal_http(base_url, operator_internal_host)
+                )
+                or not parsed.hostname or parsed.username
                 or parsed.password or parsed.query or parsed.fragment
                 or read_token == write_token
                 or not read_token or not write_token
@@ -420,14 +432,6 @@ def _validate_settings(settings: SlackConnectorSettings) -> None:
         raise ValueError("invalid_tenant_label_configuration")
     if len(set(tenant_channels.values())) != len(tenant_channels):
         raise ValueError("tenant_channel_collision")
-    if (
-        tenant_channels.get("johanna", _JOHANNA_CHANNEL_ID) != _JOHANNA_CHANNEL_ID
-        or any(
-            tenant != "johanna" and channel == _JOHANNA_CHANNEL_ID
-            for tenant, channel in tenant_channels.items()
-        )
-    ):
-        raise ValueError("reserved_johanna_channel")
     if settings.notifications_enabled and settings.activation_mode == "inactive":
         raise ValueError("explicit_activation_required")
     if settings.operator_bearer_token is not None and (
@@ -508,6 +512,7 @@ def create_app(
                 base_url=config["base_url"],
                 read_bearer=config["read_token"],
                 write_bearer=config["write_token"],
+                internal_host=settings.operator_internal_host,
             )
             for tenant, config in settings.operator_backends.items()
         }
