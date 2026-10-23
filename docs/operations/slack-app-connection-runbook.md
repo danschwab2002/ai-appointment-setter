@@ -4,7 +4,7 @@
 - **Fecha:** 2026-09-07
 - **Alcance:** crear, instalar y vincular una app Slack con privilegio mínimo
 - **Implementado localmente:** conector outbound durable y resolución interactiva; el manifest no activa Interactivity ni implica deploy
-- **Manifest:** [`deploy/slack-app-manifest-v1.json`](../../deploy/slack-app-manifest-v1.json)
+- **Manifest:** [`deploy/slack-app-manifest-v1.json`](../../deploy/slack-app-manifest-v1.json) (la app compartida); una instancia nueva usa [`deploy/slack-app-manifest-instancia-v1.json`](../../deploy/slack-app-manifest-instancia-v1.json), ver §8
 
 ## 1. Arquitectura elegida
 
@@ -183,3 +183,35 @@ La conexión inicial sólo queda verificada cuando existe evidencia de:
 - secretos ausentes de Git, logs y documentación.
 
 La creación de la app por sí sola no demuestra integración operativa.
+
+## 8. La app de una instancia nueva (F-133)
+
+Con un conector por instancia, cada instancia tiene su propia app de Slack. El
+manifiesto [`deploy/slack-app-manifest-instancia-v1.json`](../../deploy/slack-app-manifest-instancia-v1.json)
+trae dos marcadores: `INSTANCIA` (el nombre de la instancia, que en la plantilla
+completa `renombrar.py`) y `<COMPLETAR-host-del-conector-de-INSTANCIA>`, el host
+público del conector de esa instancia (la ruta de Traefik que sólo deja pasar
+`/slack/interactions`). Slack rechaza el manifiesto mientras quede un marcador.
+
+Pide sólo `chat:write`, prende Interactivity con la Request URL
+`https://<host>/slack/interactions` y deja apagados Socket Mode, Events API,
+Incoming Webhooks y slash commands: el conector recibe a Slack por HTTP firmado.
+
+Para crearla:
+
+1. Reemplazar los dos marcadores en una copia del manifiesto.
+2. En `https://api.slack.com/apps`, **Create New App** → **From an app manifest**,
+   elegir el workspace de la instancia, pegar el JSON y crear.
+3. **Install to Workspace** y aprobar `chat:write`.
+4. Guardar en el gestor de secretos de la instancia, sin pegarlos en ningún chat ni
+   documento: el **Bot User OAuth Token** (`xoxb-…`) como `SLACK_BOT_TOKEN` y el
+   **Signing Secret** (Basic Information) como `SLACK_SIGNING_SECRET`. El Team ID va
+   en `SLACK_TEAM_ID`.
+5. Crear el canal de la instancia, invitar al bot (`/invite @<INSTANCIA> Setter`) y
+   copiar su Channel ID a `SLACK_TENANT_CHANNELS_JSON={"<ally_ref>":"<Channel ID>"}`.
+6. Seguir las fases B a D de este runbook con ese canal. Slack verifica la Request
+   URL recién cuando el conector responde en ese host; mientras tanto la
+   interactividad del lado del conector sigue en `SLACK_INTERACTIONS_ENABLED=false`.
+
+La configuración del conector de la instancia está en el contrato,
+`docs/contracts/slack-operations-connector-v1.md` §10.

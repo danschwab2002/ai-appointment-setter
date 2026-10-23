@@ -3,7 +3,7 @@
 - **Estado:** Aceptado, implementado y verificado; despliegue y activación pendientes
 - **Fecha:** 2026-09-07
 - **Servicio:** `supportmagician-slack-connector`
-- **Routing:** canal exclusivo por aliado; `C0C0YEACVT2` pertenece sólo a Johanna
+- **Routing:** canal exclusivo por aliado; en el conector compartido `C0C0YEACVT2` es el canal de Johanna. Desde F-133 (2026-10-23) el canal sale sólo de la configuración (ver §10)
 - **Productores autorizados:** `johanna` y `att1`
 - **Catálogo:** [Catálogo de mensajes operativos V1](../design/slack-operations-message-catalog-v1.md)
 
@@ -41,14 +41,16 @@ mensaje desde el catálogo versionado.
 | `SLACK_OPERATOR_BEARER_TOKEN` | reconciliación | secreto distinto de ambos bearers productores |
 | `SLACK_SIGNING_SECRET` | interacciones | secreto de firma Slack; nunca se registra |
 | `SLACK_TENANT_OPERATOR_USER_IDS_JSON` | interacciones | allowlist de Slack User IDs por tenant |
-| `SLACK_TENANT_OPERATOR_BACKENDS_JSON` | interacciones | base URL y tokens read/write distintos por tenant; secreto |
+| `SLACK_TENANT_OPERATOR_BACKENDS_JSON` | interacciones | base URL y tokens read/write distintos por tenant; secreto. La base URL es `https`, salvo el bridge del mismo stack declarado en `SLACK_OPERATOR_INTERNAL_HOST` |
+| `SLACK_OPERATOR_INTERNAL_HOST` | no | default vacío. `host:puerto` exacto del bridge del mismo stack (`appointment-bridge:8000`), el único backend al que el conector le habla por `http`. Nombre de servicio de una sola etiqueta, en minúsculas, que no sea un número, y puerto explícito; con otra forma el conector no arranca (`invalid_operator_internal_host`). Ver §10 |
 | `SLACK_TENANT_CONVERSATION_BASE_URLS_JSON` | no | mapa server-owned tenant→URL base `https` de las conversaciones de Chatwoot (`https://<host>/app/accounts/<cuenta>/conversations`); con ella la tarjeta `HND-001` lleva el botón «Ir a la conversación» construido del lado del servidor desde `component=chatwoot.conversation.<n>`; sin ella la misma tarjeta sale sin botón |
 
 Los booleanos sólo aceptan `true` o `false`. Una combinación incompleta impide
 arrancar. La presencia de credenciales no habilita efectos. Dos tenants no
-pueden compartir Channel ID. `C0C0YEACVT2` está reservado a Johanna y toda ruta
-Johanna debe usarlo. En el corte actual sólo Johanna está autenticada y
-enrutada; ATT1 no aparece en el mapa de tokens hasta tener canal propio. Nunca
+pueden compartir Channel ID. Hasta el 2026-10-23 el código reservaba
+`C0C0YEACVT2` a Johanna (`reserved_johanna_channel`); desde F-133 el canal de
+cada tenant sale sólo de `SLACK_TENANT_CHANNELS_JSON`, y en el conector
+compartido la configuración sigue siendo `{"johanna":"C0C0YEACVT2"}`. Nunca
 se usa el canal de otro aliado como fallback.
 
 ## 3. Admisión
@@ -126,6 +128,11 @@ Johanna y cada runtime portable proyectan correlaciones no resueltas desde
 `slack_correlation_notification_projection`. El claim está limitado a una fila,
 lease de 30–900 segundos y fencing por token/generación. Un runtime portable
 también presenta la versión exacta de su binding activo en cada claim.
+
+El productor exige `https` hacia el conector, salvo loopback y salvo el conector
+del mismo stack declarado en `SLACK_CONNECTOR_INTERNAL_HOST` del entorno del
+bridge (`slack-connector:8000`, misma regla de forma que
+`SLACK_OPERATOR_INTERNAL_HOST`). El bridge no cambia de código para usarlo.
 
 Los IDs y dedupe keys enviados al conector se derivan de forma determinista del
 evento durable. Un resultado de admisión incierto se reintenta; rechazo explícito,
@@ -241,3 +248,44 @@ Botones, modales y actualización de mensajes se rigen por el contrato
 anti-replay durable, allowlist tenant/canal/usuario y revalidación contra
 Supabase Cloud. Events API, Incoming Webhooks y Socket Mode siguen fuera de
 alcance.
+
+## 10. Un conector por instancia (F-133)
+
+Cada instancia nueva corre su propio conector en su stack, con su propia app de
+Slack ([`deploy/slack-app-manifest-instancia-v1.json`](../../deploy/slack-app-manifest-instancia-v1.json)).
+No hay variables de un solo tenant: es el mismo conector, con **una sola clave** en
+cada mapa `SLACK_TENANT_*_JSON` (la `ally_ref` de la instancia). La forma de la
+configuración:
+
+```
+SLACK_TENANT_CHANNELS_JSON={"<ally_ref>":"<Channel ID de la instancia>"}
+SLACK_TENANT_OPERATOR_USER_IDS_JSON={"<ally_ref>":["<User ID>"]}
+SLACK_TENANT_OPERATOR_BACKENDS_JSON={"<ally_ref>":{"base_url":"http://appointment-bridge:8000","read_token":"…","write_token":"…"}}
+SLACK_OPERATOR_INTERNAL_HOST=appointment-bridge:8000
+```
+
+Del lado del bridge, `SLACK_CONNECTOR_BASE_URL=http://slack-connector:8000` y
+`SLACK_CONNECTOR_INTERNAL_HOST=slack-connector:8000`.
+
+Reglas de la excepción `http`:
+
+- sólo hacia el `host:puerto` declarado, y la URL tiene que ser exactamente
+  `http://<host:puerto>` (con o sin `/` final): otro servicio, otro puerto, una
+  ruta o un usuario se rechazan;
+- un dominio con puntos o una IP no entran ni en la variable: `http` hacia afuera
+  no se puede declarar;
+- sin la variable (el default, y el conector compartido de Johanna y ATT1) todo
+  backend sigue exigiendo `https`.
+
+Es un control compensatorio, no la prueba de que el tráfico no sale del host: el
+nombre lo resuelve el DNS del contenedor (misma regla que
+`AUTOMATION_EXPERT_INTERNAL_HOST` y la excepción `authority_internal_http` de la
+revisión diaria).
+
+La app de cada instancia recibe a Slack por HTTP con firma (`/slack/interactions`,
+HMAC `v0`, 300 s de tolerancia) y sólo pide `chat:write`. Sin Socket Mode, sin
+Events API y sin slash commands.
+
+**Lo que no cubre todavía:** la revisión diaria (`daily_feedback_app.py`) valida
+`SLACK_CONNECTOR_BASE_URL` como `https` por su cuenta, así que con el conector en
+el stack necesita su propio cambio (va con la pieza de la plantilla, P3b).

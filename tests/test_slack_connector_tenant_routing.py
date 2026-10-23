@@ -150,22 +150,17 @@ def test_exact_replay_cannot_change_the_server_owned_channel(tmp_path: Path) -> 
     assert replay.outcome == "semantic_conflict"
 
 
-def test_reserved_johanna_channel_cannot_be_routed_to_another_tenant() -> None:
-    with pytest.raises(ValueError, match="reserved_johanna_channel"):
-        create_app(
-            SlackConnectorSettings(
-                tenant_channels={"att1": JOHANNA_CHANNEL},
-            )
-        )
+# Hasta el 2026-10-23 el canal de Johanna estaba fijo en el codigo
+# (_JOHANNA_CHANNEL_ID): ningun otro tenant podia usarlo y Johanna no podia usar
+# otro. Con un conector por instancia cada uno tiene su propio workspace y su canal
+# sale de la configuracion; lo que se sigue cuidando es que dos tenants del mismo
+# conector no compartan canal (test_settings_reject_channel_reuse_between_tenants).
+def test_a_tenant_other_than_johanna_can_route_to_any_configured_channel() -> None:
+    create_app(SlackConnectorSettings(tenant_channels={"att1": JOHANNA_CHANNEL}))
 
 
-def test_johanna_route_must_use_reserved_channel() -> None:
-    with pytest.raises(ValueError, match="reserved_johanna_channel"):
-        create_app(
-            SlackConnectorSettings(
-                tenant_channels={"johanna": ATT1_CHANNEL},
-            )
-        )
+def test_johanna_route_follows_the_configuration() -> None:
+    create_app(SlackConnectorSettings(tenant_channels={"johanna": ATT1_CHANNEL}))
 
 
 def test_ingress_allows_exact_johanna_only_token_and_route_subset(tmp_path: Path) -> None:

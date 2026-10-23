@@ -143,9 +143,18 @@ def test_a_malformed_tenant_ref_is_rejected(tenant: str) -> None:
         create_app(SlackConnectorSettings(tenant_channels={tenant: NUEVA_CHANNEL}))
 
 
-def test_johanna_keeps_her_reserved_channel_with_more_tenants() -> None:
-    with pytest.raises(ValueError, match="reserved_johanna_channel"):
-        create_app(SlackConnectorSettings(tenant_channels={NUEVA: JOHANNA_CHANNEL}))
+def test_a_new_tenant_alone_can_use_any_channel() -> None:
+    # Un conector por instancia: el canal es de la configuracion, no del codigo.
+    create_app(SlackConnectorSettings(tenant_channels={NUEVA: JOHANNA_CHANNEL}))
+
+
+def test_johanna_and_a_new_tenant_still_cannot_share_a_channel() -> None:
+    with pytest.raises(ValueError, match="tenant_channel_collision"):
+        create_app(
+            SlackConnectorSettings(
+                tenant_channels={"johanna": JOHANNA_CHANNEL, NUEVA: JOHANNA_CHANNEL}
+            )
+        )
 
 
 def test_two_new_tenants_cannot_share_a_channel() -> None:
