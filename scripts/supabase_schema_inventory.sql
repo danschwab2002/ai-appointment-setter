@@ -5449,6 +5449,37 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'flow_engine_bridge_reads'
+    union all
+    select
+        '20261022000300',
+        '20261022000300_flow_engine_reads_see_motor_v1.sql',
+        -- Las tres lecturas que cuentan tambien lo que autoriza el motor: la
+        -- historia de la simulacion y las dos del AE, con la marca y la tabla
+        -- del motor, y todavia solo de service_role.
+        (
+            select count(*) = 3
+            from functions
+            where oid in (
+                to_regprocedure('public.read_flow_engine_history_v1(jsonb,text,timestamptz)'),
+                to_regprocedure('public.read_automation_expert_flows_v1(jsonb)'),
+                to_regprocedure('public.read_automation_expert_lead_history_v1(jsonb,uuid)')
+            )
+              and position('flow_engine_reads_see_motor_v1' in definition) > 0
+              and position('public.flow_engine_request_authorizations' in definition) > 0
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- El momento autorizado por el motor en la historia del lead.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.read_automation_expert_lead_history_v1(jsonb,uuid)')
+              and position('flow_engine_request_start_authorized' in definition) > 0
+        )::int,
+        2,
+        'flow_engine_reads_see_motor'
 )
 select
     version,

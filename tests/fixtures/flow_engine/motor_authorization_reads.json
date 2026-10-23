@@ -1,0 +1,33 @@
+{
+  "_origen": "tests/sql/followup_engine/validate_flow_engine_reads_see_motor_v1.mjs --emit-fixture: las RPC reales sobre la cadena de migraciones (PGlite) con el mundo de la T2.3b; uuid, horas y fechas normalizados. En ATT1 no habia todavia ninguna fila del motor (22/10 23:21Z, att1-db en solo lectura)",
+  "historia_autorizacion_del_motor": {
+    "action_id": "00000000-0000-4000-8000-000000000001",
+    "scope_key": "att1-recuperacion",
+    "contact_id": "00000000-0000-4000-8000-000000000002",
+    "authorized_at": "2026-10-22T15:00:00+00:00",
+    "scope_version": null,
+    "local_budget_date": "2026-10-22",
+    "runtime_generation": null
+  },
+  "momento_del_motor": {
+    "at": "2026-10-22T15:00:00+00:00",
+    "kind": "start_authorized",
+    "extra": {
+      "local_budget_date": "2026-10-22"
+    },
+    "decision": null,
+    "evidence": {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "table": "flow_engine_request_authorizations"
+    },
+    "flow_key": "carrito",
+    "certainty": "stored",
+    "attached_by": "case",
+    "reason_code": "flow_engine_request_start_authorized",
+    "flow_version": {
+      "scope": "att1-recuperacion v1",
+      "policy": "flujo:00000000-0000-4000-8000-000000000004 v1"
+    },
+    "reason_code_rejected": false
+  }
+}

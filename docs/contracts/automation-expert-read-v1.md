@@ -136,7 +136,7 @@ La búsqueda va por POST solo para que lo que escribió la persona viaje en el c
 7. `scheduled`: quedó programado un paso. Sale de `scheduled_actions` (`anchor_type`, `step_key`, `due_at`, `expires_at`).
 8. `deferred_by_hours`: le tocaba salir fuera de horario y se corrió. Sale de `conversation_events`, con la reevaluación `defer` y el motivo `business_window_closed`.
 9. `stopped`: se frenó un paso. Sale de `conversation_events`, con la reevaluación `cancel`, `pause` o `escalate`, que también frenan la acción (`20260805000300_per_case_conversation_anchor.sql:284-445`), y de `scheduled_actions.terminal_reason`. Lleva la `decision` y nombra el flujo que ganó, si lo hubo.
-10. `start_authorized`: el piloto autorizó el arranque y gastó cupo del día. Sale de `pilot_outbound_request_authorizations` (scope, versión, `local_budget_date`).
+10. `start_authorized`: el piloto autorizó el arranque y gastó cupo del día. Sale de `pilot_outbound_request_authorizations` (scope, versión, `local_budget_date`). Desde `20261022000300`, también de `flow_engine_request_authorizations` cuando lo autorizó el motor: la evidencia es esa tabla, el código `flow_engine_request_start_authorized` y la frase «El motor autorizó el arranque y gastó cupo del día.».
 11. `start_rejected`: intentó arrancar y no lo autorizaron. Es deducido: son intentos `reserved` sin autorización. Sale como un solo momento, con `count`.
 12. `accepted_by_chatwoot`: Chatwoot aceptó la plantilla. Sale de `followup_delivery_attempts` (`outcome`, `accepted_at`) y de `messages.delivery_status`. Dice que salió, y nada sobre si llegó.
 13. `delivery_uncertain_or_failed`: el envío quedó incierto o falló. Sale de `followup_delivery_attempts`, con un resultado distinto de aceptado, y de los `failed` del cupón y de la reactivación. En ATT1 hoy no hay ninguno.
@@ -468,7 +468,7 @@ Medido en att1-db el 2026-10-15: las 199 conversaciones de ATT1 tienen al menos 
 
 ### Qué lee cada una
 
-- **La de los flujos** lee `pilot_scope_versions`, `pilot_runtime_controls`, `pilot_control_events` (para saber desde cuándo), `pilot_outbound_request_authorizations` (para el consumo del día), `pilot_proactive_contact_caps`, `followup_policy_versions` y `commercial_ally_runtime_bindings`. Para `observed` y `events_without_flow` cuenta además en `webhook_events`, `portable_precheckout_first_contact_plans`, `scheduled_actions`, `conversation_events` y `followup_delivery_attempts`, en la ventana de 7 días, y devuelve solo conteos y medianas.
+- **La de los flujos** lee `pilot_scope_versions`, `pilot_runtime_controls`, `pilot_control_events` (para saber desde cuándo), `pilot_outbound_request_authorizations` y, desde `20261022000300`, `flow_engine_request_authorizations` con `pool` = `scope_key` (para el consumo del día y los arranques de lo observado: los dos caminos gastan la misma bolsa), `pilot_proactive_contact_caps`, `followup_policy_versions` y `commercial_ally_runtime_bindings`. Para `observed` y `events_without_flow` cuenta además en `webhook_events`, `portable_precheckout_first_contact_plans`, `scheduled_actions`, `conversation_events` y `followup_delivery_attempts`, en la ventana de 7 días, y devuelve solo conteos y medianas.
 - **La de la búsqueda** lee, según la llave:
   - para la conversación, `channel_identities.external_conversation_id` y `conversations.commercial_context`;
   - para el link, `checkout_link_issuances.issuance_ulid`;

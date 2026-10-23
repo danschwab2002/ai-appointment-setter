@@ -68,7 +68,9 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
     # el tope de la historia del motor en 4 MB (20261021000300), la lectura
     # de /flows del Automation Expert sin timeout (20261021000400) y el camino
     # del motor para el carrito, que no toca el tope por persona de la puerta
-    # comun y le suma un disparador a la tabla (20261022000100).
+    # comun y le suma un disparador a la tabla (20261022000100), lo que el
+    # bridge del motor lee y marca (20261022000200) y las lecturas que cuentan
+    # lo del motor (20261022000300).
     assert versions[position + 1:] == [
         "20261009000200",
         "20261010000100",
@@ -96,6 +98,7 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261021000400",
         "20261022000100",
         "20261022000200",
+        "20261022000300",
     ]
 
     sql = _sql()

@@ -55,6 +55,7 @@ def test_it_is_one_transaction_and_comes_right_after_the_t4b() -> None:
         "20261021000400_automation_expert_flows_speed_v1.sql",
         "20261022000100_flow_engine_motor_carrito_v1.sql",
         "20261022000200_flow_engine_bridge_reads_v1.sql",
+        "20261022000300_flow_engine_reads_see_motor_v1.sql",
     ]
 
 

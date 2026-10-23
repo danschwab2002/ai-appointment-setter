@@ -48,12 +48,18 @@ def test_it_is_one_transaction_and_comes_before_the_motor() -> None:
     # Despues va el camino del motor para el carrito (la T2.3b), que no vuelve
     # a definir read_automation_expert_flows_v1.
     # Y lo que el bridge del motor lee y marca (la T2.4), que tampoco la toca.
+    # Las lecturas que cuentan lo del motor (20261022000300) si: le suman las
+    # autorizaciones del motor por ancla, sobre esta definicion (lo prueba
+    # test_flow_engine_reads_see_motor_migration.py).
+    reads = "20261022000300_flow_engine_reads_see_motor_v1.sql"
     assert names[position + 1:] == [
         "20261022000100_flow_engine_motor_carrito_v1.sql",
         "20261022000200_flow_engine_bridge_reads_v1.sql",
+        reads,
     ]
     for later in names[position + 1:]:
-        assert "read_automation_expert_flows_v1" not in (MIGRATIONS / later).read_text(encoding="utf-8")
+        if later != reads:
+            assert "read_automation_expert_flows_v1" not in (MIGRATIONS / later).read_text(encoding="utf-8")
 
 
 def test_it_only_replaces_the_flows_function() -> None:

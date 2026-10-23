@@ -38,13 +38,15 @@ def test_it_is_one_transaction_and_comes_before_the_flow_engine_routes() -> None
     # La migracion del motor (20261021000200) va despues: concede sus dos
     # lecturas a este rol, detras de to_regrole. El tope de la historia
     # (20261021000300) conserva esos permisos, y la lectura de /flows mas
-    # rapida (20261021000400) no los toca.
+    # rapida (20261021000400) no los toca. Las lecturas que cuentan lo del
+    # motor (20261022000300) parchan por ancla y conservan los permisos.
     assert names[names.index(MIGRATION.name) + 1:] == [
         "20261021000200_flow_engine_routes_v1.sql",
         "20261021000300_flow_engine_history_cap_v1.sql",
         "20261021000400_automation_expert_flows_speed_v1.sql",
         "20261022000100_flow_engine_motor_carrito_v1.sql",
         "20261022000200_flow_engine_bridge_reads_v1.sql",
+        "20261022000300_flow_engine_reads_see_motor_v1.sql",
     ]
 
 
