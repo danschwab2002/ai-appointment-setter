@@ -377,7 +377,7 @@ esa forma: el del carrito (`plan_cart_recovery_with_identity`, `20260805000200`,
 fuente `hotmart`, vigente desde agosto) y el del pago fallido (`20260930000100`,
 fuente `system`). Ninguno lleva `valid_until`, y la aliada queda solo en
 `evidence`. Hoy no se cruzan porque cada instancia tiene su base y nunca se
-comparte con otra aliada (`docs/instalar.md` §6; la unidad de instancia en
+comparte con otra aliada (`docs/instalar.md` §8; la unidad de instancia en
 `docs/design/setter-producto-instalable-v1.md` §9): ATT1 corre en su propio
 Postgres. Si dos aliadas llegaran a compartir una base y se prendiera el motor
 durable para la segunda, un permiso concedido por una habilitaría a la otra
