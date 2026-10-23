@@ -478,6 +478,8 @@ NEW_VARIABLES = (
     "DAILY_FEEDBACK_BRAND_NAME",
     "DAILY_FEEDBACK_MAX_CONVERSATION_PAGES",
     "DAILY_FEEDBACK_COLLECTION_LEASE_SECONDS",
+    # La excepcion slack_connector_internal_http (E-036), la misma variable del bridge.
+    "SLACK_CONNECTOR_INTERNAL_HOST",
 )
 CHATWOOT_ORIGIN = "https://chatwoot.example.test"
 CONNECTOR_ORIGIN = "https://connector.example.test"

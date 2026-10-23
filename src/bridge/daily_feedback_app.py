@@ -48,6 +48,7 @@ from bridge.daily_feedback_service import (
     validate_internal_http_origin,
     validate_review_brand_name,
 )
+from slack_correlation.internal_http import is_declared_internal_http, validate_internal_host
 from slack_correlation.producer import SlackConnectorProducer
 
 # Las excepciones que puede declarar una instancia autohospedada (ATT1) frente a los
@@ -61,14 +62,20 @@ from slack_correlation.producer import SlackConnectorProducer
 # - chatwoot_agent_bot_unlinked: el AgentBot sin vincular al inbox, a proposito
 #   (DAILY_FEEDBACK_CHATWOOT_AGENT_BOT_BINDING=unlinked). El arranque verifica que el
 #   inbox no tenga bot y que el bot sea de la cuenta; es un chequeo del arranque, no un
-#   control continuo.
+#   control continuo;
+# - slack_connector_internal_http: el conector de Slack de la instancia por http
+#   interno, en el mismo stack (SLACK_CONNECTOR_INTERNAL_HOST=<servicio>:<puerto>, la
+#   misma variable y la misma regla que el productor del bridge, #315). Solo hacia ese
+#   host:puerto exacto; un dominio o una IP no se pueden declarar.
 EXCEPTION_AUTHORITY_INTERNAL_HTTP = "authority_internal_http"
 EXCEPTION_STORAGE_UNENCRYPTED_RISK_ACCEPTED = "storage_unencrypted_risk_accepted"
 EXCEPTION_CHATWOOT_AGENT_BOT_UNLINKED = "chatwoot_agent_bot_unlinked"
+EXCEPTION_SLACK_CONNECTOR_INTERNAL_HTTP = "slack_connector_internal_http"
 DAILY_FEEDBACK_EXCEPTIONS = (
     EXCEPTION_AUTHORITY_INTERNAL_HTTP,
     EXCEPTION_STORAGE_UNENCRYPTED_RISK_ACCEPTED,
     EXCEPTION_CHATWOOT_AGENT_BOT_UNLINKED,
+    EXCEPTION_SLACK_CONNECTOR_INTERNAL_HTTP,
 )
 
 
@@ -230,6 +237,9 @@ class DailyFeedbackRuntimeSettings:
     brand_name: str = DEFAULT_REVIEW_BRAND_NAME
     max_conversation_pages: int = DEFAULT_MAX_CONVERSATION_PAGES
     collection_lease_seconds: int = DEFAULT_COLLECTION_LEASE_SECONDS
+    # El host:puerto del conector interno (SLACK_CONNECTOR_INTERNAL_HOST). Vacio es lo
+    # de siempre: el conector solo por https.
+    slack_connector_internal_host: str = ""
 
     def __post_init__(self) -> None:
         # Las mismas reglas que aplican el repositorio, el colector, la pagina y el
@@ -253,6 +263,19 @@ class DailyFeedbackRuntimeSettings:
         validate_review_brand_name(self.brand_name)
         validate_max_conversation_pages(self.max_conversation_pages)
         validate_collection_lease_seconds(self.collection_lease_seconds)
+        # El conector por http solo hacia el host:puerto declarado, con la regla del
+        # productor (slack_correlation.internal_http); cualquier otro http, el error
+        # de siempre.
+        validate_internal_host(
+            self.slack_connector_internal_host,
+            error="invalid_slack_connector_internal_host",
+        )
+        if urlsplit(self.slack_connector_base_url).scheme == "http" and not (
+            is_declared_internal_http(
+                self.slack_connector_base_url, self.slack_connector_internal_host
+            )
+        ):
+            raise ValueError("invalid_slack_connector_origin")
 
     @property
     def exceptions(self) -> tuple[str, ...]:
@@ -262,6 +285,9 @@ class DailyFeedbackRuntimeSettings:
             self.supabase_internal_http,
             not self.storage_encryption_verified,
             self.chatwoot_agent_bot_binding == AGENT_BOT_BINDING_UNLINKED,
+            is_declared_internal_http(
+                self.slack_connector_base_url, self.slack_connector_internal_host
+            ),
         )
         return tuple(
             name for name, is_active in zip(DAILY_FEEDBACK_EXCEPTIONS, active) if is_active
@@ -326,10 +352,27 @@ class DailyFeedbackRuntimeSettings:
                 required("SUPABASE_BASE_URL"),
                 "invalid_supabase_origin",
             )
-        slack_connector_base_url = _validated_https_origin(
-            required("SLACK_CONNECTOR_BASE_URL"),
-            "invalid_slack_connector_origin",
+        # El conector de la instancia por http interno (la excepcion
+        # slack_connector_internal_http): solo si SLACK_CONNECTOR_INTERNAL_HOST lo
+        # declara y la URL es exactamente http://<ese host:puerto>. Sin la variable,
+        # https como siempre (Johanna y ATT1, con el conector compartido).
+        slack_connector_internal_host = (
+            validate_internal_host(
+                optional("SLACK_CONNECTOR_INTERNAL_HOST"),
+                error="invalid_slack_connector_internal_host",
+            )
+            or ""
         )
+        slack_connector_base_url_text = required("SLACK_CONNECTOR_BASE_URL")
+        if is_declared_internal_http(
+            slack_connector_base_url_text, slack_connector_internal_host
+        ):
+            slack_connector_base_url = slack_connector_base_url_text.rstrip("/")
+        else:
+            slack_connector_base_url = _validated_https_origin(
+                slack_connector_base_url_text,
+                "invalid_slack_connector_origin",
+            )
         chatwoot_base_url = _validated_https_origin(
             required("CHATWOOT_BASE_URL"),
             "invalid_chatwoot_origin",
@@ -458,6 +501,7 @@ class DailyFeedbackRuntimeSettings:
             brand_name=brand_name,
             max_conversation_pages=max_conversation_pages,
             collection_lease_seconds=collection_lease_seconds,
+            slack_connector_internal_host=slack_connector_internal_host,
         )
 
 
@@ -641,6 +685,9 @@ def create_application_from_env(
         base_url=runtime.slack_connector_base_url,
         bearer_token=runtime.slack_connector_bearer_token,
         expected_tenant_ref=runtime.slack_tenant_ref,
+        # Lo declarado en el entorno de la revision, nunca el del proceso: vacio (no
+        # None) para que el productor no lea SLACK_CONNECTOR_INTERNAL_HOST por su cuenta.
+        internal_host=runtime.slack_connector_internal_host,
     )
     scheduler = DailyFeedbackScheduler(
         repository=repository,
