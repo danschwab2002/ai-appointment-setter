@@ -7,6 +7,8 @@ from urllib.parse import quote, urlsplit
 
 import httpx
 
+from slack_correlation.internal_http import is_declared_internal_http, validate_internal_host
+
 _TIMEOUT = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
 _REJECTION_DETAILS_BY_STATUS = {
     404: frozenset({"operator_correlation_case_not_found"}),
@@ -55,8 +57,12 @@ class OperatorBridgeClient:
         read_bearer: str,
         write_bearer: str,
         transport: httpx.AsyncBaseTransport | None = None,
+        internal_host: str | None = None,
     ) -> None:
-        self._base_url = _validate_base_url(base_url)
+        internal_host = validate_internal_host(
+            internal_host, error="invalid_operator_internal_host"
+        )
+        self._base_url = _validate_base_url(base_url, internal_host=internal_host)
         self._read_bearer = _required_secret(read_bearer, "read_bearer")
         self._write_bearer = _required_secret(write_bearer, "write_bearer")
         if self._read_bearer == self._write_bearer:
@@ -258,7 +264,7 @@ def _json_object(response: httpx.Response) -> dict[str, Any]:
     return payload
 
 
-def _validate_base_url(base_url: str) -> str:
+def _validate_base_url(base_url: str, *, internal_host: str | None = None) -> str:
     if not isinstance(base_url, str) or not base_url:
         raise ValueError("invalid_operator_bridge_base_url")
     parsed = urlsplit(base_url)
@@ -281,7 +287,10 @@ def _validate_base_url(base_url: str) -> str:
         and parsed.hostname == "127.0.0.1"
         and port is not None
     )
-    if not production and not loopback_test:
+    # El bridge del mismo stack (http://appointment-bridge:8000), solo si su
+    # host:puerto exacto esta declarado en SLACK_OPERATOR_INTERNAL_HOST.
+    internal_stack = is_declared_internal_http(base_url, internal_host)
+    if not production and not loopback_test and not internal_stack:
         raise ValueError("invalid_operator_bridge_base_url")
     return base_url.rstrip("/")
 
