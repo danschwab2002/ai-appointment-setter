@@ -12,6 +12,26 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.16.4] - 2026-10-23
+
+Un parche sobre la 1.16.3, con una pieza (#313, migración `20261022000300`). Con la ruta del carrito en `motor`, tres lecturas no veían los arranques que autoriza el motor: la historia de la simulación, el `/flows` del Automation Expert y la historia de un lead. Ahora los cuentan. Son lecturas: no cambia nada de lo que se manda a los leads ni del freno de los topes.
+
+### Arreglado
+
+- **Las lecturas del motor cuentan sus arranques** (#313, migración `20261022000300_flow_engine_reads_see_motor_v1.sql`, contratos `docs/contracts/flow-engine-v1.md` §2 y `automation-expert-read-v1.md`). Una autorización del motor (`flow_engine_request_authorizations`) cuenta cuando su `pool` es el `scope_key` del flujo, o cuando la acción es del caso, el mismo criterio del tope:
+  - `read_flow_engine_history_v1`, la historia de la simulación: las autorizaciones del motor entran en la lista, en su conteo y en los contactos;
+  - `read_automation_expert_flows_v1`, el `/flows` del AE: `starts_today`, `starts_total` y `observed.starts`;
+  - `read_automation_expert_lead_history_v1`, la historia de un lead: el momento `start_authorized` del motor (código `flow_engine_request_start_authorized`), los arranques rechazados y los conteos de antes y de ahora.
+
+  La migración parcha las tres funciones por ancla y verifica que la firma, el dueño y la ACL queden iguales. El bridge (`src/bridge/automation_expert_read.py`) acepta la tabla nueva como evidencia de la historia de un lead. Sin filas del motor, las tres lecturas dan lo mismo que antes (medido en ATT1, en solo lectura, con el md5 de la salida).
+
+### Qué hace quien actualiza
+
+- **🔴 El orden importa: primero el bridge, después la migración.** Con el bridge 1.16.3 y la migración aplicada, la historia de un lead con un arranque del motor falla entera (`invalid_evidence`): el bridge viejo rechaza la tabla de evidencia que no conoce. Al revés no pasa nada: el bridge 1.16.4 sin la migración lee como la 1.16.3.
+- **Pasar el bridge y la revisión diaria a las imágenes 1.16.4** (`setter-bridge` y `setter-daily-feedback`). Sin campos nuevos en el manifiesto ni variables nuevas: `FLOW_ENGINE_ENABLED` y las rutas quedan como estaban.
+- **Después, correr la migración `20261022000300`, como `postgres`.** Reemplaza tres funciones de lectura; no suma tablas ni cambia el envío.
+- **El conector de Slack no cambia.** Redesplegarlo a 1.16.4 es opcional.
+
 ## [1.16.3] - 2026-10-22
 
 Un parche sobre la 1.16.2, con lo que falta para mover el carrito al motor (la T5). El bridge suma el motor de flujos detrás de `FLOW_ENGINE_ENABLED`, apagado por defecto (#308, la T2.4, migración `20261022000200`); el comando del operador suma `mover`, que pasa la ruta de un flujo entre `legado` y `motor` (#311); y el `volver` del operador deja de fallar en la simulación (#310). Trae también la evidencia del E2E de la T4 en ATT1 (#309, solo documentación). Con el flag prendido y la ruta del carrito en `legado`, no cambia nada de lo que se manda a los leads.
