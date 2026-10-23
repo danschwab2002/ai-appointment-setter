@@ -77,6 +77,8 @@ El proceso debe verificar antes de leer contenido:
 > - **`storage_unencrypted_risk_accepted`:** la aceptación escrita del riesgo en lugar de la evidencia de cifrado de Supabase Cloud, con `DAILY_FEEDBACK_STORAGE_ENCRYPTION_VERIFIED=false` más `DAILY_FEEDBACK_STORAGE_RISK_ACCEPTANCE_REF`, el permalink https y sin credenciales de esa aceptación. Nunca se declara cifrado lo que no lo está, y las dos referencias a la vez se rechazan (`ambiguous_storage_protection`).
 > - **`chatwoot_agent_bot_unlinked`:** el modo sin vincular en lugar del binding exacto al inbox, con `DAILY_FEEDBACK_CHATWOOT_AGENT_BOT_BINDING=unlinked`. El endpoint inbox-scoped tiene que devolver el inbox sin bot (si trae uno, `chatwoot_agent_bot_unexpectedly_linked`), y el bot configurado tiene que ser de la cuenta: `GET /api/v1/accounts/{account}/agent_bots/{id}` con `id` y `account_id` iguales (si no, `chatwoot_scope_verification_failed`). Es un chequeo del arranque, no un control continuo.
 >
+> - **`slack_connector_internal_http`** (enmienda 2026-10-23, F-133): el conector de Slack de la instancia por http interno, en el mismo stack, con `SLACK_CONNECTOR_INTERNAL_HOST=<servicio>:<puerto>`. Es la variable y la regla del productor del bridge (`slack_correlation/internal_http.py`): `SLACK_CONNECTOR_BASE_URL` puede ser exactamente `http://<ese host:puerto>`, con o sin `/` final; otro servicio, otro puerto, una ruta, un usuario, un dominio o una IP siguen dando `invalid_slack_connector_origin`, y una variable mal escrita, `invalid_slack_connector_internal_host`. La revisión usa lo declarado en su entorno y se lo pasa al productor: nunca toma la variable del proceso por su cuenta. Sin la variable, el conector sigue en HTTPS.
+>
 > `/ready` las declara: su 200 suma `"exceptions"` con las activas, en el orden de esta lista.
 
 Sólo entran mensajes públicos de prospecto y del agent bot configurado, con salidas en estado `sent`, `delivered` o `read`. Notas privadas, adjuntos, mensajes humanos, fallos de entrega y otros autores quedan fuera. Chatwoot conserva contenido y orden canónicos; el batch guarda únicamente el snapshot minimizado.
@@ -217,7 +219,7 @@ No se incluyen PII, secrets, tokens, URLs originales, adjuntos, analytics, third
 - conjunto de bindings activos comprobable y consistente con el snapshot del lote;
 - scheduler sano y sin un `delivery_unknown` vencido sin resolución.
 
-> **Enmienda 2026-10-10 (ADR-0024):** con `storage_unencrypted_risk_accepted` declarada, la aceptación escrita del riesgo ocupa el lugar de la evidencia de cifrado. El 200 de `/ready` suma `"exceptions": [...]` solo si hay alguna declarada, siempre en el orden `authority_internal_http`, `storage_unencrypted_risk_accepted`, `chatwoot_agent_bot_unlinked`. Sin excepciones, el 200 es el de siempre, y los 503 no cambian.
+> **Enmienda 2026-10-10 (ADR-0024):** con `storage_unencrypted_risk_accepted` declarada, la aceptación escrita del riesgo ocupa el lugar de la evidencia de cifrado. El 200 de `/ready` suma `"exceptions": [...]` solo si hay alguna declarada, siempre en el orden `authority_internal_http`, `storage_unencrypted_risk_accepted`, `chatwoot_agent_bot_unlinked`, `slack_connector_internal_http` (la cuarta, desde la enmienda del 2026-10-23). Sin excepciones, el 200 es el de siempre, y los 503 no cambian.
 
 ## Fuera de alcance V1
 

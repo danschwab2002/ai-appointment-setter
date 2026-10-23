@@ -286,6 +286,8 @@ La app de cada instancia recibe a Slack por HTTP con firma (`/slack/interactions
 HMAC `v0`, 300 s de tolerancia) y sólo pide `chat:write`. Sin Socket Mode, sin
 Events API y sin slash commands.
 
-**Lo que no cubre todavía:** la revisión diaria (`daily_feedback_app.py`) valida
-`SLACK_CONNECTOR_BASE_URL` como `https` por su cuenta, así que con el conector en
-el stack necesita su propio cambio (va con la pieza de la plantilla, P3b).
+**La revisión diaria** (`daily_feedback_app.py`) valida `SLACK_CONNECTOR_BASE_URL`
+por su cuenta. Con la misma `SLACK_CONNECTOR_INTERNAL_HOST` en su entorno acepta
+el conector del stack por `http`, con esta misma regla, y `/ready` lo declara como
+la excepción `slack_connector_internal_http` (ver `daily-feedback-production-v1.md`).
+Sin la variable, sigue exigiendo `https`.
