@@ -5480,6 +5480,31 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'flow_engine_reads_see_motor'
+    union all
+    select
+        '20261024000100',
+        '20261024000100_portable_hotmart_listen_only_capture.sql',
+        -- El modo «solo guardar» de Hotmart: security definer, con search_path
+        -- fijo y solo de service_role.
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_portable_hotmart_listen_only_capture_v1(text,text,integer,text,jsonb,text,text)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- Deja el evento nuevo en ignored / listen_only_capture.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_portable_hotmart_listen_only_capture_v1(text,text,integer,text,jsonb,text,text)')
+              and position('listen_only_capture' in definition) > 0
+              and position('processing_status = ''ignored''' in definition) > 0
+        )::int,
+        2,
+        'portable_hotmart_listen_only_capture'
 )
 select
     version,

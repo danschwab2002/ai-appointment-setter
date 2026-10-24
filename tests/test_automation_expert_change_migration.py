@@ -47,6 +47,9 @@ def test_it_is_one_transaction_and_comes_before_the_flow_engine_routes() -> None
         "20261022000100_flow_engine_motor_carrito_v1.sql",
         "20261022000200_flow_engine_bridge_reads_v1.sql",
         "20261022000300_flow_engine_reads_see_motor_v1.sql",
+        # El modo «solo guardar» de Hotmart (20261024000100) solo crea una
+        # funcion nueva y no redefine ninguna.
+        "20261024000100_portable_hotmart_listen_only_capture.sql",
     ]
 
 

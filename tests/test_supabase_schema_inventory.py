@@ -446,8 +446,13 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261022000100 (el camino del motor para el carrito) la admision, el
     # arranque, el contexto del paso y el apagado que llama la reevaluacion.
     # 20261022000200 (el bridge del motor) suma las rutas, las divergencias y
-    # la marca de una divergencia avisada.
-    assert len(allowlisted) == 156
+    # la marca de una divergencia avisada. 20261024000100 (el modo «solo
+    # guardar» de Hotmart) suma su admision.
+    assert len(allowlisted) == 157
+    assert (
+        "admit_portable_hotmart_listen_only_capture_v1"
+        "(text, text, integer, text, jsonb, text, text)"
+    ) in allowlisted
     for signature in (
         "read_flow_engine_routes_v1(jsonb)",
         "read_flow_engine_divergences_v1(jsonb, boolean, integer)",
@@ -1238,15 +1243,16 @@ def test_flow_engine_bridge_reads_fingerprint_grants_three_to_service_role() -> 
         assert marker in compact_fingerprint, marker
 
 
-def test_flow_engine_reads_see_motor_fingerprint_is_last() -> None:
+def test_flow_engine_reads_see_motor_fingerprint_comes_before_the_capture() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261022000300 (las tres lecturas que cuentan lo que
-    # autoriza el motor) es la ultima.
-    fingerprint = sql.split("'20261022000300'", 1)[1].split("select\n    version,", 1)[0]
+    # autoriza el motor) va justo antes de la del modo «solo guardar».
+    fingerprint = sql.split("'20261022000300'", 1)[1].split(
+        "    union all\n    select\n        '20261024000100'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261022000300_flow_engine_reads_see_motor_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",2,'flow_engine_reads_see_motor')")
+    assert compact_fingerprint.endswith(",2,'flow_engine_reads_see_motor'")
     for marker in (
         "to_regprocedure('public.read_flow_engine_history_v1(jsonb,text,timestamptz)')",
         "to_regprocedure('public.read_automation_expert_flows_v1(jsonb)')",
@@ -1255,5 +1261,25 @@ def test_flow_engine_reads_see_motor_fingerprint_is_last() -> None:
         "position('public.flow_engine_request_authorizations'indefinition)>0",
         "andnothas_function_privilege('anon',oid,'EXECUTE')",
         "position('flow_engine_request_start_authorized'indefinition)>0",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_portable_hotmart_listen_only_capture_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261024000100 (el modo «solo guardar» de Hotmart, E-057) es
+    # la ultima.
+    fingerprint = sql.split("'20261024000100'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261024000100_portable_hotmart_listen_only_capture.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'portable_hotmart_listen_only_capture')")
+    for marker in (
+        "to_regprocedure('public.admit_portable_hotmart_listen_only_capture_v1"
+        "(text,text,integer,text,jsonb,text,text)')",
+        "andprosecdef",
+        "andnothas_function_privilege('anon',oid,'EXECUTE')",
+        "andnothas_function_privilege('authenticated',oid,'EXECUTE')",
+        "position('listen_only_capture'indefinition)>0",
     ):
         assert marker in compact_fingerprint, marker
