@@ -263,6 +263,11 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # el paso, de la politica del pago rechazado de la instancia.
     "payment_failure_followup_enabled",
     "portable_hotmart_purchase_stop_enabled",
+    # El modo «solo guardar» (E-057): guarda el carrito y el pago rechazado con
+    # las admisiones portables y los deja ignored / listen_only_capture
+    # (migracion 20261024000100). No manda nada y no esta atado a ningun flujo
+    # del manifiesto: exige solo el freno por compra.
+    "portable_hotmart_capture_enabled",
     # El cupon personal del carrito (A1): crea y verifica el cupon en la API
     # de Hotmart; lo especifico (prefijo, credenciales) es del runtime.
     "recovery_coupon_worker_enabled",
@@ -639,6 +644,13 @@ class Settings:
     hotmart_max_age_seconds: int = 300
     portable_hotmart_recovery_enabled: bool = False
     portable_hotmart_payment_failure_enabled: bool = False
+    # El modo «solo guardar» (E-057, migracion 20261024000100). Prendido, el
+    # carrito y el pago rechazado de un flujo apagado se guardan con la
+    # admision portable de su tipo y quedan ignored / listen_only_capture en la
+    # misma transaccion: el worker de resolucion no los toma nunca. Con el flag
+    # del flujo prendido, manda el flujo. Exige el manifiesto y el freno por
+    # compra; no se ata a ningun [flujos].
+    portable_hotmart_capture_enabled: bool = False
     # La ficha de pago (migracion 20261019000100, C1). Apagado, la ficha se
     # descarta como hasta la 1.10: se guarda solo con el pago fallido portable
     # y el worker la deja failed. Prendido, la admision v2 la cruza con la
@@ -1024,6 +1036,10 @@ class Settings:
             os.getenv(
                 "PORTABLE_HOTMART_PAYMENT_FAILURE_ENABLED", "false"
             ).lower()
+            == "true"
+        )
+        portable_hotmart_capture_enabled = (
+            os.getenv("PORTABLE_HOTMART_CAPTURE_ENABLED", "false").lower()
             == "true"
         )
         portable_precheckout_first_contact_enabled = (
@@ -1664,6 +1680,7 @@ class Settings:
             portable_hotmart_payment_failure_enabled=(
                 portable_hotmart_payment_failure_enabled
             ),
+            portable_hotmart_capture_enabled=portable_hotmart_capture_enabled,
             portable_precheckout_first_contact_enabled=(
                 portable_precheckout_first_contact_enabled
             ),
@@ -2708,6 +2725,39 @@ def _validate_precheckout_first_contact(settings: Settings) -> None:
         raise ValueError(
             f"{flag} requires CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED"
         )
+
+
+def _validate_hotmart_capture(settings: Settings) -> None:
+    """El modo «solo guardar» (E-057): solo con manifiesto y freno por compra.
+
+    Las admisiones que usa son las portables, que piden el binding del
+    manifiesto. Sin el freno por compra no hay hottok portable, y sin el hottok
+    el webhook contesta 503 antes de guardar nada.
+    """
+    if not settings.portable_hotmart_capture_enabled:
+        return
+    flag = "PORTABLE_HOTMART_CAPTURE_ENABLED"
+    if settings.commercial_ally_manifest_path is None:
+        raise ValueError(f"{flag} requires an instance manifest")
+    if not settings.portable_hotmart_purchase_stop_enabled:
+        raise ValueError(f"{flag} requires PORTABLE_HOTMART_PURCHASE_STOP_ENABLED")
+    if settings.hotmart_hottok is None:
+        raise ValueError(f"{flag} requires HOTMART_HOTTOK")
+
+
+def _hotmart_capture_applies(settings: Settings, event_type: str | None) -> bool:
+    """Si este evento va por el modo «solo guardar» y no por su flujo.
+
+    Con el flag de su flujo prendido, manda el flujo: capturar no le saca
+    eventos al worker.
+    """
+    if not settings.portable_hotmart_capture_enabled:
+        return False
+    if event_type == EVENT_CART_ABANDONMENT:
+        return not settings.portable_hotmart_recovery_enabled
+    if event_type == EVENT_PURCHASE_CANCELED:
+        return not settings.portable_hotmart_payment_failure_enabled
+    return False
 
 
 FLOW_ENGINE_REQUIRED_FLAGS = (
@@ -3935,6 +3985,7 @@ def create_app(
         raise ValueError(
             "DURABLE_OUTBOUND_ENABLED requires LANCEMOS_PILOT_BOUNDARY_ENABLED"
         )
+    _validate_hotmart_capture(settings)
     _validate_precheckout_first_contact(settings)
     _validate_payment_slip_first_contact(settings)
     _validate_payment_failure_own_scope(settings)
@@ -9651,7 +9702,16 @@ def create_app(
                 settings.portable_hotmart_payment_slip_enabled
                 and decision.event_type == EVENT_PURCHASE_BILLET_PRINTED
             )
+            and not _hotmart_capture_applies(settings, decision.event_type)
         ):
+            # Antes salia con 200 y sin rastro (E-052): el tipo y el id del
+            # evento, sin datos personales.
+            logger.info(
+                "hotmart_event_filtered event_id=%s event_type=%s "
+                "reason=portable_purchase_stop_event_ignored",
+                decision.event_id,
+                decision.event_type,
+            )
             response.status_code = status.HTTP_200_OK
             return {
                 "status": "ignored",
@@ -9697,6 +9757,100 @@ def create_app(
             response.status_code = status.HTTP_200_OK
             return {"status": "ignored", "reason": "hotmart_event_unrouted"}
         event_config = hotmart_route.config
+        if _hotmart_capture_applies(settings, event_type):
+            # El modo «solo guardar» (E-057): la admision portable de su tipo y
+            # el evento queda ignored / listen_only_capture en la misma
+            # transaccion (admit_portable_hotmart_listen_only_capture_v1). No
+            # se planifica nada, ni ahora ni el dia que se prenda el flujo.
+            if event_type == EVENT_CART_ABANDONMENT:
+                captured_cart = parse_hotmart_payload(payload, config=event_config)
+                capture_email = (
+                    captured_cart.buyer_email if captured_cart is not None else None
+                )
+                capture_phone = (
+                    captured_cart.buyer_phone if captured_cart is not None else None
+                )
+                capture_invalid = (
+                    "invalid_cart_abandonment_payload"
+                    if captured_cart is None
+                    else None
+                )
+            else:
+                captured_failure = parse_hotmart_payment_failure_payload(
+                    payload, config=event_config
+                )
+                capture_email = (
+                    captured_failure.buyer_email
+                    if captured_failure is not None
+                    else None
+                )
+                capture_phone = (
+                    captured_failure.buyer_phone
+                    if captured_failure is not None
+                    else None
+                )
+                capture_invalid = (
+                    "invalid_payment_failure_payload"
+                    if captured_failure is None
+                    else None
+                )
+            if capture_invalid is not None:
+                logger.info(
+                    "hotmart_listen_only_capture_skipped event_id=%s "
+                    "event_type=%s reason=%s",
+                    event_id,
+                    event_type,
+                    capture_invalid,
+                )
+                response.status_code = status.HTTP_200_OK
+                return {"status": "ignored", "reason": capture_invalid}
+            try:
+                capture = (
+                    await shared_supabase.admit_portable_hotmart_listen_only_capture(
+                        config=event_config,
+                        external_event_id=event_id,
+                        payload=payload,
+                        normalized_email=capture_email,
+                        normalized_phone=capture_phone,
+                    )
+                )
+            except SupabasePermanentError as exc:
+                reason = exc.reason or "rejected_by_contract"
+                logger.info(
+                    "hotmart_event_rejected event_id=%s reason=%s",
+                    event_id,
+                    reason,
+                )
+                response.status_code = status.HTTP_200_OK
+                return {"status": "ignored", "event_id": event_id, "reason": reason}
+            except SupabaseError as exc:
+                # Ni el evento ni la marca quedaron escritos (una sola
+                # transaccion): Hotmart reintenta.
+                raise HTTPException(
+                    status_code=503, detail="listen_only_capture_unavailable"
+                ) from exc
+            logger.info(
+                "hotmart_listen_only_captured event_id=%s event_type=%s outcome=%s",
+                event_id,
+                event_type,
+                capture.outcome,
+            )
+            if capture.outcome == "inserted":
+                return {"status": "captured", "event_id": event_id}
+            if capture.outcome == "semantic_conflict":
+                if event_type == EVENT_PURCHASE_CANCELED:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="payment_failure_semantic_conflict",
+                    )
+                response.status_code = status.HTTP_200_OK
+                return {
+                    "status": "conflict",
+                    "event_id": event_id,
+                    "reason": "cart_abandonment_semantic_conflict",
+                }
+            response.status_code = status.HTTP_200_OK
+            return {"status": "duplicate", "event_id": event_id}
         parsed_slip = (
             parse_hotmart_payment_slip_payload(payload, config=event_config)
             if settings.portable_hotmart_payment_slip_enabled
