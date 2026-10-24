@@ -14,8 +14,31 @@ Todos los efectos permanecen apagados por defecto.
 - `HUMAN_HANDOFF_PROJECTION_WORKER_ID`
 - `HANDOFF_PROJECTION_POLICY_KEY`
 - `HANDOFF_PROJECTION_POLICY_VERSION`
+- `HANDOFF_NOTICE_ENABLED=false` (F-034, el aviso a la persona; ver abajo)
 
 Proyección habilitada exige Supabase, control plane Chatwoot, account/inbox canónicos y worker ID. Admisión habilitada exige además proyección, dispatcher outbound y perímetro Lancemos. Configuración incompleta impide arrancar.
+
+### Aviso a la persona al derivar (F-034)
+
+Decisiones D5 a D7 de Dan (24/10/2026). Con `HANDOFF_NOTICE_ENABLED=true` (exige
+`HUMAN_HANDOFF_ADMISSION_ENABLED`), toda derivación del entrante le manda a la
+persona un único mensaje fijo, del producto y no del modelo: «Le paso tu
+consulta al equipo y te responden por este mismo chat.» Nombra al equipo, no
+promete plazo, no da un nombre de persona y no dice que escribe una IA.
+
+- Sale antes de pedir la derivación durable y antes de la etiqueta
+  `automation_paused`, por la misma guarda de envío que cualquier respuesta: si
+  la conversación tiene una persona asignada, la pausa o un mensaje del equipo
+  después del de la persona, no sale.
+- Lleva `appointment_setter_decision = "handoff"` y el motivo en
+  `appointment_setter_reason_code`. Esa marca es la que hace que salga una sola
+  vez por conversación: si la conversación vuelve al agente y se deriva otra
+  vez, no se repite.
+- Un aviso que no sale nunca frena la derivación: queda en el log
+  (`handoff_notice_skipped` / `handoff_notice_not_sent`) y la derivación sigue.
+- No hay vuelta automática al agente (D7); la reanudación sigue como está.
+
+Apagado (el valor por defecto), la derivación no le escribe nada a la persona.
 
 ## 2. Propuesta Hermes
 
