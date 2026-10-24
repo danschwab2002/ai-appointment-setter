@@ -43,8 +43,10 @@ def test_it_is_one_transaction_and_the_last() -> None:
     sql = _sql()
     assert "\nbegin;\n" in sql and sql.rstrip().endswith("commit;")
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
-    assert names[-1] == MIGRATION.name
-    assert names[-2] == "20261024000100_portable_hotmart_listen_only_capture.sql"
+    # Despues va solo F-036 (20261024000400), que parcha el link del agente.
+    assert names[-2] == MIGRATION.name
+    assert names[-1] == "20261024000400_opted_out_reply_checkout_issuance.sql"
+    assert names[-3] == "20261024000100_portable_hotmart_listen_only_capture.sql"
     # Correrla dos veces aborta, y necesita el camino del motor del carrito.
     assert "flow_engine_native_already_applied" in sql
     assert "flow_engine_motor_missing" in sql
@@ -106,4 +108,7 @@ def test_the_native_shape_is_one_send_and_the_legacy_shape_is_untouched() -> Non
 
 def test_the_validator_is_in_the_npm_chain() -> None:
     chain = json.loads(PACKAGE.read_text(encoding="utf-8"))["scripts"]["test"]
-    assert chain.rstrip().endswith("node validate_flow_engine_native.mjs")
+    assert chain.rstrip().endswith(
+        "node validate_flow_engine_native.mjs"
+        " && node validate_opted_out_reply_issuance.mjs"
+    )

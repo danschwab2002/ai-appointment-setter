@@ -205,6 +205,26 @@ salida de Johanna no cambia.
 `CONTEXT_BUILDER_VERSION` pasa a `shadow-context-v3` (y a `shadow-context-v4`
 con la 2c-3b, abajo).
 
+#### Quien se dio de baja y escribe por su cuenta (F-036)
+
+Solo con manifiesto (decisiones D9 y D10 del 2026-10-24). Cuando la persona que
+escribe tiene una baja durable (`has_chatwoot_opt_out_stop`), el bridge la
+reconcilia como siempre y, si el mensaje no es otra baja, deja correr al agente
+con `opted_out_contact: true` en la entrada. El SOUL común contesta normal, sin
+ofrecer seguimiento ni pedir permiso para escribirle, y pide el link solo si la
+persona lo pide. Sin baja la clave no va. La baja sigue para todo lo que sale de
+nosotros: una baja nueva en el mensaje se registra y no se contesta; si la
+conversación la tiene el equipo, la admisión da `blocked` y el agente no corre.
+La reserva y la autorización del link (`reserve_chatwoot_checkout_issuance_v2`,
+sus dos portables y `authorize_chatwoot_checkout_issuance_v2`, migración
+`20261024000400`) dejan de frenar por la baja solo si el mensaje que pide el
+link es posterior a toda baja de esa persona en la cuenta y el inbox; los
+reclamos del seguimiento y de la reactivación no cambian y la siguen frenando.
+El log `chatwoot_opted_out_contact_wrote_again message=<id> answered=true`
+cuenta los casos. Sin manifiesto (Johanna) sigue la derivación de la v1.10.2
+(`opted_out_contact_wrote_again`). `CONTEXT_BUILDER_VERSION` no cambia: la clave
+es condicional y el resto de la entrada se arma igual.
+
 #### Un binding por producto (paso 2c-1)
 
 Cada producto de `[[productos]]` es su propio binding, con su `funnel_ref`

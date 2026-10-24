@@ -5637,6 +5637,7 @@ def create_app(
         context: dict[str, object],
         expected_jid: str | None = None,
         opt_out_only: bool = False,
+        answer_opted_out_contact: bool = False,
     ) -> CanonicalWorkResult:
         if control_client is None or settings.agent_bot_id is None:
             if opt_out_only:
@@ -5714,6 +5715,7 @@ def create_app(
             inbound_wa_id,
             conversation_id=conversation_id,
         )
+        prior_opt_out = False
         if opt_out_enforcement_enabled:
             assert shared_supabase is not None
             assert settings.chatwoot_account_id is not None
@@ -5755,9 +5757,16 @@ def create_app(
                     reconciliation.outcome,
                     reconciliation.opt_out_event_id,
                 )
-                return CanonicalWorkResult(
-                    proposal=None, stopped=True, prior_opt_out=True
-                )
+                if opt_out_only or not answer_opted_out_contact:
+                    return CanonicalWorkResult(
+                        proposal=None, stopped=True, prior_opt_out=True
+                    )
+                # F-036 (D9, 2026-10-24): quien se dio de baja y escribe por su
+                # cuenta recibe respuesta del agente. La baja sigue para todo lo
+                # que sale de nosotros: la reconciliacion de arriba la vuelve a
+                # aplicar, y una baja nueva en este mismo mensaje se registra
+                # abajo y corta igual que siempre.
+                prior_opt_out = True
 
         if settings.chatwoot_durable_opt_out_enabled:
             assert shared_supabase is not None
@@ -5806,6 +5815,8 @@ def create_app(
                     result.outcome,
                     result.opt_out_event_id,
                 )
+                # Sin prior_opt_out a proposito: es una baja nueva, no la
+                # derivacion de la v1.10.2 (que con manifiesto ya no corre).
                 return CanonicalWorkResult(proposal=None, stopped=True)
         if opt_out_only:
             # Only the stop and the opt-out were asked for: the agent does
@@ -5826,20 +5837,26 @@ def create_app(
             for message in normalized
         ]
         enriched_context = {**context, "messages": public_messages}
+        if prior_opt_out:
+            # El SOUL comun: contestar normal, sin ofrecer seguimiento ni pedir
+            # permiso para escribirle, y el link solo si lo pide (D10).
+            enriched_context["opted_out_contact"] = True
         if shadow_processor is None:
-            return CanonicalWorkResult(proposal=None)
+            return CanonicalWorkResult(proposal=None, prior_opt_out=prior_opt_out)
         if shadow_processor.has_result(delivery_id=delivery_id):
             return CanonicalWorkResult(
                 proposal=shadow_processor.get_completed_proposal(
                     delivery_id=delivery_id
-                )
+                ),
+                prior_opt_out=prior_opt_out,
             )
         await shadow_processor.run(
             delivery_id=delivery_id,
             context=enriched_context,
         )
         return CanonicalWorkResult(
-            proposal=shadow_processor.get_completed_proposal(delivery_id=delivery_id)
+            proposal=shadow_processor.get_completed_proposal(delivery_id=delivery_id),
+            prior_opt_out=prior_opt_out,
         )
 
     def classify_scoped_chatwoot_event(
@@ -6495,7 +6512,19 @@ def create_app(
                 batch_message_ids=batch_message_ids,
                 context=context,
                 expected_jid=scoped_expected_jid,
+                # F-036: con manifiesto (ATT1, Maribel y toda instancia nueva,
+                # que cargan el SOUL comun con la regla de opted_out_contact)
+                # el agente le contesta a quien se dio de baja y escribe por su
+                # cuenta. Sin manifiesto (Johanna) sigue la derivacion de la
+                # v1.10.2: su SOUL no tiene la regla.
+                answer_opted_out_contact=whatsapp_inbound_equivalence,
             )
+            if canonical_result.prior_opt_out and not canonical_result.stopped:
+                # El log se queda, para medir cuantas bajas vuelven a escribir.
+                logger.info(
+                    "chatwoot_opted_out_contact_wrote_again message=%s answered=true",
+                    message_id,
+                )
             if canonical_result.stopped:
                 if (
                     canonical_result.prior_opt_out

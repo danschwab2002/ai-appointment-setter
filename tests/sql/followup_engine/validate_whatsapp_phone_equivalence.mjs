@@ -846,12 +846,14 @@ const dispatch = async (lead, plan, anchor) => {
 
 // El opt-out real de Chatwoot (apply_chatwoot_inbound_opt_out), desde un wa_id.
 let optOutMessage = 0;
-const optOutFrom = async (waId, { accountId = ATT1.accountId, inboxId = ATT1.inboxId } = {}) => {
+const optOutFrom = async (waId, {
+  accountId = ATT1.accountId, inboxId = ATT1.inboxId, conversationId, messageId,
+} = {}) => {
   optOutMessage += 1;
   return one((await db.query(`
     select * from public.apply_chatwoot_inbound_opt_out($1,$2,$3,$4,$5,$6,'unsubscribe')
-  `, [accountId, inboxId, 8800 + optOutMessage, 98800 + optOutMessage, waId,
-    await dbNow()])).rows, 'opt-out');
+  `, [accountId, inboxId, conversationId ?? 8800 + optOutMessage,
+    messageId ?? 98800 + optOutMessage, waId, await dbNow()])).rows, 'opt-out');
 };
 
 // ---------------------------------------------------------------------------
@@ -1433,8 +1435,17 @@ results.schema_fingerprints = FINGERPRINTS.length;
       join public.checkout_offer_catalog offer on offer.id = issuance.offer_catalog_id
       where issuance.id = $1
     `, [row.issuance_id])).rows, `${rpc} issuance`);
-    return { outcome: row.outcome, ulid, issuance };
+    return {
+      outcome: row.outcome, ulid, issuance, issuance_id: row.issuance_id,
+      trigger: String(inboundMessage),
+    };
   };
+  // La autorizacion del ultimo paso, con el mismo mensaje que disparo la reserva.
+  const authorizeLink = async (link, userId, conversation) => one((await db.query(`
+    select * from public.authorize_chatwoot_checkout_issuance_v2(
+      $1::uuid,$2,$3,$4,$5,$6,clock_timestamp())
+  `, [link.issuance_id, userId, ATT1.accountId, ATT1.inboxId, conversation,
+    link.trigger])).rows, `authorize ${conversation}`);
   const PORTABLE = 'reserve_portable_checkout_issuance_v2';
   const SHARED = 'reserve_chatwoot_checkout_issuance_v2';
   const liveIntents = async (lead) => one((await db.query(`
@@ -1534,9 +1545,11 @@ results.schema_fingerprints = FINGERPRINTS.length;
   // e. Opt-out en la otra forma y en otra conversacion: pidio la baja desde
   //    521 (queda unmatched, sin contacto), despues dejo el formulario y la
   //    base lo conoce como 52 en otra conversacion. La compartida solo mira
-  //    esta conversacion y el id exacto.
+  //    esta conversacion y el id exacto. Desde 20261024000400 (F-036) la baja
+  //    no frena el link que pide quien escribio DESPUES de darse de baja: aca
+  //    la baja tiene un id de mensaje posterior al del pedido, y frena.
   const stopped = person('enlace-opt-out', 'MX');
-  const stoppedOptOut = await optOutFrom(stopped.whatsapp);
+  const stoppedOptOut = await optOutFrom(stopped.whatsapp, { messageId: 990000 });
   await submitForm(stopped);
   inboundConversation += 1;
   const stoppedCase = await admitInbound(stopped.plain, inboundConversation);
@@ -1545,6 +1558,57 @@ results.schema_fingerprints = FINGERPRINTS.length;
   if (stoppedOptOut.outcome !== 'recorded_unmatched'
       || stoppedLink.outcome !== 'blocked_opt_out' || stoppedLink.issuance !== null) {
     throw new Error(`an opt-out in the other form did not stop the link: ${JSON.stringify({ optOut: stoppedOptOut.outcome, admission: stoppedCase.outcome, link: stoppedLink.outcome })}`);
+  }
+
+  // e2. F-036 (D9 y D10, 24/10): se dio de baja desde 521 en la conversacion
+  //     de la plantilla (la baja queda aplicada al contacto) y despues escribe
+  //     por su cuenta en otra conversacion y pide el link. El mensaje es
+  //     posterior a la baja: la reserva y la autorizacion lo dejan pasar. La
+  //     conversacion de la baja sigue frenada, y una baja nueva vuelve a frenar.
+  const returning = person('enlace-baja-que-vuelve', 'MX');
+  await submitForm(returning);
+  inboundConversation += 1;
+  const optOutConversation = inboundConversation;
+  const optOutCase = await admitInbound(returning.whatsapp, optOutConversation);
+  const returningOptOut = await optOutFrom(returning.whatsapp,
+    { conversationId: optOutConversation });
+  const optedOutContact = one((await db.query(`
+    select contact.contact_permission, contact.lifecycle_status
+    from public.commercial_cases commercial_case
+    join public.contacts contact on contact.id = commercial_case.contact_id
+    where commercial_case.id = $1
+  `, [optOutCase.commercial_case_id])).rows, 'returning contact');
+  inboundConversation += 1;
+  const returningConversation = inboundConversation;
+  const returningCase = await admitInbound(returning.whatsapp, returningConversation);
+  const returningLink = await reserveLink(PORTABLE, returningCase.commercial_case_id,
+    returning.whatsapp, returningConversation);
+  const returningAuth = returningLink.issuance_id === null ? null
+    : await authorizeLink(returningLink, returning.whatsapp, returningConversation);
+  const sameConversationLink = await reserveLink(PORTABLE, optOutCase.commercial_case_id,
+    returning.whatsapp, optOutConversation);
+  if (returningOptOut.outcome !== 'applied'
+      || optedOutContact.contact_permission !== 'opted_out'
+      || optedOutContact.lifecycle_status !== 'do_not_contact'
+      || !['created', 'already_exists'].includes(returningCase.outcome)
+      || returningLink.outcome !== 'reserved'
+      || returningAuth?.outcome !== 'request_started'
+      || sameConversationLink.outcome !== 'blocked_conversation') {
+    throw new Error(`an opted-out person who wrote again did not get the link: ${JSON.stringify({ optOut: returningOptOut.outcome, contact: optedOutContact, admission: returningCase.outcome, link: returningLink.outcome, auth: returningAuth?.outcome, same: sameConversationLink.outcome })}`);
+  }
+  // Una baja nueva, posterior a otro pedido, frena la reserva y la autorizacion.
+  const pendingLink = await reserveLink(PORTABLE, returningCase.commercial_case_id,
+    returning.whatsapp, returningConversation);
+  await optOutFrom(returning.whatsapp,
+    { conversationId: returningConversation, messageId: 995000 });
+  const afterNewOptOut = await reserveLink(PORTABLE, returningCase.commercial_case_id,
+    returning.whatsapp, returningConversation);
+  const pendingAuth = pendingLink.issuance_id === null ? null
+    : await authorizeLink(pendingLink, returning.whatsapp, returningConversation);
+  if (pendingLink.outcome !== 'reserved'
+      || afterNewOptOut.outcome === 'reserved'
+      || pendingAuth?.outcome === 'request_started') {
+    throw new Error(`a newer opt-out did not stop the link: ${JSON.stringify({ pending: pendingLink.outcome, after: afterNewOptOut.outcome, auth: pendingAuth?.outcome })}`);
   }
 
   // f. Johanna: la compartida, con el mismo caso que a., sigue exacta: la
@@ -1616,6 +1680,7 @@ results.schema_fingerprints = FINGERPRINTS.length;
     mx_wrote_first_then_form: firstSummary,
     mx_bought_then_wrote: boughtLink.outcome,
     opt_out_other_form_other_conversation: stoppedLink.outcome,
+    opted_out_then_wrote_again: `${returningLink.outcome}, ${returningAuth.outcome}, opt-out conversation ${sameConversationLink.outcome}, after a newer opt-out ${afterNewOptOut.outcome}/${pendingAuth?.outcome}`,
     shared_reserve_same_case: `${johannaLink.issuance.source_kind}:${johannaLink.issuance.offer_resolution}:${johannaLink.issuance.offer_code}, live intents 2`,
     portable_is_shared_plus_replacements: reserveDrift.derived,
   };

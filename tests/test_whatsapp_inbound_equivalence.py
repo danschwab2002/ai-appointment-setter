@@ -393,12 +393,15 @@ def test_the_stop_check_looks_at_every_form_of_the_phone(tmp_path: Path) -> None
     assert reply["expected_jid"] == WA_JID
 
 
-def test_an_opt_out_stored_under_the_other_form_still_stops_the_reply(
+def test_an_opt_out_stored_under_the_other_form_is_found_and_marks_the_turn(
     tmp_path: Path,
 ) -> None:
     # La persona se dio de baja cuando la base todavia no la conocia: el
     # opt-out quedo bajo el wa_id textual (521…). Despues el formulario creo su
-    # identidad 52…, que es la que hoy resuelve el entrante. El stop vale igual.
+    # identidad 52…, que es la que hoy resuelve el entrante. El stop se
+    # encuentra igual y se reconcilia. Desde F-036 (D9, 24/10) la persona que
+    # escribe por su cuenta recibe respuesta: el agente corre con
+    # opted_out_contact (tests/test_opt_out_wrote_again.py).
     supabase = _Supabase(identities=(FORM_ID,), stopped_user_ids=(WA_ID,))
     webhook, history = _text_webhook("Hola, ¿siguen ahí?")
 
@@ -409,8 +412,9 @@ def test_an_opt_out_stored_under_the_other_form_still_stops_the_reply(
     assert supabase.stop_checks == [FORM_ID, WA_ID]
     [reconciliation] = supabase.reconciliations
     assert reconciliation["external_user_id"] == WA_ID
-    assert shadow.calls == []
-    assert chatwoot.reply_calls == []
+    [(_, context)] = shadow.calls
+    assert context["opted_out_contact"] is True
+    assert len(chatwoot.reply_calls) == 1
 
 
 def test_the_reset_command_respects_a_stop_under_any_form(tmp_path: Path) -> None:

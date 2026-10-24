@@ -5543,6 +5543,35 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'flow_engine_native'
+    union all
+    select
+        '20261024000400',
+        '20261024000400_opted_out_reply_checkout_issuance.sql',
+        -- El helper de F-036, interno: ningun rol de la API lo ejecuta.
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure(
+                'public._chatwoot_reply_follows_opt_out_v1(uuid,bigint,bigint,bigint,text,text)'
+            )
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- Las tres reservas del link del agente y su autorizacion lo consultan.
+        + (
+            select count(*) = 4
+            from functions
+            where oid in (
+                to_regprocedure('public.reserve_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamptz)'),
+                to_regprocedure('public.reserve_portable_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamptz)'),
+                to_regprocedure('public.reserve_portable_checkout_issuance_for_funnel_v1(uuid,text,bigint,bigint,bigint,text,text,text,timestamptz)'),
+                to_regprocedure('public.authorize_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,timestamptz)')
+            )
+              and position('_chatwoot_reply_follows_opt_out_v1(' in definition) > 0
+        )::int,
+        2,
+        'opted_out_reply_checkout_issuance'
 )
 select
     version,
