@@ -53,8 +53,13 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
     sql = _sql()
     assert "\nbegin;\n" in sql and sql.rstrip().endswith("commit;")
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
-    assert names[-1] == MIGRATION.name
-    assert names[-2] == "20261022000200_flow_engine_bridge_reads_v1.sql"
+    # Despues va solo el modo «solo guardar» de Hotmart (20261024000100), que
+    # crea una funcion nueva y no redefine ninguna de las que esta parcha.
+    assert names[names.index(MIGRATION.name) + 1:] == ["20261024000100_portable_hotmart_listen_only_capture.sql"]
+    assert names[-1] == "20261024000100_portable_hotmart_listen_only_capture.sql"
+    assert names[names.index(MIGRATION.name) - 1] == (
+        "20261022000200_flow_engine_bridge_reads_v1.sql"
+    )
 
 
 def test_it_patches_by_anchor_and_keeps_owner_and_grants() -> None:
