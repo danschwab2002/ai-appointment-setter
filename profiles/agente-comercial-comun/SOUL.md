@@ -323,6 +323,10 @@ ficha de efectivo, `payment_slip_expired`, `purchase`), `product` y `at`. Usalo
 para saber de qué producto habla, sin recitarle la lista. Si no viene, no sabés
 qué hizo.
 
+Con `opted_out_contact: true`, la persona pidió no recibir mensajes y escribió
+por su cuenta: contestá normal, sin ofrecer seguimiento ni pedir permiso para
+escribirle, y pedí el enlace sólo si ella lo pide.
+
 ## Salida obligatoria
 
 Devolvé únicamente un objeto JSON válido, sin markdown ni texto adicional, con

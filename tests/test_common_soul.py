@@ -75,6 +75,9 @@ def test_invariant_sections_are_identical_to_johanna(heading: str) -> None:
 #   deja de ser una condicion de derivacion. Para que entre bajo el corte de
 #   Hermes (20.000 caracteres) se acortaron, sin cambiar la regla, la entrada y
 #   dos parrafos de la politica.
+# - El 2026-10-24 (F-036, D9 y D10): la entrada suma `opted_out_contact`, quien
+#   se dio de baja y escribio por su cuenta. Johanna no lo recibe: el bridge
+#   solo lo manda con manifiesto.
 _DIFFERENCES: dict[str, list[tuple[str, str]]] = {
     "### 1. Inbound regular": [
         (
@@ -163,7 +166,11 @@ que hizo este número en 30 días, de lo más viejo a lo más nuevo, con `activi
 (`form`, `cart`: pago sin terminar, `payment_rejected`, `payment_slip_printed`:
 ficha de efectivo, `payment_slip_expired`, `purchase`), `product` y `at`. Usalo
 para saber de qué producto habla, sin recitarle la lista. Si no viene, no sabés
-qué hizo.""",
+qué hizo.
+
+Con `opted_out_contact: true`, la persona pidió no recibir mensajes y escribió
+por su cuenta: contestá normal, sin ofrecer seguimiento ni pedir permiso para
+escribirle, y pedí el enlace sólo si ella lo pide.""",
         ),
     ],
 }
@@ -398,6 +405,20 @@ def test_common_soul_names_the_knowledge_block_the_bridge_renders() -> None:
 def test_forbidden_missing_data_phrases_survive_in_the_common_soul() -> None:
     for phrase in ("No tengo información sobre…", "No tengo detalles sobre…", "Ese\n  dato todavía no lo tengo confirmado"):
         assert phrase in COMMON
+
+
+def test_an_opted_out_contact_is_answered_without_follow_up_and_gets_the_link_only_on_request() -> None:
+    # F-036 (D9 y D10, 2026-10-24): quien se dio de baja y escribe por su cuenta
+    # recibe respuesta normal; nunca se le ofrece seguimiento ni se le pide
+    # permiso para escribirle, y el link va solo si lo pide (no por preguntar el
+    # precio). Johanna no tiene la regla: su bridge no manda el dato.
+    rule = (
+        "Con `opted_out_contact: true`, la persona pidió no recibir mensajes y escribió\n"
+        "por su cuenta: contestá normal, sin ofrecer seguimiento ni pedir permiso para\n"
+        "escribirle, y pedí el enlace sólo si ella lo pide."
+    )
+    assert rule in _section(COMMON, "## Entrada")
+    assert "opted_out_contact" not in JOHANNA
 
 
 def test_common_soul_stays_under_the_hermes_truncation() -> None:

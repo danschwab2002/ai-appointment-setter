@@ -107,11 +107,18 @@ await shapeDb.exec(`
   grant usage on schema public to service_role, anon;
 `);
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
-if (names.at(-1) !== MIGRATION) fail(`${MIGRATION} tiene que ser la ultima de la cadena`, names.at(-1));
+// Despues va solo F-036 (20261024000400), que parcha el link del agente y no
+// toca el motor: la foto de antes y despues se saca alrededor de esta.
+const position = names.indexOf(MIGRATION);
+if (position < 0) fail(`${MIGRATION} no esta en la cadena`);
+if (JSON.stringify(names.slice(position + 1))
+    !== JSON.stringify(['20261024000400_opted_out_reply_checkout_issuance.sql'])) {
+  fail(`despues de ${MIGRATION} solo va la de F-036`, names.slice(position + 1));
+}
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(
   /create extension if not exists pgcrypto;/gi, '-- pgcrypto is built into PGlite'));
 await applyFile(shapeDb, join(root, 'supabase/baseline/20260803_public_schema.sql'));
-for (const name of names.slice(0, -1)) await applyFile(shapeDb, join(root, 'supabase/migrations', name));
+for (const name of names.slice(0, position)) await applyFile(shapeDb, join(root, 'supabase/migrations', name));
 const before = await snapshot(shapeDb);
 const tablesBefore = await tableAcl(shapeDb);
 const target = join(root, 'supabase/migrations', MIGRATION);

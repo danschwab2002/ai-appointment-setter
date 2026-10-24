@@ -1,20 +1,29 @@
-"""Quien se dio de baja y vuelve a escribir se deriva al equipo (LAN-132).
+"""Quien se dio de baja y vuelve a escribir por su cuenta (LAN-132 y F-036).
 
 El caso real (ATT1, inbox 11): la persona de la conversacion 103 toco «No más
 mensajes» el 12/10 a las 15:01Z. El 17/10 a las 07:41Z escribio «Envíame el
 enlace»; como la 103 estaba resuelta, Chatwoot abrio la 257 sin etiquetas ni
 agente, el bridge callo por la baja durable y nadie del equipo la vio. La 257
-quedo admitida a las 07:42:06Z (att1-db, leido el 19/10).
+quedo admitida a las 07:42:06Z (att1-db, leido el 19/10). El 22/10 la 425 paso
+por la derivacion de la v1.10.2.
 
-Ahora la baja sigue igual (el bridge no le contesta y no sale nada proactivo),
-pero la conversacion se deriva: asignacion y nota privada, nada a la persona.
-El telefono es del rango de ficcion.
+Desde F-036 (decisiones D9 y D10 de Dan, 24/10), con manifiesto (ATT1, Maribel
+y toda instancia nueva, que cargan el SOUL comun) el agente le contesta: la
+entrada lleva ``opted_out_contact: true``, el SOUL dice contestar normal, sin
+ofrecer seguimiento, y el link solo si lo pide. La baja sigue para todo lo que
+sale de nosotros: la reconciliacion la vuelve a aplicar en cada mensaje, y una
+baja nueva se registra y no se contesta. Si la conversacion la tiene el equipo
+(derivada o pausada), la admision da ``blocked`` y el agente no corre.
+
+Sin manifiesto (Johanna) sigue la derivacion de la v1.10.2: su SOUL no tiene la
+regla. Los telefonos son del rango de ficcion.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from test_webhook import (
@@ -25,11 +34,30 @@ from test_webhook import (
     _post,
     _signed_headers,
 )
+from test_whatsapp_inbound_equivalence import (
+    FORM_ID,
+    PAYMENT_LINK_PROPOSAL,
+    WA_ID,
+    _blocked,
+    _manifest_settings,
+    _PaymentLinkSupabase,
+    _process,
+    _Supabase,
+    _text_webhook,
+)
 
 from bridge.app import Settings, create_app
 
 SECRET = "webhook-secret"
 JID = "5210000000257@s.whatsapp.net"
+ANSWER = {
+    "decision": "ask_question",
+    "qualification_status": "in_progress",
+    "reason_code": "commercial_response",
+    "reply": "El programa dura cuatro semanas.",
+    "captured_fields": {},
+    "missing_fields": [],
+}
 
 
 class _OptedOutSupabase(StubInboundCommercialSupabase):
@@ -125,7 +153,110 @@ def _procesar(
     return shadow, chatwoot, supabase
 
 
-def test_an_opted_out_person_who_writes_again_goes_to_a_person(tmp_path: Path) -> None:
+def _context(shadow: StubShadowProcessor) -> dict[str, object]:
+    [(_, context)] = shadow.calls
+    return context
+
+
+# ------------------------------------- con manifiesto: el agente contesta (F-036)
+
+
+def test_an_opted_out_person_who_writes_again_gets_an_answer(tmp_path: Path) -> None:
+    # La baja quedo bajo el wa_id (521…) y la persona escribe una pregunta en
+    # una conversacion nueva. Antes: derivacion sin respuesta.
+    supabase = _Supabase(identities=(FORM_ID,), stopped_user_ids=(WA_ID,))
+    webhook, history = _text_webhook("¿Cuánto dura el programa?")
+
+    chatwoot, shadow, _ = _process(
+        tmp_path, supabase, webhook=webhook, history=history, proposal=ANSWER
+    )
+
+    # La baja sigue: se reconcilia en cada mensaje.
+    assert [call["external_user_id"] for call in supabase.reconciliations] == [WA_ID]
+    assert supabase.opt_outs == []
+    # El agente corre con el dato de la baja y la respuesta sale.
+    assert _context(shadow)["opted_out_contact"] is True
+    [reply] = chatwoot.reply_calls
+    assert reply["content"] == "El programa dura cuatro semanas."
+    # No es una derivacion: ni pedido de derivacion ni pausa.
+    assert supabase.handoff_calls == []
+    assert chatwoot.calls == []
+
+
+def test_an_opted_out_person_who_asks_for_the_link_receives_it(tmp_path: Path) -> None:
+    # «Envíame el enlace», el texto de la 257. El link sale con la emision de
+    # siempre; la base lo deja pasar porque el mensaje es posterior a la baja
+    # (migracion 20261024000400, validate_opted_out_reply_issuance.mjs).
+    supabase = _PaymentLinkSupabase(identities=(FORM_ID,), stopped_user_ids=(WA_ID,))
+    webhook, history = _text_webhook("Envíame el enlace")
+
+    chatwoot, shadow, _ = _process(
+        tmp_path,
+        supabase,
+        settings=replace(_manifest_settings(tmp_path), payment_link_enabled=True),
+        webhook=webhook,
+        history=history,
+        proposal=PAYMENT_LINK_PROPOSAL,
+    )
+
+    assert _context(shadow)["opted_out_contact"] is True
+    [reservation] = supabase.candidate_calls
+    assert reservation["external_user_id"] == FORM_ID
+    [reply] = chatwoot.reply_calls
+    assert "src=hermes" in str(reply["content"])
+    assert supabase.handoff_calls == []
+
+
+def test_a_new_opt_out_request_is_recorded_and_not_answered(tmp_path: Path) -> None:
+    supabase = _Supabase(identities=(FORM_ID,), stopped_user_ids=(WA_ID,))
+    webhook, history = _text_webhook("No me escriban más")
+
+    chatwoot, shadow, _ = _process(
+        tmp_path, supabase, webhook=webhook, history=history, proposal=ANSWER
+    )
+
+    [opt_out] = supabase.opt_outs
+    assert opt_out["rule_key"] == "do_not_write_again"
+    assert shadow.calls == []
+    assert chatwoot.reply_calls == []
+    assert supabase.handoff_calls == []
+
+
+def test_when_the_team_has_the_conversation_the_agent_does_not_answer(
+    tmp_path: Path,
+) -> None:
+    # Derivada o pausada por una persona: la admision da 'blocked'. La baja se
+    # reconcilia y la conversacion sigue con el equipo.
+    supabase = _blocked(identities=(FORM_ID,), stopped_user_ids=(WA_ID,))
+    webhook, history = _text_webhook("Envíame el enlace")
+
+    chatwoot, shadow, _ = _process(
+        tmp_path, supabase, webhook=webhook, history=history, proposal=ANSWER
+    )
+
+    assert [call["external_user_id"] for call in supabase.reconciliations] == [WA_ID]
+    assert shadow.calls == []
+    assert chatwoot.reply_calls == []
+
+
+def test_a_person_without_an_opt_out_does_not_get_the_marker(tmp_path: Path) -> None:
+    supabase = _Supabase(identities=(FORM_ID,))
+    webhook, history = _text_webhook("¿Cuánto dura el programa?")
+
+    chatwoot, shadow, _ = _process(
+        tmp_path, supabase, webhook=webhook, history=history, proposal=ANSWER
+    )
+
+    assert "opted_out_contact" not in _context(shadow)
+    assert len(chatwoot.reply_calls) == 1
+
+
+# -------------------------- sin manifiesto (Johanna): la derivacion de la v1.10.2
+
+
+def test_without_a_manifest_an_opted_out_person_who_writes_again_goes_to_a_person(
+    tmp_path: Path,
+) -> None:
     shadow, chatwoot, supabase = _procesar(tmp_path, texto="Envíame el enlace")
 
     assert len(supabase.reconcile_calls) == 1  # la baja sigue
@@ -137,7 +268,9 @@ def test_an_opted_out_person_who_writes_again_goes_to_a_person(tmp_path: Path) -
     assert chatwoot.calls == [(257, "automation_paused")]
 
 
-def test_a_new_opt_out_request_is_not_handed_off(tmp_path: Path) -> None:
+def test_without_a_manifest_a_new_opt_out_request_is_not_handed_off(
+    tmp_path: Path,
+) -> None:
     shadow, chatwoot, supabase = _procesar(tmp_path, texto="No me escriban más")
 
     assert len(supabase.reconcile_calls) == 1

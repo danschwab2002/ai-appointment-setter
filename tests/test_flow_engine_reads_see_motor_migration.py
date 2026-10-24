@@ -56,10 +56,12 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
     # Despues van el modo «solo guardar» de Hotmart (20261024000100), que crea
     # una funcion nueva y no redefine ninguna de las que esta parcha, y el motor
     # nativo (20261024000200), que parcha la historia por ancla sobre esta
-    # version (conserva sus bloques) y no toca las dos lecturas del AE.
+    # version (conserva sus bloques) y no toca las dos lecturas del AE. F-036
+    # (20261024000400) solo parcha el link del agente.
     assert names[names.index(MIGRATION.name) + 1:] == [
         "20261024000100_portable_hotmart_listen_only_capture.sql",
         "20261024000200_flow_engine_native_v1.sql",
+        "20261024000400_opted_out_reply_checkout_issuance.sql",
     ]
     native = (MIGRATIONS / "20261024000200_flow_engine_native_v1.sql").read_text(encoding="utf-8")
     assert "read_automation_expert_flows_v1" not in native

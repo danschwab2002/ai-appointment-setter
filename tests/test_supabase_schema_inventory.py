@@ -1288,14 +1288,16 @@ def test_portable_hotmart_listen_only_capture_fingerprint_comes_before_the_nativ
         assert marker in compact_fingerprint, marker
 
 
-def test_flow_engine_native_fingerprint_is_last() -> None:
+def test_flow_engine_native_fingerprint_comes_before_the_opted_out_reply() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261024000200 (el motor nativo, E-060) es la ultima.
-    fingerprint = sql.split("'20261024000200'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261024000200 (el motor nativo, E-060) va justo antes de la
+    # de F-036.
+    fingerprint = sql.split("'20261024000200'", 1)[1].split(
+        "    union all\n    select\n        '20261024000400'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261024000200_flow_engine_native_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",3,'flow_engine_native')")
+    assert compact_fingerprint.endswith(",3,'flow_engine_native'")
     for marker in (
         "to_regclass('public.flow_engine_pools')",
         "to_regclass('public.flow_cohort_members')",
@@ -1305,5 +1307,25 @@ def test_flow_engine_native_fingerprint_is_last() -> None:
         "andprosecdef",
         "andnothas_function_privilege('anon',oid,'EXECUTE')",
         "position('flow_engine_native_excluded'indefinition)>0",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_opted_out_reply_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261024000400 (F-036, quien se dio de baja y escribe por su
+    # cuenta recibe el link si lo pide) es la ultima.
+    fingerprint = sql.split("'20261024000400'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261024000400_opted_out_reply_checkout_issuance.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'opted_out_reply_checkout_issuance')")
+    for marker in (
+        "'public._chatwoot_reply_follows_opt_out_v1(uuid,bigint,bigint,bigint,text,text)'",
+        "andnothas_function_privilege('service_role',oid,'EXECUTE')",
+        "andnothas_function_privilege('anon',oid,'EXECUTE')",
+        "andnothas_function_privilege('authenticated',oid,'EXECUTE')",
+        "count(*)=4",
+        "position('_chatwoot_reply_follows_opt_out_v1('indefinition)>0",
     ):
         assert marker in compact_fingerprint, marker

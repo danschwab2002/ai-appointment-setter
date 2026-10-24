@@ -62,6 +62,9 @@ def test_it_is_one_transaction_and_comes_right_after_the_t4b() -> None:
         # El motor nativo (20261024000200) suma funciones y tablas y parcha por
         # ancla, sobre la definicion vigente, las lecturas y guardas del motor.
         "20261024000200_flow_engine_native_v1.sql",
+        # F-036 (20261024000400) parcha por ancla la reserva y la autorizacion
+        # del link; no toca el motor.
+        "20261024000400_opted_out_reply_checkout_issuance.sql",
     ]
 
 
