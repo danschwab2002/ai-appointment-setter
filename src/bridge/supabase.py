@@ -1016,6 +1016,87 @@ class FlowEngineDivergences:
     divergences: tuple[FlowEngineDivergence, ...]
 
 
+# flow-engine-v2 (el bridge del motor nativo, E-065): los estados de un flujo
+# nativo que la lectura devuelve, y los que el bridge cuenta como prendidos.
+_FLOW_ENGINE_NATIVE_STATES = frozenset({"prendido", "pausado", "cohorte"})
+FLOW_ENGINE_NATIVE_ON_STATES = frozenset({"prendido", "cohorte"})
+FLOW_ENGINE_NATIVE_OUTCOMES = frozenset({"motor_arranco", "motor_no_arranca", "sin_flujo"})
+_FLOW_ENGINE_REJECTION_PHASES = frozenset({"admision", "despacho"})
+
+
+@dataclass(frozen=True)
+class FlowEngineNativeFlow:
+    """One native flow of the instance that is not off (flow-engine-v2)."""
+
+    flow_id: str
+    product_ref: str
+    flow_key: str
+    state: str
+    active_version: int | None
+    trigger: str | None
+
+
+@dataclass(frozen=True)
+class FlowEngineNativeQueuedEvent:
+    """A purchase the native admission has not answered yet."""
+
+    webhook_event_id: str
+    attempts: int
+    payload: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class FlowEngineNativeQueue:
+    pending: int
+    events: tuple[FlowEngineNativeQueuedEvent, ...]
+
+
+@dataclass(frozen=True)
+class FlowEngineNativeAdmissionRow:
+    """One row of ``admit_flow_engine_event_v1``: a flow, or sin_flujo."""
+
+    flow_id: str | None
+    outcome: str
+    reason: str | None
+    recovery_case_id: str | None
+    scheduled_action_id: str | None
+    created: bool | None
+
+
+@dataclass(frozen=True)
+class FlowEngineStartRejection:
+    """MOT-002: the rejections of one flow, phase and reason, without event ids."""
+
+    flow_id: str
+    flow_key: str
+    product_ref: str
+    version: int | None
+    phase: str
+    reason: str
+    count: int
+    step: int
+    notified_count: int
+    first_at: str
+    last_at: str
+
+
+@dataclass(frozen=True)
+class FlowEngineStartRejections:
+    unnotified: int
+    rejections: tuple[FlowEngineStartRejection, ...]
+
+
+@dataclass(frozen=True)
+class FlowEngineNativeStepTail:
+    """What follows the send of a native step: the label and the note data."""
+
+    flow_id: str
+    version: int
+    etiquetar: str | None
+    producto: str | None
+    momento: str | None
+
+
 @dataclass(frozen=True)
 class PilotBoundaryConfig:
     """Non-secret identity of one published pilot scope."""
@@ -6283,6 +6364,278 @@ class SupabaseClient:
             "POST",
             f"/rest/v1/rpc/{operation}",
             content=json.dumps({"p_id": divergence_id, "p_notified_at": notified_at}),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise SupabaseError(f"{operation}_invalid_json") from exc
+        if not isinstance(payload, bool):
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return payload
+
+    async def read_flow_engine_native_flows(
+        self, instance: Mapping[str, object]
+    ) -> tuple[FlowEngineNativeFlow, ...]:
+        """The native flows of the instance that are not off (flow-engine-v2)."""
+        operation = "read_flow_engine_native_flows_v1"
+        payload = await self._flow_engine_object(
+            operation, {"p_instance": dict(instance)}
+        )
+        rows = payload.get("flows")
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            raise SupabaseError(f"{operation}_invalid_shape")
+        result = []
+        for row in rows:
+            version = row.get("active_version")
+            trigger = row.get("trigger")
+            if (version is not None and (
+                not isinstance(version, int) or isinstance(version, bool) or version < 1
+            )) or (trigger is not None and not isinstance(trigger, str)):
+                raise SupabaseError(f"{operation}_invalid_row")
+            result.append(FlowEngineNativeFlow(
+                flow_id=_required_string(row, "flow_id", operation=operation),
+                product_ref=_required_string(row, "product_ref", operation=operation),
+                flow_key=_required_string(row, "flow_key", operation=operation),
+                state=_required_enum(
+                    row, "state", set(_FLOW_ENGINE_NATIVE_STATES), operation=operation
+                ),
+                active_version=version,
+                trigger=trigger,
+            ))
+        return tuple(result)
+
+    async def enqueue_flow_engine_native_event(
+        self, instance: Mapping[str, object], *, webhook_event_id: str
+    ) -> bool:
+        """Note a purchase for the native admission, before it is applied."""
+        operation = "enqueue_flow_engine_native_event_v1"
+        return await self._flow_engine_bool(operation, {
+            "p_instance": dict(instance), "p_webhook_event_id": webhook_event_id,
+        })
+
+    async def read_flow_engine_native_event_queue(
+        self, instance: Mapping[str, object], *, limit: int
+    ) -> FlowEngineNativeQueue:
+        """The applied purchases the native admission has not answered."""
+        operation = "read_flow_engine_native_event_queue_v1"
+        if not 1 <= limit <= 50:
+            raise ValueError("limit must be between 1 and 50")
+        payload = await self._flow_engine_object(
+            operation, {"p_instance": dict(instance), "p_limit": limit}
+        )
+        pending = _required_int(payload, "pending", operation=operation)
+        rows = payload.get("events")
+        if pending < 0 or not isinstance(rows, list) or any(
+            not isinstance(row, dict) for row in rows
+        ):
+            raise SupabaseError(f"{operation}_invalid_shape")
+        events = []
+        for row in rows:
+            attempts = _required_int(row, "attempts", operation=operation)
+            event_payload = row.get("payload")
+            if attempts < 0 or not isinstance(event_payload, dict):
+                raise SupabaseError(f"{operation}_invalid_row")
+            events.append(FlowEngineNativeQueuedEvent(
+                webhook_event_id=_required_string(row, "webhook_event_id", operation=operation),
+                attempts=attempts,
+                payload=event_payload,
+            ))
+        return FlowEngineNativeQueue(pending=pending, events=tuple(events))
+
+    async def finish_flow_engine_native_event(
+        self, *, webhook_event_id: str, done: bool, now: str
+    ) -> bool:
+        """Close a queued purchase (done) or count one more attempt."""
+        operation = "finish_flow_engine_native_event_v1"
+        return await self._flow_engine_bool(operation, {
+            "p_webhook_event_id": webhook_event_id, "p_done": done, "p_now": now,
+        })
+
+    async def admit_flow_engine_event(
+        self, instance: Mapping[str, object], flow_event: Mapping[str, object]
+    ) -> tuple[FlowEngineNativeAdmissionRow, ...]:
+        """The native admission of one normalized event (flow-engine-v2, 4).
+
+        A call that does not answer raises ``FlowEngineAdmissionUnavailable``
+        (the purchase stays in the queue). A 22023 or a P0002 is a permanent
+        ``SupabasePermanentError`` with its reason: the same event never
+        passes. An answer outside the contract is a committed response.
+        """
+        operation = "admit_flow_engine_event_v1"
+        body = json.dumps(
+            {"p_instance": dict(instance), "p_flow_event": dict(flow_event)},
+            ensure_ascii=False,
+        )
+        try:
+            response = await self._request(
+                "POST", f"/rest/v1/rpc/{operation}", content=body
+            )
+        except SupabaseError as exc:
+            raise FlowEngineAdmissionUnavailable(f"{operation}_unavailable") from exc
+        if _flow_engine_transient_response(response):
+            raise FlowEngineAdmissionUnavailable(
+                f"{operation}_unavailable: HTTP {response.status_code}"
+            )
+        if response.status_code != 200:
+            reason = _deterministic_rejection(response)
+            try:
+                error_body = response.json()
+            except ValueError:
+                error_body = None
+            code = error_body.get("code") if isinstance(error_body, dict) else None
+            if code in {"22023", "P0002"}:
+                raise SupabasePermanentError(
+                    f"{operation}_rejected", reason=reason or f"{operation}_rejected"
+                )
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _committed_response_rows(response, operation=operation)
+        if not rows:
+            raise SupabaseCommittedResponseError(f"{operation}_invalid_shape")
+        result = []
+        try:
+            for row in rows:
+                outcome = _required_enum(
+                    row, "outcome", set(FLOW_ENGINE_NATIVE_OUTCOMES), operation=operation
+                )
+                reason = row.get("reason")
+                created = row.get("created")
+                if (reason is not None and (
+                    not isinstance(reason, str) or _FLOW_ENGINE_REASON.fullmatch(reason) is None
+                )) or (created is not None and not isinstance(created, bool)):
+                    raise SupabaseError(f"{operation}_invalid_row")
+                entry = FlowEngineNativeAdmissionRow(
+                    flow_id=_optional_string(row, "flow_id", operation=operation),
+                    outcome=outcome,
+                    reason=reason,
+                    recovery_case_id=_optional_string(row, "recovery_case_id", operation=operation),
+                    scheduled_action_id=_optional_string(
+                        row, "scheduled_action_id", operation=operation
+                    ),
+                    created=created,
+                )
+                if (outcome == "sin_flujo") != (entry.flow_id is None) or (
+                    outcome == "motor_arranco"
+                    and (entry.recovery_case_id is None or entry.scheduled_action_id is None)
+                ) or (outcome == "motor_no_arranca" and reason is None):
+                    raise SupabaseError(f"{operation}_invalid_row")
+                result.append(entry)
+        except SupabaseError as exc:
+            raise SupabaseCommittedResponseError(
+                f"{operation}_committed_response_invalid"
+            ) from exc
+        return tuple(result)
+
+    async def read_flow_engine_start_rejections(
+        self,
+        instance: Mapping[str, object],
+        *,
+        only_unnotified: bool,
+        limit: int,
+    ) -> FlowEngineStartRejections:
+        """MOT-002: the engine rejections to tell, by flow, phase and reason."""
+        operation = "read_flow_engine_start_rejections_v1"
+        if not 1 <= limit <= 50:
+            raise ValueError("limit must be between 1 and 50")
+        payload = await self._flow_engine_object(operation, {
+            "p_instance": dict(instance),
+            "p_only_unnotified": only_unnotified,
+            "p_limit": limit,
+        })
+        unnotified = _required_int(payload, "unnotified", operation=operation)
+        rows = payload.get("rejections")
+        if unnotified < 0 or not isinstance(rows, list) or any(
+            not isinstance(row, dict) for row in rows
+        ):
+            raise SupabaseError(f"{operation}_invalid_shape")
+        result = []
+        for row in rows:
+            reason = _required_string(row, "reason", operation=operation)
+            version = row.get("version")
+            notified = _required_int(row, "notified_count", operation=operation)
+            step = _required_int(row, "step", operation=operation)
+            if _FLOW_ENGINE_REASON.fullmatch(reason) is None or notified < 0 or step not in {
+                1, 10, 100
+            } or (
+                version is not None
+                and (not isinstance(version, int) or isinstance(version, bool) or version < 1)
+            ):
+                raise SupabaseError(f"{operation}_invalid_row")
+            result.append(FlowEngineStartRejection(
+                flow_id=_required_string(row, "flow_id", operation=operation),
+                flow_key=_required_string(row, "flow_key", operation=operation),
+                product_ref=_required_string(row, "product_ref", operation=operation),
+                version=version,
+                phase=_required_enum(
+                    row, "phase", set(_FLOW_ENGINE_REJECTION_PHASES), operation=operation
+                ),
+                reason=reason,
+                count=_required_positive_int(row, "count", operation=operation),
+                step=step,
+                notified_count=notified,
+                first_at=_required_string(row, "first_at", operation=operation),
+                last_at=_required_string(row, "last_at", operation=operation),
+            ))
+        return FlowEngineStartRejections(unnotified=unnotified, rejections=tuple(result))
+
+    async def mark_flow_engine_start_rejection_notified(
+        self,
+        *,
+        flow_id: str,
+        phase: str,
+        reason: str,
+        notified_count: int,
+        notified_at: str,
+    ) -> bool:
+        """Keep the count that was told; True when this call raised the step."""
+        operation = "mark_flow_engine_start_rejection_notified_v1"
+        return await self._flow_engine_bool(operation, {
+            "p_flow_id": flow_id,
+            "p_phase": phase,
+            "p_reason": reason,
+            "p_notified_count": notified_count,
+            "p_notified_at": notified_at,
+        })
+
+    async def get_flow_engine_native_step_tail(
+        self, action_id: str
+    ) -> FlowEngineNativeStepTail | None:
+        """The label and note data of a native step, or None for any other."""
+        operation = "flow_engine_native_step_tail_v1"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps({"p_action_id": action_id}),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise SupabaseError(f"{operation}_invalid_json") from exc
+        if payload is None:
+            return None
+        if not isinstance(payload, dict):
+            raise SupabaseError(f"{operation}_invalid_shape")
+        label = payload.get("etiquetar")
+        for key in ("etiquetar", "producto", "momento"):
+            value = payload.get(key)
+            if value is not None and not isinstance(value, str):
+                raise SupabaseError(f"{operation}_invalid_row")
+        return FlowEngineNativeStepTail(
+            flow_id=_required_string(payload, "flow_id", operation=operation),
+            version=_required_positive_int(payload, "version", operation=operation),
+            etiquetar=label,
+            producto=payload.get("producto"),
+            momento=payload.get("momento"),
+        )
+
+    async def _flow_engine_bool(self, operation: str, body: dict[str, object]) -> bool:
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps(body, ensure_ascii=False),
         )
         if response.status_code != 200:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")

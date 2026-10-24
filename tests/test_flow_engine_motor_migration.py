@@ -69,6 +69,9 @@ def test_it_is_one_transaction_and_comes_before_the_bridge_reads() -> None:
         # F-036 (20261024000400) parcha por ancla la reserva y la autorizacion
         # del link; no toca el motor.
         "20261024000400_opted_out_reply_checkout_issuance.sql",
+        # El bridge del motor nativo (20261024000500) suma lecturas y parcha la
+        # adopcion de la respuesta; no redefine el motor del carrito.
+        "20261024000500_flow_engine_native_bridge_v1.sql",
     ]
     later = (MIGRATIONS / names[position + 1]).read_text(encoding="utf-8")
     assert "create or replace" not in later.lower()

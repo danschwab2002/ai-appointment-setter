@@ -1573,6 +1573,111 @@ class ChatwootClient:
             )
         return True
 
+    async def ensure_marked_private_note(
+        self,
+        *,
+        conversation_id: int,
+        expected_inbox_id: int,
+        note_body: str,
+        idempotency_marker: str,
+    ) -> bool:
+        """Find or create one private note with a stable marker (flow-engine-v2).
+
+        The note of a native flow step (``etiquetar: cliente``): the same
+        marker never writes a second note, so a retried step is a no-op.
+        Returns True when the note exists after the call. A marker on a public
+        message, or twice, is a conflict; a POST that may have landed is
+        ``ChatwootHandoffDeliveryUnknownError``.
+        """
+        if not note_body.strip() or len(note_body) > 1800:
+            raise ValueError("private note body must contain 1 to 1800 characters")
+        if (
+            not idempotency_marker.startswith("[supportmagician-flujo:")
+            or not idempotency_marker.endswith("]")
+            or len(idempotency_marker) > 300
+        ):
+            raise ValueError("invalid flow note idempotency marker")
+        if conversation_id <= 0 or expected_inbox_id <= 0:
+            raise ValueError("conversation and inbox IDs must be positive")
+        # La conversacion es la que acaba de aceptar la plantilla del paso: se
+        # verifica que exista y sea del inbox, sin volver a mirar la identidad
+        # (el envio ya la verifico contra el telefono del caso).
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"api_access_token": self._access_token},
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            response = await client.get(
+                f"/api/v1/accounts/{self._account_id}/conversations/{conversation_id}"
+            )
+            response.raise_for_status()
+        try:
+            conversation = response.json()
+        except ValueError as exc:
+            raise ChatwootProtocolError("invalid_json") from exc
+        if (
+            not isinstance(conversation, dict)
+            or conversation.get("id") != conversation_id
+            or conversation.get("inbox_id") != expected_inbox_id
+        ):
+            raise ChatwootProtocolError("invalid_conversation_authority")
+        messages = await self.get_conversation_messages(
+            conversation_id=conversation_id,
+            limit=2000,
+            require_history_boundary=True,
+        )
+        marker_count = 0
+        for message in messages:
+            content = message.get("content")
+            if not isinstance(content, str) or idempotency_marker not in content:
+                continue
+            if message.get("private") is not True or message.get("message_type") != 1:
+                raise ChatwootHandoffConflictError("flow_marker_on_non_private_message")
+            marker_count += 1
+        if marker_count > 1:
+            raise ChatwootHandoffConflictError("duplicate_flow_private_note_marker")
+        if marker_count == 1:
+            return True
+        content = f"{note_body.rstrip()}\n\n{idempotency_marker}"
+        path = (
+            f"/api/v1/accounts/{self._account_id}"
+            f"/conversations/{conversation_id}/messages"
+        )
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._base_url,
+                headers={"api_access_token": self._access_token},
+                transport=self._transport,
+                timeout=15,
+            ) as client:
+                response = await client.post(
+                    path,
+                    json={"content": content, "message_type": "outgoing", "private": True},
+                )
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise ChatwootHandoffDeliveryUnknownError(
+                "flow_private_note_delivery_unknown"
+            ) from exc
+        try:
+            created = response.json()
+        except ValueError as exc:
+            raise ChatwootHandoffDeliveryUnknownError(
+                "flow_private_note_invalid_response"
+            ) from exc
+        if (
+            not isinstance(created, dict)
+            or not isinstance(created.get("id"), int)
+            or created.get("conversation_id") != conversation_id
+            or created.get("private") is not True
+            or created.get("content") != content
+        ):
+            raise ChatwootHandoffDeliveryUnknownError(
+                "flow_private_note_unconfirmed_response"
+            )
+        return True
+
     async def get_conversation_messages(
         self,
         *,

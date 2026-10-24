@@ -5572,6 +5572,47 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'opted_out_reply_checkout_issuance'
+    union all
+    select
+        '20261024000500',
+        '20261024000500_flow_engine_native_bridge_v1.sql',
+        -- La cola de la compra nativa y lo avisado de MOT-002, con RLS.
+        (
+            select count(*) = 2
+            from pg_class c
+            where c.oid in (
+                to_regclass('public.flow_engine_native_event_queue'),
+                to_regclass('public.flow_engine_rejection_notices')
+            )
+              and c.relrowsecurity
+        )::int
+        -- Las siete funciones del bridge del motor nativo: solo de service_role.
+        + (
+            select count(*) = 7
+            from functions
+            where oid in (
+                to_regprocedure('public.read_flow_engine_native_flows_v1(jsonb)'),
+                to_regprocedure('public.enqueue_flow_engine_native_event_v1(jsonb,uuid)'),
+                to_regprocedure('public.read_flow_engine_native_event_queue_v1(jsonb,integer)'),
+                to_regprocedure('public.finish_flow_engine_native_event_v1(uuid,boolean,timestamptz)'),
+                to_regprocedure('public.read_flow_engine_start_rejections_v1(jsonb,boolean,integer)'),
+                to_regprocedure('public.mark_flow_engine_start_rejection_notified_v1(uuid,text,text,integer,timestamptz)'),
+                to_regprocedure('public.flow_engine_native_step_tail_v1(uuid)')
+            )
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- La adopcion de la respuesta a una plantilla nativa.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_portable_inbound_commercial_case_v1(text,integer,bigint,text)')
+              and position('flow_engine_native_adoption' in definition) > 0
+        )::int,
+        3,
+        'flow_engine_native_bridge'
 )
 select
     version,

@@ -162,7 +162,14 @@ expected_service_role(signature) as (
         ('public.read_flow_engine_divergences_v1(jsonb, boolean, integer)'),
         ('public.mark_flow_engine_divergence_notified_v1(uuid, timestamp with time zone)'),
         ('public.admit_portable_hotmart_listen_only_capture_v1(text, text, integer, text, jsonb, text, text)'),
-        ('public.admit_flow_engine_event_v1(jsonb, jsonb)')
+        ('public.admit_flow_engine_event_v1(jsonb, jsonb)'),
+        ('public.read_flow_engine_native_flows_v1(jsonb)'),
+        ('public.enqueue_flow_engine_native_event_v1(jsonb, uuid)'),
+        ('public.read_flow_engine_native_event_queue_v1(jsonb, integer)'),
+        ('public.finish_flow_engine_native_event_v1(uuid, boolean, timestamp with time zone)'),
+        ('public.read_flow_engine_start_rejections_v1(jsonb, boolean, integer)'),
+        ('public.mark_flow_engine_start_rejection_notified_v1(uuid, text, text, integer, timestamp with time zone)'),
+        ('public.flow_engine_native_step_tail_v1(uuid)')
 ),
 functions as (
     select

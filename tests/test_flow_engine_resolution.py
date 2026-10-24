@@ -44,6 +44,8 @@ from bridge.worker import ResolutionWorker
 
 ROOT = Path(__file__).resolve().parents[1]
 ROWS = json.loads((ROOT / "tests" / "fixtures" / "flow_engine" / "bridge_rpc_rows.json").read_text())
+NATIVE_ROWS = json.loads((Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "flow_engine"
+                          / "native_bridge_rpc_rows.json").read_text())
 PLAN_ROW = {
     "recovery_case_id": "00000000-0000-4000-8000-0000000000a1",
     "followup_sequence_id": "00000000-0000-4000-8000-0000000000a2",
@@ -101,6 +103,9 @@ class _Base:
             self.calls.append((name, body))
             if name == "read_flow_engine_routes_v1":
                 return httpx.Response(self.routes_status, json=self.routes, request=request)
+            if name == "read_flow_engine_native_flows_v1":
+                # ATT1 hoy: ningun flujo nativo (la base real, PGlite).
+                return httpx.Response(200, json=NATIVE_ROWS["native_flows_empty"], request=request)
             if name == "admit_flow_engine_hotmart_v1":
                 return self.admission.pop(0)
             if name.startswith("plan_"):
@@ -363,7 +368,9 @@ def test_the_batch_refreshes_the_routes_only_with_the_flag() -> None:
     fetch(on)
     client = on.client()
     asyncio.run(_worker(on, FlowEngineRuntime(supabase=client, instance=INSTANCE), client)._process_batch())
-    assert on.names() == ["read_flow_engine_routes_v1"]
+    # flow-engine-v2 (E-065): con el flag, tambien los flujos nativos, a lo sumo
+    # cada 60 s. Sin ninguno, ni la cola de la compra ni nada por evento.
+    assert on.names() == ["read_flow_engine_routes_v1", "read_flow_engine_native_flows_v1"]
     off = _Base()
     fetch(off)
     client = off.client()

@@ -448,8 +448,10 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261022000200 (el bridge del motor) suma las rutas, las divergencias y
     # la marca de una divergencia avisada. 20261024000100 (el modo «solo
     # guardar» de Hotmart) suma su admision, y 20261024000200 (el motor
-    # nativo) la suya.
-    assert len(allowlisted) == 158
+    # nativo) la suya. 20261024000500 (el bridge del motor nativo) suma sus
+    # siete: los flujos nativos, la cola de la compra (anotar, leer, cerrar),
+    # los rechazos de MOT-002 y su marca, y la cola del paso.
+    assert len(allowlisted) == 165
     assert (
         "admit_portable_hotmart_listen_only_capture_v1"
         "(text, text, integer, text, jsonb, text, text)"
@@ -1311,15 +1313,16 @@ def test_flow_engine_native_fingerprint_comes_before_the_opted_out_reply() -> No
         assert marker in compact_fingerprint, marker
 
 
-def test_opted_out_reply_fingerprint_is_last() -> None:
+def test_opted_out_reply_fingerprint_comes_before_the_native_bridge() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261024000400 (F-036, quien se dio de baja y escribe por su
-    # cuenta recibe el link si lo pide) es la ultima.
-    fingerprint = sql.split("'20261024000400'", 1)[1].split("select\n    version,", 1)[0]
+    # cuenta recibe el link si lo pide) va justo antes de la del bridge nativo.
+    fingerprint = sql.split("'20261024000400'", 1)[1].split(
+        "    union all\n    select\n        '20261024000500'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261024000400_opted_out_reply_checkout_issuance.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",2,'opted_out_reply_checkout_issuance')")
+    assert compact_fingerprint.endswith(",2,'opted_out_reply_checkout_issuance'")
     for marker in (
         "'public._chatwoot_reply_follows_opt_out_v1(uuid,bigint,bigint,bigint,text,text)'",
         "andnothas_function_privilege('service_role',oid,'EXECUTE')",
@@ -1327,5 +1330,23 @@ def test_opted_out_reply_fingerprint_is_last() -> None:
         "andnothas_function_privilege('authenticated',oid,'EXECUTE')",
         "count(*)=4",
         "position('_chatwoot_reply_follows_opt_out_v1('indefinition)>0",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_flow_engine_native_bridge_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261024000500 (el bridge del motor nativo, E-065) es la ultima.
+    fingerprint = sql.split("'20261024000500'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261024000500_flow_engine_native_bridge_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",3,'flow_engine_native_bridge')")
+    for marker in (
+        "to_regclass('public.flow_engine_native_event_queue')",
+        "to_regclass('public.flow_engine_rejection_notices')",
+        "count(*)=7",
+        "andnothas_function_privilege('anon',oid,'EXECUTE')",
+        "position('flow_engine_native_adoption'indefinition)>0",
     ):
         assert marker in compact_fingerprint, marker

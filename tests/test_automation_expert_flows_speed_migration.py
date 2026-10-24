@@ -65,6 +65,9 @@ def test_it_is_one_transaction_and_comes_before_the_motor() -> None:
         # F-036 (20261024000400) parcha por ancla la reserva y la autorizacion
         # del link; no toca el motor.
         "20261024000400_opted_out_reply_checkout_issuance.sql",
+        # El bridge del motor nativo (20261024000500) suma lecturas y parcha la
+        # adopcion de la respuesta; no redefine el motor del carrito.
+        "20261024000500_flow_engine_native_bridge_v1.sql",
     ]
     for later in names[position + 1:]:
         if later != reads:

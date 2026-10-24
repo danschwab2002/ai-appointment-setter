@@ -29,12 +29,15 @@ def _code() -> str:
     return re.sub(r"--[^\n]*", "", _sql())
 
 
-def test_it_is_one_transaction_and_the_last() -> None:
+def test_it_is_one_transaction_and_comes_before_the_native_bridge() -> None:
     sql = _sql()
     assert "\nbegin;\n" in sql and sql.rstrip().endswith("commit;")
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
-    assert names[-1] == MIGRATION.name
-    assert names[-2] == "20261024000200_flow_engine_native_v1.sql"
+    # Despues va solo el bridge del motor nativo (20261024000500), que no
+    # toca el link.
+    assert names[-1] == "20261024000500_flow_engine_native_bridge_v1.sql"
+    assert names[-2] == MIGRATION.name
+    assert names[-3] == "20261024000200_flow_engine_native_v1.sql"
 
 
 def test_it_patches_the_four_link_functions_by_counted_anchor() -> None:

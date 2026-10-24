@@ -62,6 +62,9 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
         "20261024000100_portable_hotmart_listen_only_capture.sql",
         "20261024000200_flow_engine_native_v1.sql",
         "20261024000400_opted_out_reply_checkout_issuance.sql",
+        # El bridge del motor nativo (20261024000500) suma lecturas y parcha la
+        # adopcion de la respuesta; no redefine el motor del carrito.
+        "20261024000500_flow_engine_native_bridge_v1.sql",
     ]
     native = (MIGRATIONS / "20261024000200_flow_engine_native_v1.sql").read_text(encoding="utf-8")
     assert "read_automation_expert_flows_v1" not in native
