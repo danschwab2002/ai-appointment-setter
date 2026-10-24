@@ -70,10 +70,10 @@ from .flow_policy import STEPS_BY_LEGACY_KIND
 from .flow_schedule import DEFAULT_ZONE, LAST_MINUTE, Franja, franja_of, is_open, next_open
 
 __all__ = [
-    "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_PARAMETERS", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
+    "ENGINE_CAPABILITIES_NATIVE", "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_PARAMETERS", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
     "BolsaLedger", "ControlLine", "Eligible", "EngineCapabilities", "EngineFlow", "Firing", "FlowRef",
     "GateDecision", "GateFacts", "PersonView", "Plan", "PlanInvalid", "PlanNotSupported", "PlannedStep",
-    "RunView", "StartDecision", "evaluate_gate", "first_eligible", "legacy_motivo", "not_supported", "plan_start",
+    "RunView", "StartDecision", "evaluate_gate", "first_eligible", "legacy_motivo", "native_not_supported", "not_supported", "plan_start",
     "plan_steps", "pool_zone", "step_start", "wins",
 ]
 
@@ -255,6 +255,67 @@ def not_supported(definition: Mapping[str, Any], capabilities: EngineCapabilitie
         elif exit_name == "contesta" and trigger is not None and trigger.kind == "evento":
             # Con un disparo de evento, contesta es «todavia no» (diseno, §2.10).
             add("contesta_con_disparo_de_evento")
+    return tuple(found)
+
+
+# El motor nativo de flow-engine-v2 (§9, el PR 2 en 20261024000200): ejecuta un flujo que nace en el
+# motor, sin legado, disparado por la compra. Un solo envio (la forma de pasos ``nativo:compra``), con
+# ``nombre`` y ``producto``, sin boton, y el paso ``etiquetar`` (lo ejecuta el bridge, PR 3).
+ENGINE_CAPABILITIES_NATIVE = EngineCapabilities(
+    triggers=frozenset({"compra"}),
+    step_types=frozenset({"esperar", "plantilla", "etiquetar"}),
+    max_sends_per_path=1,
+    waits_between_sends=False,
+    variables=frozenset({"nombre", "producto"}),
+    buttons=frozenset(),
+    exits=frozenset(),
+    relations_between_engine_flows_only=True,
+)
+# Las variables de la forma nativa de la compra (``_flow_engine_native_steps('nativo:compra')``): el
+# compilador exige exactamente esta lista (``variables_differ``).
+NATIVE_PURCHASE_VARIABLES = ("nombre", "producto")
+# Los motivos con los que la base no abre ni admite un flujo nativo (``_flow_engine_native_unsupported``).
+NATIVE_UNSUPPORTED_TRIGGER = "motor_nativo:disparador"
+NATIVE_UNSUPPORTED_PERMISSION = "motor_nativo:permiso"
+NATIVE_UNSUPPORTED_REPEAT = "motor_nativo:repeticion"
+NATIVE_UNSUPPORTED_PRIORITY = "motor_nativo:prioridad"
+
+
+def native_not_supported(definition: Mapping[str, Any]) -> tuple[str, ...]:
+    """Lo que el motor nativo no ejecuta de una definicion, en orden; vacio si la ejecuta.
+
+    Es la regla 14 de un flujo nativo (flow-engine-v2 §9): lo que la base mira al abrirlo y al admitirlo
+    (``_flow_engine_native_unsupported``, 20261024000200), y lo que el compilador de la politica rechaza
+    con la forma ``nativo:compra`` (un envio, las variables exactas, sin espera despues del envio).
+    """
+    found: list[str] = []
+
+    def add(code: str) -> None:
+        if code not in found:
+            found.append(code)
+
+    trigger = definition.get("dispara")
+    if trigger != {"evento": "compra"}:
+        add(NATIVE_UNSUPPORTED_TRIGGER)
+    entry = definition.get("entra")
+    if not isinstance(entry, Mapping) or entry.get("permiso") != "compra":
+        add(NATIVE_UNSUPPORTED_PERMISSION)
+    caps = definition.get("topes")
+    repeat = caps.get("repeticion") if isinstance(caps, Mapping) else None
+    if not isinstance(repeat, Mapping) or repeat.get("una_por") not in ("persona", "persona_y_oferta"):
+        add(NATIVE_UNSUPPORTED_REPEAT)
+    elif repeat.get("otra_despues_de") != NEVER and parse_duration(repeat.get("otra_despues_de")) is None:
+        add(NATIVE_UNSUPPORTED_REPEAT)
+    priority = definition.get("prioridad")
+    if isinstance(priority, Mapping) and "no_arranca_mientras" in priority \
+            and not isinstance(priority.get("no_arranca_mientras"), list):
+        add(NATIVE_UNSUPPORTED_PRIORITY)
+    for code in not_supported(definition, ENGINE_CAPABILITIES_NATIVE):
+        add(code)
+    for step in _walk_steps(definition.get("pasos")):
+        if step_type(step) == "plantilla" and isinstance(step, Mapping) \
+                and step.get("variables") != list(NATIVE_PURCHASE_VARIABLES):
+            add(f"{NOT_SUPPORTED}:variables_differ")
     return tuple(found)
 
 

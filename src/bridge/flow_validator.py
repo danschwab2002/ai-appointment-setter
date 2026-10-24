@@ -25,12 +25,14 @@ from __future__ import annotations
 
 import copy
 import re
+import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from .flow_definition import (
     ALWAYS,
+    COHORT,
     DEFINITION_CODES,
     FICHA_EVENTS,
     INVALID_VALUE,
@@ -81,6 +83,14 @@ from .flow_definition import (
     step_type,
     trigger_of,
     ITEMS_MAX_BYTES,
+)
+from .flow_engine import (
+    NATIVE_UNSUPPORTED_PERMISSION,
+    NATIVE_UNSUPPORTED_PRIORITY,
+    NATIVE_UNSUPPORTED_REPEAT,
+    NATIVE_UNSUPPORTED_TRIGGER,
+    NOT_SUPPORTED,
+    native_not_supported,
 )
 from .flow_policy import PolicyCompileError, compile_policy
 
@@ -364,9 +374,79 @@ PURCHASE_PERMISSION_REQUIRES_SINGLE_UTILITY_SEND = _spec(
 )
 FLOW_CREATION_NOT_ENABLED = _spec(
     "flow_creation_not_enabled", None, KIND_CYCLE,
-    "En la 1b el Automation Expert no crea flujos: crear un flujo es de la 1c.",
-    alternative="Pedírselo a un operador.",
+    "El Automation Expert no escribe la primera versión de un flujo registrado sin versión: ese es el "
+    "camino de los flujos del legado, que registra el operador.",
+    alternative="Para un flujo nuevo, usar un ítem nuevo: nace en el motor y se publica para la cohorte.",
 )
+# El item nuevo (ciclo 1.7.0, flow-engine-v2 §7).
+FLOW_ALREADY_REGISTERED = _spec(
+    "flow_already_registered", None, KIND_CYCLE,
+    "Ya hay un flujo con esa clave en ese producto.",
+    alternative="Elegir otra clave, o cambiar el flujo que ya existe con una versión nueva.",
+)
+NEW_FLOW_MUST_START_IN_COHORT = _spec(
+    "new_flow_must_start_in_cohort", None, KIND_CYCLE,
+    "Un flujo nuevo se publica primero para la cohorte de prueba; pasarlo a todos es otra propuesta.",
+    alternative="Usar prender: cohorte.",
+)
+# El paso etiquetar (esquema 1.2): en la 5 y en la 7, como el resto de sus reglas.
+ETIQUETAR_REQUIRES_PURCHASE_TRIGGER = _spec(
+    "etiquetar_requires_purchase_trigger", 5, KIND_PROTECTION,
+    "etiquetar marca a la persona como clienta: va solo en un flujo disparado por la compra.",
+    limit="etiquetar, solo con el disparador compra",
+    alternative="Sacar el paso, o disparar el flujo con la compra.",
+)
+ETIQUETAR_NOT_AFTER_TEMPLATE = _spec(
+    "etiquetar_not_after_template", 7, KIND_FORM,
+    "etiquetar va después de una plantilla, y hay uno solo por camino.",
+    alternative="Ponerlo después del envío, una sola vez.",
+)
+# La regla 14 de un flujo nativo (flow-engine-v2 §9): lo que la base no abre ni admite.
+_NATIVE_LIMIT = ("Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, "
+                 "manda una sola plantilla de utilidad con nombre y producto, sin botón, y repite por persona")
+ENGINE_NOT_SUPPORTED_NATIVE_TRIGGER = _spec(
+    NATIVE_UNSUPPORTED_TRIGGER, 14, KIND_NOT_YET,
+    "El motor nativo de esta versión solo arranca con la compra.", limit=_NATIVE_LIMIT,
+    alternative="Disparar con dispara: {evento: compra}. Otro evento es de un flujo del legado.",
+)
+ENGINE_NOT_SUPPORTED_NATIVE_PERMISSION = _spec(
+    NATIVE_UNSUPPORTED_PERMISSION, 14, KIND_NOT_YET,
+    "El motor nativo de esta versión solo entra con permiso: compra.", limit=_NATIVE_LIMIT,
+    alternative="Usar permiso: compra, con el OK del cliente.",
+)
+ENGINE_NOT_SUPPORTED_NATIVE_REPEAT = _spec(
+    NATIVE_UNSUPPORTED_REPEAT, 14, KIND_NOT_YET,
+    "El motor nativo repite por persona o por persona y oferta, con nunca o una duración.", limit=_NATIVE_LIMIT,
+    alternative="Usar repeticion: {una_por: persona, otra_despues_de: nunca}.",
+)
+ENGINE_NOT_SUPPORTED_NATIVE_PRIORITY = _spec(
+    NATIVE_UNSUPPORTED_PRIORITY, 14, KIND_NOT_YET,
+    "no_arranca_mientras es una lista de flujos.", limit=_NATIVE_LIMIT,
+    alternative="Escribir no_arranca_mientras como una lista, vacía si no hay ninguno.",
+)
+ENGINE_NOT_SUPPORTED_NATIVE_SHAPE = _spec(
+    "motor_nativo:forma", 14, KIND_NOT_YET,
+    "El motor nativo de esta versión no ejecuta esa forma de pasos.", limit=_NATIVE_LIMIT,
+    alternative="Dejar una sola plantilla con [nombre, producto], sin botón, y etiquetar después si hace falta.",
+)
+ENGINE_NOT_SUPPORTED_ETIQUETAR = _spec(
+    "engine_not_supported:etiquetar", 14, KIND_NOT_YET,
+    "etiquetar lo ejecuta solo el motor nativo: un flujo del legado no lo hace.",
+    limit="etiquetar, solo en un flujo nativo",
+    alternative="Sacar el paso, o crear el flujo con un ítem nuevo.",
+)
+_NATIVE_SPECS: Mapping[str, CodeSpec] = {
+    spec.code: spec for spec in (
+        ENGINE_NOT_SUPPORTED_NATIVE_TRIGGER, ENGINE_NOT_SUPPORTED_NATIVE_PERMISSION,
+        ENGINE_NOT_SUPPORTED_NATIVE_REPEAT, ENGINE_NOT_SUPPORTED_NATIVE_PRIORITY,
+    )
+}
+_NATIVE_PATHS: Mapping[str, tuple[Segment, ...]] = {
+    NATIVE_UNSUPPORTED_TRIGGER: ("dispara",),
+    NATIVE_UNSUPPORTED_PERMISSION: ("entra", "permiso"),
+    NATIVE_UNSUPPORTED_REPEAT: ("topes", "repeticion"),
+    NATIVE_UNSUPPORTED_PRIORITY: ("prioridad", "no_arranca_mientras"),
+}
 CHANGE_OUTSIDE_1B_SCOPE = _spec(
     "change_outside_1b_scope", None, KIND_CYCLE,
     "En la 1b el Automation Expert cambia las esperas y el plazo, la plantilla, los topes por día y total, el horario, y prende, pausa o apaga.",
@@ -457,7 +537,10 @@ _VALIDATOR_CODES: tuple[CodeSpec, ...] = (
     ENGINE_NOT_SUPPORTED_FIXED_COUPON, ENGINE_NOT_SUPPORTED_VARIABLES_DIFFER,
     ENGINE_NOT_SUPPORTED_WAIT_BETWEEN_SENDS, ENGINE_NOT_SUPPORTED_WAIT_AFTER_SEND,
     PURCHASE_PERMISSION_REQUIRES_SINGLE_UTILITY_SEND, FLOW_CREATION_NOT_ENABLED,
-    CHANGE_OUTSIDE_1B_SCOPE, TRIGGER_CHANGE_IS_ANOTHER_FLOW, FLOW_CHANGE_STALE_BASE,
+    FLOW_ALREADY_REGISTERED, NEW_FLOW_MUST_START_IN_COHORT, ETIQUETAR_REQUIRES_PURCHASE_TRIGGER,
+    ETIQUETAR_NOT_AFTER_TEMPLATE, ENGINE_NOT_SUPPORTED_NATIVE_TRIGGER, ENGINE_NOT_SUPPORTED_NATIVE_PERMISSION,
+    ENGINE_NOT_SUPPORTED_NATIVE_REPEAT, ENGINE_NOT_SUPPORTED_NATIVE_PRIORITY, ENGINE_NOT_SUPPORTED_NATIVE_SHAPE,
+    ENGINE_NOT_SUPPORTED_ETIQUETAR, CHANGE_OUTSIDE_1B_SCOPE, TRIGGER_CHANGE_IS_ANOTHER_FLOW, FLOW_CHANGE_STALE_BASE,
     ROLLBACK_TARGET_NOT_FOUND, ROLLBACK_TARGET_IS_ACTIVE, STATE_TRANSITION_INVALID,
     FLOW_HAS_NO_VERSION, EN_CURSO_NOT_SUPPORTED, CLIENT_PURCHASE_OK_MISSING,
     ALWAYS_WITH_MARKETING, RECOVERY_WITHOUT_CAP, SILENCE_WITHOUT_PURCHASE_EXIT,
@@ -821,14 +904,25 @@ class _Run:
         self.draft_base = draft_base
         self.blocks: list[Finding] = []
         self.warnings: list[Finding] = []
-        self.flows = [self._resolve(item) for item in items]
+        # Los items nuevos cuya clave ya existe en su producto (flow_already_registered).
+        self.taken: set[int] = set()
+        self.flows = [self._resolve(index, item) for index, item in enumerate(items)]
         self.normalized: list[ProposalItem] = []
         self.subjects: list[_Subject] = []
         self.effective: dict[str, Mapping[str, Any] | None] = {
             flow.flow_id: flow.active_definition for flow in world.flows
         }
 
-    def _resolve(self, item: ProposalItem) -> WorldFlow:
+    def _resolve(self, index: int, item: ProposalItem) -> WorldFlow:
+        if item.is_new_flow:
+            # Un flujo que todavia no existe: un flujo nativo apagado y sin version, con un id
+            # que sale de su clave y no esta en la foto. Si la clave ya existe, es un bloqueo.
+            if self.world.find(item.producto, item.flujo) is not None:
+                self.taken.add(index)
+            return WorldFlow(
+                flow_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"setter-flujo-nuevo:{item.producto}/{item.flujo}")),
+                product_ref=item.producto, flow_key=item.flujo, native=True)
+        assert item.flow_id is not None
         flow = self.world.flow(item.flow_id)
         if flow is None or flow.product_ref != item.producto or flow.flow_key != item.flujo:
             raise FlowValidationInputError("flow_not_found")
@@ -842,6 +936,11 @@ class _Run:
         for index, (item, flow) in enumerate(zip(self.items, self.flows)):
             if item.tipo in ("version", "volver") and item.en_curso != "seguir":
                 self.blocks.append(EN_CURSO_NOT_SUPPORTED.at(finding_path((index, "en_curso"))))
+            if item.is_new_flow:
+                if item.prender != COHORT:
+                    self.blocks.append(NEW_FLOW_MUST_START_IN_COHORT.at(finding_path((index, "prender"))))
+                if index in self.taken:
+                    self.blocks.append(FLOW_ALREADY_REGISTERED.at(finding_path((index, "flujo"))))
             if item.tipo == "prender":
                 self._switch_on(index, item, flow)
             elif item.tipo == "apagar":
@@ -873,14 +972,18 @@ class _Run:
 
     def _normalize(self) -> None:
         for index, (item, flow) in enumerate(zip(self.items, self.flows)):
-            if item.tipo == "version":
+            if item.tipo == "version" or item.is_new_flow:
                 others = [
                     other.active_definition.get("horario")
                     for other in self.world.flows
                     if other.flow_id != flow.flow_id and other.active_definition is not None
                 ]
+                written: Mapping[str, Any] = item.definicion or {}
+                if item.is_new_flow and isinstance(written, Mapping) and "flujo" not in written:
+                    # La clave de un flujo nuevo es la del item: la definicion la repite (la base la exige).
+                    written = {**written, "flujo": item.flujo}
                 result = normalize_definition(
-                    item.definicion or {}, new_flow=flow.active_version is None,
+                    written, new_flow=flow.active_version is None,
                     instance=self.instance, other_schedules=others, catalog=self.catalog,
                     path=(index, "definicion"),
                 )
@@ -970,7 +1073,9 @@ class _Run:
         active = flow.active_definition
         if not subject.is_rollback:
             self._identity(subject)
-            if self.actor == "automation_expert" and active is None:
+            # El agente crea un flujo solo con un item nuevo (nativo); la primera version de un
+            # flujo registrado sin version sigue siendo del operador (ciclo 1.7.0).
+            if self.actor == "automation_expert" and active is None and subject.item.tipo == "version":
                 self.blocks.append(FLOW_CREATION_NOT_ENABLED.at(finding_path((subject.index,))))
             if active is not None:
                 mine, published = _trigger_identity(definition), _trigger_identity(active)
@@ -993,6 +1098,7 @@ class _Run:
             self._rule12(emitter, definition)
             categories = self._rule13(emitter, definition)
             self._rule14_compiles(emitter, definition, flow)
+            self._rule14_native(emitter, definition, flow)
             if active is not None:
                 self._rule15(emitter, definition, active)
             self._rule15_personal(emitter, definition)
@@ -1141,6 +1247,9 @@ class _Run:
             elif kind == "condicion":
                 if _get(_mapping(step.get("condicion")), "dato") == "medio_de_pago" and ficha is False:
                     emitter.add(MEDIO_DE_PAGO_REQUIRES_FICHA_TRIGGER, at + ("condicion", "dato"))
+            elif kind == "etiquetar" and trigger is not None and not (
+                    trigger.kind == "evento" and trigger.event is None) and not trigger.is_purchase:
+                emitter.add(ETIQUETAR_REQUIRES_PURCHASE_TRIGGER, at + ("etiquetar",))
 
     def _rule5_variables(self, emitter: _Emitter, definition: Mapping[str, Any]) -> None:
         """Las variables de la 1.1, en la regla 5: precio y vence solo con cupon personal, cuando solo
@@ -1188,6 +1297,27 @@ class _Run:
                 emitter.add(TERMINAL_STEP_NOT_LAST, at + (kind,))
             if kind == "condicion" and depth > 0:
                 emitter.add(NESTED_CONDITION, at + ("condicion",))
+        self._rule7_etiquetar(emitter, definition.get("pasos"), ("pasos",), sent=False, labeled=False)
+
+    def _rule7_etiquetar(self, emitter: _Emitter, steps: object, segments: tuple[Segment, ...], *,
+                         sent: bool, labeled: bool, depth: int = 0) -> None:
+        """Un ``etiquetar`` va despues de una plantilla de su camino, y hay uno solo por camino."""
+        if not isinstance(steps, list) or depth > MAX_DEPTH:
+            return
+        for index, step in enumerate(steps):
+            kind = step_type(step)
+            at = segments + (index,)
+            if kind == "plantilla":
+                sent = True
+            elif kind == "etiquetar":
+                if not sent or labeled:
+                    emitter.add(ETIQUETAR_NOT_AFTER_TEMPLATE, at + ("etiquetar",))
+                labeled = True
+            elif kind == "condicion" and isinstance(step, Mapping):
+                for name in ("entonces", "si_no"):
+                    self._rule7_etiquetar(emitter, step.get(name), at + (name,), sent=sent, labeled=labeled,
+                                          depth=depth + 1)
+                return
 
     def _rule8(self, emitter: _Emitter, definition: Mapping[str, Any], flow: WorldFlow) -> None:
         schedule = _mapping(definition.get("horario"))
@@ -1441,6 +1571,31 @@ class _Run:
             elif code == "compile_policy_step_after_send":
                 emitter.add(ENGINE_NOT_SUPPORTED_WAIT_AFTER_SEND, ("pasos", len(steps) - 1) if isinstance(
                     steps, list) and steps else ("pasos",))
+
+    def _rule14_native(self, emitter: _Emitter, definition: Mapping[str, Any], flow: WorldFlow) -> None:
+        """La 14 de un flujo nativo, con lo que la base abre y admite (flow-engine-v2 §9).
+
+        Un flujo del legado no ejecuta ``etiquetar``: ahi es ``engine_not_supported:etiquetar``.
+        """
+        steps = definition.get("pasos")
+        if not flow.is_native:
+            for step, at, *_ in _iter_steps(steps, ("pasos",)):
+                if step_type(step) == "etiquetar":
+                    emitter.add(ENGINE_NOT_SUPPORTED_ETIQUETAR, at + ("etiquetar",))
+            return
+        for code in native_not_supported(definition):
+            spec = _NATIVE_SPECS.get(code)
+            if spec is not None:
+                emitter.add(spec, _NATIVE_PATHS[code])
+                continue
+            if not code.startswith(NOT_SUPPORTED + ":"):
+                continue
+            # Un codigo cerrado (motor_nativo:forma), con lo que no ejecuta en la razon.
+            what = code.split(":", 1)[1]
+            at: tuple[Segment, ...] = ("termina", "si") if what.startswith(("salida_", "contesta_")) \
+                else ("dispara",) if what.startswith("disparo_") else ("pasos",)
+            emitter.add(ENGINE_NOT_SUPPORTED_NATIVE_SHAPE, at,
+                        reason=f"El motor nativo de esta versión no ejecuta eso ({what}).")
 
     def _rule15_personal(self, emitter: _Emitter, definition: Mapping[str, Any]) -> None:
         """Mas de dos ``cupon: personal`` en un camino (contrato 1.1): en el tercero, o en ``pasos`` con ramas."""

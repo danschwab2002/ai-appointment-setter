@@ -86,6 +86,14 @@ INBOX_9: dict[str, Any] = json.loads(
 HELLO_WORLD: dict[str, Any] = next(t for t in INBOX_9["message_templates"] if t["name"] == "hello_world")
 # El BODY de hello_world no tiene marcadores: el paso no manda variables.
 HELLO_WORLD_STEP = {"plantilla": "hello_world", "idioma": "en_US", "variables": []}
+# La plantilla de utilidad de ATT1 con nombre y producto y sin boton, leida de Chatwoot el 2026-10-21
+# (flow_change_operator/chatwoot_db_message_templates_inbox_11_20261021.json): la del flujo nuevo de la
+# bienvenida (el ciclo 1.7.0) y la forma que ejecuta el motor nativo.
+CONFIRMED: dict[str, Any] = next(
+    t for t in json.loads((FIXTURES / "flow_change_operator/chatwoot_db_message_templates_inbox_11_20261021.json")
+                          .read_text(encoding="utf-8"))["message_templates"]
+    if t["name"] == "att1_pago_efectivo_confirmado_01")
+CONFIRMED_STEP = {"plantilla": "att1_pago_efectivo_confirmado_01", "idioma": "es_MX", "variables": ["nombre", "producto"]}
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +153,43 @@ def version_item(definition: dict[str, Any], key: str = "carrito", *, en_curso: 
 def state_item(tipo: str, key: str = "carrito", *, version: int | None = None) -> ProposalItem:
     return ProposalItem(producto="att1", flujo=key, flow_id=IDS[key], tipo=tipo, version=version,
                         en_curso="seguir" if tipo == "volver" else None)
+
+
+def native_catalog() -> TemplateCatalog:
+    """El catalogo de la bandeja 11 con la plantilla de utilidad capturada, tal cual."""
+    return catalog_with(lambda payload: payload["message_templates"].append(copy.deepcopy(CONFIRMED)))
+
+
+def welcome(**changes: Any) -> dict[str, Any]:
+    """Lo minimo que escribe el agente para la bienvenida despues de la compra; el resto son defaults."""
+    definition: dict[str, Any] = {
+        "nombre": "Bienvenida despues de la compra", "dispara": {"evento": "compra"},
+        "entra": {"permiso": "compra"}, "pasos": [copy.deepcopy(CONFIRMED_STEP), {"etiquetar": "cliente"}],
+        "horario": "siempre",
+    }
+    definition.update(changes)
+    return definition
+
+
+def new_item(definition: dict[str, Any], key: str = "bienvenida", *, prender: str = "cohorte",
+             ok: dict[str, Any] | None = CLIENT_OK) -> ProposalItem:
+    return ProposalItem(producto="att1", flujo=key, flow_id=None, tipo="nuevo", definicion=definition,
+                        prender=prender, ok_del_cliente=ok)
+
+
+def run_new(definition: dict[str, Any] | None = None, key: str = "bienvenida", *, prender: str = "cohorte",
+            actor: str = "automation_expert", **kwargs: Any) -> list[Finding]:
+    kwargs.setdefault("catalog", native_catalog())
+    result = check([new_item(definition if definition is not None else welcome(), key, prender=prender)],
+                   actor=actor, draft_base={}, **kwargs)
+    return [*result.blocks, *result.warnings]
+
+
+def _legacy_purchase(pasos: list[dict[str, Any]]) -> list[Finding]:
+    """La activacion registrada sin version (un flujo del legado, no nativo) con la compra y su OK."""
+    result = check([version_item(purchase_flow(pasos=pasos), "activacion", ok=CLIENT_OK)],
+                   catalog=hello_world_catalog())
+    return [*result.blocks, *result.warnings]
 
 
 def check(items: list[ProposalItem], *, actor: str = "operador", phase: str = "publish",
@@ -608,6 +653,42 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
                     "descuento"),
         lambda: run(flow_def("descuento"), "descuento"),
     ),
+    # El item nuevo (ciclo 1.7.0) y el motor nativo (flow-engine-v2 §9).
+    "flow_already_registered": (lambda: run_new(key="activacion"), lambda: run_new()),
+    "new_flow_must_start_in_cohort": (lambda: run_new(prender="prendido"), lambda: run_new()),
+    "etiquetar_requires_purchase_trigger": (
+        lambda: run(with_(flow_def("carrito"), lambda d: d["pasos"].append({"etiquetar": "cliente"}))),
+        lambda: run_new(),
+    ),
+    "etiquetar_not_after_template": (
+        lambda: run_new(welcome(pasos=[{"etiquetar": "cliente"}, copy.deepcopy(CONFIRMED_STEP)])),
+        lambda: run_new(),
+    ),
+    "motor_nativo:disparador": (
+        lambda: run_new(welcome(dispara={"evento": "carrito"}, entra={"permiso": "formulario"},
+                                pasos=[copy.deepcopy(CONFIRMED_STEP)])),
+        lambda: run_new(),
+    ),
+    "motor_nativo:permiso": (
+        lambda: run_new(welcome(entra={"permiso": "formulario"})),
+        lambda: run_new(),
+    ),
+    "motor_nativo:repeticion": (
+        lambda: run_new(welcome(topes={"repeticion": {"una_por": "conversacion", "otra_despues_de": "nunca"}})),
+        lambda: run_new(),
+    ),
+    "motor_nativo:prioridad": (
+        lambda: run_new(welcome(prioridad={"le_gana_a": [], "no_arranca_mientras": "a_decidir"})),
+        lambda: run_new(),
+    ),
+    "motor_nativo:forma": (
+        lambda: run_new(welcome(pasos=[{**CONFIRMED_STEP, "variables": ["producto", "nombre"]}])),
+        lambda: run_new(),
+    ),
+    "engine_not_supported:etiquetar": (
+        lambda: _legacy_purchase([copy.deepcopy(HELLO_WORLD_STEP), {"etiquetar": "cliente"}]),
+        lambda: _legacy_purchase([copy.deepcopy(HELLO_WORLD_STEP)]),
+    ),
     "empty_branch_with_le_gana_a": (
         lambda: run(with_(flow_def("carrito"), lambda d: d.update(pasos=[{
             "condicion": {"dato": "ventana", "es": ["abierta"]}, "entonces": [TEMPLATE_STEP], "si_no": []}]))),
@@ -668,9 +749,11 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         4: {"purchase_exit_missing", "purchase_exit_with_purchase_trigger"},
         5: {"ficha_vencida_requires_ficha_trigger", "medio_de_pago_requires_ficha_trigger",
             "ficha_link_requires_ficha_trigger", "coupon_requires_checkout_link",
-            "variable_needs_personal_coupon", "variable_needs_event_trigger"},
+            "variable_needs_personal_coupon", "variable_needs_event_trigger",
+            "etiquetar_requires_purchase_trigger"},
         6: {"event_requires_vence", "silence_forbids_vence"},
-        7: {"conversar_outside_open_window_branch", "terminal_step_not_last", "nested_condition"},
+        7: {"conversar_outside_open_window_branch", "terminal_step_not_last", "nested_condition",
+            "etiquetar_not_after_template"},
         8: {"hour_invalid", "window_not_increasing", "zone_invalid", "zone_changed", "pool_zone_mismatch"},
         9: {"cap_invalid", "daily_cap_exceeds_total"},
         10: {"unknown_flow_reference", "mutual_le_gana_a", "product_not_declared", "product_required",
@@ -682,7 +765,9 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         14: {"engine_not_supported:more_sends_than_steps", "engine_not_supported:coupon_not_allowed",
              "engine_not_supported:coupon_missing", "engine_not_supported:fixed_coupon",
              "engine_not_supported:variables_differ", "engine_not_supported:espera_entre_envios",
-             "engine_not_supported:espera_despues_del_envio"},
+             "engine_not_supported:espera_despues_del_envio", "engine_not_supported:etiquetar",
+             "motor_nativo:disparador", "motor_nativo:permiso", "motor_nativo:repeticion",
+             "motor_nativo:prioridad", "motor_nativo:forma"},
         15: {"coupon_change_not_supported", "coupon_personal_limit"},
         17: {"purchase_permission_requires_single_utility_send"},
     }
@@ -697,18 +782,22 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         "template_variable_count_mismatch", "template_button_mismatch", "template_catalog_unavailable",
         "purchase_permission_requires_single_utility_send", "coupon_personal_limit",
         "variable_needs_personal_coupon", "variable_needs_event_trigger",
+        "etiquetar_requires_purchase_trigger",
     }
     assert {code for code, pairs in fv.CODE_RULES.items() if any(k == "todavia_no" for _, k in pairs)} == {
         "coupon_change_not_supported", "engine_not_supported:more_sends_than_steps",
         "engine_not_supported:coupon_not_allowed", "engine_not_supported:coupon_missing",
         "engine_not_supported:fixed_coupon", "engine_not_supported:variables_differ",
-        "engine_not_supported:espera_entre_envios", "engine_not_supported:espera_despues_del_envio"}
+        "engine_not_supported:espera_entre_envios", "engine_not_supported:espera_despues_del_envio",
+        "engine_not_supported:etiquetar", "motor_nativo:disparador", "motor_nativo:permiso",
+        "motor_nativo:repeticion", "motor_nativo:prioridad", "motor_nativo:forma"}
     cycle = {code for code, pairs in fv.CODE_RULES.items() if (None, "ciclo") in pairs}
     assert cycle == {
         "flow_creation_not_enabled", "change_outside_1b_scope", "trigger_change_is_another_flow",
         "required_key_missing", "flow_change_stale_base", "rollback_target_not_found",
         "rollback_target_is_active", "state_transition_invalid", "flow_has_no_version",
         "en_curso_not_supported", "identifier_not_allowed", "client_purchase_ok_missing",
+        "flow_already_registered", "new_flow_must_start_in_cohort",
     }
     assert all(pairs == {(None, "advertencia")} for code, pairs in fv.CODE_RULES.items()
                if code in fv.WARNING_CODES)

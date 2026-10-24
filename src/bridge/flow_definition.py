@@ -86,9 +86,15 @@ LINKS = ("checkout", "ficha")
 CONDITION_DATA = ("ventana", "medio_de_pago")
 WINDOW_VALUES = ("abierta", "cerrada")
 REPEAT_UNITS = ("persona", "persona_y_oferta", "conversacion")
-FLOW_STATES = ("apagado", "prendido", "pausado")
-STEP_TYPES = ("esperar", "plantilla", "conversar", "condicion", "derivar")
-ITEM_TYPES = ("version", "volver", "prender", "apagar")
+# cohorte (esquema 1.2, flow-engine-v2 §6): solo un flujo nativo, para los contactos de su cohorte.
+FLOW_STATES = ("apagado", "prendido", "pausado", "cohorte")
+COHORT = "cohorte"
+# etiquetar (esquema 1.2, D4): la etiqueta cliente y una nota privada; lo ejecuta solo el motor nativo.
+STEP_TYPES = ("esperar", "plantilla", "conversar", "condicion", "derivar", "etiquetar")
+LABELS = ("cliente",)
+# nuevo (ciclo 1.7.0, flow-engine-v2 §7): crea un flujo nativo y lo publica en cohorte. No lleva flow_id.
+ITEM_TYPES = ("version", "volver", "prender", "apagar", "nuevo")
+NEW_FLOW = "nuevo"
 # El contrato del ciclo nombra tres; hasta el motor solo se acepta seguir
 # (flow_validator, en_curso_not_supported).
 IN_FLIGHT_POLICIES = ("seguir", "cancelar", "migrar")
@@ -127,6 +133,7 @@ _STEP_KEYS: Mapping[str, tuple[str, ...]] = {
     "conversar": ("conversar",),
     "condicion": ("condicion", "entonces", "si_no"),
     "derivar": ("derivar",),
+    "etiquetar": ("etiquetar",),
 }
 _UNIT_MINUTES = {"m": 1, "h": 60, "d": DAY_MINUTES}
 
@@ -751,6 +758,9 @@ class WorldFlow:
     # El flujo del legado que ejecuta (carrito, pago_fallido, precheckout), si tiene: con el,
     # el validador mira al publicar que la definicion compile a su politica (regla 14, T2.1).
     legacy_kind: str | None = None
+    # Un flujo nativo (flow-engine-v2 §2): nacio en el motor, sin legado. La regla 14 se mira con las
+    # capacidades del motor nativo y la 16 no aplica. Un flujo en cohorte siempre es nativo.
+    native: bool = False
 
     def __post_init__(self) -> None:
         if not is_flow_id(self.flow_id):
@@ -789,6 +799,10 @@ class WorldFlow:
     @property
     def active_definition(self) -> Mapping[str, Any] | None:
         return None if self.active_version is None else self.versions[self.active_version]
+
+    @property
+    def is_native(self) -> bool:
+        return self.native is True or self.state == COHORT
 
     @property
     def fixed_zone(self) -> str | None:
@@ -836,7 +850,7 @@ class FlowWorld:
         Todos los flujos de la instancia con su version activa; los de la
         propuesta, ademas con su generacion.
         """
-        item_ids = {item.flow_id for item in items}
+        item_ids = {item.flow_id for item in items if item.flow_id is not None}
         base: dict[str, dict[str, int | None]] = {}
         for flow in self._flows:
             entry: dict[str, int | None] = {"active_version": flow.active_version}
@@ -849,8 +863,8 @@ class FlowWorld:
         """La version que lee quien propone: ``{flow_id: {active_version}}`` de los flujos de los items."""
         base: dict[str, dict[str, int | None]] = {}
         for item in items:
-            flow = self._by_id.get(item.flow_id)
-            if flow is not None:
+            flow = self._by_id.get(item.flow_id) if item.flow_id is not None else None
+            if flow is not None and item.flow_id is not None:
                 base[item.flow_id] = {"active_version": flow.active_version}
         return base
 
@@ -890,26 +904,30 @@ def _key_name(key: object) -> str:
 
 @dataclass(frozen=True)
 class ProposalItem:
-    """Un item de una propuesta: una version, volver, prender o apagar un flujo.
+    """Un item de una propuesta: una version, volver, prender o apagar un flujo, o un flujo nuevo.
 
     ``to_json`` da lo que acepta ``_flow_change_items_are_valid`` cuando la
-    definicion esta normalizada y ``en_curso`` es ``seguir``.
+    definicion esta normalizada y ``en_curso`` es ``seguir``. Un ``nuevo``
+    (ciclo 1.7.0) no lleva ``flow_id``: el flujo todavia no existe, y su
+    identidad es (``producto``, ``flujo``). Lleva ``prender``, que vale solo
+    ``cohorte`` (lo mira el validador: ``new_flow_must_start_in_cohort``).
     """
 
     producto: str
     flujo: str
-    flow_id: str
+    flow_id: str | None
     tipo: str
     definicion: Mapping[str, Any] | None = None
     version: int | None = None
     en_curso: str | None = None
     ok_del_cliente: Mapping[str, Any] | None = None
+    prender: str | None = None
 
     def __post_init__(self) -> None:
         _check_item_envelope(
             producto=self.producto, flujo=self.flujo, flow_id=self.flow_id, tipo=self.tipo,
             definicion=self.definicion, version=self.version, en_curso=self.en_curso,
-            ok_del_cliente=self.ok_del_cliente,
+            ok_del_cliente=self.ok_del_cliente, prender=self.prender,
         )
 
     @classmethod
@@ -921,7 +939,10 @@ class ProposalItem:
             raise ProposalItemsInvalid("tipo_invalid")
         keys = set(value)
         identity = {"producto", "flujo", "flow_id", "tipo"}
-        if tipo == "version":
+        if tipo == NEW_FLOW:
+            required = {"producto", "flujo", "tipo", "definicion", "prender"}
+            allowed = required | {"ok_del_cliente"}
+        elif tipo == "version":
             required = identity | {"definicion", "en_curso"}
             allowed = required | {"ok_del_cliente"}
         elif tipo == "volver":
@@ -931,12 +952,21 @@ class ProposalItem:
         if not required <= keys or not keys <= allowed:
             raise ProposalItemsInvalid("keys_invalid", missing=required - keys, extra=keys - allowed)
         return cls(
-            producto=value["producto"], flujo=value["flujo"], flow_id=value["flow_id"], tipo=tipo,
+            producto=value["producto"], flujo=value["flujo"], flow_id=value.get("flow_id"), tipo=tipo,
             definicion=value.get("definicion"), version=value.get("version"),
             en_curso=value.get("en_curso"), ok_del_cliente=value.get("ok_del_cliente"),
+            prender=value.get("prender"),
         )
 
     def to_json(self) -> dict[str, Any]:
+        if self.tipo == NEW_FLOW:
+            new: dict[str, Any] = {
+                "producto": self.producto, "flujo": self.flujo, "tipo": self.tipo,
+                "definicion": copy.deepcopy(dict(self.definicion or {})), "prender": self.prender,
+            }
+            if self.ok_del_cliente is not None:
+                new["ok_del_cliente"] = copy.deepcopy(dict(self.ok_del_cliente))
+            return new
         out: dict[str, Any] = {
             "producto": self.producto, "flujo": self.flujo, "flow_id": self.flow_id,
             "tipo": self.tipo,
@@ -953,22 +983,47 @@ class ProposalItem:
 
     @property
     def is_content(self) -> bool:
-        return self.tipo in ("version", "volver")
+        return self.tipo in ("version", "volver", NEW_FLOW)
+
+    @property
+    def is_new_flow(self) -> bool:
+        return self.tipo == NEW_FLOW
+
+    @property
+    def identity(self) -> str:
+        """La identidad del item para no repetir clases: el flow_id, o producto/flujo de un nuevo."""
+        return self.flow_id if self.flow_id is not None else f"{NEW_FLOW}:{self.producto}/{self.flujo}"
 
     def with_definition(self, definition: Mapping[str, Any]) -> ProposalItem:
         return ProposalItem(
             producto=self.producto, flujo=self.flujo, flow_id=self.flow_id, tipo=self.tipo,
             definicion=definition, version=self.version, en_curso=self.en_curso,
-            ok_del_cliente=self.ok_del_cliente,
+            ok_del_cliente=self.ok_del_cliente, prender=self.prender,
         )
 
 
 def _check_item_envelope(
     *, producto: object, flujo: object, flow_id: object, tipo: object, definicion: object,
-    version: object, en_curso: object, ok_del_cliente: object,
+    version: object, en_curso: object, ok_del_cliente: object, prender: object = None,
 ) -> None:
     if tipo not in ITEM_TYPES:
         raise ProposalItemsInvalid("tipo_invalid")
+    if tipo == NEW_FLOW:
+        if flow_id is not None or version is not None or en_curso is not None:
+            raise ProposalItemsInvalid("keys_invalid")
+        if not is_product_ref(producto):
+            raise ProposalItemsInvalid("producto_invalid")
+        if not is_flow_key(flujo):
+            raise ProposalItemsInvalid("flujo_invalid")
+        if not isinstance(definicion, Mapping):
+            raise ProposalItemsInvalid("definicion_invalid")
+        if not isinstance(prender, str):
+            raise ProposalItemsInvalid("prender_invalid")
+        if ok_del_cliente is not None and not isinstance(ok_del_cliente, Mapping):
+            raise ProposalItemsInvalid("ok_del_cliente_invalid")
+        return
+    if prender is not None:
+        raise ProposalItemsInvalid("keys_invalid")
     if not is_flow_id(flow_id):
         raise ProposalItemsInvalid("flow_id_invalid")
     if not is_product_ref(producto):
@@ -1017,7 +1072,7 @@ def check_item_classes(items: Sequence[ProposalItem]) -> None:
     """Por flujo, a lo sumo un item de contenido (version o volver) y uno de estado."""
     seen: set[tuple[str, bool]] = set()
     for item in items:
-        mark = (item.flow_id, item.is_content)
+        mark = (item.identity, item.is_content)
         if mark in seen:
             raise ProposalItemsInvalid("item_class_repeated")
         seen.add(mark)
@@ -1062,6 +1117,9 @@ def touch_times(definition: Mapping[str, Any]) -> list[dict[str, Any]]:
             started = True
             out.append({"paso": index + 1, "plantilla": step.get("plantilla"),
                         "horas_desde_el_primero": round(minutes / 60, 2)})
+        elif "etiquetar" in step:
+            # No manda nada: la etiqueta y la nota van despues del envio (esquema 1.2).
+            continue
         else:
             if out:
                 out.append({"paso": index + 1, "sigue": "depende_del_lead"})
@@ -1292,6 +1350,8 @@ def _check_step(out: _Collector, step: object, segments: tuple[Segment, ...]) ->
         _check_text(out, value, segments + ("conversar",), GOAL_MAX_CHARS, "El objetivo")
     elif kind == "derivar":
         _check_text(out, value, segments + ("derivar",), None, "La nota")
+    elif kind == "etiquetar":
+        _check_enum(out, value, segments + ("etiquetar",), LABELS)
     else:
         _check_condition_step(out, step, segments)
 

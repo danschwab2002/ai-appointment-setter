@@ -5613,6 +5613,43 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'flow_engine_native_bridge'
+    union all
+    select
+        '20261024000600',
+        '20261024000600_flow_change_new_flow_v1.sql',
+        -- La lectura de la simulacion de un flujo nuevo: de service_role y del
+        -- rol del agente, nunca de la API.
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.read_flow_engine_native_trigger_counts_v1(jsonb,text,text,timestamptz)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- La cohorte del operador y los dos helpers del item nuevo: de nadie de la API.
+        + (
+            select count(*) = 3
+            from functions
+            where oid in (
+                to_regprocedure('public.operator_flow_cohort_v1(jsonb,text,text,text,text,text,text)'),
+                to_regprocedure('public._flow_change_new_flow_zone(jsonb)'),
+                to_regprocedure('public._flow_change_new_flow_blocker(text,text,jsonb)')
+            )
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- El item nuevo en publicar.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_change_publish(text,text,uuid,text,jsonb)')
+              and position('flow_change_new_flow: begin (registrar y abrir)' in definition) > 0
+        )::int,
+        3,
+        'flow_change_new_flow'
 )
 select
     version,

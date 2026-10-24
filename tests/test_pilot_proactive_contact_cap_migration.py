@@ -75,7 +75,7 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
     # tope por persona solo lo que ya hacia su disparador: una ruta nativa es
     # una ruta en motor, y el link para quien se dio de baja y escribe por su
     # cuenta (20261024000400), que no toca la puerta, y el bridge del motor
-    # nativo (20261024000500), que tampoco.
+    # nativo (20261024000500) y el AE que crea flujos (20261024000600), que tampoco.
     assert versions[position + 1:] == [
         "20261009000200",
         "20261010000100",
@@ -108,6 +108,7 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261024000200",
         "20261024000400",
         "20261024000500",
+        "20261024000600",
     ]
 
     sql = _sql()

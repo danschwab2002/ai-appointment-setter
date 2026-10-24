@@ -84,6 +84,9 @@ class PostgrestEmulator:
         # Las dos lecturas del motor (flow-engine-v1, secciones 1 y 2): sin ellas, como una base sin la
         # migracion del motor, PostgREST contesta 403 y la simulacion queda failed.
         self.engine = True
+        # La lectura de la simulacion de un flujo nuevo (flow-engine-v2 §14, 20261024000600), con la forma
+        # que devuelve read_flow_engine_native_trigger_counts_v1. None: la base no la tiene (403).
+        self.new_flow_counts: dict | None = None
 
     def _engine_read(self) -> dict:
         flows = []
@@ -103,7 +106,9 @@ class PostgrestEmulator:
 
     def _draft_base(self, items: list[dict]) -> dict:
         by_id = {flow["flow_id"]: flow for flow in self.flows}
-        return {item["flow_id"]: {"active_version": by_id[item["flow_id"]]["active_version"]} for item in items}
+        # Un item nuevo no lleva flow_id (_flow_change_item_flow_ids, 20261024000600).
+        return {item["flow_id"]: {"active_version": by_id[item["flow_id"]]["active_version"]} for item in items
+                if "flow_id" in item}
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         function = request.url.path.rsplit("/", 1)[-1]
@@ -117,6 +122,9 @@ class PostgrestEmulator:
             return httpx.Response(200, json=self._engine_read())
         if function == "read_flow_engine_history_v1" and self.engine:
             return httpx.Response(200, json=copy.deepcopy(HISTORY))
+        if function == "read_flow_engine_native_trigger_counts_v1" and self.new_flow_counts is not None:
+            return httpx.Response(200, json={"product_ref": body["p_product_ref"], "trigger": body["p_trigger"],
+                                             "since": body["p_since"], **self.new_flow_counts})
         if function == "read_flow_store_v1":
             return httpx.Response(200, json={"database_at": "2026-10-21T16:00:00Z", "products": ["att1"],
                                              "flows": copy.deepcopy(self.flows)})
@@ -292,7 +300,8 @@ def test_proposing_a_wait_in_the_cart_saves_the_normalized_draft_with_the_role_k
     response = client.post(f"{PREFIX}/flow-changes", headers=AUTH, json=_propose_body())
     assert response.status_code == 201, response.text
     body = response.json()
-    assert (body["contract"], body["contract_version"]) == ("flow-change-cycle-v1", "1.6.0")
+    # 1.7.0: el item nuevo (el PR 4 del hito 4); la version que contesta el bridge la fija esta prueba.
+    assert (body["contract"], body["contract_version"]) == ("flow-change-cycle-v1", "1.7.0")
     assert body["instance"] == {"tenant_ref": "lancemos", "ally_ref": "att1"}
     assert body["data"]["status"] == "borrador" and body["data"]["revision"] == 1
     [read, save] = emulator.requests
