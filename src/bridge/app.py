@@ -88,6 +88,11 @@ from bridge.hotmart import (
     parse_hotmart_payload,
     verify_hotmart_token,
 )
+from bridge.handoff_notice import (
+    HANDOFF_NOTICE_DECISION,
+    HANDOFF_NOTICE_TEXT,
+    handoff_notice_already_sent,
+)
 from bridge.inbound_handoff import request_handoff_for_inbound_proposal
 from bridge.ghl_precheckout_adapter import (
     FORM_LANDING_ACTIVE,
@@ -302,6 +307,9 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "chatwoot_durable_opt_out_enabled",
     "human_handoff_projection_enabled",
     "human_handoff_admission_enabled",
+    # F-034: el aviso corto al derivar. El texto es fijo y del producto; lo
+    # unico por instancia es prenderlo (apagado por defecto: Johanna igual).
+    "handoff_notice_enabled",
     "pilot_boundary_enabled",
     "chatwoot_cut_b_admission_enabled",
     "chatwoot_cut_b_agent_enabled",
@@ -771,6 +779,10 @@ class Settings:
     opt_out_projection_worker_id: str | None = None
     human_handoff_projection_enabled: bool = False
     human_handoff_admission_enabled: bool = False
+    # F-034 (decision D5 de Dan, 24/10): al derivar, la persona recibe un
+    # aviso corto antes de la pausa. Apagado, la derivacion calla como hasta
+    # ahora (F-033, 15/10).
+    handoff_notice_enabled: bool = False
     handoff_projection_policy_key: str | None = None
     handoff_projection_policy_version: int | None = None
     human_handoff_projection_worker_id: str | None = None
@@ -1469,6 +1481,9 @@ class Settings:
             os.getenv("HUMAN_HANDOFF_ADMISSION_ENABLED", "false").lower()
             == "true"
         )
+        handoff_notice_enabled = (
+            os.getenv("HANDOFF_NOTICE_ENABLED", "false").lower() == "true"
+        )
         handoff_projection_policy_key = (
             os.getenv("HANDOFF_PROJECTION_POLICY_KEY", "").strip() or None
         )
@@ -1879,6 +1894,7 @@ class Settings:
             opt_out_projection_worker_id=opt_out_projection_worker_id,
             human_handoff_projection_enabled=human_handoff_projection_enabled,
             human_handoff_admission_enabled=human_handoff_admission_enabled,
+            handoff_notice_enabled=handoff_notice_enabled,
             handoff_projection_policy_key=handoff_projection_policy_key,
             handoff_projection_policy_version=handoff_projection_policy_version,
             human_handoff_projection_worker_id=(
@@ -4725,6 +4741,12 @@ def create_app(
         raise ValueError(
             "CHATWOOT_CUT_B_AGENT_ENABLED requires Hermes and Chatwoot control"
         )
+    if settings.handoff_notice_enabled and not settings.human_handoff_admission_enabled:
+        # El aviso vive dentro de la derivacion del entrante: sin ella no sale
+        # nunca, y un flag prendido que no hace nada no se nota.
+        raise ValueError(
+            "HANDOFF_NOTICE_ENABLED requires HUMAN_HANDOFF_ADMISSION_ENABLED"
+        )
     if settings.human_handoff_admission_enabled:
         inbound_handoff_enabled = (
             settings.chatwoot_cut_b_admission_enabled
@@ -6503,6 +6525,66 @@ def create_app(
                 shadow_processor is not None
                 and not shadow_processor.has_result(delivery_id=delivery_id)
             )
+        async def send_handoff_notice(proposal: dict[str, object]) -> None:
+            # F-034: el aviso sale antes de pedir la derivacion y antes de la
+            # etiqueta automation_paused, que bloquea todo envio del agente; y
+            # antes de que el worker de la proyeccion asigne la conversacion,
+            # porque una persona asignada tambien lo bloquea. Si la
+            # conversacion ya la tiene el equipo (asignada, pausada o con un
+            # mensaje del equipo despues del de la persona), la guarda de envio
+            # lo bloquea y no sale. Un aviso que no sale nunca frena la
+            # derivacion: se registra y la derivacion sigue.
+            if (
+                control_client is None
+                or not isinstance(message_id, int)
+                or isinstance(message_id, bool)
+                or not isinstance(conversation_id, int)
+                or isinstance(conversation_id, bool)
+            ):
+                logger.warning("handoff_notice_skipped reason=not_configured")
+                return
+            try:
+                history = await control_client.get_conversation_messages(
+                    conversation_id=conversation_id, limit=2000
+                )
+                if handoff_notice_already_sent(history):
+                    logger.info(
+                        "handoff_notice_skipped reason=already_sent conversation=%s",
+                        conversation_id,
+                    )
+                    return
+                result = await send_scoped_agent_bot_reply(
+                    conversation_id=conversation_id,
+                    trigger_message_id=message_id,
+                    content=HANDOFF_NOTICE_TEXT,
+                    agent_decision=HANDOFF_NOTICE_DECISION,
+                    agent_reason_code=_agent_marker(proposal.get("reason_code")),
+                )
+            except (
+                ChatwootReplyDeliveryUnknownError,
+                ChatwootProtocolError,
+                httpx.HTTPError,
+            ) as exc:
+                logger.warning(
+                    "handoff_notice_not_sent conversation=%s error_type=%s",
+                    conversation_id,
+                    type(exc).__name__,
+                )
+                return
+            status = result.get("status")
+            if status in {"sent", "duplicate"}:
+                logger.info(
+                    "handoff_notice_sent conversation=%s status=%s",
+                    conversation_id,
+                    status,
+                )
+            else:
+                logger.info(
+                    "handoff_notice_skipped reason=%s conversation=%s",
+                    result.get("reason", status),
+                    conversation_id,
+                )
+
         async def request_current_inbound_handoff(
             proposal: dict[str, object],
         ) -> None:
@@ -6512,6 +6594,8 @@ def create_app(
             assert admission is not None
             assert settings.handoff_projection_policy_key is not None
             assert settings.handoff_projection_policy_version is not None
+            if settings.handoff_notice_enabled:
+                await send_handoff_notice(proposal)
             try:
                 handoff = await request_handoff_for_inbound_proposal(
                     proposal=proposal,
