@@ -1,7 +1,7 @@
 {
  "_generated": {
   "generator": "tests/test_flow_validator.py (test_the_bridge_json_with_the_base_is_the_one_in_the_repo)",
-  "date": "2026-10-21",
+  "date": "2026-10-24",
   "from": "los casos negativo y positivo de cada codigo de CASES, dos bordes del resultado y validator_json() con las dos fases y los dos actores",
   "regenerate": "FLOW_STORE_FIXTURE_DIR=tests/fixtures/flow_store uv run pytest tests/test_flow_validator.py"
  },
@@ -923,6 +923,44 @@
    }
   },
   {
+   "code": "engine_not_supported:etiquetar",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 14,
+      "code": "engine_not_supported:etiquetar",
+      "kind": "todavia_no",
+      "path": "/0/definicion/pasos/1/etiquetar",
+      "limit": "etiquetar, solo en un flujo nativo",
+      "reason": "etiquetar lo ejecuta solo el motor nativo: un flujo del legado no lo hace.",
+      "alternative": "Sacar el paso, o crear el flujo con un ítem nuevo."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "engine_not_supported:etiquetar",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
    "code": "engine_not_supported:fixed_coupon",
    "case": "negativo",
    "result": {
@@ -1064,6 +1102,90 @@
    }
   },
   {
+   "code": "etiquetar_not_after_template",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 7,
+      "code": "etiquetar_not_after_template",
+      "kind": "forma",
+      "path": "/0/definicion/pasos/0/etiquetar",
+      "reason": "etiquetar va después de una plantilla, y hay uno solo por camino.",
+      "alternative": "Ponerlo después del envío, una sola vez."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "etiquetar_not_after_template",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "etiquetar_requires_purchase_trigger",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 5,
+      "code": "etiquetar_requires_purchase_trigger",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/1/etiquetar",
+      "limit": "etiquetar, solo con el disparador compra",
+      "reason": "etiquetar marca a la persona como clienta: va solo en un flujo disparado por la compra.",
+      "alternative": "Sacar el paso, o disparar el flujo con la compra."
+     },
+     {
+      "rule": 14,
+      "code": "engine_not_supported:etiquetar",
+      "kind": "todavia_no",
+      "path": "/0/definicion/pasos/1/etiquetar",
+      "limit": "etiquetar, solo en un flujo nativo",
+      "reason": "etiquetar lo ejecuta solo el motor nativo: un flujo del legado no lo hace.",
+      "alternative": "Sacar el paso, o crear el flujo con un ítem nuevo."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "etiquetar_requires_purchase_trigger",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
    "code": "event_requires_vence",
    "case": "negativo",
    "result": {
@@ -1190,6 +1312,43 @@
    }
   },
   {
+   "code": "flow_already_registered",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "flow_already_registered",
+      "kind": "ciclo",
+      "path": "/0/flujo",
+      "reason": "Ya hay un flujo con esa clave en ese producto.",
+      "alternative": "Elegir otra clave, o cambiar el flujo que ya existe con una versión nueva."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "flow_already_registered",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
    "code": "flow_change_stale_base",
    "case": "negativo",
    "result": {
@@ -1236,8 +1395,8 @@
       "code": "flow_creation_not_enabled",
       "kind": "ciclo",
       "path": "/0",
-      "reason": "En la 1b el Automation Expert no crea flujos: crear un flujo es de la 1c.",
-      "alternative": "Pedírselo a un operador."
+      "reason": "El Automation Expert no escribe la primera versión de un flujo registrado sin versión: ese es el camino de los flujos del legado, que registra el operador.",
+      "alternative": "Para un flujo nuevo, usar un ítem nuevo: nace en el motor y se publica para la cohorte."
      }
     ],
     "warnings": []
@@ -1447,6 +1606,239 @@
    }
   },
   {
+   "code": "motor_nativo:disparador",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 14,
+      "code": "motor_nativo:disparador",
+      "kind": "todavia_no",
+      "path": "/0/definicion/dispara",
+      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con nombre y producto, sin botón, y repite por persona",
+      "reason": "El motor nativo de esta versión solo arranca con la compra.",
+      "alternative": "Disparar con dispara: {evento: compra}. Otro evento es de un flujo del legado."
+     },
+     {
+      "rule": 14,
+      "code": "motor_nativo:permiso",
+      "kind": "todavia_no",
+      "path": "/0/definicion/entra/permiso",
+      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con nombre y producto, sin botón, y repite por persona",
+      "reason": "El motor nativo de esta versión solo entra con permiso: compra.",
+      "alternative": "Usar permiso: compra, con el OK del cliente."
+     },
+     {
+      "rule": 14,
+      "code": "motor_nativo:forma",
+      "kind": "todavia_no",
+      "path": "/0/definicion/dispara",
+      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con nombre y producto, sin botón, y repite por persona",
+      "reason": "El motor nativo de esta versión no ejecuta eso (disparo_carrito).",
+      "alternative": "Dejar una sola plantilla con [nombre, producto], sin botón, y etiquetar después si hace falta."
+     },
+     {
+      "rule": 14,
+      "code": "motor_nativo:forma",
+      "kind": "todavia_no",
+      "path": "/0/definicion/termina/si",
+      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con nombre y producto, sin botón, y repite por persona",
+      "reason": "El motor nativo de esta versión no ejecuta eso (salida_compra).",
+      "alternative": "Dejar una sola plantilla con [nombre, producto], sin botón, y etiquetar después si hace falta."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "motor_nativo:disparador",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "motor_nativo:forma",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 14,
+      "code": "motor_nativo:forma",
+      "kind": "todavia_no",
+      "path": "/0/definicion/pasos",
+      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con nombre y producto, sin botón, y repite por persona",
+      "reason": "El motor nativo de esta versión no ejecuta eso (variables_differ).",
+      "alternative": "Dejar una sola plantilla con [nombre, producto], sin botón, y etiquetar después si hace falta."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "motor_nativo:forma",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "motor_nativo:permiso",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 14,
+      "code": "motor_nativo:permiso",
+      "kind": "todavia_no",
+      "path": "/0/definicion/entra/permiso",
+      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con nombre y producto, sin botón, y repite por persona",
+      "reason": "El motor nativo de esta versión solo entra con permiso: compra.",
+      "alternative": "Usar permiso: compra, con el OK del cliente."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "motor_nativo:permiso",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "motor_nativo:prioridad",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 1,
+      "code": "invalid_value",
+      "kind": "forma",
+      "path": "/0/definicion/prioridad/no_arranca_mientras",
+      "reason": "Va una lista.",
+      "alternative": "Escribirlo con una de las formas de la definición formal del esquema."
+     },
+     {
+      "rule": 11,
+      "code": "unresolved_value",
+      "kind": "forma",
+      "path": "/0/definicion/prioridad/no_arranca_mientras",
+      "reason": "Una versión con a_medir, a_decidir o a_crear no se publica.",
+      "alternative": "Completar el dato antes de pedir el sí: medirlo, decidirlo o crear la plantilla."
+     },
+     {
+      "rule": 14,
+      "code": "motor_nativo:prioridad",
+      "kind": "todavia_no",
+      "path": "/0/definicion/prioridad/no_arranca_mientras",
+      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con nombre y producto, sin botón, y repite por persona",
+      "reason": "no_arranca_mientras es una lista de flujos.",
+      "alternative": "Escribir no_arranca_mientras como una lista, vacía si no hay ninguno."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "motor_nativo:prioridad",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "motor_nativo:repeticion",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 14,
+      "code": "motor_nativo:repeticion",
+      "kind": "todavia_no",
+      "path": "/0/definicion/topes/repeticion",
+      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con nombre y producto, sin botón, y repite por persona",
+      "reason": "El motor nativo repite por persona o por persona y oferta, con nunca o una duración.",
+      "alternative": "Usar repeticion: {una_por: persona, otra_despues_de: nunca}."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "motor_nativo:repeticion",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
    "code": "mutual_le_gana_a",
    "case": "negativo",
    "result": {
@@ -1546,6 +1938,43 @@
     "rules_version": 1,
     "phase": "publish",
     "actor": "operador"
+   }
+  },
+  {
+   "code": "new_flow_must_start_in_cohort",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "new_flow_must_start_in_cohort",
+      "kind": "ciclo",
+      "path": "/0/prender",
+      "reason": "Un flujo nuevo se publica primero para la cohorte de prueba; pasarlo a todos es otra propuesta.",
+      "alternative": "Usar prender: cohorte."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "new_flow_must_start_in_cohort",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
    }
   },
   {

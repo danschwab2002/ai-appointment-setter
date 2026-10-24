@@ -52,6 +52,9 @@ _BRIDGE_ERRORS = frozenset({
     "flow_change_revision_limit",
     "flow_change_validation_limit",
     "flow_creation_not_enabled",
+    # El item nuevo (ciclo 1.7.0): la clave ya existe, o prender no es cohorte.
+    "flow_already_registered",
+    "new_flow_must_start_in_cohort",
     "template_catalog_unavailable",
     "automation_expert_change_unavailable",
     "automation_expert_change_busy",

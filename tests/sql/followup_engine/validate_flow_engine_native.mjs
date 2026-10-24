@@ -115,8 +115,9 @@ const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`${MIGRATION} no esta en la cadena`);
 if (JSON.stringify(names.slice(position + 1))
     !== JSON.stringify(['20261024000400_opted_out_reply_checkout_issuance.sql',
-      '20261024000500_flow_engine_native_bridge_v1.sql'])) {
-  fail(`despues de ${MIGRATION} van solo la de F-036 y la del bridge nativo`, names.slice(position + 1));
+      '20261024000500_flow_engine_native_bridge_v1.sql', '20261024000600_flow_change_new_flow_v1.sql'])) {
+  fail(`despues de ${MIGRATION} van solo la de F-036, la del bridge nativo y la del AE que crea flujos`,
+    names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(
   /create extension if not exists pgcrypto;/gi, '-- pgcrypto is built into PGlite'));

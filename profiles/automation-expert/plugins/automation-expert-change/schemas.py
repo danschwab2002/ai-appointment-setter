@@ -17,7 +17,9 @@ PROPOSE_FLOW_CHANGE = {
     "name": "propose_flow_change",
     "description": (
         "Guarda un borrador de cambio de uno o varios flujos, con el formato setter-flujo/v1: una "
-        "versión nueva (la definición completa), volver a una versión publicada, prender o apagar. "
+        "versión nueva (la definición completa), volver a una versión publicada, prender o apagar, o un "
+        "flujo nuevo (tipo nuevo, sin flow_id, con prender: cohorte y base vacía: se publica solo para la "
+        "cohorte de prueba). "
         "Para una versión nueva: copiá draft_item de get_flow_definitions en items, cambiá solo lo "
         "pedido en draft_item.definicion.pasos, y mandá draft_base en base. La respuesta trae toques: "
         "cuándo sale cada mensaje antes y después, en horas desde el primero; comparalos con lo "
@@ -36,14 +38,16 @@ PROPOSE_FLOW_CHANGE = {
                 "description": "Los ítems, con estas claves exactas: version → {producto, flujo, flow_id, "
                                "tipo: \"version\", definicion, en_curso: \"seguir\"} (es draft_item); "
                                "volver → {producto, flujo, flow_id, tipo: \"volver\", version, en_curso}; "
-                               "prender o apagar → {producto, flujo, flow_id, tipo}. producto y flujo son el "
+                               "prender o apagar → {producto, flujo, flow_id, tipo}; un flujo nuevo → "
+                               "{producto, flujo, tipo: \"nuevo\", prender: \"cohorte\", definicion} y, con "
+                               "permiso: compra, ok_del_cliente {quien, medio, fecha}. producto y flujo son el "
                                "product_ref y el flow_key del almacén.",
                 "items": {"type": "object"},
             },
             "base": {
                 "type": "object",
                 "description": "Por cada flow_id de los ítems, {active_version: n | null}: la versión que "
-                               "leíste (es draft_base).",
+                               "leíste (es draft_base). Un flujo nuevo no suma nada: solo, va {}.",
             },
             "purpose": {
                 "type": "string",

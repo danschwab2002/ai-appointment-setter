@@ -48,7 +48,15 @@ from fastapi import FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
 from .flow_change_operator import OperatorInputError, validate_proposal, world_from_store
-from .flow_definition import InstanceView, ProposalItemsInvalid, as_draft, loads_strict, parse_items, touch_times
+from .flow_definition import (
+    InstanceView,
+    ProposalItemsInvalid,
+    TemplateCatalog,
+    as_draft,
+    loads_strict,
+    parse_items,
+    touch_times,
+)
 from .flow_validator import FlowValidationInputError, validate
 
 __all__ = [
@@ -67,7 +75,8 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 CONTRACT = "flow-change-cycle-v1"
-CONTRACT_VERSION = "1.6.0"
+# 1.7.0 (el PR 4 del hito 4): el item nuevo, que crea un flujo nativo y lo publica en cohorte.
+CONTRACT_VERSION = "1.7.0"
 PREFIX = "/internal/automation-expert/v1"
 DB_ROLE = "automation_expert_change"
 MAX_BODY_BYTES = 256 * 1024
@@ -77,6 +86,8 @@ ENGINE_PAGES_MAX = 10
 # La historia de los ultimos 8 dias (la vista previa simula 7 y el de mas es la siembra), con un margen
 # para que un reloj del bridge atrasado no pida mas de lo que la funcion acepta.
 HISTORY_WINDOW = timedelta(days=8) - timedelta(minutes=5)
+# La simulacion de un flujo nuevo cuenta los disparos de los ultimos 7 dias (flow-engine-v2 §14).
+NEW_FLOW_WINDOW = timedelta(days=7)
 _CODE = re.compile(r"^[a-z][a-z0-9_]{1,79}$")
 _SLACK_USER = re.compile(r"^[UW][A-Z0-9]{8,20}$")
 _EMAIL = re.compile(r"[^\s@]+@[^\s@]+")
@@ -90,6 +101,7 @@ _RESULT_STATUS = {
     "flow_change_open_limit": 409,
     "flow_change_revision_limit": 409,
     "flow_change_validation_limit": 409,
+    "flow_already_registered": 409,
 }
 # Lo que la base levanta como excepcion, por SQLSTATE (PostgREST 14 manda P0002
 # como 500: se mira el codigo, no el estado HTTP; capturado el 2026-10-21 en
@@ -193,6 +205,13 @@ class FlowChangeStore:
                 return document
         raise StoreUnavailable()
 
+    async def read_new_flow_counts(self, instance: Mapping[str, str], product_ref: str, trigger: str,
+                                   since: datetime) -> Any:
+        """``read_flow_engine_native_trigger_counts_v1``: los disparos del disparador de un flujo nuevo."""
+        return await self._rpc("read_flow_engine_native_trigger_counts_v1", {
+            "p_instance": instance, "p_product_ref": product_ref, "p_trigger": trigger,
+            "p_since": since.isoformat().replace("+00:00", "Z")})
+
     async def read_history(self, instance: Mapping[str, str], product_ref: str, since: datetime) -> Any:
         return await self._rpc("read_flow_engine_history_v1", {
             "p_instance": instance, "p_product_ref": product_ref,
@@ -210,6 +229,22 @@ async def _simulation_inputs(store: FlowChangeStore, instance: Mapping[str, str]
         else set()
     if len(products) != 1 or not all(isinstance(product, str) for product in products):
         return {"simulation_unavailable": "simulation_multi_product"}
+    new_flows = [item for item in items if isinstance(item, Mapping) and item.get("tipo") == "nuevo"]
+    if new_flows:
+        # Un flujo nuevo no tiene historia en el motor: se cuentan los disparos de su disparador.
+        if len(items) != 1:
+            return {"simulation_unavailable": "simulation_new_flow_mixed"}
+        definition = new_flows[0].get("definicion")
+        trigger = (definition.get("dispara") or {}).get("evento") if isinstance(definition, Mapping) else None
+        if not isinstance(trigger, str):
+            return {"simulation_unavailable": "simulation_new_flow_counts_invalid"}
+        try:
+            counts = await store.read_new_flow_counts(instance, next(iter(products)), trigger,
+                                                      datetime.now(UTC) - NEW_FLOW_WINDOW)
+        except (StoreUnavailable, StoreRejected):
+            logger.info("automation_expert_change route=validate simulation=flow_engine_unavailable")
+            return {"simulation_unavailable": "flow_engine_unavailable"}
+        return {"new_flow_counts": counts}
     since = datetime.now(UTC) - HISTORY_WINDOW
     try:
         engine = await store.read_engine(instance)
@@ -218,6 +253,16 @@ async def _simulation_inputs(store: FlowChangeStore, instance: Mapping[str, str]
         logger.info("automation_expert_change route=validate simulation=flow_engine_unavailable")
         return {"simulation_unavailable": "flow_engine_unavailable"}
     return {"engine": engine, "history": history}
+
+
+async def _draft_catalog(chatwoot: Any, inbox_id: int) -> TemplateCatalog | None:
+    """El catalogo de la bandeja para los defaults de un flujo nuevo, o None si no se pudo leer."""
+    try:
+        inbox = await chatwoot.get_inbox(inbox_id=inbox_id)
+        return TemplateCatalog.from_inbox_payload({"message_templates": inbox["message_templates"]})
+    except Exception:  # noqa: BLE001 - sin catalogo el borrador sigue y pide el idioma
+        logger.info("automation_expert_change route=propose catalog=unavailable")
+        return None
 
 
 def looks_like_identifier(value: str) -> bool:
@@ -337,6 +382,8 @@ def _check_keys(body: Any, *, required: set[str], allowed: set[str]) -> Mapping[
 
 def _touches(item: Mapping[str, Any], snapshot: Mapping[str, Any]) -> dict[str, Any] | None:
     """Cuando sale cada toque antes y despues del cambio, en horas desde el primero."""
+    if item.get("tipo") == "nuevo" and isinstance(item.get("definicion"), Mapping):
+        return {"flujo": item.get("flujo"), "antes": [], "despues": touch_times(item["definicion"])}
     if item.get("tipo") != "version" or not isinstance(item.get("definicion"), Mapping):
         return None
     flow = next((f for f in snapshot.get("flows", []) if isinstance(f, Mapping)
@@ -455,8 +502,10 @@ def register_flow_change_routes(app: FastAPI, *, token: str, store: FlowChangeSt
             draft_item = None if not isinstance(definition, Mapping) else {
                 "producto": flow.get("product_ref"), "flujo": flow.get("flow_key"), "flow_id": flow.get("flow_id"),
                 "tipo": "version", "definicion": as_draft(definition), "en_curso": "seguir"}
+            # native: el flujo nacio en el motor (flow-engine-v2); su vuelta atras es pausarlo o apagarlo.
             flows.append({key: flow.get(key) for key in ("flow_id", "product_ref", "flow_key", "state",
                                                           "active_version", "generation", "changed_at")}
+                         | {"native": flow.get("native") is True}
                          | {"versions": sorted(int(number) for number in versions),
                             "active_definition": definition,
                             "toques": touch_times(definition) if isinstance(definition, Mapping) else [],
@@ -491,11 +540,15 @@ def register_flow_change_routes(app: FastAPI, *, token: str, store: FlowChangeSt
             raise EntryRefused("flow_change_items_invalid", error.reason()) from None
         busy()
         async with slots:
+            # Un flujo nuevo no tiene de donde copiar el idioma de su plantilla: sale del catalogo de la
+            # bandeja (el default del esquema). Sin catalogo, el borrador lo pide como hoy.
+            catalog = await _draft_catalog(chatwoot, context.inbox_id) if any(
+                item.is_new_flow for item in items) else None
             try:
                 snapshot = await store.read_store(context.instance)
                 world = world_from_store(snapshot)
                 result = validate(items, actor="automation_expert", world=world,
-                                  instance=_instance_view(context, snapshot), catalog=None, phase="draft",
+                                  instance=_instance_view(context, snapshot), catalog=catalog, phase="draft",
                                   draft_base=base)
             except FlowValidationInputError as error:
                 raise HTTPException(status_code=404, detail=error.code) from None

@@ -2,7 +2,7 @@
 
 - **Estado:** propuesto el 2026-10-24, para construir contra él (el PR 1 del hito 4). No hay código que lo implemente: lo construyen los PR 2 (la base), 3 (el bridge) y 4 (el Automation Expert). Este documento fija la interfaz; no dice que nada esté desplegado, activado ni probado.
 - **Fecha:** 2026-10-24
-- **Contrato:** `flow-engine-v2`, versión `2.1.0` (la `2.1.0`, del 2026-10-24, suma la sección 13: lo que fija el PR 3, el bridge)
+- **Contrato:** `flow-engine-v2`, versión `2.2.0` (la `2.1.0`, del 2026-10-24, suma la sección 13: lo que fija el PR 3, el bridge; la `2.2.0`, del mismo día, la sección 14: lo que fija el PR 4, el Automation Expert que crea flujos)
 - **Decisión:** las siete del hito 4 (D1 a D7), aprobadas por Dan el 2026-10-24, en el roadmap del producto que se lleva fuera de este repo. Las que gobiernan este contrato: D2 (los flujos nuevos corren solo en el motor, sin legado), D4 («marcar como clienta» es la etiqueta `cliente` y una nota), D6 (un flujo nuevo se publica primero para la cohorte de prueba) y D1 (el legado no se mueve en este hito).
 - **Alcance:** lo que la v1 no puede: un flujo que nace en el motor, sin `legacy_kind` ni scope del legado. Fija la ruta nativa, la bolsa propia (`flow_engine_pools`), la admisión genérica (`admit_flow_engine_event_v1`), el disparador `compra`, el paso `etiquetar`, el estado `cohorte` del control, el ítem `nuevo` del ciclo y el aviso `MOT-002`. La v1 ([flow-engine-v1.md](flow-engine-v1.md)) sigue entera para el carrito de hoy: este contrato la extiende y no cambia nada de lo que fija.
 - **Citas:** `origin/main` en `89f0997` (1.17.1). Abreviaturas de las migraciones: `M-almacén` = `supabase/migrations/20261016000100_flow_change_store_v1.sql`, `M-rutas` = `20261021000200_flow_engine_routes_v1.sql`, `M-carrito` = `20261022000100_flow_engine_motor_carrito_v1.sql`, `M-lecturas` = `20261022000200_flow_engine_bridge_reads_v1.sql`. «El esquema» es [flow-definition-v1.md](flow-definition-v1.md), que sube a la 1.2 con este contrato; «el ciclo», [flow-change-cycle-v1.md](flow-change-cycle-v1.md), que sube a la 1.7.0.
@@ -159,7 +159,7 @@ Son las partes del sustrato de hoy que asumen un carrito o un scope. No se supon
 
 - **Guardar el borrador.** Corren las reglas 1 a 10. La base de un `nuevo` es «no hay un flujo con esa clave en ese producto»: si lo hay, `flow_already_registered`, el código de `operator_register_flow_v1` (`M-almacén:1514-1555`).
 - **Quién propone.** El Automation Expert y el operador. Para un `nuevo`, la base deja de devolver `flow_creation_not_enabled` (`M-almacén:924-929`), y el validador también (`flow_validator.py:973-974`). Una `version` sobre un flujo registrado sin versión sigue bloqueada para el agente: ese es el camino de los flujos del legado, que registra el operador.
-- **Validar.** Las reglas 1 a 17, con las capacidades del motor nativo para la 14 (sección 9) y sin la 16. La vista previa dice que el flujo nace en `cohorte`, cuántos contactos tiene la cohorte (cero, si nadie cargó el teléfono todavía) y la simulación del flujo nuevo: cuántos eventos de su disparador llegaron en los últimos 7 días y cuántos mensajes habría mandado. La lectura que da ese conteo la fija el PR 4 con una versión menor de este contrato; hasta entonces la simulación de un `nuevo` sale `failed` con `simulation_new_flow_not_built`, y el operador publica con `--sin-simulacion` como hoy (ciclo, 1.2.0).
+- **Validar.** Las reglas 1 a 17, con las capacidades del motor nativo para la 14 (sección 9) y sin la 16. La vista previa dice que el flujo nace en `cohorte`, cuántos contactos tiene la cohorte (cero, si nadie cargó el teléfono todavía) y la simulación del flujo nuevo: cuántos eventos de su disparador llegaron en los últimos 7 días y cuántos mensajes habría mandado. La lectura que da ese conteo la fija el PR 4 en la sección 14 (2.2.0): la simulación de un `nuevo` sale `built` y el operador publica sin `--sin-simulacion`.
 - **Aprobar.** Igual que hoy, con la huella. El botón firmado de Slack no existe todavía: aprueba el operador por terminal.
 - **Publicar**, bajo el mismo lock y en una sola transacción, o nada:
   1. revalida que la clave siga libre en el producto;
@@ -259,3 +259,21 @@ Escrito al construir el PR 3, antes de cualquier despliegue. Migración `2026102
 - **La respuesta a una plantilla nativa.** `admit_portable_inbound_commercial_case_v1` adopta también la conversación de una plantilla cuyo caso tiene su fila en `flow_engine_native_runs`. Así la respuesta a la bienvenida la atiende el agente. Para cualquier otro caso la adopción es la de antes.
 - **`MOT-002` (sección 8).** La lectura suma `flow_id` (lo pide la marca) y `step` (1, 10 o 100). Avisa también `motor_nativo:*`: una versión publicada que el motor no ejecuta es una falla del motor. El comando lleva `component = flow_engine:<flow_key>`, `reason_code`, `count` y un `event_id` UUID derivado del `dedupe_key`, sin ningún id de evento ni de persona. La marca devuelve `true` solo si subió el escalón.
 - **`/ready`** suma, con el flag, cuatro claves en memoria: `flow_engine_native_read`, `flow_engine_native_on`, `flow_engine_start_rejections_unnotified` y `flow_engine_native_queue_pending`.
+
+## 14. Lo que fija el PR 4 (el Automation Expert crea flujos, `2.2.0`)
+
+Escrito al construir el PR 4, antes de cualquier despliegue. Migración `20261024000600_flow_change_new_flow_v1.sql`. Describe la interfaz; no dice que nada esté desplegado ni activado. El ítem `nuevo` en el ciclo está en el ciclo, «Lo que fija el PR 4 (1.7.0)».
+
+- **La simulación de un flujo nuevo.** Una lectura nueva, para `service_role` y para el rol del agente (`automation_expert_change`), como las lecturas del motor:
+
+```sql
+read_flow_engine_native_trigger_counts_v1(p_instance jsonb, p_product_ref text, p_trigger text,
+    p_since timestamptz) returns jsonb
+```
+
+  - Devuelve `{"contract": "flow-engine-v2", "trigger", "product_ref", "since", "until", "events", "people"}`: las compras aprobadas del producto (por el ID de Hotmart de sus bindings) que llegaron desde `p_since`, contadas por transacción, y de cuántas personas (el mail, o el teléfono si no hay mail). No trae nada de una persona.
+  - `p_trigger` vale solo `compra` (`22023 flow_engine_native_trigger_invalid`). La ventana es la de la historia del motor: hasta 8 días (`flow_engine_history_window_too_wide`).
+  - Quien valida (la ruta del agente o el comando del operador) la pide con los últimos 7 días, y `build_new_flow_simulation` arma `{"status": "built", "summary": {flujo_nuevo, disparador, desde, hasta, disparos, personas, mensajes_si_fuera_para_todos, nace_en: "cohorte"}, "summary_sha256", "cambios": []}`. Una propuesta con un `nuevo` y otro ítem sale `failed` con `simulation_new_flow_mixed`. Una respuesta que no tiene esa forma da `simulation_new_flow_counts_invalid`. Sin la lectura (una base sin la migración) da `flow_engine_unavailable`.
+- **La regla 14 de un flujo nativo** en el validador es `flow_engine.native_not_supported`, con `ENGINE_CAPABILITIES_NATIVE`: el disparador `compra`, los pasos `esperar`, `plantilla` y `etiquetar`, un envío, `nombre` y `producto`, sin botón y sin salidas. Suma lo que mira `_flow_engine_native_unsupported` en la base. Los códigos están en el ciclo (1.7.0).
+- **La vista previa de un `nuevo`:** `cambios` lleva `tipo: nuevo`, `nace_en: cohorte` y el diff contra nada; `a_quien` es `cohorte`; `volver_atras`, `{a_version: null, como: pausar_o_apagar}`.
+

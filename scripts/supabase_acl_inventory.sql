@@ -169,7 +169,8 @@ expected_service_role(signature) as (
         ('public.finish_flow_engine_native_event_v1(uuid, boolean, timestamp with time zone)'),
         ('public.read_flow_engine_start_rejections_v1(jsonb, boolean, integer)'),
         ('public.mark_flow_engine_start_rejection_notified_v1(uuid, text, text, integer, timestamp with time zone)'),
-        ('public.flow_engine_native_step_tail_v1(uuid)')
+        ('public.flow_engine_native_step_tail_v1(uuid)'),
+        ('public.read_flow_engine_native_trigger_counts_v1(jsonb, text, text, timestamp with time zone)')
 ),
 functions as (
     select

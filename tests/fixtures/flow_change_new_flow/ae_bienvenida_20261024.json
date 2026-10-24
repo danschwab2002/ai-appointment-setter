@@ -1,0 +1,217 @@
+{
+  "_generated": {
+    "generator": "tests/test_flow_change_new_flow.py (test_create_the_welcome_after_the_purchase_ends_validated_for_the_cohort)",
+    "from": "la conversacion de prueba contra el doble: el item nuevo normalizado, el validador, el resultado y la vista previa que registro la ruta de validar del agente",
+    "regenerate": "NEW_FLOW_FIXTURE_DIR=tests/fixtures/flow_change_new_flow uv run pytest tests/test_flow_change_new_flow.py"
+  },
+  "purpose": "una bienvenida despues de la compra, con la etiqueta de clienta",
+  "items": [
+    {
+      "producto": "att1",
+      "flujo": "bienvenida",
+      "tipo": "nuevo",
+      "definicion": {
+        "esquema": "setter-flujo/v1",
+        "flujo": "bienvenida",
+        "producto": "att1",
+        "nombre": "Bienvenida despues de la compra",
+        "estado": "borrador",
+        "dispara": {
+          "evento": "compra"
+        },
+        "entra": {
+          "permiso": "compra",
+          "contesto_a": []
+        },
+        "pasos": [
+          {
+            "plantilla": "att1_pago_efectivo_confirmado_01",
+            "idioma": "es_MX",
+            "variables": [
+              "nombre",
+              "producto"
+            ]
+          },
+          {
+            "etiquetar": "cliente"
+          }
+        ],
+        "termina": {
+          "si": [],
+          "vence": "1d"
+        },
+        "horario": "siempre",
+        "topes": {
+          "bolsa": "att1-bienvenida",
+          "por_dia": "sin_tope",
+          "total": "sin_tope",
+          "repeticion": {
+            "una_por": "persona",
+            "otra_despues_de": "nunca"
+          }
+        },
+        "prioridad": {
+          "le_gana_a": [],
+          "no_arranca_mientras": []
+        }
+      },
+      "prender": "cohorte",
+      "ok_del_cliente": {
+        "quien": "juan",
+        "medio": "whatsapp",
+        "fecha": "2026-10-15"
+      }
+    }
+  ],
+  "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert",
+    "product_version": "1.17.1",
+    "git_sha": "fc6239300000000000000000000000000000abcd"
+  },
+  "result": {
+    "blocks": [],
+    "warnings": []
+  },
+  "preview": {
+    "cambios": [
+      {
+        "producto": "att1",
+        "flujo": "bienvenida",
+        "tipo": "nuevo",
+        "base_version": null,
+        "nace_en": "cohorte",
+        "en_curso": null,
+        "diff": [
+          {
+            "ruta": "/esquema",
+            "antes": null,
+            "despues": "setter-flujo/v1"
+          },
+          {
+            "ruta": "/flujo",
+            "antes": null,
+            "despues": "bienvenida"
+          },
+          {
+            "ruta": "/producto",
+            "antes": null,
+            "despues": "att1"
+          },
+          {
+            "ruta": "/nombre",
+            "antes": null,
+            "despues": "Bienvenida despues de la compra"
+          },
+          {
+            "ruta": "/dispara",
+            "antes": null,
+            "despues": {
+              "evento": "compra"
+            }
+          },
+          {
+            "ruta": "/entra",
+            "antes": null,
+            "despues": {
+              "permiso": "compra",
+              "contesto_a": []
+            }
+          },
+          {
+            "ruta": "/pasos",
+            "antes": null,
+            "despues": [
+              {
+                "plantilla": "att1_pago_efectivo_confirmado_01",
+                "idioma": "es_MX",
+                "variables": [
+                  "nombre",
+                  "producto"
+                ]
+              },
+              {
+                "etiquetar": "cliente"
+              }
+            ]
+          },
+          {
+            "ruta": "/termina",
+            "antes": null,
+            "despues": {
+              "si": [],
+              "vence": "1d"
+            }
+          },
+          {
+            "ruta": "/horario",
+            "antes": null,
+            "despues": "siempre"
+          },
+          {
+            "ruta": "/topes",
+            "antes": null,
+            "despues": {
+              "bolsa": "att1-bienvenida",
+              "por_dia": "sin_tope",
+              "total": "sin_tope",
+              "repeticion": {
+                "una_por": "persona",
+                "otra_despues_de": "nunca"
+              }
+            }
+          },
+          {
+            "ruta": "/prioridad",
+            "antes": null,
+            "despues": {
+              "le_gana_a": [],
+              "no_arranca_mientras": []
+            }
+          }
+        ]
+      }
+    ],
+    "para_que": "una bienvenida despues de la compra, con la etiqueta de clienta",
+    "a_quien": "cohorte",
+    "en_curso": {
+      "politica": null,
+      "recorridos": null
+    },
+    "simulacion": {
+      "status": "built",
+      "summary": {
+        "flujo_nuevo": "att1/bienvenida",
+        "disparador": "compra",
+        "desde": "2026-10-17T18:00:00Z",
+        "hasta": "2026-10-24T18:00:00Z",
+        "disparos": 2,
+        "personas": 2,
+        "mensajes_si_fuera_para_todos": 2,
+        "nace_en": "cohorte"
+      },
+      "summary_sha256": "32ead2612d3ea0a2d928ee2f933100e54433e10072d44a00b50bd58ebc02375e",
+      "cambios": []
+    },
+    "advertencias": [],
+    "empieza": "al_publicar",
+    "volver_atras": [
+      {
+        "producto": "att1",
+        "flujo": "bienvenida",
+        "a_version": null,
+        "como": "pausar_o_apagar"
+      }
+    ],
+    "huecos": [
+      {
+        "code": "in_flight_not_counted"
+      },
+      {
+        "code": "audience_change_not_computed"
+      }
+    ]
+  }
+}
