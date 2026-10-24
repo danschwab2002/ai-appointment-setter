@@ -5505,6 +5505,44 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'portable_hotmart_listen_only_capture'
+    union all
+    select
+        '20261024000200',
+        '20261024000200_flow_engine_native_v1.sql',
+        -- Las tres tablas del motor nativo, con RLS.
+        (
+            select count(*) = 3
+            from pg_class c
+            where c.oid in (
+                to_regclass('public.flow_engine_pools'),
+                to_regclass('public.flow_cohort_members'),
+                to_regclass('public.flow_engine_native_runs')
+            )
+              and c.relrowsecurity
+        )::int
+        -- La admision nativa: security definer y solo de service_role.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_flow_engine_event_v1(jsonb,jsonb)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- Las lecturas de la v1 excluyen lo nativo.
+        + (
+            select count(*) = 3
+            from functions
+            where oid in (
+                to_regprocedure('public.read_flow_engine_v1(jsonb,text)'),
+                to_regprocedure('public.read_flow_engine_routes_v1(jsonb)'),
+                to_regprocedure('public.read_flow_engine_history_v1(jsonb,text,timestamptz)')
+            )
+              and position('flow_engine_native_excluded' in definition) > 0
+        )::int,
+        3,
+        'flow_engine_native'
 )
 select
     version,
