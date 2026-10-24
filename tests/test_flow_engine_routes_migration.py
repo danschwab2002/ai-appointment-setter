@@ -59,6 +59,9 @@ def test_it_is_one_transaction_and_comes_right_after_the_t4b() -> None:
         # El modo «solo guardar» de Hotmart (20261024000100) solo crea una
         # funcion nueva y no redefine ninguna.
         "20261024000100_portable_hotmart_listen_only_capture.sql",
+        # El motor nativo (20261024000200) suma funciones y tablas y parcha por
+        # ancla, sobre la definicion vigente, las lecturas y guardas del motor.
+        "20261024000200_flow_engine_native_v1.sql",
     ]
 
 

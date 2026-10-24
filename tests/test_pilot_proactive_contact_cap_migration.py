@@ -70,8 +70,10 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
     # del motor para el carrito, que no toca el tope por persona de la puerta
     # comun y le suma un disparador a la tabla (20261022000100), lo que el
     # bridge del motor lee y marca (20261022000200) y las lecturas que cuentan
-    # lo del motor (20261022000300), y el modo «solo guardar» de Hotmart
-    # (20261024000100).
+    # lo del motor (20261022000300), el modo «solo guardar» de Hotmart
+    # (20261024000100) y el motor nativo (20261024000200), que le suma al
+    # tope por persona solo lo que ya hacia su disparador: una ruta nativa es
+    # una ruta en motor.
     assert versions[position + 1:] == [
         "20261009000200",
         "20261010000100",
@@ -101,6 +103,7 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261022000200",
         "20261022000300",
         "20261024000100",
+        "20261024000200",
     ]
 
     sql = _sql()
