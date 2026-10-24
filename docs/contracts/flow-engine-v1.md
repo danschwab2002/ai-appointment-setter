@@ -283,4 +283,5 @@ mark_flow_engine_divergence_notified_v1(p_id uuid, p_notified_at timestamptz) re
 ## Lo que queda para la versión siguiente
 
 - La ruta a `motor` del pago rechazado y de la ficha. Piden un esquema que exprese las condiciones (la variante de B1, el cupón de B1 y la fecha de vencimiento de la ficha).
+- Los flujos que nacen en el motor, sin legado (la bienvenida después de la compra, el carrito de una instancia nueva): los fija [flow-engine-v2.md](flow-engine-v2.md), propuesto el 2026-10-24, que no cambia nada de este contrato.
 - `en_curso: cancelar` y `migrar` (el ciclo).

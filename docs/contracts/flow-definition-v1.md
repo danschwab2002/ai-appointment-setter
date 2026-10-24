@@ -1,6 +1,6 @@
 # Contrato: la definición de un flujo (v1)
 
-- **Estado:** aceptado como contrato conceptual el 2026-10-15; sin implementación (lo construye la Etapa 1b). El esquema no describe nada desplegado ni activado. Lo que dice de ATT1 es la línea de base de la migración, con su fecha y su evidencia. Enmendado el mismo día, antes de construir nada: cada flujo es de un producto de la instancia (ver «El producto de un flujo»). **Versión 1.1 del 2026-10-21 (la T2.1 del motor):** varios envíos por camino, `cupon: personal` y las bolsas separadas del carrito y el pago fallido (ver «Historial», al final).
+- **Estado:** aceptado como contrato conceptual el 2026-10-15; sin implementación (lo construye la Etapa 1b). El esquema no describe nada desplegado ni activado. Lo que dice de ATT1 es la línea de base de la migración, con su fecha y su evidencia. Enmendado el mismo día, antes de construir nada: cada flujo es de un producto de la instancia (ver «El producto de un flujo»). **Versión 1.1 del 2026-10-21 (la T2.1 del motor):** varios envíos por camino, `cupon: personal` y las bolsas separadas del carrito y el pago fallido (ver «Historial», al final). **Versión 1.2 del 2026-10-24 (el hito 4, contrato [flow-engine-v2](flow-engine-v2.md)), propuesta y sin implementación:** el paso `etiquetar`, el estado `cohorte` del control y lo que la regla 14 levanta para un flujo nativo (ver «Historial»).
 - **Fecha:** 2026-10-15
 - **ADR:** [ADR-0007](../decisions/0007-durable-next-action-engine.md) y [ADR-0025](../decisions/0025-cada-instancia-tiene-su-hermes-declarado-por-el-producto.md) §7
 - **Esquema:** `setter-flujo/v1`
@@ -922,6 +922,11 @@ pasos:                            # [existe: followup_policy_versions.steps] [NU
   # - derivar: "nota para el equipo"
   #                               # el equipo es [chatwoot].equipo_derivacion. Último de su rama.
   #                               #   [NUEVO como paso; todavía no se publica]
+  # - etiquetar: cliente          # [1.2] la etiqueta cliente y una nota privada (producto y
+  #                               #   fecha) en la conversación de Chatwoot. No manda mensajes ni
+  #                               #   cuenta para los topes. Solo con el disparador compra, después
+  #                               #   de una plantilla, y uno por camino. Lo ejecuta solo el motor
+  #                               #   nativo (flow-engine-v2).
   # Default: un solo paso, una plantilla aprobada sin espera.
   # No se escriben: el máximo de mensajes (sale de los pasos), el ancla, el tipo de acción,
   # el modo del envío y el propósito. Los pone el motor.
@@ -983,9 +988,12 @@ prioridad:                        # Default: sin relaciones; los flujos conviven
 # ═══ Fuera de la versión ═══
 # control:                        # uno por flujo. [existe: pilot_runtime_controls, hoy uno por scope]
 #   version_activa: 1
-#   estado: prendido              # prendido | pausado | apagado. Se pide conversando, con
-#                                 #   aprobación, sin publicar otra versión. Un flujo nuevo
-#                                 #   nace apagado.
+#   estado: prendido              # prendido | pausado | apagado | cohorte [1.2]. Se pide
+#                                 #   conversando, con aprobación, sin publicar otra versión.
+#                                 #   Un flujo nuevo nace apagado; uno creado con el ítem nuevo
+#                                 #   del ciclo se publica en cohorte (solo para los contactos de
+#                                 #   su cohorte de prueba, flow-engine-v2 §6), y pasar a todos es
+#                                 #   otra propuesta. cohorte vale solo para un flujo nativo.
 # puerta:                         # uno por instancia.
 #   tope_por_persona: sin_tope    # o {maximo: 2, cada: 24h}: de 1 a 20 envíos en una ventana de
 #                                 #   1 h a 30 días, sumando los envíos de todos los flujos de
@@ -1002,10 +1010,10 @@ Son código y corren en dos momentos. Un bloqueo no se puede confirmar; una adve
 2. `dispara` que no tiene exactamente un evento o un silencio. Con un silencio, `desde` mayor o igual que `hasta`, o `hasta` de más de 30 días.
 3. Un `permiso` que no corresponde al disparador: `formulario` va solo con un evento, `conversacion` solo con un silencio y `compra` solo con el disparador `compra`. `contesto_a` sin `permiso: conversacion`.
 4. Un flujo disparado por un evento que no es la compra y que no tiene `compra` en `termina.si`, o la compra como salida de un flujo disparado por la compra. La baja no se escribe, porque corta siempre.
-5. `ficha_vencida` como salida sin el disparador `ficha_impresa`. `medio_de_pago` o el link `ficha` sin un disparador de la ficha. Un `cupon` sin el link `checkout`. Desde la 1.1, como protección: `precio` o `vence` en un paso cuyo botón no lleva `cupon: personal` (`variable_needs_personal_coupon`), y `cuando` sin un disparador de evento (`variable_needs_event_trigger`). Van en la 5 y no en una regla nueva porque la base acepta reglas de 1 a 17 (`20261016000100:726`).
+5. `ficha_vencida` como salida sin el disparador `ficha_impresa`. `medio_de_pago` o el link `ficha` sin un disparador de la ficha. Un `cupon` sin el link `checkout`. Desde la 1.1, como protección: `precio` o `vence` en un paso cuyo botón no lleva `cupon: personal` (`variable_needs_personal_coupon`), y `cuando` sin un disparador de evento (`variable_needs_event_trigger`). Desde la 1.2, `etiquetar` sin el disparador `compra`. Van en la 5 y no en una regla nueva porque la base acepta reglas de 1 a 17 (`20261016000100:726`).
 6. Un evento sin `vence`, o un silencio con `vence`.
-7. Un `conversar` fuera de la rama `entonces` de una condición con la ventana abierta. Un `conversar` o un `derivar` que no es el último paso de su rama. Una condición dentro de otra.
-8. Horas mal escritas, o un `desde` que no es menor que `hasta`. Una zona que no es IANA, o distinta de la de la versión anterior. Flujos de una misma bolsa con zonas distintas.
+7. Un `conversar` fuera de la rama `entonces` de una condición con la ventana abierta. Un `conversar` o un `derivar` que no es el último paso de su rama. Una condición dentro de otra. Desde la 1.2, un `etiquetar` que no va después de una plantilla, o más de uno por camino.
+8. Horas mal escritas, o un `desde` que no es menor que `hasta`. Una zona que no es IANA, o distinta de la de la versión anterior. Flujos de una misma bolsa con zonas distintas. Desde la 1.2, la bolsa de un flujo nativo con el nombre de un scope del legado (la guarda que cuenta es la de la base, `flow_engine_pool_is_legacy_scope`).
 9. Topes que no son enteros positivos ni `sin_tope`. Un `por_dia` mayor que el `total`.
 10. Un `le_gana_a`, `no_arranca_mientras` o `contesto_a` que nombra un flujo que no existe. Dos flujos que se ganan uno al otro. Un `producto` que la instancia no declara, o que falta cuando la instancia tiene más de uno. Dos flujos con la misma clave en el mismo producto.
 
@@ -1013,9 +1021,9 @@ Son código y corren en dos momentos. Un bloqueo no se puede confirmar; una adve
 11. Un valor `a_medir`, `a_decidir` o `a_crear`.
 12. Un `vence` que no supera la suma de las esperas.
 13. Una plantilla que no está APPROVED en el catálogo del inbox, en ese idioma, con tantas variables como marcadores y con el botón que declara.
-14. Algo que el motor de la instancia todavía no ejecuta o no trae. Hoy: más envíos por camino de los que ejecuta el motor para ese flujo, un paso `conversar` o `derivar`, los disparadores de la ficha y de la compra, `medio_de_pago`, y el `nombre` con la compra.
+14. Algo que el motor de la instancia todavía no ejecuta o no trae. Hoy: más envíos por camino de los que ejecuta el motor para ese flujo, un paso `conversar` o `derivar`, los disparadores de la ficha y de la compra, `medio_de_pago`, y el `nombre` con la compra. Desde la 1.2, para un flujo nativo (`flow-engine-v2` §9) se levantan el disparador `compra`, `permiso: compra` (la regla 17 sigue), el paso `etiquetar`, `repeticion.otra_despues_de` distinto de `0m` y, cuando el bridge lo extraiga del evento, el `nombre` con la compra. Para un flujo del legado no cambia nada.
 15. Un código de cupón distinto del de la versión publicada: en la v1 no se cambia conversando, y pasar de un código fijo a `personal`, o al revés, también es un cambio de código (`coupon_change_not_supported`). Más de dos `cupon: personal` en un camino (`coupon_personal_limit`): dos códigos por caso, la regla del 2026-10-17.
-16. En los flujos de hoy, mientras `[flujos]` y `[plantillas]` del manifiesto sigan siendo el techo, una plantilla distinta de la que nombra `[plantillas]`. Prender uno de esos flujos exige, además, que esté en `true` en `[flujos]`.
+16. En los flujos de hoy (los del legado: no aplica a un flujo nativo, `flow-engine-v2` §2), mientras `[flujos]` y `[plantillas]` del manifiesto sigan siendo el techo, una plantilla distinta de la que nombra `[plantillas]`. Prender uno de esos flujos exige, además, que esté en `true` en `[flujos]`.
 17. Un flujo con `permiso: compra` que manda algo que no es una plantilla de utilidad, o más de un envío por camino. A diferencia de la regla 14, esta no se levanta cuando el motor mande más de un mensaje por camino.
 
 Los bloqueos 14 y 15 son del tipo «todavía no». Los demás son protecciones, o errores de forma que el agente corrige antes de mostrar nada.
@@ -1165,3 +1173,9 @@ La migración los actualiza. Qué cambia en la base no se aprueba con este esque
   - el carrito y el pago fallido de ATT1 ya no comparten bolsa desde el 2026-10-19 (`att1-recuperacion` y `att1-pago-rechazado`). Los bloques 1 y 2 de «Los siete flujos de validación» siguen siendo la línea de base del 2026-10-14, con la bolsa compartida;
   - la regla 17 no cambia: con `permiso: compra`, un solo envío por camino;
   - tres variables nuevas, con los nombres del bridge: `cuando` (el momento del intento, el `anchor_observed_at` de la acción, en la zona del país que sale del prefijo del teléfono, o CDMX), `precio` (el que declara la instancia) y `vence` (el vencimiento del cupón personal). La regla 5 suma dos protecciones: `precio` y `vence` solo en un paso con `cupon: personal`, y `cuando` solo con un disparador de evento.
+- **1.2, 2026-10-24 (el hito 4, contrato [flow-engine-v2](flow-engine-v2.md); decisiones D2, D4 y D6 de Dan del 2026-10-24).** Propuesta, sin implementación: la construyen los PR 2 a 4 del hito. Sin cambiar `setter-flujo/v1` ni ninguna definición escrita antes:
+  - **un flujo nativo:** el que nace en el motor, sin `legacy_kind` ni scope del legado, con su control, su bolsa (`flow_engine_pools`) y su ruta. Para él se levantan en la regla 14 el disparador `compra`, `permiso: compra` (con la regla 17 intacta: una sola plantilla de utilidad por camino), el paso `etiquetar` y la repetición distinta de `0m`. La regla 16 no le aplica. Su forma de pasos sale del disparador: `carrito`, la de hoy (A1, A2 y Z), y `compra`, un solo envío;
+  - **el paso `etiquetar: cliente`** (D4, «marcar como clienta»): la etiqueta `cliente` y una nota privada en la conversación de Chatwoot. Solo con el disparador `compra`, después de una plantilla y uno por camino (reglas 5 y 7). El validador de hoy lo rechaza por la regla 1 (`STEP_TYPES`, `flow_definition.py:90`) hasta que el PR 3 lo sume;
+  - **el estado `cohorte` del control** (D6): el flujo corre solo para los contactos de su cohorte de prueba. Vale solo para un flujo nativo; la cohorte de un flujo del legado sigue en su scope;
+  - **la regla 8 suma** que la bolsa de un flujo nativo no se llame como un scope del legado;
+  - siguen sin publicarse las condiciones, `conversar`, `derivar`, los disparadores de la ficha y `medio_de_pago`.
