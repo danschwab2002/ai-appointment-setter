@@ -362,6 +362,19 @@ class PortablePaymentFailureAdmissionResult:
 
 
 @dataclass(frozen=True)
+class ListenOnlyCaptureResult:
+    """A Hotmart cart or payment failure stored in listen-only mode.
+
+    ``inserted`` means the event entered and was left ``ignored`` /
+    ``listen_only_capture`` in the same transaction; ``duplicate`` keeps the
+    status it already had.
+    """
+
+    outcome: str
+    webhook_event_id: str
+
+
+@dataclass(frozen=True)
 class RecentPaymentFailure:
     """El ultimo PURCHASE_CANCELED de un movil en la ultima semana (1.6.0).
 
@@ -2444,6 +2457,58 @@ class SupabaseClient:
             row, "webhook_event_id", operation=operation
         )
         return PortablePaymentFailureAdmissionResult(outcome, webhook_event_id)
+
+    async def admit_portable_hotmart_listen_only_capture(
+        self,
+        *,
+        config: CommercialAllyConfig,
+        external_event_id: str,
+        payload: dict[str, Any],
+        normalized_email: str | None,
+        normalized_phone: str | None,
+    ) -> ListenOnlyCaptureResult:
+        """Store a cart or payment failure that no worker will ever take.
+
+        Same admission as ``admit_portable_hotmart_cart_abandonment`` or
+        ``admit_portable_hotmart_payment_failure`` (migration 20261024000100),
+        and the new event ends ``ignored`` / ``listen_only_capture`` in the
+        same transaction.
+        """
+        operation = "portable_listen_only_capture_admission"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/admit_portable_hotmart_listen_only_capture_v1",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": config.tenant_ref,
+                    "p_funnel_ref": config.funnel_ref,
+                    "p_binding_version": config.binding_version,
+                    "p_external_event_id": external_event_id,
+                    "p_payload": payload,
+                    "p_normalized_email": normalized_email,
+                    "p_normalized_phone": normalized_phone,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        rejection = _deterministic_rejection(response)
+        if rejection is not None:
+            raise SupabasePermanentError(
+                f"{operation}_rejected: {rejection}", reason=rejection
+            )
+        rows = _response_rows(response, operation=operation)
+        if response.status_code != 200 or len(rows) != 1:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        row = rows[0]
+        if set(row) != {"outcome", "webhook_event_id"}:
+            raise _invalid_row_error(operation)
+        outcome = row.get("outcome")
+        if outcome not in {"inserted", "duplicate", "semantic_conflict"}:
+            raise SupabaseError(f"{operation}_invalid_outcome")
+        webhook_event_id = _required_uuid(
+            row, "webhook_event_id", operation=operation
+        )
+        return ListenOnlyCaptureResult(outcome, webhook_event_id)
 
     async def get_portable_recent_payment_failure(
         self,

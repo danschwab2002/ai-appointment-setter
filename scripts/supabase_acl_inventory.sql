@@ -160,7 +160,9 @@ expected_service_role(signature) as (
         ('public.flow_engine_execution_context_v1(uuid)'),
         ('public.read_flow_engine_routes_v1(jsonb)'),
         ('public.read_flow_engine_divergences_v1(jsonb, boolean, integer)'),
-        ('public.mark_flow_engine_divergence_notified_v1(uuid, timestamp with time zone)')
+        ('public.mark_flow_engine_divergence_notified_v1(uuid, timestamp with time zone)'),
+        ('public.admit_portable_hotmart_listen_only_capture_v1(text, text, integer, text, jsonb, text, text)'),
+        ('public.admit_flow_engine_event_v1(jsonb, jsonb)')
 ),
 functions as (
     select

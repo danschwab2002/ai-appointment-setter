@@ -17,6 +17,7 @@ MIGRATIONS = ROOT / "supabase" / "migrations"
 MIGRATION = MIGRATIONS / "20261021000300_flow_engine_history_cap_v1.sql"
 ROUTES = MIGRATIONS / "20261021000200_flow_engine_routes_v1.sql"
 READS = MIGRATIONS / "20261022000300_flow_engine_reads_see_motor_v1.sql"
+NATIVE = MIGRATIONS / "20261024000200_flow_engine_native_v1.sql"
 
 ANCHOR = "    c_max_bytes constant integer := 1000000;\n"
 
@@ -41,11 +42,13 @@ def test_it_is_one_transaction_and_comes_right_after_the_routes() -> None:
     # read_automation_expert_flows_v1, y el camino del motor para el carrito
     # (20261022000100, la T2.3b) no la toca. Las lecturas que cuentan lo del
     # motor (20261022000300) le suman sus autorizaciones por ancla, sin tocar
-    # el tope (test_flow_engine_reads_see_motor_migration.py).
+    # el tope (test_flow_engine_reads_see_motor_migration.py). El motor nativo
+    # (20261024000200) le saca lo nativo por ancla, tampoco toca el tope.
     for later in names[names.index(MIGRATION.name) + 1:]:
-        if later != READS.name:
+        if later not in (READS.name, NATIVE.name):
             assert "read_flow_engine_history_v1" not in (MIGRATIONS / later).read_text(encoding="utf-8")
     assert "c_max_bytes" not in READS.read_text(encoding="utf-8")
+    assert "c_max_bytes" not in NATIVE.read_text(encoding="utf-8")
 
 
 def test_the_anchor_is_the_routes_constant_and_appears_once() -> None:
@@ -56,7 +59,7 @@ def test_the_anchor_is_the_routes_constant_and_appears_once() -> None:
     sql = _sql()
     assert "E'" + ANCHOR.replace("\n", "\\n") + "'" in sql
     for path in sorted(MIGRATIONS.glob("*.sql")):
-        if path.name > ROUTES.name and path not in (MIGRATION, READS):
+        if path.name > ROUTES.name and path not in (MIGRATION, READS, NATIVE):
             assert "read_flow_engine_history_v1" not in path.read_text(encoding="utf-8"), path.name
 
 

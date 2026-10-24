@@ -87,6 +87,7 @@ const rows = await db.query(`
       ('admit_portable_observed_lead_precheckout(text,text,integer,text,jsonb,jsonb)'),
       ('admit_portable_hotmart_cart_abandonment(text,text,integer,text,jsonb,text,text)'),
       ('admit_portable_hotmart_payment_failure(text,text,integer,text,jsonb,text,text)'),
+      ('admit_portable_hotmart_listen_only_capture_v1(text,text,integer,text,jsonb,text,text)'),
       ('admit_portable_hotmart_purchase_approved(text,text,integer,text,jsonb,text,text)'),
       ('admit_precheckout_form_submission(text,jsonb,jsonb)'),
       ('begin_johanna_abandonment_one_shot(text,uuid,text,bigint,bigint,text,integer,bigint)'),
@@ -230,6 +231,7 @@ const rows = await db.query(`
       ('read_flow_engine_history_v1(jsonb,text,timestamp with time zone)'),
       ('_flow_engine_run_turned_off(uuid)'),
       ('admit_flow_engine_hotmart_v1(uuid,uuid,text,text,text,timestamp with time zone,bigint,bigint,text,text,integer,text,integer,boolean)'),
+      ('admit_flow_engine_event_v1(jsonb,jsonb)'),
       ('mark_flow_engine_request_started_v1(uuid,uuid,text,bigint,timestamp with time zone)'),
       ('flow_engine_execution_context_v1(uuid)'),
       ('read_flow_engine_routes_v1(jsonb)'),
@@ -289,9 +291,11 @@ const result = rows.rows[0];
 // adds four: the admission, the request start, the execution context and the
 // turned-off check that reevaluate_followup_action calls as service_role,
 // and the bridge of the engine (20261022000200) adds three: the routes, the
-// divergences and the mark of a notified divergence.
+// divergences and the mark of a notified divergence, the listen-only
+// capture of Hotmart (20261024000100) adds one, and the native engine
+// (20261024000200) adds its admission.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 156) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 158) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper
