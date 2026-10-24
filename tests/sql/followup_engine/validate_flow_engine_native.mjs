@@ -107,13 +107,16 @@ await shapeDb.exec(`
   grant usage on schema public to service_role, anon;
 `);
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
-// Despues va solo F-036 (20261024000400), que parcha el link del agente y no
-// toca el motor: la foto de antes y despues se saca alrededor de esta.
+// Despues van F-036 (20261024000400), que parcha el link del agente, y el
+// bridge del motor nativo (20261024000500), que suma lecturas y parcha la
+// adopcion: ninguna redefine lo de esta. La foto de antes y despues se saca
+// alrededor de esta.
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`${MIGRATION} no esta en la cadena`);
 if (JSON.stringify(names.slice(position + 1))
-    !== JSON.stringify(['20261024000400_opted_out_reply_checkout_issuance.sql'])) {
-  fail(`despues de ${MIGRATION} solo va la de F-036`, names.slice(position + 1));
+    !== JSON.stringify(['20261024000400_opted_out_reply_checkout_issuance.sql',
+      '20261024000500_flow_engine_native_bridge_v1.sql'])) {
+  fail(`despues de ${MIGRATION} van solo la de F-036 y la del bridge nativo`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(
   /create extension if not exists pgcrypto;/gi, '-- pgcrypto is built into PGlite'));

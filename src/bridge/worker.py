@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import multiprocessing
+import time
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any, Callable
@@ -103,6 +104,20 @@ from bridge.payment_slip_first_touch import (
     payment_slip_ingestion_reason,
 )
 from bridge.flow_engine_runtime import FlowEngineRuntime
+from bridge.native_flows import (
+    NATIVE_ANCHOR,
+    NATIVE_NEEDS_DIRECT_TEMPLATE,
+    NATIVE_NEEDS_ENGINE,
+    NATIVE_PURCHASE_TRIGGER,
+    NATIVE_QUEUE_PAGE,
+    NATIVE_STEP_CONTEXT_UNAVAILABLE,
+    NATIVE_STEP_VARIABLES,
+    NATIVE_TEMPLATE_CATEGORY,
+    admit_native_purchase,
+    apply_native_tail,
+    purchase_product_ref,
+)
+from bridge.product_label import ProductLabeler
 from bridge.followup_steps import FOLLOWING_STEP_TRIGGERS
 from bridge.payment_slip_reminders import PAYMENT_SLIP_STEPS
 from bridge.phones import equivalent_whatsapp_phones, whatsapp_phone_region
@@ -156,6 +171,7 @@ FLOW_ENGINE_POLICY_PREFIX = "flujo:"
 # Una version cuyas variables o boton el bridge no sabe armar (decision D5 de
 # la T2.4): cierra sin mandar y sin reintento.
 FLOW_ENGINE_STEP_UNSUPPORTED = "flow_engine_step_unsupported"
+NATIVE_QUEUE_REFRESH_SECONDS = 60.0
 _FLOW_ENGINE_CART_BUTTON = {"link": "checkout", "cupon": "personal"}
 # Lo que el bridge arma a mano para cada paso del carrito: las variables, en
 # orden, y el boton (cart_first_touch.py y cart_followups.py).
@@ -832,6 +848,7 @@ class DurableDispatcher:
         payment_failure_variants: PaymentFailureVariantsConfig | None = None,
         payment_failure_followup: PaymentFailureFollowupConfig | None = None,
         flow_engine_enabled: bool = False,
+        native_client_labeler: ProductLabeler | None = None,
     ) -> None:
         if payment_failure_followup is not None and (
             not approved_template_direct or payment_failure_variants is None
@@ -959,6 +976,9 @@ class DurableDispatcher:
         # por mark_flow_engine_request_started_v1. Sin el flag, o con otra
         # politica, ninguna llamada nueva.
         self._flow_engine_enabled = flow_engine_enabled
+        # flow-engine-v2 (E-065): la etiqueta cliente del paso etiquetar, por
+        # un macro que solo la suma. Sin macro configurado, solo la nota.
+        self._native_client_labeler = native_client_labeler
         self._payment_slip = payment_slip
         self._payment_failure_variants = payment_failure_variants
         self._payment_failure_followup = payment_failure_followup
@@ -1329,6 +1349,14 @@ class DurableDispatcher:
         category stay those of today.
         """
         trigger_kind = _flow_trigger(action)
+        if action.anchor_type == NATIVE_ANCHOR:
+            # flow-engine-v2: el paso de un flujo nativo sale solo con la
+            # plantilla de su version fijada; nunca con la del manifiesto.
+            return await self._compose_native_step_proposal(
+                action=action,
+                execution_context=execution_context,
+                step_template=step_template,
+            )
         cart_discount = self._cart_discount
         cart_followups = self._cart_followups
         if step_template is not None:
@@ -1691,6 +1719,123 @@ class DurableDispatcher:
                 message=message,
             ),
             greeting_name=greeting_name,
+        )
+
+    async def _compose_native_step_proposal(
+        self,
+        *,
+        action: ScheduledAction,
+        execution_context: FollowupExecutionContext,
+        step_template: FlowEngineStepContext | None,
+    ) -> _ApprovedTemplateComposition:
+        """The send of a native step (flow-engine-v2): its pinned template.
+
+        A first contact with ``nombre`` and ``producto`` at most, without a
+        button, in a utility template of the Chatwoot catalog (rule 17 of the
+        schema). Without the engine flag it closes for good
+        (``flow_engine_native_needs_engine``): it never goes out with the
+        template of the manifest. A step context that did not answer is
+        retried; a shape the bridge cannot build closes for good.
+        """
+        if not self._flow_engine_enabled:
+            return _ApprovedTemplateComposition(
+                failure_reason=NATIVE_NEEDS_ENGINE, retryable=False
+            )
+        if step_template is None:
+            return _ApprovedTemplateComposition(
+                failure_reason=NATIVE_STEP_CONTEXT_UNAVAILABLE
+            )
+        variables = step_template.template_variables
+        if (
+            action.action_type != "first_contact_review"
+            or step_template.step_key != action.step_key
+            or step_template.template_button is not None
+            or not variables
+            or len(set(variables)) != len(variables)
+            or not set(variables) <= NATIVE_STEP_VARIABLES
+        ):
+            logger.warning(
+                "flow_engine_step_unsupported action_id=%s step=%s version=%s",
+                action.action_id,
+                action.step_key,
+                step_template.version,
+            )
+            return _ApprovedTemplateComposition(
+                failure_reason=FLOW_ENGINE_STEP_UNSUPPORTED, retryable=False
+            )
+        buyer_name = execution_context.buyer_name
+        product_name = execution_context.product_name
+        greeting_name: str | None = None
+        name_value = buyer_name
+        if (
+            "nombre" in variables
+            and self._lead_first_name_greeting_enabled
+            and isinstance(buyer_name, str)
+            and buyer_name.strip()
+        ):
+            greeting = await resolve_greeting_name(buyer_name, store=self._supabase)
+            greeting_name = greeting.name.strip()
+            name_value = greeting_name
+        source = {"nombre": name_value, "producto": product_name}
+        if any(
+            not isinstance(source[item], str) or not source[item].strip()  # type: ignore[union-attr]
+            for item in variables
+        ) or ("nombre" in variables and not template_greeting_name_is_safe(name_value)):
+            # The values of the case (the name from Hotmart, unverified input,
+            # and the product): they do not change on their own.
+            return _ApprovedTemplateComposition(
+                failure_reason=APPROVED_TEMPLATE_PARAMETERS_MISSING, retryable=False
+            )
+        ordered = {
+            str(position): " ".join(str(source[item]).split())
+            for position, item in enumerate(variables, start=1)
+        }
+        assert self._chatwoot is not None
+        assert self._chatwoot_inbox_id is not None
+        try:
+            inbox = await self._chatwoot.get_inbox(inbox_id=self._chatwoot_inbox_id)
+        except (httpx.HTTPError, ChatwootProtocolError) as exc:
+            logger.warning(
+                "approved_template_catalog_unavailable action_id=%s error=%s",
+                action.action_id,
+                type(exc).__name__,
+            )
+            return _ApprovedTemplateComposition(failure_reason=APPROVED_TEMPLATE_UNAVAILABLE)
+        try:
+            approved = parse_approved_template(
+                inbox,
+                template_name=step_template.template_name,
+                expected_language=step_template.template_language,
+                expected_category=NATIVE_TEMPLATE_CATEGORY,
+                parameter_count=len(variables),
+            )
+            message = approved.render(ordered)
+            processed = approved.processed_params(ordered)
+        except ApprovedTemplateError as exc:
+            logger.warning(
+                "approved_template_rejected action_id=%s template=%s reason=%s detail=%s",
+                action.action_id,
+                step_template.template_name,
+                exc.reason,
+                exc.detail,
+            )
+            return _ApprovedTemplateComposition(
+                failure_reason=exc.reason,
+                retryable=exc.reason != APPROVED_TEMPLATE_PARAMETERS_MISSING,
+            )
+        return _ApprovedTemplateComposition(
+            proposal=FollowupMessageProposal(
+                strategy=f"approved_template:{step_template.template_name}",
+                message=message,
+            ),
+            greeting_name=greeting_name,
+            template_name=step_template.template_name,
+            template_params={
+                "name": step_template.template_name,
+                "category": NATIVE_TEMPLATE_CATEGORY,
+                "language": step_template.template_language,
+                "processed_params": processed,
+            },
         )
 
     async def _record_payment_failure_first_touch(
@@ -2157,6 +2302,14 @@ class DurableDispatcher:
                             direct_template_name = composition.template_name
                             direct_template_params = composition.template_params
                             direct_issuance_id = composition.issuance_id
+                        elif action.anchor_type == NATIVE_ANCHOR:
+                            # flow-engine-v2: un paso nativo nunca va a
+                            # Hermes. Asi nunca llega a request_human_handoff
+                            # (que exige el binding del piloto que un caso
+                            # nativo no tiene: handoff_pilot_scope_mismatch).
+                            proposal = None
+                            direct_failure = NATIVE_NEEDS_DIRECT_TEMPLATE
+                            direct_retryable = False
                         else:
                             assert self._recovery_agent is not None
                             proposal = (
@@ -2850,6 +3003,10 @@ class DurableDispatcher:
                                         raise SupabaseError(
                                             "followup_acceptance_finalization_mismatch"
                                         )
+                                    native_accepted = (
+                                        action.anchor_type == NATIVE_ANCHOR
+                                        and engine_step is not None
+                                    )
                                 except SupabaseError:
                                     # The message was already delivered by the
                                     # sender, but persisting the canonical
@@ -2890,6 +3047,21 @@ class DurableDispatcher:
                                         raise SupabaseError(
                                             "followup_unknown_finalization_mismatch"
                                         )
+                                    native_accepted = False
+                                if native_accepted:
+                                    # flow-engine-v2: etiquetar despues de la
+                                    # plantilla. Falla blanda: el envio ya
+                                    # quedo aceptado.
+                                    assert self._chatwoot is not None
+                                    assert self._chatwoot_inbox_id is not None
+                                    await apply_native_tail(
+                                        self._supabase,
+                                        action_id=action.action_id,
+                                        conversation_id=result.conversation_id,
+                                        inbox_id=self._chatwoot_inbox_id,
+                                        labeler=self._native_client_labeler,
+                                        notes=self._chatwoot,
+                                    )
                     else:
                         raise SupabaseError("invalid_followup_message_proposal")
             decisions.append(decision)
@@ -3293,6 +3465,8 @@ class ResolutionWorker:
         # flow-engine-v1, seccion 8: solo con FLOW_ENGINE_ENABLED. Con None,
         # el lote no lee nada del motor y el carrito se planifica como hoy.
         self._flow_engine = flow_engine
+        # flow-engine-v2: la ultima lectura de la cola de la compra nativa.
+        self._native_queue_read_at: float | None = None
         self._batch_size = batch_size
         self._recovery_agent = recovery_agent
         self._message_sender = message_sender
@@ -3357,6 +3531,10 @@ class ResolutionWorker:
             # A lo sumo cada 60 s; una falla deja la cache failing y el
             # carrito va por el envoltorio de hoy.
             await self._flow_engine.routes.refresh_if_due()
+            # flow-engine-v2: los flujos nativos, tambien cada 60 s. Sin uno
+            # prendido o en cohorte, el lote no hace ninguna llamada por evento.
+            await self._flow_engine.native_flows.refresh_if_due()
+            await self._retry_native_queue()
         events = await self._supabase.fetch_pending_events(
             limit=self._batch_size,
             excluded_event_types=(
@@ -3374,6 +3552,107 @@ class ResolutionWorker:
                 # Keep the event retryable, but do not let one bad or
                 # unavailable RPC starve later events in the same batch.
                 continue
+
+    def _native_purchase_product(self, payload: dict[str, Any]) -> str | None:
+        """The product of a purchase with a native flow on, or None.
+
+        None without the engine flag, without the portable runtime, or when no
+        native flow of that product is on or in its cohort: then the purchase
+        goes exactly as today, without any new call.
+        """
+        if self._flow_engine is None or self._commercial_ally_config is None:
+            return None
+        if not self._flow_engine.native_flows.any_on():
+            return None
+        product_ref = purchase_product_ref(
+            payload,
+            commercial_ally_config=self._commercial_ally_config,
+            product_routes=self._product_routes,
+        )
+        if product_ref is None or not self._flow_engine.native_flows.wants(
+            product_ref, NATIVE_PURCHASE_TRIGGER
+        ):
+            return None
+        return product_ref
+
+    async def _admit_native_purchase(
+        self, event_id: str, payload: dict[str, Any], product_ref: str
+    ) -> str:
+        assert self._flow_engine is not None
+        assert self._commercial_ally_config is not None
+        return await admit_native_purchase(
+            self._supabase,
+            runtime=self._flow_engine,
+            webhook_event_id=event_id,
+            payload=payload,
+            product_ref=product_ref,
+            commercial_ally_config=self._commercial_ally_config,
+            now=datetime.now(timezone.utc).isoformat(),
+        )
+
+    async def _close_native_purchase(self, event_id: str) -> None:
+        try:
+            await self._supabase.finish_flow_engine_native_event(
+                webhook_event_id=event_id,
+                done=True,
+                now=datetime.now(timezone.utc).isoformat(),
+            )
+        except SupabaseError as exc:
+            logger.warning(
+                "flow_engine_native_queue_mark_failed event_id=%s error=%s",
+                event_id,
+                type(exc).__name__,
+            )
+
+    async def _retry_native_queue(self) -> None:
+        """The applied purchases the native admission has not answered.
+
+        Only with a native flow on: without one, no call. A purchase whose flow
+        was turned off meanwhile is admitted anyway and the base answers
+        sin_flujo; the queue closes it.
+        """
+        assert self._flow_engine is not None
+        if self._commercial_ally_config is None or not self._flow_engine.native_flows.any_on():
+            return
+        # A lo sumo cada 60 s, como las otras lecturas del motor.
+        now = time.monotonic()
+        if (
+            self._native_queue_read_at is not None
+            and now - self._native_queue_read_at < NATIVE_QUEUE_REFRESH_SECONDS
+        ):
+            return
+        self._native_queue_read_at = now
+        try:
+            queue = await self._supabase.read_flow_engine_native_event_queue(
+                self._flow_engine.instance, limit=NATIVE_QUEUE_PAGE
+            )
+        except SupabaseError as exc:
+            self._flow_engine.native_queue_pending = None
+            logger.warning(
+                "flow_engine_read_failed read=native_queue error=%s", type(exc).__name__
+            )
+            return
+        self._flow_engine.native_queue_pending = queue.pending
+        for queued in queue.events:
+            if self._stopped.is_set():
+                return
+            product_ref = purchase_product_ref(
+                queued.payload,
+                commercial_ally_config=self._commercial_ally_config,
+                product_routes=self._product_routes,
+            )
+            if product_ref is None:
+                await self._close_native_purchase(queued.webhook_event_id)
+                continue
+            outcome = await self._admit_native_purchase(
+                queued.webhook_event_id, queued.payload, product_ref
+            )
+            logger.info(
+                "flow_engine_native_queue_retry event_id=%s attempts=%s outcome=%s",
+                queued.webhook_event_id,
+                queued.attempts,
+                outcome,
+            )
 
     async def _process_one(self, event: dict[str, Any]) -> None:
         event_id = event.get("id")
@@ -3395,6 +3674,17 @@ class ResolutionWorker:
                     error="invalid_purchase_payload",
                 )
                 return
+            native_product = self._native_purchase_product(payload)
+            if native_product is not None:
+                assert self._flow_engine is not None
+                # flow-engine-v2, seccion 5: la compra se anota para la admision
+                # nativa ANTES de aplicarla. La aplicacion la marca processed, y
+                # despues el lote ya no la ve: si la admision no contesta, la
+                # cola la trae de nuevo. Si la anotacion falla, el evento sigue
+                # received y el lote lo reintenta entero.
+                await self._supabase.enqueue_flow_engine_native_event(
+                    self._flow_engine.instance, webhook_event_id=event_id
+                )
             try:
                 result = await self._supabase.apply_hotmart_purchase_approved(
                     webhook_event_id=event_id,
@@ -3414,12 +3704,19 @@ class ResolutionWorker:
                     status="failed",
                     error="purchase_rpc_permanent_failure",
                 )
+                if native_product is not None:
+                    await self._close_native_purchase(event_id)
                 return
             logger.info(
                 "hotmart_purchase_processed event_id=%s outcome=%s",
                 purchase.event_id,
                 result.outcome,
             )
+            if native_product is not None:
+                # Primero la compra corto lo abierto (choque 2 del diseno);
+                # recien ahora arranca el flujo nativo. Con not_found (una
+                # venta sin caso del recuperador) tambien dispara.
+                await self._admit_native_purchase(event_id, payload, native_product)
             return
         slip_event = (
             self._payment_slip is not None

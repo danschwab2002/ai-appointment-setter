@@ -204,7 +204,11 @@ from bridge.payment_failure_variant import (
     PaymentFailureVariantsConfig,
 )
 from bridge.recovery_coupons import RecoveryCouponWorker
-from bridge.flow_engine_runtime import DivergenceNotifier, FlowEngineRuntime
+from bridge.flow_engine_runtime import (
+    DivergenceNotifier,
+    FlowEngineRuntime,
+    StartRejectionNotifier,
+)
 from bridge.worker import (
     DurableDispatcher,
     HotmartAbandonmentTimerWorker,
@@ -580,6 +584,9 @@ class Settings:
     chatwoot_human_pause_enabled: bool = False
     chatwoot_opt_out_macro_id: int | None = None
     chatwoot_resume_macro_id: int | None = None
+    # flow-engine-v2 (E-065): el macro que solo suma la etiqueta cliente, para
+    # el paso etiquetar de un flujo nativo. Sin el, el paso deja solo la nota.
+    chatwoot_client_label_macro_id: int | None = None
     conversation_resume_enabled: bool = False
     conversation_resume_quiet_seconds: int = 28800
     conversation_resume_max: int = 3
@@ -1362,6 +1369,12 @@ class Settings:
         chatwoot_resume_macro_id = (
             int(resume_macro_id_raw) if resume_macro_id_raw else None
         )
+        client_label_macro_id_raw = os.environ.get(
+            "CHATWOOT_CLIENT_LABEL_MACRO_ID", ""
+        ).strip()
+        chatwoot_client_label_macro_id = (
+            int(client_label_macro_id_raw) if client_label_macro_id_raw else None
+        )
         conversation_resume_enabled = (
             os.environ.get("CONVERSATION_RESUME_ENABLED", "false").lower()
             == "true"
@@ -1589,6 +1602,7 @@ class Settings:
             chatwoot_human_pause_enabled=chatwoot_human_pause_enabled,
             chatwoot_opt_out_macro_id=chatwoot_opt_out_macro_id,
             chatwoot_resume_macro_id=chatwoot_resume_macro_id,
+            chatwoot_client_label_macro_id=chatwoot_client_label_macro_id,
             conversation_resume_enabled=conversation_resume_enabled,
             conversation_resume_quiet_seconds=conversation_resume_quiet_seconds,
             conversation_resume_max=conversation_resume_max,
@@ -4289,6 +4303,27 @@ def create_app(
             macro_id=labeled_product.chatwoot_label_macro_id,
         )
 
+    # flow-engine-v2 (E-065): la etiqueta cliente del paso etiquetar, con el
+    # mismo patron (un macro que solo suma la etiqueta, verificado antes de
+    # usarlo). Solo con el motor de flujos.
+    native_client_labeler: ProductLabeler | None = None
+    if settings.flow_engine_enabled and settings.chatwoot_client_label_macro_id is not None:
+        if control_client is None:
+            raise ValueError("the client label requires Chatwoot control")
+        if settings.chatwoot_client_label_macro_id in {
+            settings.chatwoot_pause_macro_id,
+            settings.chatwoot_resume_macro_id,
+            settings.chatwoot_opt_out_macro_id,
+        }:
+            raise ValueError(
+                "the client label macro cannot be a pause, resume or opt-out macro"
+            )
+        native_client_labeler = ProductLabeler(
+            client=control_client,
+            label="cliente",
+            macro_id=settings.chatwoot_client_label_macro_id,
+        )
+
     async def label_products(
         conversation_id: int, keys: Iterable[str | None], *, source: str
     ) -> None:
@@ -4787,6 +4822,16 @@ def create_app(
             runtime=flow_engine_runtime,
             producer=slack_runtime.producer if slack_runtime is not None else None,
         )
+    # MOT-002 (flow-engine-v2, seccion 8): el mismo productor y el mismo bucle
+    # de 60 s; avisa tambien los rechazos del motor del carrito.
+    flow_engine_rejection_notifier: StartRejectionNotifier | None = None
+    if flow_engine_runtime is not None:
+        assert shared_supabase is not None
+        flow_engine_rejection_notifier = StartRejectionNotifier(
+            supabase=shared_supabase,
+            runtime=flow_engine_runtime,
+            producer=slack_runtime.producer if slack_runtime is not None else None,
+        )
     if settings.hotmart_abandonment_timer_worker_enabled:
         if shared_supabase is None:
             raise ValueError(
@@ -5084,6 +5129,7 @@ def create_app(
         )
         durable_dispatcher = DurableDispatcher(
             flow_engine_enabled=settings.flow_engine_enabled,
+            native_client_labeler=native_client_labeler,
             supabase=shared_supabase,
             worker_id=settings.dispatcher_worker_id,
             poll_interval_seconds=settings.dispatcher_poll_interval_seconds,
@@ -5289,9 +5335,15 @@ def create_app(
                 await conversation_followup_sweeper.start()
             if flow_engine_divergence_notifier is not None:
                 await flow_engine_divergence_notifier.start()
+            if flow_engine_rejection_notifier is not None:
+                await flow_engine_rejection_notifier.start()
             yield
         finally:
             for worker_name, worker in (
+                (
+                    "flow_engine_rejection_notifier",
+                    flow_engine_rejection_notifier,
+                ),
                 (
                     "flow_engine_divergence_notifier",
                     flow_engine_divergence_notifier,
@@ -5339,6 +5391,7 @@ def create_app(
     app.state.resolution_worker = resolution_worker
     app.state.flow_engine = flow_engine_runtime
     app.state.flow_engine_divergence_notifier = flow_engine_divergence_notifier
+    app.state.flow_engine_rejection_notifier = flow_engine_rejection_notifier
     app.state.hotmart_abandonment_timer_worker = hotmart_abandonment_timer_worker
     app.state.recovery_coupon_worker = recovery_coupon_worker
     app.state.durable_dispatcher = durable_dispatcher

@@ -180,7 +180,8 @@ def test_a_long_reason_is_cut_to_eighty() -> None:
 def test_the_catalog_knows_mot_001() -> None:
     assert DIVERGENCE_EVENT_CODE in EVENT_TEMPLATES
     assert EVENT_TEMPLATES["MOT-001"].severity == "p2"
-    assert len(EVENT_TEMPLATES) == 57
+    # MOT-002 (flow-engine-v2): el rechazo del motor, el codigo 58.
+    assert len(EVENT_TEMPLATES) == 58
 
 
 def test_create_app_wires_the_notifier_only_with_the_flag(tmp_path: Path) -> None:

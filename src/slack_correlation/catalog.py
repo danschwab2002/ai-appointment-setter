@@ -156,6 +156,9 @@ EVENT_TEMPLATES: dict[str, EventTemplate] = {
     # flow-engine-v1, seccion 8: el motor de flujos no pudo admitir un disparo
     # y lo planifico el legado (una fila de flow_engine_divergences).
     "MOT-001": EventTemplate("p2", "El motor no pudo y lo planificó el legado"),
+    # flow-engine-v2, seccion 8: el motor no pudo arrancar un flujo (una
+    # falla suya: error_interno, la bolsa o la politica compilada).
+    "MOT-002": EventTemplate("p2", "El motor no pudo arrancar un flujo"),
 }
 
 

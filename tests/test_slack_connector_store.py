@@ -68,9 +68,10 @@ def _recommendation() -> CorrelationRecommendation:
     )
 
 
-def test_catalog_has_exactly_the_57_approved_event_codes() -> None:
+def test_catalog_has_exactly_the_58_approved_event_codes() -> None:
     # MOT-001 (flow-engine-v1, seccion 8): la divergencia del motor de flujos.
-    assert len(EVENT_TEMPLATES) == 57
+    # MOT-002 (flow-engine-v2, seccion 8): el motor no pudo arrancar un flujo.
+    assert len(EVENT_TEMPLATES) == 58
     assert set(EVENT_TEMPLATES) == {
         *(f"HND-{number:03d}" for number in range(1, 12)),
         *(f"COR-{number:03d}" for number in range(1, 16)),
@@ -82,6 +83,7 @@ def test_catalog_has_exactly_the_57_approved_event_codes() -> None:
         "DIG-002",
         "REV-001",
         "MOT-001",
+        "MOT-002",
     }
 
 

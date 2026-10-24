@@ -75,6 +75,10 @@ class HotmartPurchaseData:
     product_ucode: str | None
     offer_code: str | None
     origin_sck: str | None
+    # El nombre del comprador (data.buyer.name), para la variable nombre de un
+    # flujo nativo disparado por la compra (flow-engine-v2, seccion 5). No
+    # entra en la correlacion.
+    buyer_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -291,6 +295,7 @@ def parse_hotmart_purchase_payload(
         product_ucode=_str(product.get("ucode")),
         offer_code=_str(offer.get("code")),
         origin_sck=_opaque_sck(origin.get("sck")),
+        buyer_name=_str(buyer.get("name")),
     )
 
 def parse_hotmart_payment_failure_payload(

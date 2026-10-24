@@ -1,0 +1,61 @@
+{
+  "_origen": "tests/sql/followup_engine/validate_flow_engine_native_bridge.mjs --emit-bridge-fixtures: las RPC reales sobre la cadena de migraciones (PGlite), con el manifiesto de ATT1; uuid y horas normalizados",
+  "native_flows_empty": {
+    "flows": []
+  },
+  "rejections_empty": {
+    "rejections": [],
+    "unnotified": 0
+  },
+  "queue_empty": {
+    "events": [],
+    "pending": 0
+  },
+  "native_flows_cohort": {
+    "flows": [
+      {
+        "state": "cohorte",
+        "flow_id": "00000000-0000-4000-8000-000000000001",
+        "trigger": "compra",
+        "flow_key": "activacion",
+        "product_ref": "att1",
+        "active_version": 1
+      }
+    ]
+  },
+  "queue_ready": {
+    "events": [
+      {
+        "payload": "<payload>",
+        "attempts": 0,
+        "webhook_event_id": "00000000-0000-4000-8000-000000000002"
+      }
+    ],
+    "pending": 1
+  },
+  "step_tail": {
+    "flow_id": "00000000-0000-4000-8000-000000000001",
+    "momento": "2026-10-24T12:00:00.000000Z",
+    "version": 1,
+    "producto": "Alimenta tu Tiroides",
+    "etiquetar": "cliente"
+  },
+  "rejections_unnotified": {
+    "rejections": [
+      {
+        "step": 1,
+        "count": 1,
+        "phase": "admision",
+        "reason": "error_interno:22012",
+        "flow_id": "00000000-0000-4000-8000-000000000001",
+        "last_at": "2026-10-24T12:00:00.000000Z",
+        "version": 1,
+        "first_at": "2026-10-24T12:00:00.000000Z",
+        "flow_key": "activacion",
+        "product_ref": "att1",
+        "notified_count": 0
+      }
+    ],
+    "unnotified": 1
+  }
+}

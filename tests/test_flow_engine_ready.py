@@ -30,6 +30,10 @@ ROWS = json.loads((ROOT / "tests" / "fixtures" / "flow_engine" / "bridge_rpc_row
 FLOW_KEYS = {
     "flow_engine", "flow_engine_routes_motor", "flow_engine_routes_legado", "flow_engine_read",
     "flow_engine_divergences_unnotified", "flow_engine_alerts",
+    # flow-engine-v2 (E-065): los flujos nativos, los rechazos de MOT-002 y la
+    # cola de la compra nativa. Todas en memoria: /ready no llama a la base.
+    "flow_engine_native_read", "flow_engine_native_on", "flow_engine_start_rejections_unnotified",
+    "flow_engine_native_queue_pending",
 }
 
 
@@ -107,6 +111,10 @@ def test_on_before_the_first_read_it_is_pending(tmp_path: Path) -> None:
     assert payload["flow_engine_read"] == "pending"
     assert payload["flow_engine_divergences_unnotified"] == "unknown"
     assert payload["flow_engine_alerts"] == "sin_slack"
+    assert payload["flow_engine_native_read"] == "pending"
+    assert payload["flow_engine_native_on"] == "0"
+    assert payload["flow_engine_start_rejections_unnotified"] == "unknown"
+    assert payload["flow_engine_native_queue_pending"] == "unknown"
     # /ready no lee las rutas: eso es del lote.
     assert "routes" not in authority.calls
 
