@@ -11,7 +11,13 @@ con la biblioteca estandar, con el molde de ``piloto.sh``.
 el script muestra y lee por ``/dev/tty``; sin terminal se niega. La garantia
 real es ser root en el VPS: el codigo ataja un error, no a un root.
 **Andy no corre ``publicar``, ``volver``, ``prender``, ``apagar``, ``pausar``,
-``descartar``, ``registrar``, ``ruta`` ni ``mover``.**
+``descartar``, ``registrar``, ``ruta``, ``mover`` ni ``cohorte``.**
+
+``proponer`` acepta un archivo con un item ``nuevo`` (ciclo 1.7.0): crea un
+flujo nativo y, al publicarlo, queda en ``cohorte``. ``cohorte`` agrega o saca
+un contacto de la cohorte de prueba de un flujo nativo (hasta 5): el telefono
+se lee de la terminal sin eco, se resuelve a su contacto en la base y no se
+imprime ni queda en ningun log.
 
 Subcomandos::
 
@@ -28,6 +34,7 @@ Subcomandos::
     registrar <producto>/<flujo> --quien <q> --motivo "..."
     ruta <producto>/<flujo> --tipo carrito|pago_fallido|ficha --scope <scope del legado> --quien <q> --motivo "..."
     mover <producto>/<flujo> motor|legado --quien <q> --motivo "..."
+    cohorte <producto>/<flujo> agregar|sacar --quien <q> --motivo "..."
     descartar <propuesta> --quien <q> --motivo "..."
     descartar --todo-del-agente --quien <q> --motivo "..."
 
@@ -58,6 +65,7 @@ del SQL. Todo lo que se imprime pasa por ``json.dumps(ensure_ascii=True)``.
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import re
@@ -125,6 +133,14 @@ class Terminal:
                 return tty.readline().strip()
         except OSError as error:
             raise Refused("sin terminal no se confirma: este comando lo corre una persona") from error
+
+    def secret(self, prompt: str) -> str:
+        """Un dato que no se muestra (el telefono de la cohorte): sin eco, desde ``/dev/tty``."""
+        try:
+            with open("/dev/tty", "w", encoding="utf-8") as out:
+                return getpass.getpass(prompt, stream=out).strip()
+        except (OSError, getpass.GetPassWarning) as error:
+            raise Refused("sin terminal no se carga un telefono: este comando lo corre una persona") from error
 
 
 @dataclass
@@ -291,6 +307,19 @@ class Ops:
         if len(products) != 1:
             return {"simulation_unavailable": "simulation_multi_product"}
         args = {"tenant": self.config.tenant, "ally": self.config.ally}
+        new_flows = [item for item in items if isinstance(item, Mapping) and item.get("tipo") == "nuevo"] \
+            if isinstance(items, list) else []
+        if new_flows:
+            if len(items) != 1:
+                return {"simulation_unavailable": "simulation_new_flow_mixed"}
+            definition = new_flows[0].get("definicion")
+            trigger = (definition.get("dispara") or {}).get("evento") if isinstance(definition, Mapping) else None
+            try:
+                counts = self.sql_json(SQL_NEW_FLOW_COUNTS, {**args, "product": next(iter(products)),
+                                                             "trigger": trigger}, read_only=True)
+            except Refused:
+                return {"simulation_unavailable": "flow_engine_unavailable"}
+            return {"new_flow_counts": counts}
         try:
             engine: dict[str, Any] | None = None
             after = None
@@ -367,7 +396,9 @@ SQL_STORE = f"""select coalesce(jsonb_agg(jsonb_build_object(
     'active_version', c.active_version, 'generation', c.generation, 'changed_at', c.changed_at,
     'changed_by_kind', c.changed_by_kind,
     'versions', coalesce((select jsonb_object_agg(d.version::text, d.definition)
-                            from public.flow_definitions d where d.flow_id = c.flow_id), '{{}}'::jsonb))
+                            from public.flow_definitions d where d.flow_id = c.flow_id), '{{}}'::jsonb),
+    'native', exists (select 1 from public.flow_engine_routes native_route
+                       where native_route.flow_id = c.flow_id and native_route.legacy_kind is null))
     order by c.product_ref, c.flow_key), '[]'::jsonb)::text
   from public.flow_controls c
  where c.tenant_ref = {_arg('tenant')} and c.ally_ref = {_arg('ally')};"""
@@ -426,6 +457,9 @@ SQL_ROUTE = f"""select coalesce((select jsonb_build_object(
 SQL_ENGINE = f"""select public.read_flow_engine_v1({INSTANCE_SQL}, {_arg('after')})::text;"""
 SQL_HISTORY = f"""select public.read_flow_engine_history_v1({INSTANCE_SQL}, {_arg('product')},
     now() - interval '8 days' + interval '5 minutes')::text;"""
+# La simulacion de un flujo nuevo (flow-engine-v2 §14): los disparos de su disparador en 7 dias.
+SQL_NEW_FLOW_COUNTS = f"""select public.read_flow_engine_native_trigger_counts_v1({INSTANCE_SQL},
+    {_arg('product')}, {_arg('trigger')}, now() - interval '7 days')::text;"""
 ENGINE_PAGES_MAX = 10
 
 SQL_CATALOG = f"""select c.message_templates::jsonb::text
@@ -483,8 +517,15 @@ def _flow_of(world: Mapping[str, Any], flow_id: str) -> Mapping[str, Any] | None
 
 def show_items(ops: Ops, items: Sequence[Mapping[str, Any]], world: Mapping[str, Any]) -> None:
     for item in items:
-        flow = _flow_of(world, item.get("flow_id", ""))
         ref = f"{item.get('producto')}/{item.get('flujo')}"
+        if item.get("tipo") == "nuevo":
+            ops.say(f"* {ref}: nuevo (un flujo nativo; al publicarlo queda en cohorte, prender: "
+                    f"{json.dumps(item.get('prender'), ensure_ascii=True)})")
+            for path, left, right in json_diff({}, item.get("definicion", {})):
+                ops.say(f"  {json.dumps(path, ensure_ascii=True)}: {json.dumps(left, ensure_ascii=True, sort_keys=True)}"
+                        f" -> {json.dumps(right, ensure_ascii=True, sort_keys=True)}")
+            continue
+        flow = _flow_of(world, item.get("flow_id", ""))
         if flow is None:
             ops.say(f"* {ref}: el flujo no esta en el almacen")
             continue
@@ -543,6 +584,8 @@ def cmd_estado(ops: Ops, _args: argparse.Namespace) -> int:
             ops.say("  ruta: no se pudo leer (la base no tiene la migracion del motor)")
         elif route is None:
             ops.say("  ruta: ninguna; el estado de aca no frena nada del legado")
+        elif route["legacy_kind"] is None:
+            ops.say("  ruta: nativa (motor, sin legado); su vuelta atras es pausarlo o apagarlo")
         else:
             ops.say(f"  ruta: {route['executor']} ({route['legacy_kind']}, {route['legacy_scope_key']}); "
                     "pausarlo o apagarlo aca frena el legado")
@@ -588,6 +631,10 @@ def _record(ops: Ops, proposal: Mapping[str, Any], validation: Mapping[str, Any]
 
 # El p_instance de las operator_*, armado una vez en _args.
 INSTANCE_ARGS = (f"insert into pg_temp._args (k, v) select 'instance', {INSTANCE_SQL}::text;\n")
+# El de publicar, con la zona de la instancia (ZONA).
+INSTANCE_ZONE_ARGS = ("insert into pg_temp._args (k, v) select 'instance', jsonb_build_object("
+                      f"'tenant_ref', {_arg('tenant')}, 'ally_ref', {_arg('ally')}, "
+                      f"'time_zone', {_arg('zone')})::text;\n")
 
 
 def cmd_validar(ops: Ops, args: argparse.Namespace) -> int:
@@ -650,9 +697,11 @@ def _publish(ops: Ops, proposal_id: str, who: str, without_simulation: bool) -> 
         "result": validation["result"], "validator": validation["validator"],
         "validated_at": validated_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
-    published = ops.sql_json(INSTANCE_ARGS + _call(
+    # La zona de la instancia viaja en p_instance: la bolsa de un flujo nuevo con horario: siempre
+    # cuenta el dia en ella (flow-engine-v2 §3).
+    published = ops.sql_json(INSTANCE_ZONE_ARGS + _call(
         "operator_publish_flow_change_v1", ("instance", "jsonb"), ("id", "uuid"), ("fingerprint", "text"),
-        ("revalidation", "jsonb")), {**instance, "revalidation": revalidation})
+        ("revalidation", "jsonb")), {**instance, "zone": ops.config.zone, "revalidation": revalidation})
     ops.show("publicacion", published)
     if published.get("ok") is not True:
         return EXIT_BLOCKED
@@ -878,6 +927,33 @@ def cmd_mover(ops: Ops, args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_cohorte(ops: Ops, args: argparse.Namespace) -> int:
+    """Agrega o saca un contacto de la cohorte de prueba de un flujo nativo (flow-engine-v2 §7.3).
+
+    El telefono se lee de la terminal sin eco y va a la base por ``_args``: no se imprime, no queda en
+    el log y la respuesta trae solo cuantos miembros tiene la cohorte.
+    """
+    ops.check_approver(args.quien)
+    if args.accion not in ("agregar", "sacar"):
+        raise Refused("la accion es agregar o sacar", EXIT_USAGE)
+    flow = _find_flow(ops.read_world(), args.flujo)
+    if flow.get("native") is not True:
+        raise Refused(f"{args.flujo} no es un flujo nativo: la cohorte de un flujo del legado vive en su scope")
+    ops.say(f"{args.flujo}: {flow['state']}, version {flow['active_version']}")
+    phone = ops.terminal.secret("Telefono del contacto (no se muestra): ")
+    if not re.fullmatch(r"\+?[0-9 ()-]{8,24}", phone or ""):
+        raise Refused("eso no tiene forma de telefono: no se escribio nada", EXIT_USAGE)
+    ops.confirm(f"{args.accion} un contacto en la cohorte de {args.flujo}")
+    params = {"tenant": ops.config.tenant, "ally": ops.config.ally, "product": flow["product_ref"],
+              "flow": flow["flow_key"], "action": args.accion, "phone": phone, "who": args.quien,
+              "reason": args.motivo}
+    changed = ops.sql_json(INSTANCE_ARGS + _call(
+        "operator_flow_cohort_v1", ("instance", "jsonb"), ("product", "text"), ("flow", "text"),
+        ("action", "text"), ("phone", "text"), ("who", "text"), ("reason", "text")), params)
+    ops.show("cohorte", changed)
+    return EXIT_OK if changed.get("ok") is True else EXIT_BLOCKED
+
+
 def _discard(ops: Ops, proposal_id: str, who: str, reason: str) -> dict[str, Any]:
     params = {"tenant": ops.config.tenant, "ally": ops.config.ally, "id": proposal_id, "who": who,
               "reason": reason}
@@ -955,6 +1031,10 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("flujo")
     command.add_argument("ejecutor")
     command.add_argument("--motivo", required=True)
+    command = writer("cohorte")
+    command.add_argument("flujo")
+    command.add_argument("accion")
+    command.add_argument("--motivo", required=True)
     command = writer("descartar")
     command.add_argument("propuesta", nargs="?")
     command.add_argument("--todo-del-agente", action="store_true")
@@ -967,7 +1047,7 @@ COMMANDS: dict[str, Callable[[Ops, argparse.Namespace], int]] = {
     "validar": cmd_validar, "publicar": cmd_publicar, "volver": cmd_estado_o_version,
     "prender": cmd_estado_o_version, "apagar": cmd_estado_o_version, "pausar": cmd_pausar,
     "descartar": cmd_descartar, "registrar": cmd_registrar, "ruta": cmd_ruta,
-    "mover": cmd_mover,
+    "mover": cmd_mover, "cohorte": cmd_cohorte,
 }
 
 

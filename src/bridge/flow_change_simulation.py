@@ -52,6 +52,8 @@ from .flow_replay import (
 
 __all__ = [
     "CAMBIOS_MAX",
+    "NEW_FLOW_COUNTS_CONTRACT",
+    "build_new_flow_simulation",
     "build_simulation",
     "engine_flows_from_read",
     "summary_sha256",
@@ -216,6 +218,56 @@ def _simulate(engine: Mapping[str, Any], history_in: Any, items: Sequence[Propos
     }
 
 
+# La simulacion de un flujo nuevo (flow-engine-v2 §14, la 2.2.0): la lectura
+# read_flow_engine_native_trigger_counts_v1 cuenta los disparos de su disparador.
+NEW_FLOW_COUNTS_CONTRACT = "flow-engine-v2"
+NEW_FLOW_NOT_BUILT = "simulation_new_flow_not_built"
+NEW_FLOW_MIXED = "simulation_new_flow_mixed"
+NEW_FLOW_COUNTS_INVALID = "simulation_new_flow_counts_invalid"
+_COUNT_KEYS = frozenset({"contract", "trigger", "product_ref", "since", "until", "events", "people"})
+
+
+def _count(value: object) -> int:
+    if type(value) is not int or value < 0:
+        raise _Failed(NEW_FLOW_COUNTS_INVALID)
+    return value
+
+
+def build_new_flow_simulation(counts: Any, items: Sequence[ProposalItem]) -> dict[str, Any]:
+    """La simulacion de un item ``nuevo``: cuantos disparos de su disparador hubo y a cuantas personas
+    les habria llegado si estuviera para todos.
+
+    ``counts`` es la respuesta de ``read_flow_engine_native_trigger_counts_v1`` para el producto y el
+    disparador del flujo nuevo, con la ventana de la vista previa. Es una estimacion con los eventos
+    reales: con ``repeticion.otra_despues_de: nunca`` le llega una sola vez a cada persona, y mientras
+    este en cohorte solo a los contactos de la cohorte. Nunca levanta.
+    """
+    try:
+        if len(items) != 1 or not items[0].is_new_flow:
+            raise _Failed(NEW_FLOW_MIXED)
+        if not isinstance(counts, Mapping) or set(counts) != _COUNT_KEYS \
+                or counts.get("contract") != NEW_FLOW_COUNTS_CONTRACT:
+            raise _Failed(NEW_FLOW_COUNTS_INVALID)
+        item = items[0]
+        trigger = ((item.definicion or {}).get("dispara") or {}).get("evento")
+        if counts.get("product_ref") != item.producto or counts.get("trigger") != trigger:
+            raise _Failed(NEW_FLOW_COUNTS_INVALID)
+        events, people = _count(counts.get("events")), _count(counts.get("people"))
+        if people > events:
+            raise _Failed(NEW_FLOW_COUNTS_INVALID)
+        summary = {
+            "flujo_nuevo": f"{item.producto}/{item.flujo}", "disparador": trigger,
+            "desde": counts.get("since"), "hasta": counts.get("until"),
+            "disparos": events, "personas": people, "mensajes_si_fuera_para_todos": people,
+            "nace_en": "cohorte",
+        }
+        return {"status": "built", "summary": summary, "summary_sha256": summary_sha256(summary), "cambios": []}
+    except _Failed as failed:
+        return {"status": "failed", "reason_code": failed.reason_code}
+    except Exception:  # noqa: BLE001 - la vista previa no se cae por la simulacion
+        return {"status": "failed", "reason_code": SIMULATION_ERROR}
+
+
 def build_simulation(engine: Any, history: Any, items: Sequence[ProposalItem], *,
                      time_zone: str | None = None, store: Any = None) -> dict[str, Any]:
     """La simulacion de los items sobre la historia: ``built`` con su resumen, o ``failed`` con el motivo.
@@ -228,6 +280,9 @@ def build_simulation(engine: Any, history: Any, items: Sequence[ProposalItem], *
     lo muestra como «la simulacion no se pudo armar».
     """
     try:
+        if any(item.is_new_flow for item in items):
+            # Un flujo nuevo no tiene historia en el motor: se simula con su propia lectura.
+            raise _Failed(NEW_FLOW_NOT_BUILT)
         if not isinstance(engine, Mapping):
             raise _Failed(READ_INVALID)
         return _simulate(engine, history, items, time_zone, store)

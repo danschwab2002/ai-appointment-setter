@@ -450,8 +450,10 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # guardar» de Hotmart) suma su admision, y 20261024000200 (el motor
     # nativo) la suya. 20261024000500 (el bridge del motor nativo) suma sus
     # siete: los flujos nativos, la cola de la compra (anotar, leer, cerrar),
-    # los rechazos de MOT-002 y su marca, y la cola del paso.
-    assert len(allowlisted) == 165
+    # los rechazos de MOT-002 y su marca, y la cola del paso. 20261024000600
+    # (el AE que crea flujos) suma la lectura de la simulacion de un flujo nuevo.
+    assert len(allowlisted) == 166
+    assert "read_flow_engine_native_trigger_counts_v1(jsonb, text, text, timestamp with time zone)" in allowlisted
     assert (
         "admit_portable_hotmart_listen_only_capture_v1"
         "(text, text, integer, text, jsonb, text, text)"
@@ -1334,19 +1336,38 @@ def test_opted_out_reply_fingerprint_comes_before_the_native_bridge() -> None:
         assert marker in compact_fingerprint, marker
 
 
-def test_flow_engine_native_bridge_fingerprint_is_last() -> None:
+def test_flow_engine_native_bridge_fingerprint_is_before_the_new_flow() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261024000500 (el bridge del motor nativo, E-065) es la ultima.
-    fingerprint = sql.split("'20261024000500'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261024000500 (el bridge del motor nativo, E-065) va justo antes de la del AE que crea flujos.
+    fingerprint = sql.split("'20261024000500'", 1)[1].split(
+        "    union all\n    select\n        '20261024000600'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261024000500_flow_engine_native_bridge_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",3,'flow_engine_native_bridge')")
+    assert compact_fingerprint.endswith(",3,'flow_engine_native_bridge'")
     for marker in (
         "to_regclass('public.flow_engine_native_event_queue')",
         "to_regclass('public.flow_engine_rejection_notices')",
         "count(*)=7",
         "andnothas_function_privilege('anon',oid,'EXECUTE')",
         "position('flow_engine_native_adoption'indefinition)>0",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_flow_change_new_flow_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261024000600 (el AE que crea flujos, E-070) es la ultima.
+    fingerprint = sql.split("'20261024000600'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261024000600_flow_change_new_flow_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",3,'flow_change_new_flow')")
+    for marker in (
+        "to_regprocedure('public.read_flow_engine_native_trigger_counts_v1(jsonb,text,text,timestamptz)')",
+        "to_regprocedure('public.operator_flow_cohort_v1(jsonb,text,text,text,text,text,text)')",
+        "count(*)=3",
+        "andnothas_function_privilege('anon',oid,'EXECUTE')",
+        "position('flow_change_new_flow:begin(registraryabrir)'indefinition)>0",
     ):
         assert marker in compact_fingerprint, marker

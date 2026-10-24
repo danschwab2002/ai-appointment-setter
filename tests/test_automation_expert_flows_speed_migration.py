@@ -68,6 +68,9 @@ def test_it_is_one_transaction_and_comes_before_the_motor() -> None:
         # El bridge del motor nativo (20261024000500) suma lecturas y parcha la
         # adopcion de la respuesta; no redefine el motor del carrito.
         "20261024000500_flow_engine_native_bridge_v1.sql",
+        # El AE que crea flujos (20261024000600) parcha el ciclo del almacen (el item
+        # nuevo) y read_flow_store_v1; no redefine el motor del carrito.
+        "20261024000600_flow_change_new_flow_v1.sql",
     ]
     for later in names[position + 1:]:
         if later != reads:

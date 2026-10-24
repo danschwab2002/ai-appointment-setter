@@ -58,8 +58,24 @@ def _state_after(tipo: str, before: str) -> str:
     return before
 
 
+def _new_flow_change(item: ProposalItem) -> tuple[dict[str, Any], int]:
+    """Un flujo nuevo (ciclo 1.7.0): todo es nuevo, nace en cohorte y no hay version a la que volver."""
+    changes = [
+        {"ruta": change.path, "antes": change.before, "despues": change.after}
+        for change in diff({}, item.definicion or {})
+        if change.path not in ("/estado", "/version")
+    ]
+    out: dict[str, Any] = {
+        "producto": item.producto, "flujo": item.flujo, "tipo": item.tipo, "base_version": None,
+        "nace_en": "cohorte", "en_curso": None, "diff": changes[:DIFF_MAX_CHANGES],
+    }
+    return out, max(0, len(changes) - DIFF_MAX_CHANGES)
+
+
 def _change(item: ProposalItem, world: FlowWorld) -> tuple[dict[str, Any], int]:
-    flow = world.flow(item.flow_id)
+    if item.is_new_flow:
+        return _new_flow_change(item)
+    flow = world.flow(item.flow_id) if item.flow_id is not None else None
     if flow is None:
         raise ValueError("flow_not_found")
     out: dict[str, Any] = {
@@ -112,9 +128,14 @@ def build_preview(
     volver_atras = [
         {"producto": item.producto, "flujo": item.flujo, "a_version": flow.active_version}
         for item in items
-        if item.is_content
+        if item.is_content and item.flow_id is not None
         for flow in (world.flow(item.flow_id),)
         if flow is not None and flow.active_version is not None
+    ]
+    # Un flujo nuevo no tiene version anterior: su vuelta atras es pausarlo o apagarlo (flow-engine-v2 §2).
+    volver_atras += [
+        {"producto": item.producto, "flujo": item.flujo, "a_version": None, "como": "pausar_o_apagar"}
+        for item in items if item.is_new_flow
     ]
     politicas = sorted({item.en_curso for item in items if item.en_curso is not None})
     if simulacion is None:
@@ -129,7 +150,8 @@ def build_preview(
     preview: dict[str, Any] = {
         "cambios": cambios,
         "para_que": purpose,
-        "a_quien": None,
+        # Un flujo nuevo le llega solo a los contactos de su cohorte de prueba (D6).
+        "a_quien": "cohorte" if any(item.is_new_flow for item in items) else None,
         "en_curso": {"politica": politicas[0] if len(politicas) == 1 else (politicas or None),
                      "recorridos": None},
         "simulacion": None if simulacion is None else dict(simulacion),
