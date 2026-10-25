@@ -96,7 +96,9 @@ const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`${MIGRATION} no esta en la cadena`);
 // Despues va solo la de las lecturas nativas del AE (20261025000100): suma lecturas y parcha prender
 // (a: cohorte) sin tocar lo que esta prueba mira.
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261025000100_automation_expert_native_reads_v1.sql'])) {
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261025000100_automation_expert_native_reads_v1.sql',
+  // El btrim del nombre del producto en el pago rechazado (E-087): solo parcha esa admision.
+  '20261025000200_payment_failure_product_name_btrim.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de las lecturas nativas del AE`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(
