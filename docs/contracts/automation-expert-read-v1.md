@@ -1,9 +1,9 @@
 # Contrato: la lectura del Automation Expert (v1)
 
-- **Estado:** aceptado como contrato conceptual el 2026-10-15. La versión 1.1.0 suma lo que fijó la implementación de los lectores (la rama `feat/claude-automation-expert-read-v1`, apagada por defecto): ver «Lo que fijó la implementación (1.1.0)». El contrato no describe nada desplegado ni activado. Lo que dice de ATT1 es lo medido, con su fecha y su evidencia.
+- **Estado:** aceptado como contrato conceptual el 2026-10-15. La versión 1.1.0 suma lo que fijó la implementación de los lectores (la rama `feat/claude-automation-expert-read-v1`, apagada por defecto): ver «Lo que fijó la implementación (1.1.0)». La 1.2.0, del 2026-10-25, la construye el PR 5 del hito 4 (migración `20261025000100`), escrita antes del merge: ver «Lo que suma el motor nativo (1.2.0)». El contrato no describe nada desplegado ni activado. Lo que dice de ATT1 es lo medido, con su fecha y su evidencia.
 - **Fecha:** 2026-10-15
 - **ADR:** [ADR-0025](../decisions/0025-cada-instancia-tiene-su-hermes-declarado-por-el-producto.md) §4 y §7, y [ADR-0017](../decisions/0017-central-slack-operations-connector.md)
-- **Contrato:** `automation-expert-read-v1`, versión `1.1.0`
+- **Contrato:** `automation-expert-read-v1`, versión `1.2.0`
 - **Alcance:** lo que el Automation Expert de la 1a le pregunta al bridge y lo que recibe. Son dos preguntas: qué flujos hay, y qué le pasó o le va a pasar a un lead, y por qué. Fija las rutas, la clave, la marca de la instancia, la lista cerrada de motivos, los huecos, las tres funciones de la base, la lectura de Chatwoot y las reglas de los datos personales. Proponer o cambiar un flujo, el dibujo de un flujo y la app de Slack van en sus propias piezas (ver «Fuera de este contrato»).
 - **Etapas:** las del roadmap macro del producto, como en [flow-definition-v1.md](flow-definition-v1.md). La 1a es el Automation Expert que lee y explica los flujos; la 1b, los flujos como datos, con su motor y su ciclo de versiones; y la 1c, los flujos nuevos. La Etapa 0 bis alinea a ATT1 y al producto con el ADR-0025 antes de llevar la 1a a ATT1. Incluye la declaración de Hermes con su instalador y su chequeo, el Hermes propio de ATT1 con el agente comercial, cubierto por el respaldo y las alertas, ese chequeo en verde contra ATT1 y lo viejo de ATT1 bajado.
 - **Citas:** las citas de código son de `origin/main` en `1b83191` (1.8.0). Las migraciones de `supabase/migrations/` se citan por su nombre. `stack.yaml`, `despliegue/traefik/setter-att1.yaml`, `despliegue/gateway/nginx.conf`, `despliegue/respaldo/README.md`, `despliegue/alertas/README.md`, `instancia.toml`, `generar.py`, y el `.env.example` y el `README.md` que se dicen «de la instancia», son de la instancia ATT1 (`setter-instancia-att1`), en `b1cdefe`. Las de Hermes (`plugins/`, `gateway/`, `agent/`, `hermes_cli/` y `toolsets.py`) son del repo público `NousResearch/hermes-agent` en `29112be`, Hermes 0.21.0 (la imagen `v2026.8.31`). En este contrato, «el esquema» es [flow-definition-v1.md](flow-definition-v1.md), y sus secciones se citan por su título. «Hoy» es ese código, la instancia ATT1 y lo medido en att1-db y en Chatwoot al 2026-10-15.
@@ -722,6 +722,50 @@ Los lectores se construyeron en la rama `feat/claude-automation-expert-read-v1`,
   - **El cuerpo de la búsqueda** tiene un tope de 4 KiB. Un error inesperado da 503, y el log lleva solo su tipo.
 
 Lo que sigue sin confirmar está en «Lo que se confirma al implementar».
+
+## Lo que suma el motor nativo (1.2.0)
+
+Escrito al construir el PR 5 del hito 4 (2026-10-25, migración `20261025000100_automation_expert_native_reads_v1.sql`), antes del merge. Describe la interfaz; no dice que nada esté desplegado ni activado. Los flujos nativos son los del contrato [flow-engine-v2.md](flow-engine-v2.md). Todo es aditivo: el plugin sigue aceptando todo major 1, y sin flujos nativos las respuestas son las de la 1.1.0 más `contract_version: 1.2.0` y `data.native` en la historia.
+
+### Tres lecturas nuevas en la base
+
+De solo lectura, `stable`, `security definer` con `search_path` fijo, y solo para `service_role`, como las tres de la 1.1.0. La marca de instancia es la misma `p_instance` (la ata `_flow_store_instance`, por `tenant_ref` y `ally_ref`). Ninguna devuelve un teléfono, un mail ni un contacto.
+
+- **`read_automation_expert_native_flows_v1(p_instance)`**: los flujos con ruta nativa de la instancia, apagados incluidos, con el estado del control y desde cuándo, la versión activa y su definición, la bolsa y su zona, cuántos tiene la cohorte, los arranques del día en la zona de la bolsa y lo observado en los últimos 7 días corridos (recorridos que arrancaron, envíos aceptados por Chatwoot, pasos en curso y los rechazos del arranque por motivo).
+- **`read_automation_expert_native_history_v1(p_instance, p_lead_ref)`**: los momentos de los recorridos nativos de la persona en la bandeja de la instancia, con la forma de los momentos de la historia (`kind`, `at`, `flow_key`, `flow_version`, `reason_code`, `certainty`, `attached_by`, `evidence` y `extra`), y `cohort_of`, las cohortes de prueba de las que es. `null` si no tiene ni lo uno ni lo otro. Los momentos: `entered_flow` (`flow_engine_native_started`, evidencia en `flow_engine_runs`), `scheduled` (`flow_engine_native_step_scheduled`, con `due_at`, `expires_at`, `step_key` y `status`), `start_authorized`, `accepted_by_chatwoot` o `delivery_uncertain_or_failed`, `stopped` o `expired`, y `purchased` cuando el recuperador ató una compra al caso del recorrido (nunca la que lo disparó).
+- **`read_flow_sales_v1(p_instance, p_since)`**: las ventas por flujo del motor (el carrito con su ruta en motor y los nativos), desde `p_since` y a lo sumo 31 días (`22023 flow_sales_window_too_wide`). Ver «Las ventas por flujo».
+
+### Lo que cambia en dos funciones de la 1.1.0
+
+- **El anclaje de una persona** en `read_automation_expert_lead_history_v1` y `find_automation_expert_lead_v1` suma un camino: un recorrido nativo de la bandeja de la instancia (`flow_engine_native_runs.chatwoot_inbox_id`). Un comprador que solo recibió la bienvenida no se ataba a la instancia por ningún otro camino, y la historia daba `lead_not_found`. Es un reemplazo por ancla con su marca (`automation_expert_native_anchor_v1`), sobre la definición vigente; el resto de las dos funciones queda letra por letra.
+
+### Lo que suma la respuesta
+
+- **`list_flows`** suma los flujos nativos a `data.flows[]`, después de los cinco de siempre. Cada uno trae `native: true`, `product_ref`, `source: stored_definition`, `version: {definition: N}`, `status` con `state` en `on`, `paused`, `off` o **`cohort`** (el estado `cohorte` del control: corre solo para su cohorte de prueba) y el estado crudo en `detail`, `cohort: {members, max_members: 5, applies}`, `priority` desde la definición, `usage: {pool, pool_timezone, starts_today}`, `observed` y la definición guardada en `definition`, con su procedencia `database`. Con flujos nativos, el sobre dice `source: mixed`. `list_flows(flow_key)` acepta la clave de un flujo nativo (`^[a-z][a-z0-9_]{1,39}$`) y da `flow_not_found` si no existe.
+- **`sales`**, en cada flujo que corrió en el motor (los nativos y, con su ruta en motor, el carrito): `runs_started`, `purchases_after_send`, `by_case`, `by_identity`, `people_after_send`, `purchases_before_send`, `by_step`, la ventana (`since` y `until`, los últimos 7 días), `rule` e `identity_window_days`.
+- **`lead_history`** pone los momentos nativos en la misma línea de tiempo, con la clave de su flujo nativo en `flow_key` y `flow_version: {scope: null, policy: null, definition: N}`. Los momentos de los flujos de la 1.1.0 no cambian de forma. `data.native.cohort_of` lista las cohortes de la persona.
+- **Los huecos nuevos:** `native_flows_not_read` (la lectura del motor nativo no contestó: una base sin la migración, o un error; la respuesta sale igual con lo de la 1.1.0), `flow_sales_not_read`, `flow_sales_motor_only` (las ventas de un flujo del legado cuentan solo lo que corrió en el motor) y `native_upcoming_not_projected` (el próximo paso de un flujo nativo sale como un momento `scheduled` con su `due_at`, no en `upcoming`).
+
+### Las ventas por flujo
+
+**La regla, `purchase_after_accepted_send_v1`, es un valor por defecto que decide Dan (D-080-1):**
+
+- una venta es una compra aprobada de Hotmart de un producto de la instancia, contada una vez por transacción;
+- va al recorrido al que el recuperador ya la ató (`by_case`: `recovery_cases.purchase_event_id`, que escribe la correlación de la compra al cerrar el caso abierto, y que es único);
+- si no la ató ningún caso, va por la persona (`by_identity`): al recorrido del motor de la misma persona (su mail en `contact_points`) con el último envío aceptado por Chatwoot en los 7 días antes de la compra. Sin esto, un flujo de un solo envío nunca vendería: la bienvenida cierra su caso al salir (medido en PGlite: el caso queda `sequence_exhausted` y la otra compra no se ata a él);
+- la compra que disparó el recorrido no cuenta para ese recorrido;
+- el toque (`by_step`) es el último paso aceptado antes de la compra; una compra atada a un caso sin ningún envío antes va aparte (`purchases_before_send`).
+
+Es «compró después de recibir el mensaje», no que el mensaje causó la compra, y así lo dice el agente. No mira el `sck` del link ni el cupón: esa separación (con nuestro link, con nuestro cupón) es de una versión siguiente. Lo que corrió en el legado no entra (`flow_sales_motor_only`).
+
+### La biblioteca del agente
+
+Una herramienta nueva del plugin, `read_library(tema)`, sin red: sin tema devuelve el índice, y con `hotmart`, `ghl-formularios` o `chatwoot-whatsapp`, la página. Las páginas viajan con el plugin (`profiles/automation-expert/plugins/automation-expert-read/biblioteca/`) y no traen nada de una instancia ni de una persona. **Que vivan en el plugin y no en `docs/plataformas/` es un valor por defecto (D-080-2):** el plugin es lo que llega al Hermes de la instancia, y una copia en `docs/` envejecería aparte. Una prueba las coteja contra el código: los eventos que nombra existen en `hotmart.py`, la ruta del adaptador de GHL es la del bridge, los códigos de Meta están en el catálogo y los disparadores son los del esquema.
+
+### Las pruebas que la fijan
+
+- **PGlite** (`validate_automation_expert_native_reads.mjs`, al final de `npm test`): la forma de la migración (tres lecturas solo de `service_role`, cuatro funciones cambiadas con su marca, el resto y los permisos iguales, dos corridas y otro dueño abortan); la bienvenida del PR 4 en cohorte, con una compra de la cohorte que arranca el recorrido, el envío aceptado y otra compra de la misma persona; las tres lecturas sobre ese mundo; rojos a propósito: sin el parche del anclaje la persona no se encuentra, y sin el envío aceptado la compra no cuenta. Con `--emit-fixture` deja la salida de las tres en `tests/fixtures/automation_expert_native/`.
+- **pytest** (`tests/test_automation_expert_native_reads.py`): las rutas con esa salida, ATT1 sin flujos nativos igual que en la 1.1.0, una base sin la migración con su hueco, la biblioteca contra el código.
 
 ## Lo que se confirma al implementar
 

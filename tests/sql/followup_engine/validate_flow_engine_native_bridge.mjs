@@ -91,10 +91,12 @@ await shapeDb.exec(`
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`${MIGRATION} no esta en la cadena`);
-// Despues va solo la del AE que crea flujos (20261024000600), que parcha el ciclo del almacen y no
+// Despues van la del AE que crea flujos (20261024000600), que parcha el ciclo del almacen, y la de las
+// lecturas nativas del AE (20261025000100), que suma lecturas y parcha el anclaje del AE y prender: ninguna
 // redefine nada de esta.
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261024000600_flow_change_new_flow_v1.sql'])) {
-  fail(`despues de ${MIGRATION} va solo la del AE que crea flujos`, names.slice(position + 1));
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261024000600_flow_change_new_flow_v1.sql',
+  '20261025000100_automation_expert_native_reads_v1.sql'])) {
+  fail(`despues de ${MIGRATION} van solo la del AE que crea flujos y la de sus lecturas nativas`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(
   /create extension if not exists pgcrypto;/gi, '-- pgcrypto is built into PGlite'));

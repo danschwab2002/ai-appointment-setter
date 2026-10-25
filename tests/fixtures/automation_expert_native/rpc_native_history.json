@@ -1,0 +1,94 @@
+{
+  "_capture": {
+    "source": "tests/sql/followup_engine/validate_automation_expert_native_reads.mjs --emit-fixture",
+    "migration": "20261025000100_automation_expert_native_reads_v1.sql",
+    "note": "la salida real de la funcion sobre la cadena de migraciones en PGlite, datos sinteticos"
+  },
+  "value": {
+    "moments": [
+      {
+        "at": "2026-10-25T03:26:08.838-03:00",
+        "kind": "entered_flow",
+        "extra": {
+          "event_type": "PURCHASE_APPROVED"
+        },
+        "decision": null,
+        "evidence": {
+          "id": "1a63a57c-9b83-4dca-89d7-4243c0e09d61",
+          "table": "flow_engine_runs"
+        },
+        "flow_key": "bienvenida",
+        "certainty": "stored",
+        "attached_by": "contact",
+        "reason_code": "flow_engine_native_started",
+        "flow_version": {
+          "definition": 1
+        }
+      },
+      {
+        "at": "2026-10-25T03:26:08.838-03:00",
+        "kind": "scheduled",
+        "extra": {
+          "due_at": "2026-10-25T03:25:08.812-03:00",
+          "status": "accepted_by_chatwoot",
+          "step_key": "first_contact",
+          "expires_at": "2026-10-26T03:25:08.812-03:00"
+        },
+        "decision": null,
+        "evidence": {
+          "id": "40e214da-4c6d-48bd-aa84-421848e99dc2",
+          "table": "scheduled_actions"
+        },
+        "flow_key": "bienvenida",
+        "certainty": "stored",
+        "attached_by": "contact",
+        "reason_code": "flow_engine_native_step_scheduled",
+        "flow_version": {
+          "definition": 1
+        }
+      },
+      {
+        "at": "2026-10-25T03:26:08.851-03:00",
+        "kind": "start_authorized",
+        "extra": {
+          "local_budget_date": "2026-10-25"
+        },
+        "decision": null,
+        "evidence": {
+          "id": "62d271fb-6810-43e6-bb2a-8895eafb360f",
+          "table": "flow_engine_request_authorizations"
+        },
+        "flow_key": "bienvenida",
+        "certainty": "stored",
+        "attached_by": "contact",
+        "reason_code": "flow_engine_request_start_authorized",
+        "flow_version": {
+          "definition": 1
+        }
+      },
+      {
+        "at": "2026-10-25T03:26:08.856-03:00",
+        "kind": "accepted_by_chatwoot",
+        "extra": {
+          "outcome": "accepted_by_chatwoot"
+        },
+        "decision": null,
+        "evidence": {
+          "id": "14aa1c37-40aa-4f74-a73c-091207014fe3",
+          "table": "followup_delivery_attempts"
+        },
+        "flow_key": "bienvenida",
+        "certainty": "stored",
+        "attached_by": "contact",
+        "reason_code": "accepted_by_chatwoot",
+        "flow_version": {
+          "definition": 1
+        }
+      }
+    ],
+    "cohort_of": [
+      "bienvenida"
+    ],
+    "database_at": "2026-10-25T03:26:08.869-03:00"
+  }
+}

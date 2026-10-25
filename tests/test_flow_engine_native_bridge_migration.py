@@ -28,17 +28,19 @@ def test_it_is_one_transaction_and_the_last() -> None:
     assert "\nbegin;\n" in sql and sql.rstrip().endswith("commit;")
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
     # Despues va solo el AE que crea flujos (20261024000600), que no redefine nada de esta.
-    assert names[-1] == "20261024000600_flow_change_new_flow_v1.sql"
-    assert names[-2] == MIGRATION.name
-    assert names[-3] == "20261024000400_opted_out_reply_checkout_issuance.sql"
-    assert names[-4] == "20261024000200_flow_engine_native_v1.sql"
+    assert names[-1] == "20261025000100_automation_expert_native_reads_v1.sql"
+    assert names[-2] == "20261024000600_flow_change_new_flow_v1.sql"
+    assert names[-3] == MIGRATION.name
+    assert names[-4] == "20261024000400_opted_out_reply_checkout_issuance.sql"
+    assert names[-5] == "20261024000200_flow_engine_native_v1.sql"
 
 
 def test_the_validator_is_in_the_npm_chain() -> None:
     package = json.loads((ROOT / "tests" / "sql" / "followup_engine" / "package.json").read_text())
     chain = package["scripts"]["test"]
     assert chain.rstrip().endswith("node validate_flow_engine_native_bridge.mjs --emit-bridge-fixtures --check"
-                                   " && node validate_flow_change_new_flow.mjs")
+                                   " && node validate_flow_change_new_flow.mjs"
+                                   " && node validate_automation_expert_native_reads.mjs")
 
 
 def test_only_service_role_executes_the_seven_entrypoints_and_no_helper() -> None:

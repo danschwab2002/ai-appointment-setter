@@ -1,0 +1,78 @@
+{
+  "_capture": {
+    "source": "tests/sql/followup_engine/validate_automation_expert_native_reads.mjs --emit-fixture",
+    "migration": "20261025000100_automation_expert_native_reads_v1.sql",
+    "note": "la salida real de la funcion sobre la cadena de migraciones en PGlite, datos sinteticos"
+  },
+  "value": {
+    "flows": [
+      {
+        "pool": "att1-bienvenida",
+        "state": "cohorte",
+        "flow_id": "9daeb8b5-6c97-4447-a8b7-1e3f962decd9",
+        "flow_key": "bienvenida",
+        "observed": {
+          "in_flight": 0,
+          "window_days": 7,
+          "runs_started": 1,
+          "start_rejections": {},
+          "accepted_by_chatwoot": 1
+        },
+        "definition": {
+          "entra": {
+            "permiso": "compra",
+            "contesto_a": []
+          },
+          "flujo": "bienvenida",
+          "pasos": [
+            {
+              "idioma": "es_MX",
+              "plantilla": "att1_pago_efectivo_confirmado_01",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            },
+            {
+              "etiquetar": "cliente"
+            }
+          ],
+          "topes": {
+            "bolsa": "att1-bienvenida",
+            "total": "sin_tope",
+            "por_dia": "sin_tope",
+            "repeticion": {
+              "una_por": "persona",
+              "otra_despues_de": "nunca"
+            }
+          },
+          "estado": "publicada",
+          "nombre": "Bienvenida despues de la compra",
+          "dispara": {
+            "evento": "compra"
+          },
+          "esquema": "setter-flujo/v1",
+          "horario": "siempre",
+          "termina": {
+            "si": [],
+            "vence": "1d"
+          },
+          "version": 1,
+          "producto": "att1",
+          "prioridad": {
+            "le_gana_a": [],
+            "no_arranca_mientras": []
+          }
+        },
+        "product_ref": "att1",
+        "state_since": "2026-10-25T03:26:08.807-03:00",
+        "starts_today": 1,
+        "pool_timezone": "America/Mexico_City",
+        "active_version": 1,
+        "cohort_members": 1
+      }
+    ],
+    "database_at": "2026-10-25T03:26:08.866-03:00",
+    "window_from": "2026-10-18T03:26:08.866-03:00"
+  }
+}

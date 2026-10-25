@@ -36,6 +36,8 @@ Los caracteres de control se escriben con escapes ``\\u``.
 
 from __future__ import annotations
 
+import dataclasses
+
 import copy
 import json
 import os
@@ -120,7 +122,7 @@ def published(definition: dict[str, Any], version: int = 1) -> dict[str, Any]:
 
 def flow(key: str, *, versions: dict[int, dict[str, Any]] | None = None, active: int | None = None,
          state: str | None = None, generation: int | None = None, product: str = "att1",
-         flow_id: str | None = None, legacy_kind: str | None = None) -> WorldFlow:
+         flow_id: str | None = None, legacy_kind: str | None = None, native: bool = False) -> WorldFlow:
     versions = versions or {}
     if active is None and versions:
         active = max(versions)
@@ -128,7 +130,7 @@ def flow(key: str, *, versions: dict[int, dict[str, Any]] | None = None, active:
         flow_id=flow_id or IDS[key], product_ref=product, flow_key=key,
         state=state or ("prendido" if active is not None else "apagado"),
         active_version=active, generation=generation if generation is not None else len(versions),
-        versions=versions, legacy_kind=legacy_kind,
+        versions=versions, legacy_kind=legacy_kind, native=native,
     )
 
 
@@ -612,6 +614,13 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
         lambda: check([state_item("prender")], in_world=world(live("carrito"))).blocks,
         lambda: check([state_item("prender")], in_world=world(live("carrito", state="apagado"))).blocks,
     ),
+    # Ciclo 1.8.0: prender con a: cohorte, solo para un flujo nativo pausado.
+    "prender_a_cohorte_needs_paused_native": (
+        lambda: check([dataclasses.replace(state_item("prender"), a="cohorte")],
+                      in_world=world(live("carrito", state="pausado"))).blocks,
+        lambda: check([dataclasses.replace(state_item("prender"), a="cohorte")],
+                      in_world=world(live("carrito", state="pausado", native=True))).blocks,
+    ),
     "flow_has_no_version": (
         lambda: check([state_item("prender")]).blocks,
         lambda: check([version_item(flow_def("carrito")), state_item("prender")]).blocks,
@@ -797,7 +806,7 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         "required_key_missing", "flow_change_stale_base", "rollback_target_not_found",
         "rollback_target_is_active", "state_transition_invalid", "flow_has_no_version",
         "en_curso_not_supported", "identifier_not_allowed", "client_purchase_ok_missing",
-        "flow_already_registered", "new_flow_must_start_in_cohort",
+        "flow_already_registered", "new_flow_must_start_in_cohort", "prender_a_cohorte_needs_paused_native",
     }
     assert all(pairs == {(None, "advertencia")} for code, pairs in fv.CODE_RULES.items()
                if code in fv.WARNING_CODES)

@@ -533,7 +533,9 @@ def show_items(ops: Ops, items: Sequence[Mapping[str, Any]], world: Mapping[str,
         tipo = item.get("tipo")
         ops.say(f"* {ref}: {tipo} (hoy: version {active}, {flow.get('state')}, generacion {flow.get('generation')})")
         if tipo in ("prender", "apagar"):
-            ops.show("  estado despues", "prendido" if tipo == "prender" else "apagado")
+            # Ciclo 1.8.0: prender con a: cohorte vuelve a la cohorte de prueba.
+            after = ("cohorte" if item.get("a") == "cohorte" else "prendido") if tipo == "prender" else "apagado"
+            ops.show("  estado despues", after)
             continue
         before = flow["versions"].get(str(active), {}) if active is not None else {}
         if tipo == "volver":

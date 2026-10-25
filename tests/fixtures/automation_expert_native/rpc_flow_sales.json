@@ -1,0 +1,30 @@
+{
+  "_capture": {
+    "source": "tests/sql/followup_engine/validate_automation_expert_native_reads.mjs --emit-fixture",
+    "migration": "20261025000100_automation_expert_native_reads_v1.sql",
+    "note": "la salida real de la funcion sobre la cadena de migraciones en PGlite, datos sinteticos"
+  },
+  "value": {
+    "rule": "purchase_after_accepted_send_v1",
+    "flows": [
+      {
+        "native": true,
+        "by_case": 0,
+        "by_step": {
+          "first_contact": 1
+        },
+        "flow_id": "9daeb8b5-6c97-4447-a8b7-1e3f962decd9",
+        "flow_key": "bienvenida",
+        "by_identity": 1,
+        "product_ref": "att1",
+        "runs_started": 1,
+        "people_after_send": 1,
+        "purchases_after_send": 1,
+        "purchases_before_send": 0
+      }
+    ],
+    "since": "2026-10-18T03:26:08.903-03:00",
+    "until": "2026-10-25T03:26:08.903-03:00",
+    "identity_window_days": 7
+  }
+}

@@ -2,7 +2,7 @@
 
 - **Estado:** propuesto el 2026-10-24, para construir contra él (el PR 1 del hito 4). No hay código que lo implemente: lo construyen los PR 2 (la base), 3 (el bridge) y 4 (el Automation Expert). Este documento fija la interfaz; no dice que nada esté desplegado, activado ni probado.
 - **Fecha:** 2026-10-24
-- **Contrato:** `flow-engine-v2`, versión `2.2.0` (la `2.1.0`, del 2026-10-24, suma la sección 13: lo que fija el PR 3, el bridge; la `2.2.0`, del mismo día, la sección 14: lo que fija el PR 4, el Automation Expert que crea flujos)
+- **Contrato:** `flow-engine-v2`, versión `2.3.0` (la `2.1.0`, del 2026-10-24, suma la sección 13: lo que fija el PR 3, el bridge; la `2.2.0`, del mismo día, la sección 14: lo que fija el PR 4, el Automation Expert que crea flujos; la `2.3.0`, del 2026-10-25, la sección 15: lo que fija el PR 5, lo que el Automation Expert ve del motor nativo)
 - **Decisión:** las siete del hito 4 (D1 a D7), aprobadas por Dan el 2026-10-24, en el roadmap del producto que se lleva fuera de este repo. Las que gobiernan este contrato: D2 (los flujos nuevos corren solo en el motor, sin legado), D4 («marcar como clienta» es la etiqueta `cliente` y una nota), D6 (un flujo nuevo se publica primero para la cohorte de prueba) y D1 (el legado no se mueve en este hito).
 - **Alcance:** lo que la v1 no puede: un flujo que nace en el motor, sin `legacy_kind` ni scope del legado. Fija la ruta nativa, la bolsa propia (`flow_engine_pools`), la admisión genérica (`admit_flow_engine_event_v1`), el disparador `compra`, el paso `etiquetar`, el estado `cohorte` del control, el ítem `nuevo` del ciclo y el aviso `MOT-002`. La v1 ([flow-engine-v1.md](flow-engine-v1.md)) sigue entera para el carrito de hoy: este contrato la extiende y no cambia nada de lo que fija.
 - **Citas:** `origin/main` en `89f0997` (1.17.1). Abreviaturas de las migraciones: `M-almacén` = `supabase/migrations/20261016000100_flow_change_store_v1.sql`, `M-rutas` = `20261021000200_flow_engine_routes_v1.sql`, `M-carrito` = `20261022000100_flow_engine_motor_carrito_v1.sql`, `M-lecturas` = `20261022000200_flow_engine_bridge_reads_v1.sql`. «El esquema» es [flow-definition-v1.md](flow-definition-v1.md), que sube a la 1.2 con este contrato; «el ciclo», [flow-change-cycle-v1.md](flow-change-cycle-v1.md), que sube a la 1.7.0.
@@ -236,7 +236,7 @@ Todos en forma `^[a-z][a-z0-9_:]{1,79}$`. Los errores de entrada siguen la conve
 - Pasar al motor los flujos que hoy corren en el legado (el pago rechazado, la ficha y el primer contacto): son los PR 7 a 9, después de prender a Maribel (D1).
 - El tope por persona contado en los dos caminos y el arreglo de la adopción: el PR 6 (D5).
 - `en_curso: cancelar` y `migrar` (el ciclo).
-- Las ventas por flujo y la biblioteca del Automation Expert: el PR 5.
+- Las ventas por flujo y la biblioteca del Automation Expert: el PR 5 (sección 15).
 - Retirar un flujo para siempre.
 
 ## Para decidir antes del PR 2
@@ -277,3 +277,11 @@ read_flow_engine_native_trigger_counts_v1(p_instance jsonb, p_product_ref text, 
 - **La regla 14 de un flujo nativo** en el validador es `flow_engine.native_not_supported`, con `ENGINE_CAPABILITIES_NATIVE`: el disparador `compra`, los pasos `esperar`, `plantilla` y `etiquetar`, un envío, `nombre` y `producto`, sin botón y sin salidas. Suma lo que mira `_flow_engine_native_unsupported` en la base. Los códigos están en el ciclo (1.7.0).
 - **La vista previa de un `nuevo`:** `cambios` lleva `tipo: nuevo`, `nace_en: cohorte` y el diff contra nada; `a_quien` es `cohorte`; `volver_atras`, `{a_version: null, como: pausar_o_apagar}`.
 
+## 15. Lo que fija el PR 5 (lo que el Automation Expert ve del motor nativo, `2.3.0`)
+
+Escrito al construir el PR 5, antes de cualquier despliegue. Migración `20261025000100_automation_expert_native_reads_v1.sql`. Describe la interfaz; no dice que nada esté desplegado ni activado. El detalle de las lecturas y de la regla de las ventas está en [automation-expert-read-v1.md](automation-expert-read-v1.md), «Lo que suma el motor nativo (1.2.0)», y el de `prender` con `a: cohorte`, en el ciclo (1.8.0).
+
+- **Las lecturas de la v1 siguen sin mostrar los flujos nativos** (sección 1). El Automation Expert los ve por tres lecturas nuevas, de solo `service_role`: `read_automation_expert_native_flows_v1`, `read_automation_expert_native_history_v1` y `read_flow_sales_v1`. La sección 1 dejaba abierto si el agente pasaba a una lectura v2 o sumaba la nativa a la de hoy: suma la nativa a la de hoy, y el contrato de lectura sigue en el major 1.
+- **Las ventas por flujo** cuentan sobre `flow_engine_runs`, así que valen para todo flujo del motor: los nativos y el carrito con su ruta en motor. Lo que corrió en el legado no entra.
+- **Volver de `pausado` a `cohorte`** (sección 6, la última transición) es un ítem `prender` con `a: cohorte`. La base ya dejaba la transición; lo nuevo es que el ítem la pueda pedir.
+- **El anclaje de una persona** a la instancia, en la historia y en la búsqueda del agente, suma un recorrido nativo de la bandeja: un caso nativo no tiene el binding del piloto, que era uno de los caminos.

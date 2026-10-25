@@ -94,6 +94,8 @@ STEP_TYPES = ("esperar", "plantilla", "conversar", "condicion", "derivar", "etiq
 LABELS = ("cliente",)
 # nuevo (ciclo 1.7.0, flow-engine-v2 §7): crea un flujo nativo y lo publica en cohorte. No lleva flow_id.
 ITEM_TYPES = ("version", "volver", "prender", "apagar", "nuevo")
+# Ciclo 1.8.0: el unico valor de la clave a de un prender.
+PRENDER_A_COHORT = "cohorte"
 NEW_FLOW = "nuevo"
 # El contrato del ciclo nombra tres; hasta el motor solo se acepta seguir
 # (flow_validator, en_curso_not_supported).
@@ -922,6 +924,9 @@ class ProposalItem:
     en_curso: str | None = None
     ok_del_cliente: Mapping[str, Any] | None = None
     prender: str | None = None
+    # Ciclo 1.8.0: un prender puede llevar a: cohorte (de pausado a la cohorte
+    # de prueba de un flujo nativo). Sin a, prender lleva a prendido.
+    a: str | None = None
 
     def __post_init__(self) -> None:
         _check_item_envelope(
@@ -929,6 +934,8 @@ class ProposalItem:
             definicion=self.definicion, version=self.version, en_curso=self.en_curso,
             ok_del_cliente=self.ok_del_cliente, prender=self.prender,
         )
+        if self.a is not None and (self.tipo != "prender" or self.a != PRENDER_A_COHORT):
+            raise ProposalItemsInvalid("a_invalid")
 
     @classmethod
     def from_json(cls, value: object) -> ProposalItem:
@@ -947,6 +954,9 @@ class ProposalItem:
             allowed = required | {"ok_del_cliente"}
         elif tipo == "volver":
             required = allowed = identity | {"version", "en_curso"}
+        elif tipo == "prender":
+            required = identity
+            allowed = identity | {"a"}
         else:
             required = allowed = identity
         if not required <= keys or not keys <= allowed:
@@ -955,7 +965,7 @@ class ProposalItem:
             producto=value["producto"], flujo=value["flujo"], flow_id=value.get("flow_id"), tipo=tipo,
             definicion=value.get("definicion"), version=value.get("version"),
             en_curso=value.get("en_curso"), ok_del_cliente=value.get("ok_del_cliente"),
-            prender=value.get("prender"),
+            prender=value.get("prender"), a=value.get("a"),
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -979,6 +989,8 @@ class ProposalItem:
         elif self.tipo == "volver":
             out["version"] = self.version
             out["en_curso"] = self.en_curso
+        elif self.tipo == "prender" and self.a is not None:
+            out["a"] = self.a
         return out
 
     @property
@@ -998,7 +1010,7 @@ class ProposalItem:
         return ProposalItem(
             producto=self.producto, flujo=self.flujo, flow_id=self.flow_id, tipo=self.tipo,
             definicion=definition, version=self.version, en_curso=self.en_curso,
-            ok_del_cliente=self.ok_del_cliente, prender=self.prender,
+            ok_del_cliente=self.ok_del_cliente, prender=self.prender, a=self.a,
         )
 
 

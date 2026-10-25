@@ -124,12 +124,15 @@ from bridge.automation_expert_read import (
     LookupRejected,
     ResponseTooLarge,
     ScopeRef,
+    attach_sales,
     build_flows,
     build_history,
+    build_native_flows,
     build_lookup,
     checked_size,
     decode_cursor,
     envelope as automation_expert_envelope,
+    gap as automation_expert_gap,
     flow_settings_from,
     parse_flow_key,
     parse_lead_ref,
@@ -7734,6 +7737,37 @@ def create_app(
             data, gaps = build_flows(
                 raw, instance=expert_instance, settings=expert_flow_settings
             )
+            # 1.2.0: los flujos nativos y las ventas por flujo. Si la lectura
+            # no contesta (una base sin la migracion 20261025000100), la
+            # respuesta sale con los flujos de siempre y su hueco.
+            native_flows: list[dict[str, object]] = []
+            try:
+                native_flows = build_native_flows(
+                    await expert_reader.read_automation_expert_native_flows_v1(
+                        instance=expert_instance.to_rpc()
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - el log lleva solo el tipo
+                logger.warning(
+                    "automation_expert_native_read_failed route=flows error_type=%s",
+                    type(exc).__name__,
+                )
+                gaps = [*gaps, automation_expert_gap("native_flows_not_read", "instance")]
+            data = {**data, "flows": [*data["flows"], *native_flows]}  # type: ignore[misc]
+            try:
+                gaps = [*gaps, *attach_sales(
+                    data["flows"],  # type: ignore[arg-type]
+                    await expert_reader.read_flow_sales_v1(
+                        instance=expert_instance.to_rpc(),
+                        since=datetime.now(UTC) - timedelta(days=7),
+                    ),
+                )]
+            except Exception as exc:  # noqa: BLE001 - el log lleva solo el tipo
+                logger.warning(
+                    "automation_expert_native_read_failed route=sales error_type=%s",
+                    type(exc).__name__,
+                )
+                gaps = [*gaps, automation_expert_gap("flow_sales_not_read", "instance")]
             if flow_key is not None:
                 flows = [
                     flow for flow in data["flows"] if flow["flow_key"] == flow_key  # type: ignore[index]
@@ -7754,6 +7788,9 @@ def create_app(
                 generated_at=datetime.now(UTC),
                 database_at=raw.get("database_at"),
                 bridge_git_sha=settings.bridge_release,
+                source="mixed" if any(
+                    flow.get("native") for flow in data["flows"]  # type: ignore[union-attr]
+                ) else "projection",
             )
             return checked_size(body, limit=MAX_FLOWS_BODY_BYTES)
 
@@ -7934,6 +7971,20 @@ def create_app(
                     ):
                         raise InvalidReadEvidence("invalid_conversations")
                     ordered = sorted(set(numbers))
+                    native_history: object = None
+                    native_failed = False
+                    try:
+                        native_history = (
+                            await expert_reader.read_automation_expert_native_history_v1(
+                                instance=expert_instance.to_rpc(), lead_ref=checked_ref
+                            )
+                        )
+                    except Exception as exc:  # noqa: BLE001 - el log lleva solo el tipo
+                        logger.warning(
+                            "automation_expert_native_read_failed route=history error_type=%s",
+                            type(exc).__name__,
+                        )
+                        native_failed = True
                     reads = await read_automation_expert_conversations(ordered[-5:])
                     reads += [
                         ChatwootRead(
@@ -7951,6 +8002,8 @@ def create_app(
                         now=datetime.now(UTC),
                         limit=limit,
                         cursor=cursor,
+                        native=native_history,
+                        native_failed=native_failed,
                     )
                     body = checked_size(
                         automation_expert_envelope(

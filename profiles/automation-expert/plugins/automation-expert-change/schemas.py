@@ -38,7 +38,9 @@ PROPOSE_FLOW_CHANGE = {
                 "description": "Los ítems, con estas claves exactas: version → {producto, flujo, flow_id, "
                                "tipo: \"version\", definicion, en_curso: \"seguir\"} (es draft_item); "
                                "volver → {producto, flujo, flow_id, tipo: \"volver\", version, en_curso}; "
-                               "prender o apagar → {producto, flujo, flow_id, tipo}; un flujo nuevo → "
+                               "prender o apagar → {producto, flujo, flow_id, tipo}; volver un flujo nativo "
+                               "pausado a la cohorte de prueba → {producto, flujo, flow_id, tipo: \"prender\", "
+                               "a: \"cohorte\"}; un flujo nuevo → "
                                "{producto, flujo, tipo: \"nuevo\", prender: \"cohorte\", definicion} y, con "
                                "permiso: compra, ok_del_cliente {quien, medio, fecha}. producto y flujo son el "
                                "product_ref y el flow_key del almacén.",

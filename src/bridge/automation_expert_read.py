@@ -30,7 +30,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 CONTRACT = "automation-expert-read-v1"
-CONTRACT_VERSION = "1.1.0"
+CONTRACT_VERSION = "1.2.0"
 FLOW_KEYS = ("precheckout", "carrito", "pago_fallido", "reactivacion", "descuento")
 HISTORY_DEFAULT_LIMIT = 50
 HISTORY_MAX_LIMIT = 100
@@ -41,7 +41,7 @@ CHATWOOT_MAX_MESSAGES_PER_CONVERSATION = 200
 CHATWOOT_READ_TIMEOUT_SECONDS = 5.0
 
 REASON_CODE_RE = re.compile(r"^[a-z][a-z0-9_:]{0,79}$")
-_FLOW_KEY_SHAPE_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+_FLOW_KEY_SHAPE_RE = re.compile(r"^[a-z][a-z0-9_]{1,39}$")
 _ULID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 _EMAIL_RE = re.compile(r"[^\s@]+@[^\s@]+")
 _PHONE_SEPARATORS = frozenset(" \t\n\r\u00a0-.()+")
@@ -74,6 +74,8 @@ _EVIDENCE_TABLES = frozenset({
     "checkout_link_issuances",
     "conversation_followup_events", "conversation_reactivation_events", "human_handoff_requests",
     "conversation_resume_events", "contact_opt_out_events", "chatwoot.messages",
+    # 1.2.0: el recorrido de un flujo nativo.
+    "flow_engine_runs",
 })
 
 # Los motivos (contrato, «Los motivos»). La traduccion de los codigos de hoy;
@@ -143,6 +145,9 @@ EXPLANATIONS = {
     "pilot_request_start_authorized": "El piloto autorizó el arranque y gastó cupo del día.",
     # 20261022000300: el mismo momento cuando lo autoriza el motor de flujos.
     "flow_engine_request_start_authorized": "El motor autorizó el arranque y gastó cupo del día.",
+    # 1.2.0: los recorridos del motor nativo.
+    "flow_engine_native_started": "Arrancó el recorrido del flujo nativo: lo disparó el evento.",
+    "flow_engine_native_step_scheduled": "Se programó el paso del flujo nativo.",
     "precheckout_binding_unavailable": "La instancia no tenía una configuración comercial activa para el primer contacto.",
     "precheckout_prior_opt_out": "La persona se había dado de baja antes del formulario.",
     "contact_blocked": "El contacto está bloqueado.",
@@ -218,6 +223,18 @@ GAP_DESCRIPTIONS = {
         "el motivo de un momento", "el código no está en el catálogo o no cumple la forma"),
     "unknown_event_kind": (
         "qué fue un momento", "el tipo no está en el catálogo"),
+    # 1.2.0.
+    "native_flows_not_read": (
+        "los flujos del motor nativo y sus recorridos",
+        "la lectura del motor nativo no contestó (una base sin la migración 20261025000100, o un error)"),
+    "flow_sales_not_read": (
+        "las ventas por flujo", "la lectura de las ventas no contestó"),
+    "flow_sales_motor_only": (
+        "las ventas de lo que corrió en el legado",
+        "las ventas por flujo se cuentan sobre los recorridos del motor; lo que corrió en el legado no entra"),
+    "native_upcoming_not_projected": (
+        "cuándo sale el próximo paso de un flujo nativo",
+        "la historia lo muestra como un paso programado, con su due_at, y no en upcoming"),
 }
 
 
@@ -353,12 +370,15 @@ def envelope(
     database_at: object,
     bridge_git_sha: str | None,
     page: Mapping[str, object] | None = None,
+    source: str = "projection",
 ) -> dict[str, object]:
+    # 1.2.0: mixed cuando la respuesta trae flujos nativos (stored_definition)
+    # junto a los proyectados.
     return {
         "contract": CONTRACT,
         "contract_version": CONTRACT_VERSION,
         "instance": instance.envelope(),
-        "source": "projection",
+        "source": source if source in ("projection", "stored_definition", "mixed") else "projection",
         "generated_at": generated_at.astimezone(timezone.utc).isoformat(),
         "database_at": database_at if isinstance(database_at, str) else None,
         "bridge_git_sha": bridge_git_sha if bridge_git_sha and _RELEASE_RE.match(bridge_git_sha) else None,
@@ -952,6 +972,11 @@ def _gap(code: str, scope: str, *, what: str | None = None, why: str | None = No
     return {"code": code, "scope": scope, "what": what or default_what, "why": why or default_why}
 
 
+def gap(code: str, scope: str) -> dict[str, object]:
+    """Un hueco del catalogo, para lo que suma la ruta (1.2.0)."""
+    return _gap(code, scope)
+
+
 def _dedupe(gaps: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
     seen: set[tuple[object, object, object]] = set()
     result = []
@@ -980,11 +1005,15 @@ def _flow_version(value: object) -> dict[str, str | None] | None:
         return None
     if not isinstance(value, dict):
         raise InvalidReadEvidence("invalid_flow_version")
-    result: dict[str, str | None] = {}
+    result: dict[str, object] = {}
     for field_name in ("scope", "policy"):
         label = value.get(field_name)
         result[field_name] = label if isinstance(label, str) and _SCOPE_LABEL_RE.match(label) else None
-    return result
+    # 1.2.0: la version de la definicion de un flujo nativo.
+    definition = _int(value.get("definition")) if "definition" in value else None
+    if definition is not None and definition > 0:
+        result["definition"] = definition
+    return result  # type: ignore[return-value]
 
 
 # Las claves de extra que pueden salir, con su validacion.
@@ -1059,6 +1088,7 @@ class _Moment:
 
 def _moment_from_database(
     raw: object, *, zone: ZoneInfo, gaps: list[dict[str, object]],
+    native_keys: frozenset[str] = frozenset(),
 ) -> _Moment:
     if not isinstance(raw, dict):
         raise InvalidReadEvidence("invalid_moment")
@@ -1068,7 +1098,7 @@ def _moment_from_database(
         gaps.append(_gap("unknown_event_kind", "lead"))
         kind = "other"
     flow_key = raw.get("flow_key")
-    if flow_key is not None and flow_key not in FLOW_KEYS:
+    if flow_key is not None and flow_key not in FLOW_KEYS and flow_key not in native_keys:
         raise InvalidReadEvidence("invalid_flow_key")
     evidence = raw.get("evidence")
     if (not isinstance(evidence, dict) or evidence.get("table") not in _EVIDENCE_TABLES
@@ -1380,12 +1410,26 @@ def build_history(
     now: datetime,
     limit: int,
     cursor: tuple[str, int, str, str, str] | None,
+    native: object = None,
+    native_failed: bool = False,
 ) -> tuple[dict[str, object], list[dict[str, object]], str | None]:
-    """La historia de un lead: la base y Chatwoot en una sola linea de tiempo."""
+    """La historia de un lead: la base y Chatwoot en una sola linea de tiempo.
+
+    ``native`` es lo que devolvio read_automation_expert_native_history_v1
+    (1.2.0): sus momentos van a la misma linea de tiempo, con la clave de su
+    flujo nativo. ``native_failed`` dice que esa lectura no contesto.
+    """
     if not isinstance(raw, dict):
         raise InvalidReadEvidence("invalid_history_shape")
     zone = ZoneInfo(instance.time_zone)
     gaps: list[dict[str, object]] = [_gap("payment_slip_not_attached", "instance")]
+    native_moments, cohort_of = _native_history(native)
+    native_keys = frozenset(
+        str(item["flow_key"]) for item in native_moments if isinstance(item, dict)
+        and isinstance(item.get("flow_key"), str) and _FLOW_KEY_SHAPE_RE.match(item["flow_key"])
+        and item["flow_key"] not in FLOW_KEYS)
+    if native_failed:
+        gaps.append(_gap("native_flows_not_read", "lead"))
     lead_raw = raw.get("lead")
     if not isinstance(lead_raw, dict):
         raise InvalidReadEvidence("invalid_lead")
@@ -1409,6 +1453,10 @@ def build_history(
     if not isinstance(raw_moments, list):
         raise InvalidReadEvidence("invalid_moments")
     database = [_moment_from_database(item, zone=zone, gaps=gaps) for item in raw_moments]
+    database += [_moment_from_database(item, zone=zone, gaps=gaps, native_keys=native_keys)
+                 for item in native_moments]
+    if any(isinstance(item, dict) and item.get("kind") == "scheduled" for item in native_moments):
+        gaps.append(_gap("native_upcoming_not_projected", "lead"))
     templates: dict[int, _Moment] = {}
     for moment in database:
         message_id = moment.data.pop("chatwoot_message_id", None)
@@ -1525,8 +1573,138 @@ def build_history(
         "past": [moment.data for moment in page],
         "upcoming": upcoming,
         "now": now_state,
+        # 1.2.0: de que cohortes de prueba de flujos nativos es la persona.
+        "native": {"cohort_of": cohort_of},
     }
     return data, _dedupe(gaps), next_cursor
+
+
+def _native_history(native: object) -> tuple[list[object], list[str]]:
+    if native is None:
+        return [], []
+    if not isinstance(native, dict):
+        raise InvalidReadEvidence("invalid_native_history")
+    moments = native.get("moments")
+    cohorts = native.get("cohort_of")
+    if not isinstance(moments, list) or not isinstance(cohorts, list):
+        raise InvalidReadEvidence("invalid_native_history")
+    if not all(isinstance(key, str) and _FLOW_KEY_SHAPE_RE.match(key) for key in cohorts):
+        raise InvalidReadEvidence("invalid_native_cohort")
+    return moments, sorted(set(cohorts))
+
+
+# ---------------------------------------------------------------------------
+# El motor nativo (1.2.0): los flujos y las ventas por flujo.
+# ---------------------------------------------------------------------------
+
+# El estado del control del almacen, como lo muestra la lectura.
+_NATIVE_STATE = {"prendido": "on", "pausado": "paused", "apagado": "off", "cohorte": "cohort"}
+_SALES_FIELDS = ("runs_started", "purchases_after_send", "by_case", "by_identity", "people_after_send",
+                 "purchases_before_send")
+NATIVE_COHORT_MAX = 5
+
+
+def build_native_flows(raw: object) -> list[dict[str, object]]:
+    """Los flujos con ruta nativa, en la forma de data.flows[] (contrato 1.2.0)."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("flows"), list):
+        raise InvalidReadEvidence("invalid_native_flows")
+    flows: list[dict[str, object]] = []
+    for item in raw["flows"]:
+        if not isinstance(item, dict):
+            raise InvalidReadEvidence("invalid_native_flow")
+        flow_key = item.get("flow_key")
+        state = item.get("state")
+        if (not isinstance(flow_key, str) or not _FLOW_KEY_SHAPE_RE.match(flow_key) or flow_key in FLOW_KEYS
+                or state not in _NATIVE_STATE):
+            raise InvalidReadEvidence("invalid_native_flow")
+        product_ref = item.get("product_ref")
+        if not isinstance(product_ref, str) or not _LANDING_RE.match(product_ref):
+            raise InvalidReadEvidence("invalid_native_flow")
+        version = _int(item.get("active_version"))
+        definition = item.get("definition")
+        if definition is not None and not isinstance(definition, dict):
+            raise InvalidReadEvidence("invalid_native_definition")
+        observed_raw = item.get("observed")
+        if not isinstance(observed_raw, dict):
+            raise InvalidReadEvidence("invalid_native_observed")
+        rejections = observed_raw.get("start_rejections")
+        observed: dict[str, object] = {"window_days": _int(observed_raw.get("window_days"))}
+        for field_name in ("runs_started", "accepted_by_chatwoot", "in_flight"):
+            observed[field_name] = _int(observed_raw.get(field_name))
+        observed["start_rejections"] = {
+            code: count for code, count in (rejections or {}).items()
+            if code_ok(code) and _int(count) is not None
+        } if isinstance(rejections, dict) else {}
+        definition_ref = f"flow_definitions {product_ref}/{flow_key} v{version}" if version else None
+        provenance: dict[str, dict[str, str]] = {
+            "/status": {"from": "database", "ref": "flow_controls"},
+            "/cohort": {"from": "database", "ref": "flow_cohort_members"},
+        }
+        if definition_ref is not None:
+            provenance["/definition"] = {"from": "database", "ref": definition_ref}
+            provenance["/version"] = {"from": "database", "ref": definition_ref}
+        if item.get("pool") is not None:
+            provenance["/usage"] = {"from": "database", "ref": "flow_engine_pools y flow_engine_request_authorizations"}
+        pool = item.get("pool")
+        flows.append({
+            "flow_key": flow_key,
+            "native": True,
+            "product_ref": product_ref,
+            "version": {"definition": version} if version else None,
+            "status": {"state": _NATIVE_STATE[state], "detail": state, "since": item.get("state_since")},
+            "cohort": {"members": _int(item.get("cohort_members")), "max_members": NATIVE_COHORT_MAX,
+                       "applies": state == "cohorte"},
+            "priority": {
+                "le_gana_a": list((definition or {}).get("prioridad", {}).get("le_gana_a", []))
+                if isinstance((definition or {}).get("prioridad"), dict) else [],
+                "no_arranca_mientras": list((definition or {}).get("prioridad", {}).get("no_arranca_mientras", []))
+                if isinstance((definition or {}).get("prioridad"), dict) else [],
+                "le_ganan": [],
+                "derived": ["le_ganan"],
+            },
+            "usage": {
+                "pool": pool if isinstance(pool, str) and _LANDING_RE.match(pool) else None,
+                "pool_timezone": item.get("pool_timezone") if isinstance(item.get("pool_timezone"), str) else None,
+                "starts_today": _int(item.get("starts_today")),
+            },
+            "observed": observed,
+            "source": "stored_definition",
+            "definition": definition,
+            "provenance": provenance,
+        })
+    return flows
+
+
+def attach_sales(flows: Sequence[dict[str, object]], raw: object) -> list[dict[str, object]]:
+    """Suma a cada flujo del motor sus ventas (read_flow_sales_v1). Devuelve los huecos."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("flows"), list):
+        raise InvalidReadEvidence("invalid_flow_sales")
+    by_key: dict[str, dict[str, object]] = {}
+    for item in raw["flows"]:
+        if not isinstance(item, dict) or not isinstance(item.get("flow_key"), str):
+            raise InvalidReadEvidence("invalid_flow_sales")
+        by_step = item.get("by_step")
+        sales: dict[str, object] = {field_name: _int(item.get(field_name)) for field_name in _SALES_FIELDS}
+        sales["by_step"] = {
+            step: count for step, count in (by_step or {}).items() if code_ok(step) and _int(count) is not None
+        } if isinstance(by_step, dict) else {}
+        sales.update({
+            "since": raw.get("since") if isinstance(raw.get("since"), str) else None,
+            "until": raw.get("until") if isinstance(raw.get("until"), str) else None,
+            "rule": raw.get("rule") if code_ok(raw.get("rule")) else None,
+            "identity_window_days": _int(raw.get("identity_window_days")),
+        })
+        by_key[str(item["flow_key"])] = sales
+    gaps: list[dict[str, object]] = []
+    for flow in flows:
+        key = str(flow["flow_key"])
+        if key in by_key:
+            flow["sales"] = by_key[key]
+            flow.setdefault("provenance", {})["/sales"] = {  # type: ignore[index]
+                "from": "database", "ref": "read_flow_sales_v1"}
+            if not flow.get("native"):
+                gaps.append(_gap("flow_sales_motor_only", f"flow:{key}"))
+    return gaps
 
 
 def _coupon_upcoming(number: int, opens: datetime, closes: datetime, decision: str,
