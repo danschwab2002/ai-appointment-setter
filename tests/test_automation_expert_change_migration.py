@@ -64,6 +64,9 @@ def test_it_is_one_transaction_and_comes_before_the_flow_engine_routes() -> None
         "20261024000600_flow_change_new_flow_v1.sql",
         # Las lecturas nativas del AE (20261025000100) suman lecturas y parchan el anclaje del AE y prender.
         "20261025000100_automation_expert_native_reads_v1.sql",
+        # El btrim del nombre del producto en el pago rechazado (20261025000200, E-087) solo parcha
+        # admit_portable_hotmart_payment_failure.
+        "20261025000200_payment_failure_product_name_btrim.sql",
     ]
 
 

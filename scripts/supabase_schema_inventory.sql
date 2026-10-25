@@ -5690,6 +5690,30 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'automation_expert_native_reads'
+    union all
+    select
+        '20261025000200',
+        '20261025000200_payment_failure_product_name_btrim.sql',
+        -- El pago rechazado portable compara el nombre del producto con btrim
+        -- de los dos lados (E-087).
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_portable_hotmart_payment_failure(text,text,integer,text,jsonb,text,text)')
+              and position('btrim(v_binding.product_name)' in definition) > 0
+        )::int
+        -- Sigue siendo de service_role y de nadie mas de la API.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_portable_hotmart_payment_failure(text,text,integer,text,jsonb,text,text)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        2,
+        'payment_failure_product_name_btrim'
 )
 select
     version,

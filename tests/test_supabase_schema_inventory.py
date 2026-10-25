@@ -1376,19 +1376,36 @@ def test_flow_change_new_flow_fingerprint_is_before_the_native_reads() -> None:
         assert marker in compact_fingerprint, marker
 
 
-def test_automation_expert_native_reads_fingerprint_is_last() -> None:
+def test_automation_expert_native_reads_fingerprint_is_before_the_product_name_btrim() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261025000100 (las lecturas nativas del AE, E-080) es la ultima.
-    fingerprint = sql.split("'20261025000100'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261025000100 (las lecturas nativas del AE, E-080) va justo antes de la del btrim (E-087).
+    fingerprint = sql.split("'20261025000100'", 1)[1].split(
+        "    union all\n    select\n        '20261025000200'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261025000100_automation_expert_native_reads_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",3,'automation_expert_native_reads')")
+    assert compact_fingerprint.endswith(",3,'automation_expert_native_reads'")
     for marker in (
         "to_regprocedure('public.read_automation_expert_native_flows_v1(jsonb)')",
         "to_regprocedure('public.read_flow_sales_v1(jsonb,timestamptz)')",
         "position('automation_expert_native_anchor_v1'indefinition)>0",
         "position('flow_change_prender_a_cohorte_v1'indefinition)>0",
+        "andnothas_function_privilege('anon',oid,'EXECUTE')",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_payment_failure_product_name_btrim_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261025000200 (el btrim del nombre del producto en el pago rechazado, E-087) es la ultima.
+    fingerprint = sql.split("'20261025000200'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261025000200_payment_failure_product_name_btrim.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'payment_failure_product_name_btrim')")
+    for marker in (
+        "to_regprocedure('public.admit_portable_hotmart_payment_failure(text,text,integer,text,jsonb,text,text)')",
+        "position('btrim(v_binding.product_name)'indefinition)>0",
         "andnothas_function_privilege('anon',oid,'EXECUTE')",
     ):
         assert marker in compact_fingerprint, marker

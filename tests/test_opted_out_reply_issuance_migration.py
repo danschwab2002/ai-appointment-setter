@@ -35,11 +35,13 @@ def test_it_is_one_transaction_and_comes_before_the_native_bridge() -> None:
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
     # Despues van el bridge del motor nativo (20261024000500) y el AE que crea
     # flujos (20261024000600), que no tocan el link.
-    assert names[-1] == "20261025000100_automation_expert_native_reads_v1.sql"
-    assert names[-2] == "20261024000600_flow_change_new_flow_v1.sql"
-    assert names[-3] == "20261024000500_flow_engine_native_bridge_v1.sql"
-    assert names[-4] == MIGRATION.name
-    assert names[-5] == "20261024000200_flow_engine_native_v1.sql"
+    # Despues va la del btrim del nombre del producto en el pago rechazado (20261025000200, E-087).
+    assert names[-1] == "20261025000200_payment_failure_product_name_btrim.sql"
+    assert names[-2] == "20261025000100_automation_expert_native_reads_v1.sql"
+    assert names[-3] == "20261024000600_flow_change_new_flow_v1.sql"
+    assert names[-4] == "20261024000500_flow_engine_native_bridge_v1.sql"
+    assert names[-5] == MIGRATION.name
+    assert names[-6] == "20261024000200_flow_engine_native_v1.sql"
 
 
 def test_it_patches_the_four_link_functions_by_counted_anchor() -> None:

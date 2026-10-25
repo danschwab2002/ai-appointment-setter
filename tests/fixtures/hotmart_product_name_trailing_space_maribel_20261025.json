@@ -1,0 +1,36 @@
+{
+  "_capture": {
+    "captured_at": "2026-10-25T16:35:00Z",
+    "origin": "Base de Maribel (maribel_db, public.webhook_events y public.commercial_ally_runtime_bindings), leida con default_transaction_read_only=on. Solo el bloque data.product de cada evento y el binding activo: sin comprador, sin transaccion, sin ucode del carrito.",
+    "why": "Hotmart manda el nombre del producto con un espacio al final en el carrito (26 caracteres) y sin el en la compra aprobada (25). El binding activo lo tiene sin el espacio. E-087: el pago rechazado portable tiene que rutear igual con los dos.",
+    "task": "E-087 (claim claude-btrim-nombre-producto-v1)"
+  },
+  "binding": {
+    "hotmart_product_id": 8443991,
+    "product_name": "El Protocolo Biohacking +",
+    "offer_code": "u8ikyx78"
+  },
+  "events": [
+    {
+      "event": "PURCHASE_OUT_OF_SHOPPING_CART",
+      "received_at": "2026-10-25T16:26:40.690257Z",
+      "version": "2.0.0",
+      "product": {"id": 8443991, "name": "El Protocolo Biohacking + "},
+      "offer_code": "u8ikyx78"
+    },
+    {
+      "event": "PURCHASE_OUT_OF_SHOPPING_CART",
+      "received_at": "2026-10-25T16:29:09.28664Z",
+      "version": "2.0.0",
+      "product": {"id": 8443991, "name": "El Protocolo Biohacking + "},
+      "offer_code": "u8ikyx78"
+    },
+    {
+      "event": "PURCHASE_APPROVED",
+      "received_at": "2026-10-25T16:24:58.752328Z",
+      "version": "2.0.0",
+      "product": {"id": 8443991, "name": "El Protocolo Biohacking +"},
+      "offer_code": "u8ikyx78"
+    }
+  ]
+}
