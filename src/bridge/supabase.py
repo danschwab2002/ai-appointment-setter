@@ -732,6 +732,19 @@ class HandoffNoteCheckoutLink:
     coupon_code: str | None
 
 
+@dataclass(frozen=True)
+class PurchaseAgentPauseLookup:
+    """Las conversaciones del comprador con el agente, para pausarlas (E-100).
+
+    ``outcome``: ``found`` (con hasta 5 conversaciones, la mas reciente
+    primero), ``not_found`` o ``ambiguous`` (de mas de un numero de WhatsApp:
+    no se pausa ninguna).
+    """
+
+    outcome: str
+    conversation_ids: tuple[int, ...]
+
+
 HANDOFF_NOTE_LINK_SOURCE_KINDS = frozenset(
     {"inbound_request", "precheckout_request", "recovery_first_touch"}
 )
@@ -2775,6 +2788,66 @@ class SupabaseClient:
             source_kind=source_kind,
             accepted_at=accepted_at,
             coupon_code=coupon_code,
+        )
+
+    async def read_purchase_agent_pause_conversations(
+        self,
+        *,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        inbound_scope_key: str,
+        buyer_email: str | None,
+        buyer_phone: str | None,
+    ) -> PurchaseAgentPauseLookup:
+        """Las conversaciones de la instancia que son del comprador (E-100).
+
+        Las busca la base, por los ultimos 10 digitos del WhatsApp o por el
+        mail del contacto (``read_purchase_agent_pause_conversations_v1``,
+        migracion 20261025000400). Solo lectura.
+        """
+        operation = "purchase_agent_pause_read"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/read_purchase_agent_pause_conversations_v1",
+            content=json.dumps(
+                {
+                    "p_chatwoot_account_id": chatwoot_account_id,
+                    "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                    "p_inbound_scope_key": inbound_scope_key,
+                    "p_buyer_email": buyer_email,
+                    "p_buyer_phone": buyer_phone,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if not rows:
+            return PurchaseAgentPauseLookup(outcome="not_found", conversation_ids=())
+        for row in rows:
+            if set(row) != {"outcome", "chatwoot_conversation_id", "last_activity_at"}:
+                raise _invalid_row_error(operation)
+        outcomes = {row["outcome"] for row in rows}
+        if outcomes == {"ambiguous"}:
+            if len(rows) != 1 or rows[0]["chatwoot_conversation_id"] is not None:
+                raise _invalid_row_error(operation)
+            return PurchaseAgentPauseLookup(outcome="ambiguous", conversation_ids=())
+        if outcomes != {"found"} or len(rows) > 5:
+            raise _invalid_row_error(operation)
+        conversation_ids: list[int] = []
+        for row in rows:
+            value = row["chatwoot_conversation_id"]
+            if (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value <= 0
+                or value in conversation_ids
+            ):
+                raise _invalid_row_error(operation)
+            conversation_ids.append(value)
+        return PurchaseAgentPauseLookup(
+            outcome="found", conversation_ids=tuple(conversation_ids)
         )
 
     async def admit_portable_hotmart_payment_slip_event(

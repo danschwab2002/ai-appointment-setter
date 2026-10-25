@@ -176,7 +176,9 @@ expected_service_role(signature) as (
         ('public.read_automation_expert_native_history_v1(jsonb, uuid)'),
         ('public.read_flow_sales_v1(jsonb, timestamp with time zone)'),
         -- 20261025000300: el link de la persona para la nota privada al derivar (F-034, D8).
-        ('public.read_handoff_note_checkout_link_v1(uuid, bigint, bigint, timestamp with time zone)')
+        ('public.read_handoff_note_checkout_link_v1(uuid, bigint, bigint, timestamp with time zone)'),
+        -- 20261025000400: las conversaciones del comprador para pausar al agente (E-100).
+        ('public.read_purchase_agent_pause_conversations_v1(bigint, bigint, text, text, text)')
 ),
 functions as (
     select

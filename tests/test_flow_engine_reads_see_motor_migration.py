@@ -76,6 +76,9 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
         # La lectura del link para la nota privada al derivar (20261025000300, F-034 D8):
         # una funcion nueva, no toca ninguna existente.
         "20261025000300_handoff_link_note_v1.sql",
+        # Las conversaciones del comprador para pausar al agente (20261025000400,
+        # E-100): una funcion nueva, no toca ninguna existente.
+        "20261025000400_purchase_agent_pause_v1.sql",
     ]
     native = (MIGRATIONS / "20261024000200_flow_engine_native_v1.sql").read_text(encoding="utf-8")
     assert "read_automation_expert_flows_v1" not in native
