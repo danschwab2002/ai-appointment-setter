@@ -5714,6 +5714,29 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'payment_failure_product_name_btrim'
+    union all
+    select
+        '20261025000300',
+        '20261025000300_handoff_link_note_v1.sql',
+        -- La lectura del link para la nota privada al derivar (F-034, D8).
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.read_handoff_note_checkout_link_v1(uuid,bigint,bigint,timestamptz)')
+              and position('accepted_by_chatwoot' in definition) > 0
+        )::int
+        -- Solo service_role la ejecuta.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.read_handoff_note_checkout_link_v1(uuid,bigint,bigint,timestamptz)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        2,
+        'handoff_link_note'
 )
 select
     version,

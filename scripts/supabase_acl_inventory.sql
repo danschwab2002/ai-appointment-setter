@@ -174,7 +174,9 @@ expected_service_role(signature) as (
         -- 20261025000100: las lecturas del motor nativo del AE y las ventas por flujo.
         ('public.read_automation_expert_native_flows_v1(jsonb)'),
         ('public.read_automation_expert_native_history_v1(jsonb, uuid)'),
-        ('public.read_flow_sales_v1(jsonb, timestamp with time zone)')
+        ('public.read_flow_sales_v1(jsonb, timestamp with time zone)'),
+        -- 20261025000300: el link de la persona para la nota privada al derivar (F-034, D8).
+        ('public.read_handoff_note_checkout_link_v1(uuid, bigint, bigint, timestamp with time zone)')
 ),
 functions as (
     select

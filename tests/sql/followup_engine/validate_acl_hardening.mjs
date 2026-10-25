@@ -247,7 +247,8 @@ const rows = await db.query(`
       ('read_flow_engine_native_trigger_counts_v1(jsonb,text,text,timestamp with time zone)'),
       ('read_automation_expert_native_flows_v1(jsonb)'),
       ('read_automation_expert_native_history_v1(jsonb,uuid)'),
-      ('read_flow_sales_v1(jsonb,timestamp with time zone)')
+      ('read_flow_sales_v1(jsonb,timestamp with time zone)'),
+      ('read_handoff_note_checkout_link_v1(uuid,bigint,bigint,timestamp with time zone)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -310,7 +311,7 @@ const result = rows.rows[0];
 // native reads (20261025000100) add three: the native flows, the native
 // history of a lead and the sales by flow.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 169) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 170) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

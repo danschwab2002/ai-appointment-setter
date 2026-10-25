@@ -88,6 +88,10 @@ from bridge.hotmart import (
     parse_hotmart_payload,
     verify_hotmart_token,
 )
+from bridge.handoff_link_note import (
+    handoff_link_note_body,
+    handoff_link_note_marker,
+)
 from bridge.handoff_notice import (
     HANDOFF_NOTICE_DECISION,
     HANDOFF_NOTICE_TEXT,
@@ -314,6 +318,9 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # F-034: el aviso corto al derivar. El texto es fijo y del producto; lo
     # unico por instancia es prenderlo (apagado por defecto: Johanna igual).
     "handoff_notice_enabled",
+    # F-034, D8: al derivar, una nota privada con el ultimo link que recibio
+    # la persona. El texto es del producto; por instancia, solo prenderlo.
+    "handoff_link_note_enabled",
     "pilot_boundary_enabled",
     "chatwoot_cut_b_admission_enabled",
     "chatwoot_cut_b_agent_enabled",
@@ -787,6 +794,10 @@ class Settings:
     # aviso corto antes de la pausa. Apagado, la derivacion calla como hasta
     # ahora (F-033, 15/10).
     handoff_notice_enabled: bool = False
+    # F-034, D8 (Dan, 24/10): al derivar, la conversacion recibe una nota
+    # privada con el ultimo link que le mandamos a la persona (y su cupon, si
+    # vino del carrito). Apagado, la derivacion queda como hasta ahora.
+    handoff_link_note_enabled: bool = False
     handoff_projection_policy_key: str | None = None
     handoff_projection_policy_version: int | None = None
     human_handoff_projection_worker_id: str | None = None
@@ -1488,6 +1499,9 @@ class Settings:
         handoff_notice_enabled = (
             os.getenv("HANDOFF_NOTICE_ENABLED", "false").lower() == "true"
         )
+        handoff_link_note_enabled = (
+            os.getenv("HANDOFF_LINK_NOTE_ENABLED", "false").lower() == "true"
+        )
         handoff_projection_policy_key = (
             os.getenv("HANDOFF_PROJECTION_POLICY_KEY", "").strip() or None
         )
@@ -1899,6 +1913,7 @@ class Settings:
             human_handoff_projection_enabled=human_handoff_projection_enabled,
             human_handoff_admission_enabled=human_handoff_admission_enabled,
             handoff_notice_enabled=handoff_notice_enabled,
+            handoff_link_note_enabled=handoff_link_note_enabled,
             handoff_projection_policy_key=handoff_projection_policy_key,
             handoff_projection_policy_version=handoff_projection_policy_version,
             human_handoff_projection_worker_id=(
@@ -4752,6 +4767,14 @@ def create_app(
         raise ValueError(
             "HANDOFF_NOTICE_ENABLED requires HUMAN_HANDOFF_ADMISSION_ENABLED"
         )
+    if (
+        settings.handoff_link_note_enabled
+        and not settings.human_handoff_admission_enabled
+    ):
+        # La nota vive dentro de la derivacion del entrante, como el aviso.
+        raise ValueError(
+            "HANDOFF_LINK_NOTE_ENABLED requires HUMAN_HANDOFF_ADMISSION_ENABLED"
+        )
     if settings.human_handoff_admission_enabled:
         inbound_handoff_enabled = (
             settings.chatwoot_cut_b_admission_enabled
@@ -6590,6 +6613,66 @@ def create_app(
                     conversation_id,
                 )
 
+        async def write_handoff_link_note(handoff: object) -> None:
+            # F-034, D8: despues de la derivacion durable y de la pausa, una
+            # nota privada con el ultimo link que le mandamos a la persona. El
+            # marcador lleva el handoff_request_id: un reintento del webhook no
+            # escribe otra. Nunca frena la derivacion: todo error va al log.
+            # D-091-1 (default, lo revisa Dan): sin link, no hay nota.
+            handoff_request_id = getattr(handoff, "handoff_request_id", None)
+            if (
+                control_client is None
+                or shared_supabase is None
+                or admission is None
+                or settings.chatwoot_account_id is None
+                or settings.chatwoot_inbox_id is None
+                or not isinstance(conversation_id, int)
+                or isinstance(conversation_id, bool)
+                or not isinstance(handoff_request_id, str)
+            ):
+                logger.warning("handoff_link_note_skipped reason=not_configured")
+                return
+            try:
+                link = await shared_supabase.read_handoff_note_checkout_link(
+                    commercial_case_id=admission.commercial_case_id,
+                    chatwoot_account_id=settings.chatwoot_account_id,
+                    chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                    now=datetime.now(UTC).isoformat(),
+                )
+            except Exception as exc:  # noqa: BLE001 - la derivacion sigue
+                logger.warning(
+                    "handoff_link_note_not_sent conversation=%s error_type=%s",
+                    conversation_id,
+                    type(exc).__name__,
+                )
+                return
+            if link is None:
+                logger.info(
+                    "handoff_link_note_skipped reason=no_link conversation=%s",
+                    conversation_id,
+                )
+                return
+            try:
+                await control_client.ensure_marked_private_note(
+                    conversation_id=conversation_id,
+                    expected_inbox_id=settings.chatwoot_inbox_id,
+                    note_body=handoff_link_note_body(link),
+                    idempotency_marker=handoff_link_note_marker(handoff_request_id),
+                )
+            except Exception as exc:  # noqa: BLE001 - la derivacion sigue
+                logger.warning(
+                    "handoff_link_note_not_sent conversation=%s error_type=%s",
+                    conversation_id,
+                    type(exc).__name__,
+                )
+                return
+            logger.info(
+                "handoff_link_note_sent conversation=%s source_kind=%s coupon=%s",
+                conversation_id,
+                link.source_kind,
+                "yes" if link.coupon_code is not None else "no",
+            )
+
         async def request_current_inbound_handoff(
             proposal: dict[str, object],
         ) -> None:
@@ -6640,6 +6723,8 @@ def create_app(
                 raise RetryableChatwootWorkError(
                     "handoff_automation_pause_not_confirmed"
                 ) from exc
+            if settings.handoff_link_note_enabled:
+                await write_handoff_link_note(handoff)
 
         if must_scan_canonical_history:
             assert context is not None

@@ -21,8 +21,10 @@ def test_it_is_one_transaction_and_the_last() -> None:
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
 
     assert "\nbegin;\n" in sql and sql.rstrip().endswith("commit;")
-    assert names[-1] == MIGRATION.name
-    assert names[-2] == "20261025000100_automation_expert_native_reads_v1.sql"
+    # Despues va la lectura del link para la nota al derivar (20261025000300, F-034 D8).
+    assert names[-1] == "20261025000300_handoff_link_note_v1.sql"
+    assert names[-2] == MIGRATION.name
+    assert names[-3] == "20261025000100_automation_expert_native_reads_v1.sql"
 
 
 def test_it_patches_only_the_product_name_comparison() -> None:
@@ -70,4 +72,4 @@ def test_the_validator_is_in_the_npm_chain() -> None:
     package = json.loads((ROOT / "tests/sql/followup_engine/package.json").read_text(encoding="utf-8"))
 
     assert package["scripts"]["test"].rstrip().endswith(
-        "node validate_payment_failure_product_name_btrim.mjs")
+        "node validate_payment_failure_product_name_btrim.mjs && node validate_handoff_link_note.mjs")

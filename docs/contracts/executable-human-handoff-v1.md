@@ -15,6 +15,7 @@ Todos los efectos permanecen apagados por defecto.
 - `HANDOFF_PROJECTION_POLICY_KEY`
 - `HANDOFF_PROJECTION_POLICY_VERSION`
 - `HANDOFF_NOTICE_ENABLED=false` (F-034, el aviso a la persona; ver abajo)
+- `HANDOFF_LINK_NOTE_ENABLED=false` (F-034, D8, la nota privada con el link; ver abajo)
 
 Proyección habilitada exige Supabase, control plane Chatwoot, account/inbox canónicos y worker ID. Admisión habilitada exige además proyección, dispatcher outbound y perímetro Lancemos. Configuración incompleta impide arrancar.
 
@@ -37,6 +38,26 @@ promete plazo, no da un nombre de persona y no dice que escribe una IA.
 - Un aviso que no sale nunca frena la derivación: queda en el log
   (`handoff_notice_skipped` / `handoff_notice_not_sent`) y la derivación sigue.
 - No hay vuelta automática al agente (D7); la reanudación sigue como está.
+
+### Nota privada con el link al derivar (F-034, D8)
+
+Con `HANDOFF_LINK_NOTE_ENABLED=true` (exige `HUMAN_HANDOFF_ADMISSION_ENABLED`),
+después de la derivación durable y de la etiqueta `automation_paused`, el bridge
+escribe en la conversación una **nota privada** (nunca un mensaje a la persona)
+con el último link de pago que le mandamos a esa persona.
+
+- El link sale de la base, no de Chatwoot: `read_handoff_note_checkout_link_v1`
+  (migración `20261025000300`, solo `service_role`) devuelve el último link
+  `accepted_by_chatwoot` del contacto del caso en esa cuenta e inbox. Si es el
+  del carrito (`recovery_first_touch`), trae el cupón vigente del caso y la nota
+  muestra el link con su `offDiscount`, como el botón.
+- Una nota por derivación: el marcador `[supportmagician-derivacion-link:<handoff_request_id>]`
+  hace que un reintento del webhook no escriba otra.
+- Si la persona nunca recibió un link nuestro, no hay nota y queda
+  `handoff_link_note_skipped reason=no_link` en el log (decisión D-091-1, con
+  default, pendiente de revisión de Dan).
+- Una nota que no sale nunca frena la derivación: queda
+  `handoff_link_note_not_sent` en el log y la derivación sigue igual.
 
 Apagado (el valor por defecto), la derivación no le escribe nada a la persona.
 

@@ -1592,7 +1592,10 @@ class ChatwootClient:
         if not note_body.strip() or len(note_body) > 1800:
             raise ValueError("private note body must contain 1 to 1800 characters")
         if (
-            not idempotency_marker.startswith("[supportmagician-flujo:")
+            # La nota de un paso nativo, o la del link al derivar (F-034, D8).
+            not idempotency_marker.startswith(
+                ("[supportmagician-flujo:", "[supportmagician-derivacion-link:")
+            )
             or not idempotency_marker.endswith("]")
             or len(idempotency_marker) > 300
         ):
