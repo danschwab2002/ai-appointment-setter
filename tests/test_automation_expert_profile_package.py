@@ -82,7 +82,7 @@ def test_the_distribution_copies_the_plugin_and_names_its_variables() -> None:
     plugin = yaml.safe_load((PLUGIN / "plugin.yaml").read_text(encoding="utf-8"))
     # Hermes busca el plugin por el nombre de su carpeta.
     assert plugin["name"] == PLUGIN.name
-    assert plugin["provides_tools"] == ["list_flows", "lead_history", "draw_flow"]
+    assert plugin["provides_tools"] == ["list_flows", "lead_history", "draw_flow", "read_library"]
     change = yaml.safe_load((PROFILE / "plugins" / "automation-expert-change" / "plugin.yaml").read_text(encoding="utf-8"))
     assert change["name"] == "automation-expert-change"
     assert change["provides_tools"] == ["get_flow_definitions", "propose_flow_change", "validate_flow_change",
@@ -105,7 +105,7 @@ def test_the_registered_tools_and_hooks() -> None:
         register_hook=lambda name, callback: hooks.__setitem__(name, callback),
     )
     plugin.register(ctx)
-    assert tools == ["list_flows", "lead_history", "draw_flow"]
+    assert tools == ["list_flows", "lead_history", "draw_flow", "read_library"]
     dispatch = hooks["pre_gateway_dispatch"]
     slack = SimpleNamespace(value="slack")
     assert dispatch(event=SimpleNamespace(source=SimpleNamespace(platform=slack, chat_id="D0123"))) is None

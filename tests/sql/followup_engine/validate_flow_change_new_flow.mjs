@@ -94,7 +94,11 @@ await shapeDb.exec(`
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`${MIGRATION} no esta en la cadena`);
-if (position !== names.length - 1) fail(`${MIGRATION} tiene que ser la ultima de la cadena`, names.slice(position + 1));
+// Despues va solo la de las lecturas nativas del AE (20261025000100): suma lecturas y parcha prender
+// (a: cohorte) sin tocar lo que esta prueba mira.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261025000100_automation_expert_native_reads_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de las lecturas nativas del AE`, names.slice(position + 1));
+}
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(
   /create extension if not exists pgcrypto;/gi, '-- pgcrypto is built into PGlite'));
 await applyFile(shapeDb, join(root, 'supabase/baseline/20260803_public_schema.sql'));

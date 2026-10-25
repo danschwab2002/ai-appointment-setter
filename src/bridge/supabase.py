@@ -10,7 +10,7 @@ import json
 import re
 import uuid
 from dataclasses import dataclass, field, fields
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping, Sequence
 from urllib.parse import parse_qs, urlsplit
@@ -4463,6 +4463,56 @@ class SupabaseClient:
         )
         value = _automation_expert_value(response, operation=operation)
         if value is not None and not isinstance(value, dict):
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return value
+
+    # automation-expert-read-v1 1.2.0 (migracion 20261025000100): el motor
+    # nativo y las ventas por flujo, de solo lectura.
+    async def read_automation_expert_native_flows_v1(
+        self, *, instance: dict[str, object]
+    ) -> dict[str, Any]:
+        operation = "automation_expert_native_flows"
+        response = await self._request(
+            "GET",
+            "/rest/v1/rpc/read_automation_expert_native_flows_v1",
+            params={"p_instance": json.dumps(instance, separators=(",", ":"))},
+        )
+        value = _automation_expert_value(response, operation=operation)
+        if not isinstance(value, dict):
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return value
+
+    async def read_automation_expert_native_history_v1(
+        self, *, instance: dict[str, object], lead_ref: str
+    ) -> dict[str, Any] | None:
+        operation = "automation_expert_native_history"
+        response = await self._request(
+            "GET",
+            "/rest/v1/rpc/read_automation_expert_native_history_v1",
+            params={
+                "p_instance": json.dumps(instance, separators=(",", ":")),
+                "p_lead_ref": str(uuid.UUID(lead_ref)),
+            },
+        )
+        value = _automation_expert_value(response, operation=operation)
+        if value is not None and not isinstance(value, dict):
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return value
+
+    async def read_flow_sales_v1(
+        self, *, instance: dict[str, object], since: datetime
+    ) -> dict[str, Any]:
+        operation = "flow_sales"
+        response = await self._request(
+            "GET",
+            "/rest/v1/rpc/read_flow_sales_v1",
+            params={
+                "p_instance": json.dumps(instance, separators=(",", ":")),
+                "p_since": since.astimezone(UTC).isoformat(),
+            },
+        )
+        value = _automation_expert_value(response, operation=operation)
+        if not isinstance(value, dict):
             raise SupabaseError(f"{operation}_invalid_shape")
         return value
 

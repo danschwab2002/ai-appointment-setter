@@ -50,9 +50,10 @@ GAP_AUDIENCE = "audience_change_not_computed"
 GAP_DIFF_TRUNCATED = "diff_truncated"
 
 
-def _state_after(tipo: str, before: str) -> str:
+def _state_after(tipo: str, before: str, a: str | None = None) -> str:
     if tipo == "prender":
-        return "prendido"
+        # Ciclo 1.8.0: prender con a: cohorte vuelve a la cohorte de prueba.
+        return a if a == "cohorte" else "prendido"
     if tipo == "apagar":
         return "apagado"
     return before
@@ -83,7 +84,7 @@ def _change(item: ProposalItem, world: FlowWorld) -> tuple[dict[str, Any], int]:
         "base_version": flow.active_version,
     }
     if item.tipo in ("prender", "apagar"):
-        out["estado"] = {"antes": flow.state, "despues": _state_after(item.tipo, flow.state)}
+        out["estado"] = {"antes": flow.state, "despues": _state_after(item.tipo, flow.state, item.a)}
         return out, 0
     if item.tipo == "version":
         after: object = item.definicion
@@ -151,7 +152,8 @@ def build_preview(
         "cambios": cambios,
         "para_que": purpose,
         # Un flujo nuevo le llega solo a los contactos de su cohorte de prueba (D6).
-        "a_quien": "cohorte" if any(item.is_new_flow for item in items) else None,
+        # Ciclo 1.8.0: lo mismo un prender con a: cohorte.
+        "a_quien": "cohorte" if any(item.is_new_flow or item.a == "cohorte" for item in items) else None,
         "en_curso": {"politica": politicas[0] if len(politicas) == 1 else (politicas or None),
                      "recorridos": None},
         "simulacion": None if simulacion is None else dict(simulacion),

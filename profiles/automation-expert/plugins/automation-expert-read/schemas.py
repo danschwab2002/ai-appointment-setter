@@ -4,8 +4,11 @@ LIST_FLOWS = {
     "name": "list_flows",
     "description": (
         "Lista los flujos de la instancia (primer contacto, carrito, pago fallido, "
-        "reactivación y cupón) con su versión, si están prendidos, sus topes y lo que "
-        "pasó en los últimos 7 días, más lo que corre en código y los eventos que no "
+        "reactivación y cupón, más los flujos nativos del motor, como la bienvenida, con "
+        "native: true, su estado (cohort = solo la cohorte de prueba) y su cohorte) con su "
+        "versión, si están prendidos, sus topes, lo que pasó en los últimos 7 días y, para "
+        "los flujos del motor, sus ventas (`sales`: compras después de un envío aceptado, "
+        "con la regla en `sales.rule`), más lo que corre en código y los eventos que no "
         "disparan nada. Con flow_key devuelve uno solo. Solo lee."
     ),
     "parameters": {
@@ -13,8 +16,8 @@ LIST_FLOWS = {
         "properties": {
             "flow_key": {
                 "type": "string",
-                "enum": ["precheckout", "carrito", "pago_fallido", "reactivacion", "descuento"],
-                "description": "La clave de un flujo, para pedir solo ese.",
+                "pattern": "^[a-z][a-z0-9_]{1,39}$",
+                "description": "La clave de un flujo (precheckout, carrito, pago_fallido, reactivacion, descuento o la de un flujo nativo), para pedir solo ese.",
             }
         },
         "additionalProperties": False,
@@ -35,7 +38,7 @@ DRAW_FLOW = {
         "properties": {
             "flow_key": {
                 "type": "string",
-                "enum": ["precheckout", "carrito", "pago_fallido", "reactivacion", "descuento"],
+                "pattern": "^[a-z][a-z0-9_]{1,39}$",
                 "description": "El flujo que se abre primero en el dibujo.",
             }
         },
@@ -88,6 +91,28 @@ LEAD_HISTORY = {
                 "type": "string",
                 "description": "El next_cursor de la página anterior.",
             },
+        },
+        "additionalProperties": False,
+    },
+}
+
+READ_LIBRARY = {
+    "name": "read_library",
+    "description": (
+        "La biblioteca de plataformas: sin tema devuelve el índice (los temas y los eventos en una "
+        "línea); con tema, la página: hotmart (los eventos y el producto por ID), ghl-formularios "
+        "(cómo llega el formulario con permiso de WhatsApp) o chatwoot-whatsapp (plantillas, "
+        "categorías, la ventana de 24 h y las etiquetas). Usala antes de armar un flujo nuevo para "
+        "saber si el evento existe y llega. No trae nada de la instancia ni de una persona. Solo lee."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "tema": {
+                "type": "string",
+                "enum": ["hotmart", "ghl-formularios", "chatwoot-whatsapp"],
+                "description": "El tema; sin tema, el índice.",
+            }
         },
         "additionalProperties": False,
     },

@@ -75,6 +75,8 @@ def test_it_is_one_transaction_and_comes_before_the_bridge_reads() -> None:
         # El AE que crea flujos (20261024000600) parcha el ciclo del almacen (el item
         # nuevo) y read_flow_store_v1; no redefine el motor del carrito.
         "20261024000600_flow_change_new_flow_v1.sql",
+        # Las lecturas nativas del AE (20261025000100) suman lecturas y parchan el anclaje del AE y prender.
+        "20261025000100_automation_expert_native_reads_v1.sql",
     ]
     later = (MIGRATIONS / names[position + 1]).read_text(encoding="utf-8")
     assert "create or replace" not in later.lower()

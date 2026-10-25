@@ -28,7 +28,7 @@ from uuid import UUID
 CONTRACT_MAJOR = "1"
 PROFILE_NAME = "automation-expert"
 TIMEOUT_SECONDS = 15
-_FLOW_KEY_RE = re.compile(r"[a-z][a-z0-9_]{0,31}")
+_FLOW_KEY_RE = re.compile(r"[a-z][a-z0-9_]{1,39}")
 _ULID_RE = re.compile(r"[0-7][0-9A-HJKMNP-TV-Z]{25}")
 # El sck de un link nuestro termina en hermes|v1|<ULID>, con | o ~ y escapado o no.
 _LINK_ISSUANCE_RE = re.compile(
@@ -315,3 +315,29 @@ def draw_flow(params: dict[str, object], **kwargs: object) -> str:
         "warnings": avisos,
         "gaps": payload.get("gaps") or [],
     })
+
+
+# La biblioteca (automation-expert-read-v1 1.2.0, el PR 5 del hito 4): paginas
+# fijas que viajan con el plugin, sin red. El indice lista los temas.
+LIBRARY_DIR = Path(__file__).resolve().parent / "biblioteca"
+LIBRARY_TOPICS = ("hotmart", "ghl-formularios", "chatwoot-whatsapp")
+LIBRARY_MAX_BYTES = 16 * 1024
+
+
+def read_library(params: dict[str, object], **kwargs: object) -> str:
+    """El indice de la biblioteca, o la pagina de un tema. Solo lee archivos del plugin."""
+    del kwargs
+    tema = params.get("tema")
+    if tema is None:
+        name = "indice"
+    elif isinstance(tema, str) and tema in LIBRARY_TOPICS:
+        name = tema
+    else:
+        return _dumps({"error": "library_topic_unknown", "topics": list(LIBRARY_TOPICS)})
+    try:
+        text = (LIBRARY_DIR / f"{name}.md").read_text(encoding="utf-8")
+    except OSError:
+        return _dumps({"error": "library_unavailable"})
+    if len(text.encode("utf-8")) > LIBRARY_MAX_BYTES:
+        return _dumps({"error": "library_page_too_large"})
+    return _dumps({"tema": name, "topics": list(LIBRARY_TOPICS), "page": text})

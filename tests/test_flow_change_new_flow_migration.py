@@ -30,13 +30,16 @@ def test_it_is_one_transaction_and_the_last() -> None:
     sql = _sql()
     assert "\nbegin;\n" in sql and sql.rstrip().endswith("commit;")
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
-    assert names[-1] == MIGRATION.name
-    assert names[-2] == "20261024000500_flow_engine_native_bridge_v1.sql"
+    # Despues va solo la de las lecturas nativas del AE (20261025000100), que parcha prender sin tocar lo de esta.
+    assert names[-1] == "20261025000100_automation_expert_native_reads_v1.sql"
+    assert names[-2] == MIGRATION.name
+    assert names[-3] == "20261024000500_flow_engine_native_bridge_v1.sql"
 
 
 def test_the_validator_is_in_the_npm_chain() -> None:
     package = json.loads((ROOT / "tests" / "sql" / "followup_engine" / "package.json").read_text())
-    assert package["scripts"]["test"].rstrip().endswith("node validate_flow_change_new_flow.mjs")
+    assert package["scripts"]["test"].rstrip().endswith(
+        "node validate_flow_change_new_flow.mjs && node validate_automation_expert_native_reads.mjs")
 
 
 def test_only_the_simulation_read_is_granted_and_only_to_service_role_and_the_agent() -> None:

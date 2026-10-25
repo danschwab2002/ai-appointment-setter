@@ -384,6 +384,12 @@ FLOW_ALREADY_REGISTERED = _spec(
     "Ya hay un flujo con esa clave en ese producto.",
     alternative="Elegir otra clave, o cambiar el flujo que ya existe con una versión nueva.",
 )
+# Ciclo 1.8.0: volver a la cohorte.
+PRENDER_A_COHORT_NEEDS_PAUSED_NATIVE = _spec(
+    "prender_a_cohorte_needs_paused_native", None, KIND_CYCLE,
+    "Volver a la cohorte de prueba (prender con a: cohorte) solo sirve para un flujo nativo pausado.",
+    alternative="Para un flujo del legado, prender sin a; para uno en cohorte o prendido, pausarlo primero.",
+)
 NEW_FLOW_MUST_START_IN_COHORT = _spec(
     "new_flow_must_start_in_cohort", None, KIND_CYCLE,
     "Un flujo nuevo se publica primero para la cohorte de prueba; pasarlo a todos es otra propuesta.",
@@ -537,7 +543,8 @@ _VALIDATOR_CODES: tuple[CodeSpec, ...] = (
     ENGINE_NOT_SUPPORTED_FIXED_COUPON, ENGINE_NOT_SUPPORTED_VARIABLES_DIFFER,
     ENGINE_NOT_SUPPORTED_WAIT_BETWEEN_SENDS, ENGINE_NOT_SUPPORTED_WAIT_AFTER_SEND,
     PURCHASE_PERMISSION_REQUIRES_SINGLE_UTILITY_SEND, FLOW_CREATION_NOT_ENABLED,
-    FLOW_ALREADY_REGISTERED, NEW_FLOW_MUST_START_IN_COHORT, ETIQUETAR_REQUIRES_PURCHASE_TRIGGER,
+    FLOW_ALREADY_REGISTERED, NEW_FLOW_MUST_START_IN_COHORT, PRENDER_A_COHORT_NEEDS_PAUSED_NATIVE,
+    ETIQUETAR_REQUIRES_PURCHASE_TRIGGER,
     ETIQUETAR_NOT_AFTER_TEMPLATE, ENGINE_NOT_SUPPORTED_NATIVE_TRIGGER, ENGINE_NOT_SUPPORTED_NATIVE_PERMISSION,
     ENGINE_NOT_SUPPORTED_NATIVE_REPEAT, ENGINE_NOT_SUPPORTED_NATIVE_PRIORITY, ENGINE_NOT_SUPPORTED_NATIVE_SHAPE,
     ENGINE_NOT_SUPPORTED_ETIQUETAR, CHANGE_OUTSIDE_1B_SCOPE, TRIGGER_CHANGE_IS_ANOTHER_FLOW, FLOW_CHANGE_STALE_BASE,
@@ -1041,7 +1048,10 @@ class _Run:
 
     def _switch_on(self, index: int, item: ProposalItem, flow: WorldFlow) -> None:
         at = finding_path((index,))
-        if flow.state == "prendido":
+        if item.a is not None:
+            if not flow.native or flow.state != "pausado":
+                self.blocks.append(PRENDER_A_COHORT_NEEDS_PAUSED_NATIVE.at(finding_path((index, "a"))))
+        elif flow.state == "prendido":
             self.blocks.append(STATE_TRANSITION_INVALID.at(finding_path((index, "tipo"))))
         content = [other for other in self.items
                    if other.flow_id == item.flow_id and other.is_content]

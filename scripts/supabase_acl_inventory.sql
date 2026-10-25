@@ -170,7 +170,11 @@ expected_service_role(signature) as (
         ('public.read_flow_engine_start_rejections_v1(jsonb, boolean, integer)'),
         ('public.mark_flow_engine_start_rejection_notified_v1(uuid, text, text, integer, timestamp with time zone)'),
         ('public.flow_engine_native_step_tail_v1(uuid)'),
-        ('public.read_flow_engine_native_trigger_counts_v1(jsonb, text, text, timestamp with time zone)')
+        ('public.read_flow_engine_native_trigger_counts_v1(jsonb, text, text, timestamp with time zone)'),
+        -- 20261025000100: las lecturas del motor nativo del AE y las ventas por flujo.
+        ('public.read_automation_expert_native_flows_v1(jsonb)'),
+        ('public.read_automation_expert_native_history_v1(jsonb, uuid)'),
+        ('public.read_flow_sales_v1(jsonb, timestamp with time zone)')
 ),
 functions as (
     select

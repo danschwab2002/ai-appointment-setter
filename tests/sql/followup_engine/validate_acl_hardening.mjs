@@ -244,7 +244,10 @@ const rows = await db.query(`
       ('read_flow_engine_start_rejections_v1(jsonb,boolean,integer)'),
       ('mark_flow_engine_start_rejection_notified_v1(uuid,text,text,integer,timestamp with time zone)'),
       ('flow_engine_native_step_tail_v1(uuid)'),
-      ('read_flow_engine_native_trigger_counts_v1(jsonb,text,text,timestamp with time zone)')
+      ('read_flow_engine_native_trigger_counts_v1(jsonb,text,text,timestamp with time zone)'),
+      ('read_automation_expert_native_flows_v1(jsonb)'),
+      ('read_automation_expert_native_history_v1(jsonb,uuid)'),
+      ('read_flow_sales_v1(jsonb,timestamp with time zone)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -303,9 +306,11 @@ const result = rows.rows[0];
 // capture of Hotmart (20261024000100) adds one, and the native engine
 // (20261024000200) adds its admission, the bridge of the native engine
 // (20261024000500) adds its seven entrypoints, and the agent that creates
-// flows (20261024000600) adds the read of the new flow simulation.
+// flows (20261024000600) adds the read of the new flow simulation, and its
+// native reads (20261025000100) add three: the native flows, the native
+// history of a lead and the sales by flow.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 166) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 169) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

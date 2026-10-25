@@ -5650,6 +5650,46 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'flow_change_new_flow'
+    union all
+    select
+        '20261025000100',
+        '20261025000100_automation_expert_native_reads_v1.sql',
+        -- Las tres lecturas del motor nativo del AE: solo de service_role.
+        (
+            select count(*) = 3
+            from functions
+            where oid in (
+                to_regprocedure('public.read_automation_expert_native_flows_v1(jsonb)'),
+                to_regprocedure('public.read_automation_expert_native_history_v1(jsonb,uuid)'),
+                to_regprocedure('public.read_flow_sales_v1(jsonb,timestamptz)')
+            )
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- El anclaje de una persona con un recorrido nativo, en la historia y la busqueda.
+        + (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public.read_automation_expert_lead_history_v1(jsonb,uuid)'),
+                to_regprocedure('public.find_automation_expert_lead_v1(jsonb,bigint,text,text)')
+            )
+              and position('automation_expert_native_anchor_v1' in definition) > 0
+        )::int
+        -- prender con a: cohorte, en los items y en publicar.
+        + (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public._flow_change_items_are_valid(jsonb)'),
+                to_regprocedure('public._flow_change_publish(text,text,uuid,text,jsonb)')
+            )
+              and position('flow_change_prender_a_cohorte_v1' in definition) > 0
+        )::int,
+        3,
+        'automation_expert_native_reads'
 )
 select
     version,

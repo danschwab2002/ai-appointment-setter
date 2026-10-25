@@ -97,10 +97,18 @@ class FakeReader:
     """La base: devuelve la salida real capturada de las tres funciones."""
 
     def __init__(self, *, history: dict[str, object] | None = None, failure: Exception | None = None,
-                 lookup: dict[str, object] | None = None) -> None:
+                 lookup: dict[str, object] | None = None, native_flows: dict[str, object] | None = None,
+                 native_history: dict[str, object] | None = None, sales: dict[str, object] | None = None,
+                 native_failure: Exception | None = None) -> None:
         self.history = history
         self.failure = failure
         self.lookup = lookup
+        # 1.2.0: sin flujos nativos por defecto, como ATT1 hoy.
+        self.native_flows = native_flows if native_flows is not None else {"flows": []}
+        self.native_history = native_history
+        self.sales = sales if sales is not None else {"flows": [], "rule": "purchase_after_accepted_send_v1"}
+        self.native_failure = native_failure
+        self.sales_since: list[object] = []
         self.instances: list[dict[str, object]] = []
         self.lookups: list[dict[str, object]] = []
 
@@ -132,6 +140,26 @@ class FakeReader:
             raise self.failure
         history = self.history if self.history is not None else _rpc("rpc_history_lead_a.json")
         return history if history["lead"]["lead_ref"] == lead_ref else None  # type: ignore[index]
+
+    async def read_automation_expert_native_flows_v1(self, *, instance: dict[str, object]) -> dict[str, object]:
+        self.instances.append(instance)
+        if self.native_failure is not None:
+            raise self.native_failure
+        return copy.deepcopy(self.native_flows)
+
+    async def read_automation_expert_native_history_v1(self, *, instance: dict[str, object],
+                                                       lead_ref: str) -> dict[str, object] | None:
+        self.instances.append(instance)
+        if self.native_failure is not None:
+            raise self.native_failure
+        return copy.deepcopy(self.native_history)
+
+    async def read_flow_sales_v1(self, *, instance: dict[str, object], since: object) -> dict[str, object]:
+        self.instances.append(instance)
+        self.sales_since.append(since)
+        if self.native_failure is not None:
+            raise self.native_failure
+        return copy.deepcopy(self.sales)
 
 
 def _manifest() -> InstanceManifest:
