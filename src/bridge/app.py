@@ -212,7 +212,7 @@ from bridge.payment_failure_variant import (
     PaymentFailureVariantsConfig,
 )
 from bridge.recovery_coupons import RecoveryCouponWorker
-from bridge.event_log import configure_bridge_event_log
+from bridge.event_log import configure_bridge_event_log, hotmart_log_fields
 from bridge.flow_engine_runtime import (
     DivergenceNotifier,
     FlowEngineRuntime,
@@ -227,19 +227,6 @@ from bridge.worker import (
 )
 
 logger = logging.getLogger(__name__)
-_HOTMART_LOG_EVENT_ID = re.compile(r"[A-Za-z0-9-]{1,64}")
-_HOTMART_LOG_EVENT_TYPE = re.compile(r"[A-Z0-9_]{1,64}")
-
-
-def _hotmart_log_token(value: object, shape: re.Pattern[str]) -> str:
-    """El valor si tiene la forma esperada; si no, una marca sin su contenido."""
-    if value is None:
-        return "-"
-    if isinstance(value, str) and shape.fullmatch(value):
-        return value
-    return "<otro>"
-
-
 CHATWOOT_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024
 HOTMART_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024
 PRECHECKOUT_WEBHOOK_BODY_LIMIT_BYTES = 64 * 1024
@@ -3657,10 +3644,7 @@ def create_app(
     audio_transcriber: AudioTranscriber | None = None,
     flow_change_store: flow_change_api.FlowChangeStore | None = None,
 ) -> FastAPI:
-    # Bajo uvicorn los info del bridge no llegan al log: esto deja salir los
-    # revisados (E-084, bridge/event_log.py). No hace nada si el raiz ya tiene
-    # handlers.
-    configure_bridge_event_log()
+    configure_bridge_event_log()  # los info revisados, al log (E-084)
     boolean_fields = [
         field
         for field in dataclass_fields(settings)
@@ -9916,8 +9900,7 @@ def create_app(
             # tienen la forma de Hotmart: nunca texto libre del payload.
             logger.info(
                 "hotmart_event_ignored event_id=%s event_type=%s reason=%s",
-                _hotmart_log_token(decision.event_id, _HOTMART_LOG_EVENT_ID),
-                _hotmart_log_token(decision.event_type, _HOTMART_LOG_EVENT_TYPE),
+                *hotmart_log_fields(decision.event_id, decision.event_type),
                 decision.reason,
             )
             response.status_code = status.HTTP_200_OK

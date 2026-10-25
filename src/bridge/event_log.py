@@ -21,6 +21,7 @@ mas duplicaria las lineas.
 from __future__ import annotations
 
 import logging
+import re
 import sys
 from typing import TextIO
 
@@ -81,3 +82,21 @@ def configure_bridge_event_log(stream: TextIO | None = None) -> bool:
     if bridge_logger.level == logging.NOTSET or bridge_logger.level > logging.INFO:
         bridge_logger.setLevel(logging.INFO)
     return True
+
+
+_HOTMART_EVENT_ID = re.compile(r"[A-Za-z0-9-]{1,64}")
+_HOTMART_EVENT_TYPE = re.compile(r"[A-Z0-9_]{1,64}")
+
+
+def _shaped(value: object, shape: re.Pattern[str]) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, str) and shape.fullmatch(value):
+        return value
+    return "<otro>"
+
+
+def hotmart_log_fields(event_id: object, event_type: object) -> tuple[str, str]:
+    """El id y el tipo de un evento para el log, solo si tienen la forma de
+    Hotmart; si no, ``<otro>``: nunca texto libre del payload."""
+    return _shaped(event_id, _HOTMART_EVENT_ID), _shaped(event_type, _HOTMART_EVENT_TYPE)
