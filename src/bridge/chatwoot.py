@@ -1479,6 +1479,94 @@ class ChatwootClient:
                 await asyncio.sleep(self._confirmation_delay_seconds)
         raise ChatwootProtocolError("handoff_assignment_not_confirmed")
 
+    async def _get_conversation_in_inbox(
+        self, *, conversation_id: int, expected_inbox_id: int
+    ) -> dict[str, object]:
+        """The conversation show, only when it belongs to the expected inbox."""
+        if conversation_id <= 0 or expected_inbox_id <= 0:
+            raise ValueError("conversation and inbox IDs must be positive")
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"api_access_token": self._access_token},
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            response = await client.get(
+                f"/api/v1/accounts/{self._account_id}/conversations/{conversation_id}"
+            )
+            response.raise_for_status()
+        try:
+            conversation = response.json()
+        except ValueError as exc:
+            raise ChatwootProtocolError("invalid_json") from exc
+        if (
+            not isinstance(conversation, dict)
+            or conversation.get("id") != conversation_id
+            or conversation.get("inbox_id") != expected_inbox_id
+        ):
+            raise ChatwootProtocolError("invalid_conversation_authority")
+        return conversation
+
+    async def pause_purchased_conversation(
+        self,
+        *,
+        conversation_id: int,
+        expected_inbox_id: int,
+        team_id: int | None,
+    ) -> str:
+        """Pause the agent in a buyer's conversation and hand it to the team (E-100).
+
+        The conversation comes from the base, which matched it to the buyer
+        (``read_purchase_agent_pause_conversations_v1``); here only the inbox
+        is checked, like ``ensure_marked_private_note``. First the
+        ``automation_paused`` label (the pause macro, confirmed by reading),
+        which blocks every send of the agent; then, with a team, the team
+        assignment when nobody owns the conversation. A person or the team
+        already there are left as they are; another team raises
+        ``ChatwootAssignmentConflictError`` after the label is on.
+
+        Returns ``team_assigned``, ``existing_human``, ``expected_team`` or
+        ``no_team``.
+        """
+        await self._get_conversation_in_inbox(
+            conversation_id=conversation_id, expected_inbox_id=expected_inbox_id
+        )
+        await self.ensure_conversation_label(
+            conversation_id=conversation_id, label="automation_paused"
+        )
+        if team_id is None:
+            return "no_team"
+        if team_id <= 0:
+            raise ValueError("team ID must be positive")
+        conversation = await self._get_conversation_in_inbox(
+            conversation_id=conversation_id, expected_inbox_id=expected_inbox_id
+        )
+        state = self._handoff_assignment_state(conversation, expected_team_id=team_id)
+        if state != "unassigned":
+            return state
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"api_access_token": self._access_token},
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            response = await client.post(
+                f"/api/v1/accounts/{self._account_id}"
+                f"/conversations/{conversation_id}/assignments",
+                json={"team_id": team_id},
+            )
+            response.raise_for_status()
+        for attempt in range(self._confirmation_attempts):
+            confirmed = await self._get_conversation_in_inbox(
+                conversation_id=conversation_id, expected_inbox_id=expected_inbox_id
+            )
+            state = self._handoff_assignment_state(confirmed, expected_team_id=team_id)
+            if state in {"existing_human", "expected_team"}:
+                return "team_assigned"
+            if attempt + 1 < self._confirmation_attempts:
+                await asyncio.sleep(self._confirmation_delay_seconds)
+        raise ChatwootProtocolError("purchase_pause_assignment_not_confirmed")
+
     async def ensure_private_handoff_note(
         self,
         *,
@@ -1592,9 +1680,14 @@ class ChatwootClient:
         if not note_body.strip() or len(note_body) > 1800:
             raise ValueError("private note body must contain 1 to 1800 characters")
         if (
-            # La nota de un paso nativo, o la del link al derivar (F-034, D8).
+            # La nota de un paso nativo, la del link al derivar (F-034, D8) o
+            # la de la compra que pausa al agente (E-100).
             not idempotency_marker.startswith(
-                ("[supportmagician-flujo:", "[supportmagician-derivacion-link:")
+                (
+                    "[supportmagician-flujo:",
+                    "[supportmagician-derivacion-link:",
+                    "[supportmagician-compra-pausa:",
+                )
             )
             or not idempotency_marker.endswith("]")
             or len(idempotency_marker) > 300

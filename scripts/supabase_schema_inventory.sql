@@ -5737,6 +5737,29 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'handoff_link_note'
+    union all
+    select
+        '20261025000400',
+        '20261025000400_purchase_agent_pause_v1.sql',
+        -- Las conversaciones del comprador para pausar al agente al comprar (E-100).
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.read_purchase_agent_pause_conversations_v1(bigint,bigint,text,text,text)')
+              and position('ambiguous' in definition) > 0
+        )::int
+        -- Solo service_role la ejecuta.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.read_purchase_agent_pause_conversations_v1(bigint,bigint,text,text,text)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        2,
+        'purchase_agent_pause'
 )
 select
     version,

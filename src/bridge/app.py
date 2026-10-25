@@ -68,6 +68,10 @@ from bridge.instance_manifest import (
     INTENT_PERMISSION_FLOWS,
     InstanceManifest,
 )
+from bridge.purchase_agent_pause import (
+    PurchaseAgentPause,
+    purchase_pause_note_present,
+)
 from bridge.product_label import ProductLabeler
 from bridge.product_routes import HotmartUnrouted, ProductRoute, ProductRoutes
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
@@ -321,6 +325,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # F-034, D8: al derivar, una nota privada con el ultimo link que recibio
     # la persona. El texto es del producto; por instancia, solo prenderlo.
     "handoff_link_note_enabled",
+    # E-100: al comprar, el agente deja de atender y la persona pasa al team
+    # de derivacion del manifiesto. El comportamiento es del producto; por
+    # instancia, solo prenderlo.
+    "purchase_agent_pause_enabled",
     "pilot_boundary_enabled",
     "chatwoot_cut_b_admission_enabled",
     "chatwoot_cut_b_agent_enabled",
@@ -798,6 +806,11 @@ class Settings:
     # privada con el ultimo link que le mandamos a la persona (y su cupon, si
     # vino del carrito). Apagado, la derivacion queda como hasta ahora.
     handoff_link_note_enabled: bool = False
+    # E-100 (Dan, 25/10): la replica de «Ventas maribel» de GHL. Con la compra
+    # aprobada, la conversacion del comprador queda pausada para el agente,
+    # asignada al team y con una nota privada. Apagado, la compra hace lo de
+    # hoy (corta los toques) y el agente le sigue contestando.
+    purchase_agent_pause_enabled: bool = False
     handoff_projection_policy_key: str | None = None
     handoff_projection_policy_version: int | None = None
     human_handoff_projection_worker_id: str | None = None
@@ -1502,6 +1515,9 @@ class Settings:
         handoff_link_note_enabled = (
             os.getenv("HANDOFF_LINK_NOTE_ENABLED", "false").lower() == "true"
         )
+        purchase_agent_pause_enabled = (
+            os.getenv("PURCHASE_AGENT_PAUSE_ENABLED", "false").lower() == "true"
+        )
         handoff_projection_policy_key = (
             os.getenv("HANDOFF_PROJECTION_POLICY_KEY", "").strip() or None
         )
@@ -1914,6 +1930,7 @@ class Settings:
             human_handoff_admission_enabled=human_handoff_admission_enabled,
             handoff_notice_enabled=handoff_notice_enabled,
             handoff_link_note_enabled=handoff_link_note_enabled,
+            purchase_agent_pause_enabled=purchase_agent_pause_enabled,
             handoff_projection_policy_key=handoff_projection_policy_key,
             handoff_projection_policy_version=handoff_projection_policy_version,
             human_handoff_projection_worker_id=(
@@ -2452,6 +2469,15 @@ async def _resume_paused_conversation(
             ChatwootProtocolError,
             httpx.HTTPError,
         ):
+            return False
+        if purchase_pause_note_present(messages):
+            # E-100: la persona compro y la conversacion es del equipo. El
+            # silencio del equipo no la devuelve al agente; la devuelve una
+            # persona sacando la etiqueta a mano.
+            logger.info(
+                "conversation_resume_skipped reason=purchase_pause conversation=%s",
+                conversation_id,
+            )
             return False
         if (
             quiet_seconds is not None
@@ -4775,6 +4801,17 @@ def create_app(
         raise ValueError(
             "HANDOFF_LINK_NOTE_ENABLED requires HUMAN_HANDOFF_ADMISSION_ENABLED"
         )
+    if settings.purchase_agent_pause_enabled and (
+        settings.instance_manifest is None
+        or not settings.worker_enabled
+        or not settings.hotmart_purchase_worker_enabled
+    ):
+        # La pausa vive despues de aplicar la compra, en el worker, y busca la
+        # conversacion con el inbox y el scope del manifiesto.
+        raise ValueError(
+            "PURCHASE_AGENT_PAUSE_ENABLED requires the instance manifest, "
+            "RESOLUTION_WORKER_ENABLED and HOTMART_PURCHASE_WORKER_ENABLED"
+        )
     if settings.human_handoff_admission_enabled:
         inbound_handoff_enabled = (
             settings.chatwoot_cut_b_admission_enabled
@@ -5025,6 +5062,23 @@ def create_app(
                 whatsapp_equivalence_enabled=portable_dynamic_recipient,
                 on_conversation_opened=conversation_opened_hook,
             )
+        purchase_agent_pause: PurchaseAgentPause | None = None
+        if settings.purchase_agent_pause_enabled:
+            if not isinstance(control_client, ChatwootClient):
+                raise ValueError(
+                    "PURCHASE_AGENT_PAUSE_ENABLED requires the Chatwoot control "
+                    "API and CHATWOOT_PAUSE_MACRO_ID"
+                )
+            assert settings.instance_manifest is not None
+            purchase_agent_pause = PurchaseAgentPause(
+                supabase=shared_supabase,
+                chatwoot=control_client,
+                chatwoot_account_id=settings.instance_manifest.chatwoot_account_id,
+                chatwoot_inbox_id=settings.instance_manifest.chatwoot_inbox_id,
+                inbound_scope_key=settings.instance_manifest.inbound_scope_key,
+                team_id=settings.instance_manifest.handoff_team_id,
+                time_zone=settings.instance_manifest.time_zone,
+            )
         resolution_worker = ResolutionWorker(
             supabase=shared_supabase,
             poll_interval_seconds=settings.worker_poll_interval_seconds,
@@ -5043,6 +5097,7 @@ def create_app(
             pilot_boundary=pilot_boundary,
             product_routes=commercial_ally_routes,
             flow_engine=flow_engine_runtime,
+            purchase_agent_pause=purchase_agent_pause,
             commercial_ally_config=(
                 settings.commercial_ally_config
                 if portable_dynamic_recipient

@@ -453,8 +453,14 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # los rechazos de MOT-002 y su marca, y la cola del paso. 20261024000600
     # (el AE que crea flujos) suma la lectura de la simulacion de un flujo nuevo,
     # y 20261025000100 (sus lecturas nativas) las tres del AE. 20261025000300
-    # (la nota privada al derivar, F-034 D8) suma la lectura del link.
-    assert len(allowlisted) == 170
+    # (la nota privada al derivar, F-034 D8) suma la lectura del link, y
+    # 20261025000400 (la pausa del agente al comprar, E-100) la de las
+    # conversaciones del comprador.
+    assert len(allowlisted) == 171
+    assert (
+        "read_purchase_agent_pause_conversations_v1(bigint, bigint, text, text, text)"
+        in allowlisted
+    )
     assert (
         "read_handoff_note_checkout_link_v1(uuid, bigint, bigint, timestamp with time zone)"
         in allowlisted
@@ -1417,17 +1423,34 @@ def test_payment_failure_product_name_btrim_fingerprint_is_before_the_handoff_li
         assert marker in compact_fingerprint, marker
 
 
-def test_handoff_link_note_fingerprint_is_last() -> None:
+def test_handoff_link_note_fingerprint_is_before_the_purchase_agent_pause() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261025000300 (la lectura del link para la nota privada al derivar, F-034 D8) es la ultima.
-    fingerprint = sql.split("'20261025000300'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261025000300 (la lectura del link para la nota privada al derivar, F-034 D8) va
+    # justo antes de la de la pausa del agente al comprar (20261025000400).
+    fingerprint = sql.split("'20261025000300'", 1)[1].split("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261025000300_handoff_link_note_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",2,'handoff_link_note')")
+    assert compact_fingerprint.endswith(",2,'handoff_link_note'")
     for marker in (
         "to_regprocedure('public.read_handoff_note_checkout_link_v1(uuid,bigint,bigint,timestamptz)')",
         "position('accepted_by_chatwoot'indefinition)>0",
+        "andnothas_function_privilege('anon',oid,'EXECUTE')",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_purchase_agent_pause_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261025000400 (las conversaciones del comprador para pausar al agente, E-100) es la ultima.
+    fingerprint = sql.split("'20261025000400'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261025000400_purchase_agent_pause_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'purchase_agent_pause')")
+    for marker in (
+        "to_regprocedure('public.read_purchase_agent_pause_conversations_v1(bigint,bigint,text,text,text)')",
+        "position('ambiguous'indefinition)>0",
         "andnothas_function_privilege('anon',oid,'EXECUTE')",
     ):
         assert marker in compact_fingerprint, marker

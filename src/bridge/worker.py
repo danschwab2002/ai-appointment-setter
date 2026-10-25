@@ -61,6 +61,7 @@ from bridge.hotmart import (
     EVENT_PURCHASE_APPROVED,
     EVENT_PURCHASE_BILLET_PRINTED,
     EVENT_PURCHASE_CANCELED,
+    HotmartPurchaseData,
     parse_hotmart_purchase_payload,
 )
 from bridge.lead_first_name import (
@@ -118,6 +119,7 @@ from bridge.native_flows import (
     purchase_product_ref,
 )
 from bridge.product_label import ProductLabeler
+from bridge.purchase_agent_pause import PurchaseAgentPause
 from bridge.followup_steps import FOLLOWING_STEP_TRIGGERS
 from bridge.payment_slip_reminders import PAYMENT_SLIP_STEPS
 from bridge.phones import equivalent_whatsapp_phones, whatsapp_phone_region
@@ -3459,9 +3461,14 @@ class ResolutionWorker:
         payment_slip: PaymentSlipPlanningConfig | None = None,
         payment_failure_planning: PaymentFailurePlanningConfig | None = None,
         flow_engine: FlowEngineRuntime | None = None,
+        purchase_agent_pause: PurchaseAgentPause | None = None,
     ) -> None:
         self._supabase = supabase
         self._poll_interval = poll_interval_seconds
+        # E-100: con PURCHASE_AGENT_PAUSE_ENABLED, la compra aprobada pausa al
+        # agente en la conversacion del comprador y la pasa al equipo. Sin el
+        # flag, ninguna llamada nueva.
+        self._purchase_agent_pause = purchase_agent_pause
         # flow-engine-v1, seccion 8: solo con FLOW_ENGINE_ENABLED. Con None,
         # el lote no lee nada del motor y el carrito se planifica como hoy.
         self._flow_engine = flow_engine
@@ -3654,6 +3661,42 @@ class ResolutionWorker:
                 outcome,
             )
 
+    async def _pause_agent_for_purchase(
+        self,
+        event_id: str,
+        payload: dict[str, Any],
+        purchase: HotmartPurchaseData,
+        *,
+        native_product: str | None,
+    ) -> None:
+        """E-100: after the purchase is applied, the agent stops answering the buyer.
+
+        Only for a product of the instance. With a native flow on for that
+        product the pause is skipped: its welcome template goes to the same
+        conversation, and a paused conversation stops proactive sends. It never
+        fails the purchase: ``pause_buyer`` logs and returns.
+        """
+        assert self._purchase_agent_pause is not None
+        if native_product is not None:
+            logger.info(
+                "purchase_agent_pause_skipped event_id=%s reason=native_flow_on",
+                event_id,
+            )
+            return
+        if purchase_product_ref(
+            payload,
+            commercial_ally_config=self._commercial_ally_config,
+            product_routes=self._product_routes,
+        ) is None:
+            logger.info(
+                "purchase_agent_pause_skipped event_id=%s reason=other_product",
+                event_id,
+            )
+            return
+        await self._purchase_agent_pause.pause_buyer(
+            webhook_event_id=event_id, purchase=purchase
+        )
+
     async def _process_one(self, event: dict[str, Any]) -> None:
         event_id = event.get("id")
         if not isinstance(event_id, str):
@@ -3712,6 +3755,10 @@ class ResolutionWorker:
                 purchase.event_id,
                 result.outcome,
             )
+            if self._purchase_agent_pause is not None:
+                await self._pause_agent_for_purchase(
+                    event_id, payload, purchase, native_product=native_product
+                )
             if native_product is not None:
                 # Primero la compra corto lo abierto (choque 2 del diseno);
                 # recien ahora arranca el flujo nativo. Con not_found (una
