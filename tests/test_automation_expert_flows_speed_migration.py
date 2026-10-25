@@ -76,6 +76,9 @@ def test_it_is_one_transaction_and_comes_before_the_motor() -> None:
         # El btrim del nombre del producto en el pago rechazado (20261025000200, E-087) solo parcha
         # admit_portable_hotmart_payment_failure.
         "20261025000200_payment_failure_product_name_btrim.sql",
+        # La lectura del link para la nota privada al derivar (20261025000300, F-034 D8):
+        # una funcion nueva, no toca ninguna existente.
+        "20261025000300_handoff_link_note_v1.sql",
     ]
     for later in names[position + 1:]:
         if later != reads:

@@ -302,7 +302,7 @@ EXCEPTIONS_V1: tuple[FlowException, ...] = (
     ),
     FlowException(
         "a1_cupon_por_flag", _CARRITO, "despacho",
-        "src/bridge/app.py:5122-5123",
+        "src/bridge/app.py:5145-5146",
         "Que A1 lleve el cupon personal lo decide RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED, no la"
         " politica: el primer paso no tiene coupon_ordinal.",
         step_keys=frozenset({"first_contact"}),

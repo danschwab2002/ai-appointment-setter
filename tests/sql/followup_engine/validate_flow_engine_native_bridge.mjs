@@ -97,7 +97,9 @@ if (position < 0) fail(`${MIGRATION} no esta en la cadena`);
 if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261024000600_flow_change_new_flow_v1.sql',
   '20261025000100_automation_expert_native_reads_v1.sql',
   // El btrim del nombre del producto en el pago rechazado (E-087): solo parcha esa admision.
-  '20261025000200_payment_failure_product_name_btrim.sql'])) {
+  '20261025000200_payment_failure_product_name_btrim.sql',
+  // La lectura del link para la nota privada al derivar (F-034 D8): una funcion nueva.
+  '20261025000300_handoff_link_note_v1.sql'])) {
   fail(`despues de ${MIGRATION} van solo la del AE que crea flujos y la de sus lecturas nativas`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(

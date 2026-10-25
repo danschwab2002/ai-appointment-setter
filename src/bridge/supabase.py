@@ -723,6 +723,21 @@ class InboundCommercialCaseAdmissionResult:
 
 
 @dataclass(frozen=True)
+class HandoffNoteCheckoutLink:
+    """El ultimo link aceptado de la persona, para la nota de la derivacion (F-034, D8)."""
+
+    checkout_url_final: str
+    source_kind: str
+    accepted_at: datetime
+    coupon_code: str | None
+
+
+HANDOFF_NOTE_LINK_SOURCE_KINDS = frozenset(
+    {"inbound_request", "precheckout_request", "recovery_first_touch"}
+)
+
+
+@dataclass(frozen=True)
 class ConversationResumeResult:
     """Outcome of lifting a durable human pause on one conversation."""
 
@@ -2700,6 +2715,67 @@ class SupabaseClient:
                 raise _invalid_row_error(operation)
             activities.append(PersonActivity(activity=activity, occurred_at=parsed_at))
         return tuple(activities)
+
+    async def read_handoff_note_checkout_link(
+        self,
+        *,
+        commercial_case_id: str,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        now: str,
+    ) -> HandoffNoteCheckoutLink | None:
+        """El ultimo link aceptado del contacto del caso en ese inbox, o None.
+
+        F-034, D8: lo lee la nota privada de la derivacion. Si vino del carrito,
+        trae el cupon vigente de ese caso. Solo lectura.
+        """
+        operation = "handoff_note_checkout_link_read"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/read_handoff_note_checkout_link_v1",
+            content=json.dumps(
+                {
+                    "p_commercial_case_id": commercial_case_id,
+                    "p_chatwoot_account_id": chatwoot_account_id,
+                    "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                    "p_now": now,
+                }
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if not rows:
+            return None
+        if len(rows) != 1:
+            raise _invalid_row_error(operation)
+        [row] = rows
+        if set(row) != {"checkout_url_final", "source_kind", "accepted_at", "coupon_code"}:
+            raise _invalid_row_error(operation)
+        url = _required_string(row, "checkout_url_final", operation=operation)
+        if not url.startswith("https://pay.hotmart.com/"):
+            raise _invalid_row_error(operation)
+        source_kind = _required_enum(
+            row, "source_kind", set(HANDOFF_NOTE_LINK_SOURCE_KINDS), operation=operation
+        )
+        accepted_text = _required_string(row, "accepted_at", operation=operation)
+        try:
+            accepted_at = datetime.fromisoformat(accepted_text.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise _invalid_row_error(operation) from exc
+        if accepted_at.tzinfo is None:
+            raise _invalid_row_error(operation)
+        coupon_code = _optional_string(row, "coupon_code", operation=operation)
+        if coupon_code is not None and (
+            not coupon_code.isascii() or not coupon_code.isalnum()
+        ):
+            raise _invalid_row_error(operation)
+        return HandoffNoteCheckoutLink(
+            checkout_url_final=url,
+            source_kind=source_kind,
+            accepted_at=accepted_at,
+            coupon_code=coupon_code,
+        )
 
     async def admit_portable_hotmart_payment_slip_event(
         self,
