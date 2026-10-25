@@ -1,0 +1,180 @@
+{
+  "_capture": {
+    "fecha": "2026-10-25T20:35Z",
+    "origen": "base de Chatwoot del VPS de Lancemos (infra_chatwoot-db, base infra), sesion de solo lectura",
+    "que": "los inbox 11 (WhatsApp Cloud de ATT1, cuenta 2) y 12 (la bandeja provisoria Channel::Api de Maribel, cuenta 3), el canal de WhatsApp del 11 sin el telefono (solo si esta cargado) y sus plantillas por nombre, estado e idioma; y las columnas de las dos tablas",
+    "sin": "telefono, token, provider_config ni cuerpos de plantilla"
+  },
+  "inboxes": [
+    {
+      "id": 11,
+      "account_id": 2,
+      "channel_type": "Channel::Whatsapp",
+      "channel_id": 10,
+      "enable_auto_assignment": false
+    },
+    {
+      "id": 12,
+      "account_id": 3,
+      "channel_type": "Channel::Api",
+      "channel_id": 2,
+      "enable_auto_assignment": true
+    }
+  ],
+  "channel_whatsapp": [
+    {
+      "id": 10,
+      "account_id": 2,
+      "provider": "whatsapp_cloud",
+      "phone_number_present": true,
+      "message_templates": [
+        {
+          "name": "att1_bienvenida_01",
+          "status": "APPROVED",
+          "language": "es_MX"
+        },
+        {
+          "name": "att1_carrito_abandonado_01",
+          "status": "APPROVED",
+          "language": "es_MX"
+        },
+        {
+          "name": "att1_carrito_descuento_01",
+          "status": "APPROVED",
+          "language": "es_MX"
+        },
+        {
+          "name": "att1_carrito_dudas_01",
+          "status": "APPROVED",
+          "language": "es_MX"
+        },
+        {
+          "name": "att1_compra_fallida_01",
+          "status": "APPROVED",
+          "language": "es_MX"
+        },
+        {
+          "name": "att1_ficha_efectivo_01",
+          "status": "APPROVED",
+          "language": "es_MX"
+        },
+        {
+          "name": "att1_ficha_vence_hoy_01",
+          "status": "APPROVED",
+          "language": "es_MX"
+        },
+        {
+          "name": "att1_ficha_vence_manana_01",
+          "status": "APPROVED",
+          "language": "es_MX"
+        },
+        {
+          "name": "att1_ficha_vencida_descuento_01",
+          "status": "APPROVED",
+          "language": "es_MX"
+        },
+        {
+          "name": "att1_interes_precheckout_01",
+          "status": "APPROVED",
+          "language": "es_MX"
+        },
+        {
+          "name": "att1_pago_efectivo_confirmado_01",
+          "status": "APPROVED",
+          "language": "es_MX"
+        },
+        {
+          "name": "att1_pago_pendiente_01",
+          "status": "APPROVED",
+          "language": "es_MX"
+        },
+        {
+          "name": "att1_pago_pendiente_cancelado_01",
+          "status": "APPROVED",
+          "language": "es_MX"
+        },
+        {
+          "name": "att1_pago_rechazado_banco_01",
+          "status": "APPROVED",
+          "language": "es_MX"
+        },
+        {
+          "name": "att1_pago_rechazado_cupon_01",
+          "status": "APPROVED",
+          "language": "es_MX"
+        },
+        {
+          "name": "att1_pago_rechazado_descuento_01",
+          "status": "APPROVED",
+          "language": "es_MX"
+        },
+        {
+          "name": "att1_pago_rechazado_dos_veces_01",
+          "status": "APPROVED",
+          "language": "es_MX"
+        },
+        {
+          "name": "att1_pago_rechazado_saldo_01",
+          "status": "APPROVED",
+          "language": "es_MX"
+        },
+        {
+          "name": "att1_reactivacion_01",
+          "status": "APPROVED",
+          "language": "es_MX"
+        },
+        {
+          "name": "att1_recordatorio_dia_elegido_01",
+          "status": "APPROVED",
+          "language": "es_MX"
+        },
+        {
+          "name": "att1_seguimiento_descuento_01",
+          "status": "APPROVED",
+          "language": "es_MX"
+        },
+        {
+          "name": "att1_ultima_renovacion_01",
+          "status": "APPROVED",
+          "language": "es_MX"
+        }
+      ]
+    }
+  ],
+  "columns_inboxes": [
+    "id",
+    "channel_id",
+    "account_id",
+    "name",
+    "created_at",
+    "updated_at",
+    "channel_type",
+    "enable_auto_assignment",
+    "greeting_enabled",
+    "greeting_message",
+    "email_address",
+    "working_hours_enabled",
+    "out_of_office_message",
+    "timezone",
+    "enable_email_collect",
+    "csat_survey_enabled",
+    "allow_messages_after_resolved",
+    "auto_assignment_config",
+    "lock_to_single_conversation",
+    "portal_id",
+    "sender_name_type",
+    "business_name",
+    "csat_config"
+  ],
+  "columns_channel_whatsapp": [
+    "id",
+    "account_id",
+    "phone_number",
+    "provider",
+    "provider_config",
+    "created_at",
+    "updated_at",
+    "message_templates",
+    "message_templates_last_updated"
+  ]
+}
