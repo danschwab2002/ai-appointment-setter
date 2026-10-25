@@ -70,6 +70,9 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
         "20261024000600_flow_change_new_flow_v1.sql",
         # Las lecturas nativas del AE (20261025000100) suman lecturas y parchan el anclaje del AE y prender.
         "20261025000100_automation_expert_native_reads_v1.sql",
+        # El btrim del nombre del producto en el pago rechazado (20261025000200, E-087) solo parcha
+        # admit_portable_hotmart_payment_failure.
+        "20261025000200_payment_failure_product_name_btrim.sql",
     ]
     native = (MIGRATIONS / "20261024000200_flow_engine_native_v1.sql").read_text(encoding="utf-8")
     assert "read_automation_expert_flows_v1" not in native

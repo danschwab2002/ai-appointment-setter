@@ -28,8 +28,10 @@ def test_it_is_one_transaction_and_the_last() -> None:
     sql = _sql()
     assert "\nbegin;\n" in sql and sql.rstrip().endswith("commit;")
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
-    assert names[-1] == MIGRATION.name
-    assert names[-2] == "20261024000600_flow_change_new_flow_v1.sql"
+    # Despues va la del btrim del nombre del producto en el pago rechazado (20261025000200, E-087).
+    assert names[-1] == "20261025000200_payment_failure_product_name_btrim.sql"
+    assert names[-2] == MIGRATION.name
+    assert names[-3] == "20261024000600_flow_change_new_flow_v1.sql"
     # Correrla dos veces aborta, y necesita el AE que crea flujos.
     assert "automation_expert_native_reads_already_applied" in sql
     assert "flow_change_new_flow_missing" in sql
@@ -37,7 +39,8 @@ def test_it_is_one_transaction_and_the_last() -> None:
 
 def test_the_validator_is_in_the_npm_chain() -> None:
     package = json.loads((ROOT / "tests" / "sql" / "followup_engine" / "package.json").read_text())
-    assert package["scripts"]["test"].rstrip().endswith("node validate_automation_expert_native_reads.mjs")
+    assert package["scripts"]["test"].rstrip().endswith(
+        "node validate_automation_expert_native_reads.mjs && node validate_payment_failure_product_name_btrim.mjs")
 
 
 def test_only_service_role_executes_the_three_reads() -> None:

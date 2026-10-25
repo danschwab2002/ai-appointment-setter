@@ -1,0 +1,73 @@
+"""El btrim del nombre del producto en el pago rechazado (20261025000200, E-087), leido como texto.
+
+El comportamiento lo prueba tests/sql/followup_engine/validate_payment_failure_product_name_btrim.mjs
+sobre PGlite, con el pago rechazado capturado de ATT1 y el nombre capturado de Maribel.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+MIGRATIONS = ROOT / "supabase" / "migrations"
+MIGRATION = MIGRATIONS / "20261025000200_payment_failure_product_name_btrim.sql"
+FIXTURE = ROOT / "tests" / "fixtures" / "hotmart_product_name_trailing_space_maribel_20261025.json"
+
+
+def test_it_is_one_transaction_and_the_last() -> None:
+    sql = MIGRATION.read_text(encoding="utf-8")
+    names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
+
+    assert "\nbegin;\n" in sql and sql.rstrip().endswith("commit;")
+    assert names[-1] == MIGRATION.name
+    assert names[-2] == "20261025000100_automation_expert_native_reads_v1.sql"
+
+
+def test_it_patches_only_the_product_name_comparison() -> None:
+    code = re.sub(r"--[^\n]*", "", MIGRATION.read_text(encoding="utf-8"))
+
+    assert re.findall(r"public\.(\w+)\(", code) == ["admit_portable_hotmart_payment_failure"]
+    assert "create or replace function" not in code.lower()
+    assert "grant " not in code.lower() and "revoke " not in code.lower()
+    assert (
+        "or p_payload #>> ''{data,product,name}'' is distinct from v_binding.product_name\\n"
+        in code
+    )
+    assert (
+        "or btrim(p_payload #>> ''{data,product,name}'') is distinct from btrim(v_binding.product_name)\\n"
+        in code
+    )
+
+
+def test_the_replaced_line_is_in_the_live_definition() -> None:
+    live = (MIGRATIONS / "20261001000100_whatsapp_phone_equivalence.sql").read_text(encoding="utf-8")
+    later = [
+        path.name
+        for path in sorted(MIGRATIONS.glob("*.sql"))
+        if "20261001000100" < path.name.split("_", 1)[0] < "20261025000200"
+        and "function public.admit_portable_hotmart_payment_failure("
+        in path.read_text(encoding="utf-8")
+    ]
+
+    assert later == []
+    assert live.count(
+        "       or p_payload #>> '{data,product,name}' is distinct from v_binding.product_name\n"
+    ) == 1
+
+
+def test_the_fixture_is_the_captured_name_with_the_trailing_space() -> None:
+    fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    cart = [event for event in fixture["events"] if event["event"] == "PURCHASE_OUT_OF_SHOPPING_CART"]
+
+    assert fixture["_capture"]["captured_at"].startswith("2026-10-25")
+    assert cart and all(event["product"]["name"] == "El Protocolo Biohacking + " for event in cart)
+    assert fixture["binding"]["product_name"] == "El Protocolo Biohacking +"
+
+
+def test_the_validator_is_in_the_npm_chain() -> None:
+    package = json.loads((ROOT / "tests/sql/followup_engine/package.json").read_text(encoding="utf-8"))
+
+    assert package["scripts"]["test"].rstrip().endswith(
+        "node validate_payment_failure_product_name_btrim.mjs")
