@@ -212,6 +212,7 @@ from bridge.payment_failure_variant import (
     PaymentFailureVariantsConfig,
 )
 from bridge.recovery_coupons import RecoveryCouponWorker
+from bridge.event_log import configure_bridge_event_log, hotmart_log_fields
 from bridge.flow_engine_runtime import (
     DivergenceNotifier,
     FlowEngineRuntime,
@@ -3643,6 +3644,7 @@ def create_app(
     audio_transcriber: AudioTranscriber | None = None,
     flow_change_store: flow_change_api.FlowChangeStore | None = None,
 ) -> FastAPI:
+    configure_bridge_event_log()  # los info revisados, al log (E-084)
     boolean_fields = [
         field
         for field in dataclass_fields(settings)
@@ -9893,6 +9895,14 @@ def create_app(
             ),
         )
         if not decision.accepted:
+            # Un tipo que el bridge no soporta (o sin id, o de otra version)
+            # salia con 200 y sin rastro (E-084). El id y el tipo pasan solo si
+            # tienen la forma de Hotmart: nunca texto libre del payload.
+            logger.info(
+                "hotmart_event_ignored event_id=%s event_type=%s reason=%s",
+                *hotmart_log_fields(decision.event_id, decision.event_type),
+                decision.reason,
+            )
             response.status_code = status.HTTP_200_OK
             return {
                 "status": "ignored",
