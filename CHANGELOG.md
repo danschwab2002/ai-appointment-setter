@@ -12,6 +12,27 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.20.1] - 2026-10-26
+
+Un parche sobre la 1.20.0, con un PR: el caso de un flujo nativo lleva al despacho la oferta de la compra que lo abrió, así que la plantilla de la bienvenida de ATT1 sale (#342). Una migración, sin paso manual. Sin variables nuevas, sin campos nuevos en el manifiesto y sin cambios en el código del bridge ni en los profiles: el bridge 1.20.1 es el de la 1.20.0 con otro número.
+
+### Arreglado
+
+- **El paso de mensaje de un flujo nativo ya no se frena por la oferta** (#342, E-122, migración `20261026000200_flow_engine_native_offer_in_context_v1.sql`; contrato `flow-engine-v2.md` 2.5.0, sección 17). La compra de prueba del 26/10 en ATT1 abrió el primer recorrido nativo (la bienvenida) y la plantilla nunca salió: cuatro intentos `failed_before_request` y `followup_recipient_not_allowlisted` en el log. El despachador exige que la oferta del caso sea una de las aceptadas del binding, y el caso nativo nacía sin oferta. Con eso, ningún paso de mensaje de un flujo nativo podía salir, en ninguna instancia.
+  - La migración guarda la oferta de la compra en el `context` del caso (`flow_engine_offer`) y `get_followup_execution_context` la devuelve para un caso nativo (`policy_key` `flujo:…`) sin oferta. Para todo otro caso devuelve la oferta del caso, como antes.
+  - `recovery_cases.offer_code` sigue nulo en un caso nativo, a propósito: el carrito, el pago rechazado y la compra buscan el caso abierto de la persona por esa columna, y nunca tienen que caer en un caso nativo.
+  - El chequeo del bridge no cambia: una compra por una oferta que la instancia no declara, o sin oferta, se sigue frenando.
+  - Los casos nativos que ya existen no se tocan: su `context` no tiene la oferta y su envío se sigue frenando. En ATT1, el caso de la compra de prueba del 26/10 queda así, y la regla «una vez por persona» del flujo ya consumió a esa persona: la prueba se repite con otro teléfono de la cohorte.
+
+### Qué hace quien actualiza
+
+- **La migración** `20261026000200_flow_engine_native_offer_in_context_v1.sql`. No tiene paso manual, y correrla dos veces aborta con `unexpected_flow_engine_native_admission_definition` sin cambiar nada. Exige el motor nativo de la 1.18.0. **Va antes de subir el bridge**, como toda migración: es la que arregla el envío, y el bridge 1.20.1 no cambia nada sin ella. Al revés no pasa nada: el bridge 1.20.0 con la migración aplicada manda igual la plantilla del flujo nativo. Las funciones conservan su ACL. `/ready` no suma claves.
+- **Variables:** ninguna nueva.
+- **Profiles:** no cambian.
+- **ATT1:** la migración y el bridge. Después, una compra nueva de otro teléfono de la cohorte de la bienvenida.
+- **Una instancia en solo escucha (Maribel):** la migración y el bridge. Sin flujos nativos, nada cambia.
+- **Johanna:** nada que hacer. No tiene motor nativo.
+
 ## [1.20.0] - 2026-10-26
 
 Una versión menor sobre la 1.19.0, con tres PR: el motor nativo manda plantillas con botón de URL fija y con las variables que declara el paso, lo que destraba la bienvenida de ATT1 (#340); la baja nueva se confirma con una sola línea, apagada por defecto (#337); y `docs/instalar.md` alineado con la guía de implementación (#338, solo documentación). Dos variables nuevas, las dos con default que no cambia nada. Una migración, sin paso manual. Sin campos nuevos en el manifiesto.
