@@ -12,6 +12,39 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.20.0] - 2026-10-26
+
+Una versión menor sobre la 1.19.0, con tres PR: el motor nativo manda plantillas con botón de URL fija y con las variables que declara el paso, lo que destraba la bienvenida de ATT1 (#340); la baja nueva se confirma con una sola línea, apagada por defecto (#337); y `docs/instalar.md` alineado con la guía de implementación (#338, solo documentación). Dos variables nuevas, las dos con default que no cambia nada. Una migración, sin paso manual. Sin campos nuevos en el manifiesto.
+
+Nada rige sin variable para lo que ya corre: la migración solo cambia lo que acepta la forma nativa de la compra, y el legado compila igual antes y después. Lo nuevo del Automation Expert (#340: cómo escribe las variables de un paso y la página de la biblioteca sobre plantillas) llega cuando la instancia instala los profiles de esta versión. Johanna no cambia.
+
+### Agregado
+
+- **El motor nativo manda plantillas con botón de URL fija y con las variables que declara el paso** (#340, E-115, migración `20261026000100_flow_engine_native_template_shape_v1.sql`; contratos `flow-engine-v2.md` 2.4.0, sección 16, y la tabla de `approved-template-direct-dispatch-v1.md`).
+  - **Variables:** el paso `plantilla` de un flujo nativo manda las que escribe en `variables`, en su orden, de entre `nombre` y `producto` (al menos una, ninguna repetida). Antes la base fijaba `["nombre", "producto"]` y un paso con `["producto"]` terminaba en `flow_policy_not_compilable:variables_differ:first_contact`. La migración suma `variables_de` a la forma `nativo:compra` y el compilador acepta esa lista; las formas del legado no traen `variables_de` y compilan igual.
+  - **Botones:** en el envío nativo, un botón de URL fija sale sin parámetros de botón. Un botón de URL con variable cierra con `url_button_with_variable`, y una respuesta rápida u otro tipo con `unsupported_button`. La regla 13 del validador frena lo mismo antes de abrir el flujo, con el motivo en la razón, y en un flujo nativo dice cuántos marcadores tiene la plantilla. Sin el flujo nativo, un botón URL no declarado sigue siendo `unsupported_button`, como antes.
+  - **El Automation Expert:** su SOUL dice que el paso escribe una variable por marcador y qué hacer con el bloqueo, y `biblioteca/chatwoot-whatsapp.md` explica cómo se nombra una plantilla de la compra, qué variables lleva, qué botones puede tener y que, sin el macro de la etiqueta `cliente` (`CHATWOOT_CLIENT_LABEL_MACRO_ID`), el paso `etiquetar` deja solo la nota.
+- **La baja nueva se confirma con una sola línea** (#337, E-107, contrato `commercial-ally-runtime-v1.md`, sección «La baja se confirma con una línea»). Con `OPT_OUT_CONFIRMATION_ENABLED=true`, cuando el entrante registra una baja nueva le contesta a la persona una línea, sin vender, una vez por conversación: `OPT_OUT_CONFIRMATION_TEXT`, o «Listo, no te escribimos más.» si está vacía. El texto se valida al arrancar: una línea, hasta 160 caracteres, sin link, sin código de cupón, sin `%`, `$`, `?` ni `¿`; si no pasa, el bridge no arranca. No sale a quien ya tenía una baja ni con `evidence_conflict`, y después de la confirmación el agente no corre. Exige `CHATWOOT_DURABLE_OPT_OUT_ENABLED` y `CHATWOOT_AUTOMATED_REPLIES_ENABLED`: prendido sin ellas, el bridge no arranca. Una confirmación que no sale va al log y nunca frena la baja. Sin migración.
+
+### Documentación
+
+- **`docs/instalar.md` alineado con la guía de implementación del recuperador** (#338, E-110): todo lo que no es un comando apunta a la guía, el tiempo medido de Maribel en lugar del estimado, la cuenta propia de Chatwoot (paso 2), los tres `provisionales:` (paso 7), «solo guardar» (pasos 10 y 15), el conector de Slack propio de cada instancia (paso 14) y el orden de los flujos del día del entrante (paso 17). Sin código.
+
+### Qué hace quien actualiza
+
+- **La migración** `20261026000100_flow_engine_native_template_shape_v1.sql`. No tiene paso manual, y correrla dos veces aborta con `flow_engine_native_template_shape_already_applied` sin cambiar nada. Exige el motor nativo de la 1.18.0 (aborta con `flow_engine_native_missing` sin él). **Conviene aplicarla antes de subir el bridge:** con el bridge 1.20.0 y sin la migración, el validador del Automation Expert da por buena una bienvenida con `variables: ["producto"]`, y la base la rechaza al abrir el flujo con `variables_differ`. Al revés no pasa nada: el bridge 1.19.0 con la migración aplicada sigue frenando esa lista en el validador, y el legado compila igual. `/ready` no suma claves.
+- **Las variables nuevas:**
+  ```
+  OPT_OUT_CONFIRMATION_ENABLED=false   # la línea que confirma una baja nueva (#337); exige CHATWOOT_DURABLE_OPT_OUT_ENABLED y CHATWOOT_AUTOMATED_REPLIES_ENABLED
+  OPT_OUT_CONFIRMATION_TEXT=           # vacía = «Listo, no te escribimos más.»; una línea, sin link, cupón, precio ni pregunta
+  ```
+  Las dos están en `.env.example` y `compose.yaml`. Si el compose de la instancia lista las variables a mano, hay que sumarlas ahí.
+- **Para que el paso `etiquetar: cliente` de un flujo nativo sume la etiqueta:** `CHATWOOT_CLIENT_LABEL_MACRO_ID` (ya existía desde la 1.18.0) con el id de un macro de Chatwoot de una sola acción, `add_label cliente`, distinto de los de pausa, reanudación y baja. Sin ella, el paso deja solo la nota privada. El bridge lee el macro la primera vez que lo usa: si no es exactamente esa acción, apaga el etiquetado y escribe `product_label_macro_invalid` en el log; el envío no se frena.
+- **Los profiles del Automation Expert de esta versión** (`profiles/automation-expert/`: el SOUL y `biblioteca/chatwoot-whatsapp.md`) traen lo de #340. El SOUL común del agente comercial no cambia.
+- **ATT1:** la migración, el bridge con `CHATWOOT_CLIENT_LABEL_MACRO_ID` del macro de la etiqueta `cliente` y `OPT_OUT_CONFIRMATION_ENABLED=false`, y el profile del Automation Expert. Con eso el AE puede proponer la bienvenida (`att1_bienvenida_01`, un `{{1}}` y un botón de URL fija) con `variables: ["producto"]`. La confirmación de la baja entra recién con `OPT_OUT_CONFIRMATION_ENABLED=true`.
+- **Una instancia en solo escucha (Maribel):** la migración y el bridge, con `OPT_OUT_CONFIRMATION_ENABLED=false`. Sin flujos nativos, nada cambia. Si su GHL ya confirma la baja con un texto, ese texto pasa la validación y puede ir en `OPT_OUT_CONFIRMATION_TEXT` el día que se prenda el entrante.
+- **Johanna:** nada que hacer. El flag nuevo viene apagado y no tiene motor nativo.
+
 ## [1.19.0] - 2026-10-26
 
 Una versión menor sobre la 1.18.0, con seis PR: el quinto PR del motor nativo del hito 4, con el que el Automation Expert ve los flujos nativos, las ventas por flujo y una biblioteca de plataformas (#330); dos arreglos (#331, el log de los eventos de Hotmart descartados, y #332, el nombre del producto con espacios al final en el pago rechazado); dos funcionalidades nuevas apagadas por defecto, la nota privada con el último link al derivar (#333) y la pausa del agente al comprar (#334); y el script que pasa una instancia de la bandeja provisoria al inbox de su número (#335). Dos variables nuevas, las dos apagadas por defecto. Cuatro migraciones, todas sin paso manual. Sin campos nuevos en el manifiesto.
