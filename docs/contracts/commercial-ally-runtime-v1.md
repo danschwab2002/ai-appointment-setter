@@ -213,7 +213,7 @@ reconcilia como siempre y, si el mensaje no es otra baja, deja correr al agente
 con `opted_out_contact: true` en la entrada. El SOUL común contesta normal, sin
 ofrecer seguimiento ni pedir permiso para escribirle, y pide el link solo si la
 persona lo pide. Sin baja la clave no va. La baja sigue para todo lo que sale de
-nosotros: una baja nueva en el mensaje se registra y no se contesta; si la
+nosotros: una baja nueva en el mensaje se registra y el agente no corre; si la
 conversación la tiene el equipo, la admisión da `blocked` y el agente no corre.
 La reserva y la autorización del link (`reserve_chatwoot_checkout_issuance_v2`,
 sus dos portables y `authorize_chatwoot_checkout_issuance_v2`, migración
@@ -224,6 +224,51 @@ El log `chatwoot_opted_out_contact_wrote_again message=<id> answered=true`
 cuenta los casos. Sin manifiesto (Johanna) sigue la derivación de la v1.10.2
 (`opted_out_contact_wrote_again`). `CONTEXT_BUILDER_VERSION` no cambia: la clave
 es condicional y el resto de la entrada se arma igual.
+
+#### La baja se confirma con una línea (E-107)
+
+Regla del producto (Dan, 2026-10-26, reemplaza la del 2026-10-25 «una baja
+nueva se registra y no se contesta»): **una baja se registra y se confirma con
+una sola línea, sin vender**. La persona acaba de escribir, así que la
+confirmación cae dentro de la ventana de 24 h de WhatsApp como texto libre, y
+baja la chance de que bloquee o denuncie el número.
+
+- **Flag por instancia, apagado por defecto:** `OPT_OUT_CONFIRMATION_ENABLED`.
+  Apagado, la baja se registra y no se contesta, como antes. Prendido exige
+  `CHATWOOT_DURABLE_OPT_OUT_ENABLED` y `CHATWOOT_AUTOMATED_REPLIES_ENABLED`, o
+  el bridge no arranca. Es una capacidad portable (arranca con manifiesto).
+- **El texto:** `OPT_OUT_CONFIRMATION_TEXT`, de la instancia; vacío, el del
+  producto, «Listo, no te escribimos más.». Se valida al arrancar: una línea,
+  hasta 160 caracteres, sin link, sin código de cupón, sin `%`, `$`, `?` ni
+  `¿`. Lo manda el bridge, no el modelo, y no gasta caracteres del SOUL común.
+- **Cuándo sale:** solo cuando `apply_chatwoot_inbound_opt_out` registra una
+  baja nueva de ese mensaje (`applied`, `recorded_unmatched`,
+  `recorded_ambiguous`, o `already_applied` en un reintento del mismo mensaje),
+  por los dos caminos del entrante: el del agente y el de «solo la baja» (la
+  admisión dio `blocked` o rechazó la conversación de la plantilla). Con
+  `evidence_conflict` no sale.
+- **Una sola vez:** no sale si la persona ya tenía una baja (`prior_opt_out`,
+  en esta u otra conversación), ni si la conversación ya tiene un mensaje del
+  AgentBot con `appointment_setter_decision = opt_out_confirmation`. El envío
+  usa la idempotencia de siempre de `send_agent_bot_reply` (el hash del lote
+  por conversación y mensaje disparador).
+- **Por dónde:** `send_agent_bot_reply` del AgentBot, en la conversación de la
+  baja, como respuesta al mensaje que la disparó, con la marca
+  `opt_out_confirmation`. No pasa por la reautorización durable (la baja acaba
+  de dejar la conversación en `blocked` y la confirmación es la única
+  respuesta que permite). Las guardas de Chatwoot siguen: si la conversación
+  está asignada a una persona, tiene `automation_paused` o tiene un mensaje
+  después del de la persona, no sale.
+- **La macro de la baja espera:** la macro pone `automation_paused`, que
+  bloquea todo envío del AgentBot. Con el flag, el entrante registra la baja y
+  manda la confirmación con un candado tomado que comparte con
+  `OptOutProjectionWorker`, y el worker proyecta recién cuando lo suelta.
+- **Después, nada:** el agente no corre en ese mensaje y la baja sigue para
+  todo lo que sale de nosotros, igual que antes.
+- **Nunca frena la baja:** una confirmación que no sale (bloqueada o con error
+  de Chatwoot) va al log y la baja queda registrada. Logs:
+  `opt_out_confirmation_sent`, `opt_out_confirmation_skipped reason=…` y
+  `opt_out_confirmation_not_sent`.
 
 #### Un binding por producto (paso 2c-1)
 
