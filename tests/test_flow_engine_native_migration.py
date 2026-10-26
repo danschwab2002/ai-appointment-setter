@@ -132,4 +132,5 @@ def test_the_validator_is_in_the_npm_chain() -> None:
         " && node validate_payment_failure_product_name_btrim.mjs"
         " && node validate_handoff_link_note.mjs && node validate_purchase_agent_pause.mjs"
         " && node validate_flow_engine_native_template_shape.mjs"
+        " && node validate_flow_engine_native_offer_in_context.mjs --check"
     )
