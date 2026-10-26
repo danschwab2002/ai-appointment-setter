@@ -14,7 +14,7 @@ import tempfile
 import time
 import unicodedata
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, fields as dataclass_fields
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -120,6 +120,13 @@ from bridge.messaging import (
 )
 from bridge.payment_slip_reminders import PAYMENT_SLIP_STEPS
 from bridge.opt_out import detect_explicit_opt_out
+from bridge.opt_out_confirmation import (
+    OPT_OUT_CONFIRMATION_DECISION,
+    OPT_OUT_CONFIRMATION_DEFAULT_TEXT,
+    OPT_OUT_CONFIRMATION_OUTCOMES,
+    opt_out_confirmation_already_sent,
+    validate_opt_out_confirmation_text,
+)
 from bridge import flow_change_api
 from bridge.automation_expert_read import (
     CHATWOOT_MAX_MESSAGES_PER_CONVERSATION,
@@ -317,6 +324,9 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "dispatcher_approved_template_direct_enabled",
     "meta_final_effect_enabled",
     "chatwoot_durable_opt_out_enabled",
+    # E-107: la baja se confirma con una linea. El texto tiene un default del
+    # producto y cada instancia puede cambiarlo (OPT_OUT_CONFIRMATION_TEXT).
+    "opt_out_confirmation_enabled",
     "human_handoff_projection_enabled",
     "human_handoff_admission_enabled",
     # F-034: el aviso corto al derivar. El texto es fijo y del producto; lo
@@ -796,6 +806,10 @@ class Settings:
     meta_final_effect_evidence_dir: Path = Path("./data/meta-final-effect-gate")
     chatwoot_durable_opt_out_enabled: bool = False
     opt_out_projection_worker_id: str | None = None
+    # E-107 (Dan, 26/10): una baja nueva se confirma con una sola linea, sin
+    # vender. Apagado, la baja se registra y no se contesta, como hasta ahora.
+    opt_out_confirmation_enabled: bool = False
+    opt_out_confirmation_text: str = OPT_OUT_CONFIRMATION_DEFAULT_TEXT
     human_handoff_projection_enabled: bool = False
     human_handoff_admission_enabled: bool = False
     # F-034 (decision D5 de Dan, 24/10): al derivar, la persona recibe un
@@ -1512,6 +1526,13 @@ class Settings:
         handoff_notice_enabled = (
             os.getenv("HANDOFF_NOTICE_ENABLED", "false").lower() == "true"
         )
+        opt_out_confirmation_enabled = (
+            os.getenv("OPT_OUT_CONFIRMATION_ENABLED", "false").lower() == "true"
+        )
+        opt_out_confirmation_text = validate_opt_out_confirmation_text(
+            os.getenv("OPT_OUT_CONFIRMATION_TEXT", "").strip()
+            or OPT_OUT_CONFIRMATION_DEFAULT_TEXT
+        )
         handoff_link_note_enabled = (
             os.getenv("HANDOFF_LINK_NOTE_ENABLED", "false").lower() == "true"
         )
@@ -1926,6 +1947,8 @@ class Settings:
             meta_final_effect_evidence_dir=meta_final_effect_evidence_dir,
             chatwoot_durable_opt_out_enabled=chatwoot_durable_opt_out_enabled,
             opt_out_projection_worker_id=opt_out_projection_worker_id,
+            opt_out_confirmation_enabled=opt_out_confirmation_enabled,
+            opt_out_confirmation_text=opt_out_confirmation_text,
             human_handoff_projection_enabled=human_handoff_projection_enabled,
             human_handoff_admission_enabled=human_handoff_admission_enabled,
             handoff_notice_enabled=handoff_notice_enabled,
@@ -4787,6 +4810,19 @@ def create_app(
         raise ValueError(
             "CHATWOOT_CUT_B_AGENT_ENABLED requires Hermes and Chatwoot control"
         )
+    if settings.opt_out_confirmation_enabled:
+        # La confirmacion vive dentro de la baja durable del entrante y sale
+        # como respuesta del AgentBot: sin las dos, el flag no haria nada.
+        if not (
+            settings.chatwoot_durable_opt_out_enabled
+            and settings.automated_replies_enabled
+        ):
+            raise ValueError(
+                "OPT_OUT_CONFIRMATION_ENABLED requires "
+                "CHATWOOT_DURABLE_OPT_OUT_ENABLED and "
+                "CHATWOOT_AUTOMATED_REPLIES_ENABLED"
+            )
+        validate_opt_out_confirmation_text(settings.opt_out_confirmation_text)
     if settings.handoff_notice_enabled and not settings.human_handoff_admission_enabled:
         # El aviso vive dentro de la derivacion del entrante: sin ella no sale
         # nunca, y un flag prendido que no hace nada no se nota.
@@ -5351,6 +5387,14 @@ def create_app(
         and settings.chatwoot_opt_out_macro_id > 0
         and bool(settings.opt_out_projection_worker_id)
     )
+    # E-107: la macro de la baja pone automation_paused, y esa etiqueta
+    # bloquea todo envio del AgentBot. El worker la proyecta cada 5 s: sin el
+    # candado, la confirmacion competia con el y a veces llegaba tarde. Con el
+    # flag, el entrante registra la baja y manda la confirmacion con el
+    # candado tomado, y el worker espera a que la suelte.
+    opt_out_projection_lock: asyncio.Lock | None = (
+        asyncio.Lock() if settings.opt_out_confirmation_enabled else None
+    )
     if opt_out_projection_configured:
         assert shared_supabase is not None
         assert control_client is not None
@@ -5363,6 +5407,7 @@ def create_app(
             # base ya tenia (52…) y la conversacion de Chatwoot es del wa_id
             # (521…): la proyeccion acepta la otra forma del mismo movil.
             whatsapp_equivalence_enabled=settings.instance_manifest is not None,
+            run_lock=opt_out_projection_lock,
         )
     if settings.human_handoff_projection_enabled:
         assert shared_supabase is not None
@@ -5796,6 +5841,7 @@ def create_app(
         expected_jid: str | None = None,
         opt_out_only: bool = False,
         answer_opted_out_contact: bool = False,
+        confirm_new_opt_out: Callable[..., Awaitable[None]] | None = None,
     ) -> CanonicalWorkResult:
         if control_client is None or settings.agent_bot_id is None:
             if opt_out_only:
@@ -5954,25 +6000,63 @@ def create_app(
                 occurred_at = datetime.fromtimestamp(
                     int(created_at), tz=UTC
                 ).isoformat()
-                try:
-                    result = await shared_supabase.apply_chatwoot_inbound_opt_out(
-                        chatwoot_account_id=settings.chatwoot_account_id,
-                        chatwoot_inbox_id=settings.chatwoot_inbox_id,
-                        chatwoot_conversation_id=conversation_id,
-                        chatwoot_message_id=int(message_ref),
-                        external_user_id=external_user_id,
-                        occurred_at=occurred_at,
-                        rule_key=opt_out_match.rule_key,
-                    )
-                except SupabaseError as exc:
-                    raise RetryableChatwootWorkError(
-                        "chatwoot_opt_out_apply_failed"
-                    ) from exc
-                logger.info(
-                    "chatwoot_opt_out_stopped outcome=%s event_id=%s",
-                    result.outcome,
-                    result.opt_out_event_id,
+                # E-107: con el flag, una baja nueva se confirma con una linea.
+                # Una baja de quien ya estaba dado de baja (prior_opt_out) no
+                # repite la confirmacion.
+                confirming = (
+                    settings.opt_out_confirmation_enabled
+                    and confirm_new_opt_out is not None
                 )
+                async with (
+                    opt_out_projection_lock
+                    if confirming and opt_out_projection_lock is not None
+                    else nullcontext()
+                ):
+                    try:
+                        result = (
+                            await shared_supabase.apply_chatwoot_inbound_opt_out(
+                                chatwoot_account_id=settings.chatwoot_account_id,
+                                chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                                chatwoot_conversation_id=conversation_id,
+                                chatwoot_message_id=int(message_ref),
+                                external_user_id=external_user_id,
+                                occurred_at=occurred_at,
+                                rule_key=opt_out_match.rule_key,
+                            )
+                        )
+                    except SupabaseError as exc:
+                        raise RetryableChatwootWorkError(
+                            "chatwoot_opt_out_apply_failed"
+                        ) from exc
+                    logger.info(
+                        "chatwoot_opt_out_stopped outcome=%s event_id=%s",
+                        result.outcome,
+                        result.opt_out_event_id,
+                    )
+                    if confirming:
+                        assert confirm_new_opt_out is not None
+                        if prior_opt_out:
+                            logger.info(
+                                "opt_out_confirmation_skipped reason=prior_opt_out "
+                                "conversation=%s",
+                                conversation_id,
+                            )
+                        elif result.outcome not in OPT_OUT_CONFIRMATION_OUTCOMES:
+                            logger.info(
+                                "opt_out_confirmation_skipped reason=%s "
+                                "conversation=%s",
+                                result.outcome,
+                                conversation_id,
+                            )
+                        else:
+                            await confirm_new_opt_out(
+                                conversation_id=conversation_id,
+                                trigger_message_id=(
+                                    current_message_id
+                                    if current_message_id is not None
+                                    else int(message_ref)
+                                ),
+                            )
                 # Sin prior_opt_out a proposito: es una baja nueva, no la
                 # derivacion de la v1.10.2 (que con manifiesto ya no corre).
                 return CanonicalWorkResult(proposal=None, stopped=True)
@@ -6183,6 +6267,71 @@ def create_app(
                 **send_args,
                 expected_jid=scoped_expected_jid,
             )
+
+        async def confirm_new_opt_out(
+            *, conversation_id: int, trigger_message_id: int
+        ) -> None:
+            # E-107 (Dan, 26/10): la baja se confirma con una sola linea, sin
+            # vender. Sale una vez por conversacion (la marca del mensaje), por
+            # el canal de la conversacion y dentro de la ventana, porque la
+            # persona acaba de escribir. No pasa por la reautorizacion durable:
+            # la baja acaba de dejar la conversacion en 'blocked', y esta es la
+            # unica respuesta que la baja permite. Las guardas de Chatwoot
+            # siguen: si el equipo tiene la conversacion (asignada, pausada o
+            # con un mensaje despues del de la persona), no sale. Una
+            # confirmacion que no sale nunca frena la baja: va al log.
+            if control_client is None:
+                logger.warning("opt_out_confirmation_skipped reason=not_configured")
+                return
+            try:
+                history = await control_client.get_conversation_messages(
+                    conversation_id=conversation_id, limit=2000
+                )
+                if opt_out_confirmation_already_sent(history):
+                    logger.info(
+                        "opt_out_confirmation_skipped reason=already_sent "
+                        "conversation=%s",
+                        conversation_id,
+                    )
+                    return
+                confirmation_args: dict[str, object] = {
+                    "conversation_id": conversation_id,
+                    "trigger_message_id": trigger_message_id,
+                    "delivery_id": delivery_id,
+                    "content": settings.opt_out_confirmation_text,
+                    "expected_inbox_id": settings.chatwoot_inbox_id,
+                    "agent_decision": OPT_OUT_CONFIRMATION_DECISION,
+                }
+                if scoped_expected_jid is not None:
+                    confirmation_args["expected_jid"] = scoped_expected_jid
+                result = await control_client.send_agent_bot_reply(
+                    **confirmation_args  # type: ignore[arg-type]
+                )
+            except (
+                ChatwootReplyDeliveryUnknownError,
+                ChatwootProtocolError,
+                httpx.HTTPError,
+            ) as exc:
+                logger.warning(
+                    "opt_out_confirmation_not_sent conversation=%s error_type=%s",
+                    conversation_id,
+                    type(exc).__name__,
+                )
+                return
+            status = result.get("status")
+            if status in {"sent", "duplicate"}:
+                logger.info(
+                    "opt_out_confirmation_sent conversation=%s status=%s",
+                    conversation_id,
+                    status,
+                )
+            else:
+                logger.info(
+                    "opt_out_confirmation_skipped reason=%s conversation=%s",
+                    result.get("reason", status),
+                    conversation_id,
+                )
+
         if _is_conversation_reset_message(payload):
             if not settings.automated_replies_enabled:
                 return
@@ -6392,6 +6541,7 @@ def create_app(
                     context=stop_context,
                     expected_jid=scoped_expected_jid,
                     opt_out_only=True,
+                    confirm_new_opt_out=confirm_new_opt_out,
                 )
                 return stop_result.stopped
 
@@ -6800,6 +6950,7 @@ def create_app(
                 # cuenta. Sin manifiesto (Johanna) sigue la derivacion de la
                 # v1.10.2: su SOUL no tiene la regla.
                 answer_opted_out_contact=whatsapp_inbound_equivalence,
+                confirm_new_opt_out=confirm_new_opt_out,
             )
             if canonical_result.prior_opt_out and not canonical_result.stopped:
                 # El log se queda, para medir cuantas bajas vuelven a escribir.

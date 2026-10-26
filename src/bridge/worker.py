@@ -512,6 +512,7 @@ class OptOutProjectionWorker:
         lease_duration: str = "1 minute",
         max_attempts: int = 5,
         whatsapp_equivalence_enabled: bool = False,
+        run_lock: asyncio.Lock | None = None,
     ) -> None:
         if type(whatsapp_equivalence_enabled) is not bool:
             raise ValueError("invalid whatsapp equivalence flag")
@@ -520,6 +521,10 @@ class OptOutProjectionWorker:
         self._worker_id = worker_id
         self._poll_interval = poll_interval_seconds
         self._batch_size = batch_size
+        # E-107: el candado que comparte con la confirmacion de la baja del
+        # entrante. Mientras el entrante registra una baja y manda la
+        # confirmacion, la macro (que pone automation_paused) espera.
+        self._run_lock = run_lock
         self._lease_duration = lease_duration
         self._max_attempts = max_attempts
         self._whatsapp_equivalence_enabled = whatsapp_equivalence_enabled
@@ -560,6 +565,12 @@ class OptOutProjectionWorker:
                 pass
 
     async def run_once(self) -> int:
+        if self._run_lock is None:
+            return await self._run_once()
+        async with self._run_lock:
+            return await self._run_once()
+
+    async def _run_once(self) -> int:
         now = datetime.now(UTC).isoformat()
         claims = await self._supabase.claim_chatwoot_opt_out_projections(
             worker_id=self._worker_id,
