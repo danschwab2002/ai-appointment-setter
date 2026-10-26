@@ -1743,9 +1743,11 @@ class DurableDispatcher:
     ) -> _ApprovedTemplateComposition:
         """The send of a native step (flow-engine-v2): its pinned template.
 
-        A first contact with ``nombre`` and ``producto`` at most, without a
-        button, in a utility template of the Chatwoot catalog (rule 17 of the
-        schema). Without the engine flag it closes for good
+        A first contact with the variables the step declares, in its order,
+        out of ``nombre`` and ``producto``, in a utility template of the
+        Chatwoot catalog (rule 17 of the schema). The step declares no button;
+        the template may carry URL buttons with a fixed URL, which need no
+        parameter (E-115), and nothing else. Without the engine flag it closes for good
         (``flow_engine_native_needs_engine``): it never goes out with the
         template of the manifest. A step context that did not answer is
         retried; a shape the bridge cannot build closes for good.
@@ -1821,6 +1823,7 @@ class DurableDispatcher:
                 expected_language=step_template.template_language,
                 expected_category=NATIVE_TEMPLATE_CATEGORY,
                 parameter_count=len(variables),
+                static_url_buttons_only=True,
             )
             message = approved.render(ordered)
             processed = approved.processed_params(ordered)

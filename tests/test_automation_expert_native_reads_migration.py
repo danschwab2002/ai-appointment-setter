@@ -31,11 +31,13 @@ def test_it_is_one_transaction_and_the_last() -> None:
     # Despues va la del btrim del nombre del producto en el pago rechazado (20261025000200, E-087).
     # Despues va la lectura del link para la nota al derivar (20261025000300, F-034 D8).
     # Y despues, las conversaciones del comprador para pausar al agente (20261025000400, E-100).
-    assert names[-1] == "20261025000400_purchase_agent_pause_v1.sql"
-    assert names[-2] == "20261025000300_handoff_link_note_v1.sql"
-    assert names[-3] == "20261025000200_payment_failure_product_name_btrim.sql"
-    assert names[-4] == MIGRATION.name
-    assert names[-5] == "20261024000600_flow_change_new_flow_v1.sql"
+    # Y despues, la forma nativa con las variables del paso (20261026000100, E-115).
+    assert names[-1] == "20261026000100_flow_engine_native_template_shape_v1.sql"
+    assert names[-2] == "20261025000400_purchase_agent_pause_v1.sql"
+    assert names[-3] == "20261025000300_handoff_link_note_v1.sql"
+    assert names[-4] == "20261025000200_payment_failure_product_name_btrim.sql"
+    assert names[-5] == MIGRATION.name
+    assert names[-6] == "20261024000600_flow_change_new_flow_v1.sql"
     # Correrla dos veces aborta, y necesita el AE que crea flujos.
     assert "automation_expert_native_reads_already_applied" in sql
     assert "flow_change_new_flow_missing" in sql
@@ -45,7 +47,8 @@ def test_the_validator_is_in_the_npm_chain() -> None:
     package = json.loads((ROOT / "tests" / "sql" / "followup_engine" / "package.json").read_text())
     assert package["scripts"]["test"].rstrip().endswith(
         "node validate_automation_expert_native_reads.mjs && node validate_payment_failure_product_name_btrim.mjs"
-        " && node validate_handoff_link_note.mjs && node validate_purchase_agent_pause.mjs")
+        " && node validate_handoff_link_note.mjs && node validate_purchase_agent_pause.mjs"
+        " && node validate_flow_engine_native_template_shape.mjs")
 
 
 def test_only_service_role_executes_the_three_reads() -> None:

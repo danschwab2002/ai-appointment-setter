@@ -691,7 +691,9 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
         lambda: run_new(),
     ),
     "motor_nativo:forma": (
-        lambda: run_new(welcome(pasos=[{**CONFIRMED_STEP, "variables": ["producto", "nombre"]}])),
+        # Una variable repetida: el paso nativo elige sus variables de entre nombre y producto (E-115),
+        # pero cada una una sola vez.
+        lambda: run_new(welcome(pasos=[{**CONFIRMED_STEP, "variables": ["nombre", "nombre"]}])),
         lambda: run_new(),
     ),
     "engine_not_supported:etiquetar": (

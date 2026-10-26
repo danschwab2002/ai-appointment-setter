@@ -102,7 +102,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026102500010
   // La lectura del link para la nota privada al derivar (F-034 D8): una funcion nueva.
   '20261025000300_handoff_link_note_v1.sql',
   // Las conversaciones del comprador para pausar al agente (E-100): una funcion nueva.
-  '20261025000400_purchase_agent_pause_v1.sql'])) {
+  '20261025000400_purchase_agent_pause_v1.sql',
+  // La forma nativa con las variables del paso (E-115): parcha la forma nativa y el compilador.
+  '20261026000100_flow_engine_native_template_shape_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de las lecturas nativas del AE`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(

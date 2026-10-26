@@ -58,6 +58,12 @@ _BUTTON_SUFFIX_INVALID_RE = re.compile(r"\s")
 _URL_BUTTON_RE = re.compile(r"https://[^\s{}#]+\{\{1\}\}")
 
 
+def is_static_url(url: object) -> bool:
+    """A fixed https URL of a URL button: no ``{{n}}``, so the send fills nothing."""
+    return isinstance(url, str) and url.startswith("https://") and "{{" not in url \
+        and "}}" not in url and _BUTTON_SUFFIX_INVALID_RE.search(url) is None
+
+
 class ApprovedTemplateError(Exception):
     """The catalog or the values do not allow sending this template."""
 
@@ -147,6 +153,7 @@ def parse_approved_template(
     parameter_count: int,
     checkout_button: bool = False,
     url_button: str | None = None,
+    static_url_buttons_only: bool = False,
 ) -> ApprovedTemplate:
     """Pick one template from the inbox catalog and fail closed on any doubt.
 
@@ -163,6 +170,14 @@ def parse_approved_template(
     ``url_button=CHECKOUT_BUTTON_URL``; giving both with another URL is an
     error of the caller.
 
+    ``static_url_buttons_only``: the send of a native step (flow-engine-v2).
+    Its buttons may only be URL buttons with a fixed URL, without a variable
+    («Completar mi perfil» of the ATT1 welcome, 26/10): the send carries no
+    button parameter, so a fixed URL needs nothing. A URL button with a
+    variable is ``url_button_with_variable``; a quick reply or any other button
+    is ``unsupported_button``. It excludes ``checkout_button`` and
+    ``url_button``.
+
     ``approved_template_unavailable``: the catalog is unreadable, the template
     is not there, or it is not APPROVED. ``approved_template_mismatch``: it is
     there but does not match what the runtime would send (language, category,
@@ -178,6 +193,8 @@ def parse_approved_template(
         not isinstance(url_button, str) or _URL_BUTTON_RE.fullmatch(url_button) is None
     ):
         raise ValueError("approved_template_url_button_invalid")
+    if static_url_buttons_only and (checkout_button or url_button is not None):
+        raise ValueError("approved_template_static_url_buttons_conflict")
     if checkout_button:
         if url_button is not None and url_button != CHECKOUT_BUTTON_URL:
             raise ValueError("approved_template_url_button_conflict")
@@ -248,6 +265,13 @@ def parse_approved_template(
                 isinstance(button, dict) for button in buttons
             ):
                 raise ApprovedTemplateError(REASON_MISMATCH, "unsupported_button")
+            if static_url_buttons_only:
+                for button in buttons:
+                    if button.get("type") != "URL":
+                        raise ApprovedTemplateError(REASON_MISMATCH, "unsupported_button")
+                    if not is_static_url(button.get("url")):
+                        raise ApprovedTemplateError(REASON_MISMATCH, "url_button_with_variable")
+                continue
             quick_replies = buttons
             if url_button is not None:
                 if has_checkout_button or not buttons:
