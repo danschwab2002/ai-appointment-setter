@@ -110,6 +110,33 @@ def test_turning_the_cart_off_leaves_it_without_sends() -> None:
     assert simulation["summary"]["vigente"]["flujos"]["carrito"]["recorridos"] == 59
 
 
+# El policy_key de un flujo del motor, como lo arma la base ('flujo:' || flow_id): el del carrito
+# nativo de ATT1, leido en att1-db el 2026-10-26 (E-127). Sin guiones tiene nueve cifras seguidas
+# (523, 2869, 43), y desde el 23/10 toda simulacion con historia de ATT1 salia
+# flow_engine_history_invalid.
+ENGINE_POLICY_KEY = "flujo:3ad1c523-2869-43f1-82ad-ed2610f2f521"
+
+
+def _with_policy_key(value: object, old: str, new: str) -> object:
+    if isinstance(value, dict):
+        return {key: (new if key == "policy_key" and item == old else _with_policy_key(item, old, new))
+                for key, item in value.items()}
+    if isinstance(value, list):
+        return [_with_policy_key(item, old, new) for item in value]
+    return value
+
+
+def test_a_history_with_the_policy_key_of_an_engine_flow_is_simulated() -> None:
+    history = _with_policy_key(HISTORY, "att1-carrito-tres-toques", ENGINE_POLICY_KEY)
+    assert ENGINE_POLICY_KEY in json.dumps(history)
+    wait = _cart([{"esperar": "6h"}, *_cart()["pasos"]])
+    simulation = build_simulation(_read_doc(), history, _items(_version_item(wait)), time_zone=ZONE)
+    assert simulation["status"] == "built", simulation
+    # La clave no cambia lo que se simula: el mismo resumen que con la clave del legado.
+    same = build_simulation(_read_doc(), HISTORY, _items(_version_item(wait)), time_zone=ZONE)
+    assert simulation["summary"] == same["summary"]
+
+
 def _with_phone(history: dict) -> dict:
     broken = copy.deepcopy(history)
     broken["telefono"] = "5215512345678"

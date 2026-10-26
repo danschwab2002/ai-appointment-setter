@@ -155,8 +155,10 @@ class Form:
     """La forma de una hoja: su tipo y, en un texto, su patron (con fullmatch).
 
     ``fixed`` marca las formas que ya fijan su largo y su alfabeto: quedan
-    fuera de la regla de los nueve digitos. ``instant`` y ``day`` piden ademas
-    que la hora o la fecha existan.
+    fuera de la regla de los nueve digitos. ``fixed_alternative`` es una forma
+    fija dentro de una que no lo es: el valor que la cumple entera (con
+    fullmatch) queda fuera de la regla, y el resto sigue con ella.
+    ``instant`` y ``day`` piden ademas que la hora o la fecha existan.
     """
 
     name: str
@@ -167,6 +169,7 @@ class Form:
     fixed: bool = False
     instant: bool = False
     day: bool = False
+    fixed_alternative: re.Pattern[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -220,6 +223,18 @@ CODE = _text("codigo", r"[a-z][a-z0-9_]{0,79}")
 STATE = _text("estado_del_control", r"[a-z][a-z_]{0,31}")
 # Las claves de configuracion: scope, politica, tenant, embudo y la consulta.
 KEY = _text("clave_de_configuracion", r"[a-z0-9][a-z0-9_:-]{0,79}")
+# El policy_key: una clave de configuracion, o la de un flujo del motor, que la
+# base arma como 'flujo:' || flow_id (20261021000200, 20261022000100 y
+# 20261024000200). Un UUID puede tener nueve cifras repartidas entre sus
+# segmentos (flujo:3ad1c523-2869-43f1-..., el carrito de ATT1 desde el 23/10),
+# y la regla de los digitos saltea los guiones: sin la alternativa fija, toda
+# historia con un caso del motor salia flow_engine_history_invalid. Solo
+# 'flujo:' mas un UUID canonico entero queda fuera de la regla; las demas
+# claves siguen con ella.
+POLICY_KEY = Form(
+    "clave_de_politica", "text", KEY.pattern,
+    fixed_alternative=re.compile(r"flujo:" + UUID.pattern.pattern),
+)
 PROVIDER_EVENT = _text("tipo_de_evento_de_hotmart", r"[A-Z][A-Z0-9_]{0,79}")
 CENSUS_EVENT = _text("tipo_de_evento", r"[A-Za-z0-9_.]{1,80}")
 SOURCE = _text("fuente", r"[a-z_]{1,40}")
@@ -293,7 +308,7 @@ ROWS: Mapping[str, Record] = {
         "id": UUID, "contact_id": UUID, "abandonment_event_id": UUID,
         "purchase_event_id": UUID, "external_product_id": PRODUCT_ID, "offer_code": OFFER,
         "status": CODE, "grace_expires_at": INSTANT, "created_at": INSTANT,
-        "closed_at": INSTANT, "won_at": INSTANT, "policy_key": KEY,
+        "closed_at": INSTANT, "won_at": INSTANT, "policy_key": POLICY_KEY,
         "policy_version": POSITIVE, "trigger_kind": CODE, "purchase_correlation": REASON,
         "has_conversation": BOOLEAN,
         "binding": Record("binding", {
@@ -322,7 +337,7 @@ ROWS: Mapping[str, Record] = {
         "recovery_case_id": UUID, "related_action_id": UUID, "event_type": CODE,
         "actor_type": CODE,
         "data": Record("datos_de_la_reevaluacion", {
-            "decision": CODE, "reason_code": REASON, "policy_key": KEY,
+            "decision": CODE, "reason_code": REASON, "policy_key": POLICY_KEY,
             "policy_version": POSITIVE, "chatwoot_checked": BOOLEAN,
             "chatwoot_inbound_after_anchor": BOOLEAN,
             "chatwoot_human_activity_after_anchor": BOOLEAN,
@@ -347,13 +362,13 @@ CONFIG = Record("config", {
         "source": SOURCE, "source_event_type": PROVIDER_EVENT,
         "additional_source_event_types": ListOf(PROVIDER_EVENT), "purpose": CODE,
         "timezone": ZONE, "external_product_id": PRODUCT_ID, "offer_code": OFFER,
-        "additional_offer_codes": ListOf(OFFER), "policy_key": KEY,
+        "additional_offer_codes": ListOf(OFFER), "policy_key": POLICY_KEY,
         "policy_version": POSITIVE, "audience_mode": CODE,
         "max_outbound_request_starts_per_day": COUNT,
         "max_outbound_request_starts_total": COUNT, "published_at": INSTANT,
     })),
     "followup_policy_versions": ListOf(Record("version_de_la_politica", {
-        "policy_key": KEY, "version": POSITIVE, "status": CODE, "purpose": CODE,
+        "policy_key": POLICY_KEY, "version": POSITIVE, "status": CODE, "purpose": CODE,
         "timezone": ZONE,
         "business_windows": ListOf(Record("ventana", {
             "days": ListOf(WEEKDAY), "start": HOUR_MINUTE, "end": HOUR_MINUTE,
@@ -443,7 +458,7 @@ ROWS_V3: Mapping[str, Record] = {
     # forma de un motivo.
     "secuencias": Record("secuencia", {
         "id": UUID, "recovery_case_id": UUID, "status": CODE, "reason": CODE,
-        "policy_key": KEY, "policy_version": POSITIVE, "current_step": COUNT,
+        "policy_key": POLICY_KEY, "policy_version": POSITIVE, "current_step": COUNT,
         "max_attempts": POSITIVE, "automatic_messages_accepted": COUNT,
         "started_at": INSTANT, "completed_at": INSTANT, "cancelled_at": INSTANT,
         "completion_reason": REASON, "cancel_reason": REASON,
@@ -613,7 +628,10 @@ def _leaf_problem(value: Any, form: Form) -> str | None:
         return f"{form.name} no es una hora que exista"
     if form.day and _day_or_none(value) is None:
         return f"{form.name} no es una fecha que exista"
-    if not form.fixed and _longest_digit_run(value) >= _DIGIT_RUN:
+    if form.fixed or (form.fixed_alternative is not None
+                      and form.fixed_alternative.fullmatch(value)):
+        return None
+    if _longest_digit_run(value) >= _DIGIT_RUN:
         return "tiene nueve o mas digitos seguidos"
     return None
 
