@@ -1,0 +1,132 @@
+{
+  "_capture": {
+    "origen": "att1-db public.webhook_events, fila c1dd277a-5362-473e-a08c-eb00fbe48cf6 (la compra de prueba de Dan, 2026-10-26 16:47:37Z), leida en sesion de solo lectura",
+    "capturado": "2026-10-26",
+    "encargo": "E-122",
+    "anonimizado": [
+      "data.affiliates[0].affiliate_code",
+      "data.affiliates[0].name",
+      "data.buyer.address.address",
+      "data.buyer.address.city",
+      "data.buyer.address.complement",
+      "data.buyer.address.zipcode",
+      "data.buyer.checkout_phone",
+      "data.buyer.document",
+      "data.buyer.email",
+      "data.buyer.first_name",
+      "data.buyer.last_name",
+      "data.buyer.name",
+      "data.buyer.ucode",
+      "data.producer.document",
+      "data.producer.name",
+      "data.product.support_email",
+      "data.purchase.buyer_ip",
+      "data.purchase.transaction",
+      "id"
+    ],
+    "nota": "Nombre, mail, telefono, documento, direccion, ip, transaccion e id del webhook reemplazados por sinteticos. Producto, oferta, cupon, precios, fechas y forma: tal cual."
+  },
+  "payload": {
+    "id": "00000000-0000-4000-8000-0000000e1220",
+    "data": {
+      "buyer": {
+        "name": "Edith Garcia Perez",
+        "email": "comprador.sintetico@example.com",
+        "ucode": "00000000-0000-4000-8000-000000000001",
+        "address": {
+          "city": "sintetico",
+          "address": "sintetico",
+          "country": "Italy",
+          "zipcode": "sintetico",
+          "complement": "sintetico",
+          "country_iso": "IT"
+        },
+        "document": "00000000000",
+        "last_name": "Garcia Perez",
+        "first_name": "Edith",
+        "checkout_phone": "+12025550124"
+      },
+      "product": {
+        "id": 5071808,
+        "name": "Alimenta tu Tiroides",
+        "ucode": "384858a0-bdc4-4b9a-a479-9eeff9ed8893",
+        "support_email": "soporte.sintetico@example.com",
+        "warranty_date": "2026-11-02T00:00:00Z",
+        "has_co_production": true,
+        "product_format_id": 8,
+        "is_physical_product": false
+      },
+      "producer": {
+        "name": "Productora Sintetica",
+        "document": "00000000000",
+        "legal_nature": "Pessoa Física"
+      },
+      "purchase": {
+        "offer": {
+          "code": "gopi6lh7",
+          "name": "VSL | PAUTA | A | 47USD | HISTORICO🔴",
+          "coupon_code": "TESTDAN2",
+          "description": "Alimenta tu Tiroides"
+        },
+        "price": {
+          "value": 842.47,
+          "currency_value": "ARS"
+        },
+        "status": "APPROVED",
+        "payment": {
+          "type": "CREDIT_CARD",
+          "installments_number": 1
+        },
+        "buyer_ip": "192.0.2.10",
+        "is_funnel": false,
+        "full_price": {
+          "value": 850.72,
+          "currency_value": "ARS"
+        },
+        "invoice_by": "SELLER",
+        "order_bump": {
+          "is_order_bump": false
+        },
+        "order_date": 1793033240000,
+        "transaction": "HP0000000000",
+        "approved_date": 1793033244000,
+        "business_model": "A",
+        "checkout_country": {
+          "iso": "IT",
+          "name": "Italy"
+        },
+        "original_offer_price": {
+          "value": 0.51,
+          "currency_value": "USD"
+        },
+        "subscription_anticipation_purchase": false
+      },
+      "affiliates": [
+        {
+          "name": "sintetico",
+          "affiliate_code": "sintetico"
+        }
+      ],
+      "commissions": [
+        {
+          "value": 0.47,
+          "source": "MARKETPLACE",
+          "currency_value": "USD"
+        },
+        {
+          "value": 0,
+          "source": "PRODUCER",
+          "currency_value": "USD",
+          "currency_conversion": {
+            "conversion_rate": 18.692995,
+            "converted_value": 0,
+            "converted_to_currency": "MXN"
+          }
+        }
+      ]
+    },
+    "event": "PURCHASE_APPROVED",
+    "version": "2.0.0",
+    "creation_date": 1793033256032
+  }
+}

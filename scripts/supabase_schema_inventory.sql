@@ -5781,6 +5781,27 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'flow_engine_native_template_shape'
+    union all
+    select
+        '20261026000200',
+        '20261026000200_flow_engine_native_offer_in_context_v1.sql',
+        -- El caso nativo lleva la oferta de su evento al despacho (E-122): la
+        -- admision nativa la guarda en el context ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_admit_native_flow(public.flow_controls,public.webhook_events,uuid,text,timestamptz,bigint,bigint,text)')
+              and position('flow_engine_native_offer_in_context' in definition) > 0
+        )::int
+        -- ... y el contexto del despachador la devuelve para un caso flujo:.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_followup_execution_context(uuid,text,bigint,timestamptz)')
+              and position('flow_engine_native_offer_in_context' in definition) > 0
+        )::int,
+        2,
+        'flow_engine_native_offer_in_context'
 )
 select
     version,

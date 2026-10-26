@@ -22,7 +22,10 @@ const fail = (message, detail) => {
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-if (position !== names.length - 1) fail(`${MIGRATION} tiene que ser la ultima`, names.slice(position + 1));
+// Despues va solo la de la oferta del evento en el caso nativo (E-122), que no toca el compilador.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261026000200_flow_engine_native_offer_in_context_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de la oferta en el caso nativo`, names.slice(position + 1));
+}
 
 const fixture = (name) => JSON.parse(readFileSync(join(root, 'tests/fixtures', name), 'utf8'));
 const welcome = fixture('chatwoot_message_templates_inbox_11_bienvenida_20261026.json').message_templates

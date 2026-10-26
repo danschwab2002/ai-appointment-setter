@@ -24,11 +24,13 @@ def test_it_is_one_transaction_and_the_last() -> None:
     # Despues va la lectura del link para la nota al derivar (20261025000300, F-034 D8).
     # Y despues, las conversaciones del comprador para pausar al agente (20261025000400, E-100).
     # Y despues, la forma nativa con las variables del paso (20261026000100, E-115).
-    assert names[-1] == "20261026000100_flow_engine_native_template_shape_v1.sql"
-    assert names[-2] == "20261025000400_purchase_agent_pause_v1.sql"
-    assert names[-3] == "20261025000300_handoff_link_note_v1.sql"
-    assert names[-4] == MIGRATION.name
-    assert names[-5] == "20261025000100_automation_expert_native_reads_v1.sql"
+    # Y despues, la oferta del evento en el caso nativo (20261026000200, E-122).
+    assert names[-1] == "20261026000200_flow_engine_native_offer_in_context_v1.sql"
+    assert names[-2] == "20261026000100_flow_engine_native_template_shape_v1.sql"
+    assert names[-3] == "20261025000400_purchase_agent_pause_v1.sql"
+    assert names[-4] == "20261025000300_handoff_link_note_v1.sql"
+    assert names[-5] == MIGRATION.name
+    assert names[-6] == "20261025000100_automation_expert_native_reads_v1.sql"
 
 
 def test_it_patches_only_the_product_name_comparison() -> None:
@@ -77,4 +79,5 @@ def test_the_validator_is_in_the_npm_chain() -> None:
 
     assert package["scripts"]["test"].rstrip().endswith(
         "node validate_payment_failure_product_name_btrim.mjs && node validate_handoff_link_note.mjs && node validate_purchase_agent_pause.mjs"
-        " && node validate_flow_engine_native_template_shape.mjs")
+        " && node validate_flow_engine_native_template_shape.mjs"
+        " && node validate_flow_engine_native_offer_in_context.mjs --check")
