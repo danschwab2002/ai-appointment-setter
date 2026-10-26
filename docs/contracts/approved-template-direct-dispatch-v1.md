@@ -98,6 +98,8 @@ La plantilla se busca por nombre **y** idioma, porque Meta admite el mismo nombr
 | No hay exactamente un `BODY` con texto | `approved_template_mismatch` | `invalid_body` |
 | Los marcadores no son exactamente `{{1}}` a `{{n}}`, con `n` = las variables declaradas (un marcador con nombre también cuenta) | `approved_template_mismatch` | `unexpected_placeholders` |
 | Un botón que no es `QUICK_REPLY` | `approved_template_mismatch` | `unsupported_button` |
+| En el envío de un paso nativo (`static_url_buttons_only`, flow-engine-v2 §16): un botón de URL con variable | `approved_template_mismatch` | `url_button_with_variable` |
+| En el envío de un paso nativo: un botón que no es de URL (una respuesta rápida, por ejemplo); uno de URL fija pasa sin parámetros | `approved_template_mismatch` | `unsupported_button` |
 | Un `HEADER` que no es de texto, o un `HEADER`/`FOOTER` con variables | `approved_template_mismatch` | `component_requires_parameters` |
 | Otro tipo de componente | `approved_template_mismatch` | `unsupported_component` |
 | El texto renderizado pasa de 1024 caracteres | `approved_template_mismatch` | `rendered_body_too_long` |

@@ -5760,6 +5760,27 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'purchase_agent_pause'
+    union all
+    select
+        '20261026000100',
+        '20261026000100_flow_engine_native_template_shape_v1.sql',
+        -- El paso de un flujo nativo manda las variables que declara, de entre
+        -- nombre y producto (E-115): la forma nativa con variables_de ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_steps(text)')
+              and position('variables_de' in definition) > 0
+        )::int
+        -- ... y el compilador que la lee.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_compile_policy_core(jsonb,text,integer,text,text)')
+              and position('flow_engine_native_variables: end' in definition) > 0
+        )::int,
+        2,
+        'flow_engine_native_template_shape'
 )
 select
     version,

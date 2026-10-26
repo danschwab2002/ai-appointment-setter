@@ -1,7 +1,7 @@
 {
  "_generated": {
   "generator": "tests/test_flow_validator.py (test_the_bridge_json_with_the_base_is_the_one_in_the_repo)",
-  "date": "2026-10-25",
+  "date": "2026-10-26",
   "from": "los casos negativo y positivo de cada codigo de CASES, dos bordes del resultado y validator_json() con las dos fases y los dos actores",
   "regenerate": "FLOW_STORE_FIXTURE_DIR=tests/fixtures/flow_store uv run pytest tests/test_flow_validator.py"
  },
@@ -1615,7 +1615,7 @@
       "code": "motor_nativo:disparador",
       "kind": "todavia_no",
       "path": "/0/definicion/dispara",
-      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con nombre y producto, sin botón, y repite por persona",
+      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con variables de entre nombre y producto, sin botón o con botones de URL fija, y repite por persona",
       "reason": "El motor nativo de esta versión solo arranca con la compra.",
       "alternative": "Disparar con dispara: {evento: compra}. Otro evento es de un flujo del legado."
      },
@@ -1624,7 +1624,7 @@
       "code": "motor_nativo:permiso",
       "kind": "todavia_no",
       "path": "/0/definicion/entra/permiso",
-      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con nombre y producto, sin botón, y repite por persona",
+      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con variables de entre nombre y producto, sin botón o con botones de URL fija, y repite por persona",
       "reason": "El motor nativo de esta versión solo entra con permiso: compra.",
       "alternative": "Usar permiso: compra, con el OK del cliente."
      },
@@ -1633,18 +1633,18 @@
       "code": "motor_nativo:forma",
       "kind": "todavia_no",
       "path": "/0/definicion/dispara",
-      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con nombre y producto, sin botón, y repite por persona",
+      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con variables de entre nombre y producto, sin botón o con botones de URL fija, y repite por persona",
       "reason": "El motor nativo de esta versión no ejecuta eso (disparo_carrito).",
-      "alternative": "Dejar una sola plantilla con [nombre, producto], sin botón, y etiquetar después si hace falta."
+      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
      },
      {
       "rule": 14,
       "code": "motor_nativo:forma",
       "kind": "todavia_no",
       "path": "/0/definicion/termina/si",
-      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con nombre y producto, sin botón, y repite por persona",
+      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con variables de entre nombre y producto, sin botón o con botones de URL fija, y repite por persona",
       "reason": "El motor nativo de esta versión no ejecuta eso (salida_compra).",
-      "alternative": "Dejar una sola plantilla con [nombre, producto], sin botón, y etiquetar después si hace falta."
+      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
      }
     ],
     "warnings": []
@@ -1680,9 +1680,9 @@
       "code": "motor_nativo:forma",
       "kind": "todavia_no",
       "path": "/0/definicion/pasos",
-      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con nombre y producto, sin botón, y repite por persona",
+      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con variables de entre nombre y producto, sin botón o con botones de URL fija, y repite por persona",
       "reason": "El motor nativo de esta versión no ejecuta eso (variables_differ).",
-      "alternative": "Dejar una sola plantilla con [nombre, producto], sin botón, y etiquetar después si hace falta."
+      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
      }
     ],
     "warnings": []
@@ -1718,7 +1718,7 @@
       "code": "motor_nativo:permiso",
       "kind": "todavia_no",
       "path": "/0/definicion/entra/permiso",
-      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con nombre y producto, sin botón, y repite por persona",
+      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con variables de entre nombre y producto, sin botón o con botones de URL fija, y repite por persona",
       "reason": "El motor nativo de esta versión solo entra con permiso: compra.",
       "alternative": "Usar permiso: compra, con el OK del cliente."
      }
@@ -1772,7 +1772,7 @@
       "code": "motor_nativo:prioridad",
       "kind": "todavia_no",
       "path": "/0/definicion/prioridad/no_arranca_mientras",
-      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con nombre y producto, sin botón, y repite por persona",
+      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con variables de entre nombre y producto, sin botón o con botones de URL fija, y repite por persona",
       "reason": "no_arranca_mientras es una lista de flujos.",
       "alternative": "Escribir no_arranca_mientras como una lista, vacía si no hay ninguno."
      }
@@ -1810,7 +1810,7 @@
       "code": "motor_nativo:repeticion",
       "kind": "todavia_no",
       "path": "/0/definicion/topes/repeticion",
-      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con nombre y producto, sin botón, y repite por persona",
+      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, manda una sola plantilla de utilidad con variables de entre nombre y producto, sin botón o con botones de URL fija, y repite por persona",
       "reason": "El motor nativo repite por persona o por persona y oferta, con nunca o una duración.",
       "alternative": "Usar repeticion: {una_por: persona, otra_despues_de: nunca}."
      }
@@ -2076,7 +2076,17 @@
    "code": "prender_a_cohorte_needs_paused_native",
    "case": "positivo",
    "result": {
-    "blocks": [],
+    "blocks": [
+     {
+      "rule": 13,
+      "code": "template_button_mismatch",
+      "kind": "proteccion",
+      "path": "/0",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "La plantilla tiene un botón de respuesta rápida, y el motor nativo solo manda botones de URL fija.",
+      "alternative": "Declarar el botón que tiene la plantilla, o elegir otra."
+     }
+    ],
     "warnings": []
    },
    "validator": {
