@@ -12,6 +12,27 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.20.2] - 2026-10-26
+
+Un parche sobre la 1.20.1, con un PR: la simulación de un flujo del motor en ATT1 vuelve a armarse (#344). Sin migración, sin variables nuevas, sin campos nuevos en el manifiesto y sin cambios en los profiles. Solo cambia el Python del bridge (`src/bridge/flow_capture.py`).
+
+### Arreglado
+
+- **La simulación con historia ya no confunde la clave de un flujo del motor con un teléfono** (#344, E-128; contrato `flow-engine-v1.md`, sección 2). Desde el 23/10, en ATT1, toda simulación con historia daba `flow_engine_history_invalid`: la del carrito, la del operador (`volver`, `apagar`, `version`) y el «simular» del Automation Expert. La base arma la clave de un flujo del motor como `flujo:` seguido del UUID del flujo, y en el UUID del carrito hay nueve cifras seguidas si se saltean los guiones. La regla que frena teléfonos en la historia la tomaba como uno.
+  - Ahora `flujo:` seguido de un UUID entero es una forma fija y no pasa por la regla de los nueve dígitos. Cualquier otra clave sigue pasando por ella, como antes.
+  - Medido sobre la historia real de ATT1 del 26/10 (2,17 MB, 193 casos): de 307 problemas de forma a 0, y `apagar`, `volver` y `version` del carrito dan `built`.
+  - El tope de tamaño de la historia no cambia: es de 4.000.000 bytes, en la base.
+  - Todavía no se arma la simulación de prender, apagar o cambiar la versión de un flujo **nativo** (la bienvenida): da `proposal_flow_unknown`, como antes.
+
+### Qué hace quien actualiza
+
+- **Migración:** ninguna.
+- **Variables:** ninguna nueva.
+- **Profiles:** no cambian.
+- **ATT1:** subir el bridge y la revisión. El operador de flujos (`operador-de-flujos.sh`) corre el validador en la imagen del bridge que corre y el comando del árbol de esa misma versión, así que toma el arreglo solo, con el árbol de la 1.20.2 en el VPS. Después, una simulación del carrito (por ejemplo, `volver` a la versión activa) tiene que dar `built`.
+- **Una instancia en solo escucha (Maribel):** el bridge, cuando le toque. Sin flujos del motor, nada cambia.
+- **Johanna:** nada que hacer. No tiene motor.
+
 ## [1.20.1] - 2026-10-26
 
 Un parche sobre la 1.20.0, con un PR: el caso de un flujo nativo lleva al despacho la oferta de la compra que lo abrió, así que la plantilla de la bienvenida de ATT1 sale (#342). Una migración, sin paso manual. Sin variables nuevas, sin campos nuevos en el manifiesto y sin cambios en el código del bridge ni en los profiles: el bridge 1.20.1 es el de la 1.20.0 con otro número.
