@@ -8,6 +8,8 @@ La instalación tiene dos tiempos, y esta guía los separa:
 
 Se instala temprano para aprender con datos reales; se prende recién con lo que hace falta para hablarle a personas.
 
+**Este archivo tiene los comandos; lo demás está en la guía.** Todo lo que no es un comando (si la aliada entra, qué se lee y qué se pide, a quién y con qué ramas, el conocimiento, las plantillas, las firmas, el orden de los flujos y los tiempos medidos) vive en **la guía de implementación del recuperador**: `productos/soporte-infoproductores/guia-de-implementacion.md`, en el vault de operación, fuera de este repo. Es lo que antes este archivo llamaba «el runbook del operador». Acá no se repite: cada paso nombra la sección de la guía que le corresponde. Si la guía y el código dicen cosas distintas, manda el código del tag que se instala, y la diferencia se le avisa a quien mantiene la guía.
+
 Lo que se usa del repo de la instancia (creado desde la plantilla `danschwab2002/setter-instancia-plantilla`):
 - **`despliegue/dia-0.md`, la lista del día 0:** lo que tiene que existir antes (accesos, cuentas, las apps de Slack, R2, healthchecks.io, los hosts) y lo que se hace ese día, en orden, con cuánto tarda cada paso. Esta guía explica cada paso; la lista es lo que se tiene abierto el día 0.
 - **`despliegue/chequear.sh`, el chequeo:** solo lee, y dice `INSTALADA`, qué falta o qué está prendido de más (paso 15).
@@ -17,8 +19,9 @@ Lo que se usa del repo de la instancia (creado desde la plantilla `danschwab2002
 >
 > - **La primera instancia, ATT1, se instaló a mano** mientras se escribía la primera versión de esta guía, sin plantilla (primer commit `4590f27`, 2026-09-27). Sus fechas y PR están en cada paso, como «en ATT1». Su repo no sigue la regla de nombres (servicios `att1-*`, stack `setter-att1`) y no tiene `despliegue/despliegue.toml`.
 > - **La plantilla se probó entera sin VPS el 2026-10-23,** contra el árbol del tag `v1.16.4` del producto, con `pruebas/probar_plantilla.sh` de la plantilla (PGlite, docker falso y la imagen del bridge compilada en local): la versión cruda (setter-instancia-plantilla#4), el Automation Expert (#5), la subida genérica (#6), el respaldo (#7), la revisión diaria (#8) y las alertas (#9). La salida de cada una está en `evidencia/2026-10-23-*` de la plantilla. El chequeo y la lista del día 0 los suma setter-instancia-plantilla#10, con su prueba contra un árbol falso.
-> - **Lo que todavía no se recorrió con la plantilla en ningún VPS:** el stack en un Swarm real, la base desde cero en el Postgres de Supabase, Hermes con los dos profiles, las alertas, el respaldo, la ruta pública y `chequear.sh` contra un servidor de verdad. Es la prueba de aceptación de esta guía (`docs/design/setter-producto-instalable-v1.md` §8.1): la próxima instalación, siguiéndola sin preguntar.
-> - **El conector de Slack propio de la instancia** está en el producto desde la `1.17.0` (#315, `CHANGELOG.md`), y entra a la plantilla en su propio PR, con el tag. El paso 14 dice lo que se sabe hoy y lo marca.
+> - **Lo que la plantilla recorrió en un VPS:** en Maribel (setter-instancia-maribel#1, desde el 2026-10-23), el stack en el Swarm, la base desde cero, el bridge con su ruta pública, Hotmart y `chequear.sh`. **Lo que todavía no:** Hermes con los dos profiles, las alertas, el respaldo y `chequear.sh` hasta `INSTALADA` (guía §5.9). Es la prueba de aceptación de esta guía (`docs/design/setter-producto-instalable-v1.md` §8.1): la próxima instalación, siguiéndola sin preguntar.
+> - **El conector de Slack propio de la instancia** está en el producto desde la `1.17.0` (#315, `CHANGELOG.md`) y en la plantilla desde setter-instancia-plantilla#11 (2026-10-23): el servicio `slack-connector` del stack y `despliegue/slack/conectar-slack.py` (paso 14).
+> - **La primera instancia desde la plantilla** es la de Maribel (setter-instancia-maribel#1, 2026-10-23). Lo que enseñó, con los tiempos de cada paso, está en la guía de implementación (§5 y Anexo A).
 >
 > Lo que en un paso dice «en ATT1» es evidencia de esa instancia, no de la que estás instalando.
 
@@ -29,111 +32,64 @@ Lo que se usa del repo de la instancia (creado desde la plantilla `danschwab2002
 - `<servidor>` es el VPS por ssh. `<dominio del bridge>` es la ruta pública del bridge, `[hosts].bridge` de `despliegue.toml`.
 - **El día 0** es el día de la instalación en solo escucha. La llamada de arranque va antes.
 - **Nombres del producto que llevan el de una empresa.** `LANCEMOS_PILOT_*`, `AGENT_PROVENANCE_TENANT_REF`, el `tenant_ref` del manifiesto y las funciones `*_lancemos_pilot_*` de la base son nombres del código del producto, no datos de un cliente. Se usan tal cual en cualquier instancia.
+- **«Esta guía» y «paso N» son este archivo; «la guía» con un § (guía §4.6) es la guía de implementación** (arriba).
 - Un valor de ATT1 aparece solo como ejemplo, y lo dice al lado. Los flujos concretos de ATT1 (el carrito de tres toques, las variantes del pago rechazado, la ficha de pago) son configuración de esa aliada, no pasos de la instalación: el producto se instala crudo (decisión del 2026-10-23).
 
 ## Qué necesitás antes de empezar
 
-- Lo de «Antes del día 0» de `despliegue/dia-0.md` del repo de la instancia: los accesos (el OK para crear la instancia en el VPS, ssh como root, GitHub, el tag del producto), las cuentas del negocio, las apps de Slack, R2, healthchecks.io y los hosts.
+- Lo de «Antes del día 0» de `despliegue/dia-0.md` del repo de la instancia: los accesos (el OK para crear la instancia en el VPS, ssh como root, GitHub, el tag del producto), la cuenta de Chatwoot de la aliada (paso 2), las cuentas del negocio, las apps de Slack, R2, healthchecks.io y los hosts.
 - Un VPS con Docker Swarm y EasyPanel, donde ya corra Chatwoot o donde se pueda levantar.
-- Los recursos de terceros del paso 0. Los que hacen falta para prender (el número, Meta, las plantillas) no frenan el día 0, pero se piden igual desde el primer día: son los que tardan.
+- Los pedidos a terceros del paso 0, hechos. Los que hacen falta para prender (el número, Meta, las plantillas) no frenan el día 0, pero se piden igual desde el primer día: son los que tardan.
 
-## 0. La llamada de arranque y los pedidos a terceros
+## 0. Antes de instalar: si entra, la lectura y los pedidos
 
-**Por qué va primero:** lo que depende de terceros tarda, y lo nuestro no. Para el día 0 hace falta poco de afuera (Hotmart, Chatwoot, Slack, R2, OpenRouter). Para prender, el camino crítico es el número de WhatsApp, el portfolio de Meta con un admin y el medio de pago, la cuenta de mensajería con el número verificado, las plantillas (Meta las revisa en hasta 24 h) y el primer envío. El segundo camino largo es la información del producto, porque depende de que el infoproductor conteste.
+Este paso no tiene comandos: lo lleva entero la guía de implementación. Dónde está cada cosa:
 
-El detalle de cada recurso (las preguntas, las ramas según la respuesta, quién lo hace y qué se anota) lo lleva el runbook del operador, que vive fuera de este repo. Acá va el resumen: el orden, la primera opción de cada recurso, qué hacer si falla y cuándo está hecho. Lo que se anota de cada recurso va al repo privado de la instancia, nunca un secreto: de un PIN o un token se anota dónde está guardado, no el valor.
+| Qué | En la guía |
+|---|---|
+| Si la aliada entra (los requisitos duros) y qué frena hoy prender | §0 |
+| Calificar al infoproductor, leer lo público antes de hablar con nadie y la llamada de arranque (en una aliada de Lancemos, el documento de pedidos en su lugar) | §3 |
+| Los pedidos, todos el mismo día y con su checklist: el número, Meta, Hotmart, **el token de solo lectura de GHL con todos los permisos** que lista la guía, **el permiso para leer las conversaciones de quien atiende** (o, sin permiso, las cinco preguntas), lo que ya le escribe a los leads, las personas, y lo de quien opera el VPS | §4 |
+| El conocimiento: lo que se lee con permiso, **los siete criterios** (lo único que se le pregunta a la aliada, una vez y al final, con la propuesta escrita), escribirlo, probarlo y firmarlo | §7.1 a §7.4 |
+| Las plantillas (copiar el flujo que ya corre, o el juego por defecto de `plantillas/README.md` de la instancia, que se presenta «Soy del equipo de …» y nunca como «asistente virtual») y su coherencia con el conocimiento | §7.5 y §7.6 |
+| Las firmas y en qué orden se prenden los flujos | §8.2 y §8.3 |
+| Cuánto lleva cada paso | §2 y Anexo A |
+
+Ya no se le pide a la aliada un formulario del conocimiento ni una lista de «las preguntas que más te hacen»: se lee con su permiso, y lo que no sale de ningún dato son los siete criterios.
 
 ### El orden
 
-- **La llamada de arranque (≈45 min).** La conduce quien instala. Se hacen todas las preguntas que eligen una rama: el número, el portfolio, la moneda, el nombre visible, la cuenta de Hotmart y el `off=` de cada landing, las landings y sus formularios, el orgánico, Slack, quién atiende las derivaciones y en qué horario, si hay un lanzamiento cerca, los nombres de cada rol, todo lo que ya le escribe a sus leads, **en qué país vende y cuántos carritos abandonados tiene por día**. Se piden también los datos mínimos para redactar las plantillas: el nombre del producto, el país y el idioma, el cupón y si vence, el link del checkout y cómo se presenta el asistente.
-- **El día siguiente a la llamada, todo lo que depende de terceros, junto:** los accesos de Hotmart, de GHL y de Slack; las apps de Slack de la instancia (`dia-0.md`); el bucket de R2 y los checks de healthchecks.io; la key de OpenRouter. Y, para prender más adelante: el número; el portfolio, el admin, la moneda y el medio de pago; la app de Meta y la cuenta de mensajería; las plantillas a revisión; la verificación del negocio; el formulario del conocimiento al infoproductor y a quien contesta hoy los chats; y el alta de las personas en Chatwoot y en Slack.
+- **La calificación, la lectura de lo público y la llamada.**
+- **El mismo día, todo lo que depende de terceros, junto**, también lo que le toca a quien opera el VPS (guía §4.10).
 - **Lo nuestro, sin depender de nadie:** los pasos 1 a 5 (el repo desde la plantilla, completo y validado).
-- **El día 0:** los pasos 6 a 15, en el orden de `despliegue/dia-0.md`. Unas 4 horas de trabajo (estimado).
-- **Para prender, cuando llegan el número, Meta y las firmas:** los pasos 16 y 17. Justo antes de prender el carrito, el corte de lo que ya le escribe a los leads, mirado en su panel (cortarlo antes deja días sin recuperar carritos).
+- **El día 0:** los pasos 6 a 15, en el orden de `despliegue/dia-0.md`. En Maribel, lo nuestro hasta solo escucha (con el conocimiento v1 a v3 y una subida de versión) llevó **3 h 52 min** de reloj neto, sin contar las esperas, los defectos que ya se arreglaron ni prender (4 h 25 min con los defectos) (`productos/soporte-infoproductores/documentacion/2026-10-24-registro-de-la-instalacion-de-maribel.md` del vault; guía §2).
+- **Para prender, cuando llegan el número, Meta y las firmas:** los pasos 16 y 17. Justo antes de abrir cada flujo, el corte de lo que ya le escribe a los leads, mirado en su panel (guía §8.8).
 
-### Los recursos
+### Dos reglas duras que usan los pasos de abajo
 
-**El número de WhatsApp.** No hace falta para el día 0. Para prender, es lo primero que se define.
-- *Primera opción:* un número nuevo y dedicado, con un chip prepago del país que compra el infoproductor. Se verifica por SMS.
-- *Si falla:* un número virtual que reciba llamadas, contratado a nombre del infoproductor y pagado por él, verificado por voz. Que un virtual pase la verificación no está probado: se prueba antes de pagar meses. Un número que ya está en la app de WhatsApp se puede registrar en la Cloud API borrando esa cuenta (con respaldo, porque se pierde el historial). La coexistencia (seguir usando el número en la app del celular) no se hace con esta instalación: exige ser Tech Provider, y la carga manual de Chatwoot no la soporta. Un número que está en GHL o en otro proveedor sigue ahí hasta que se corte su flujo, y se instala con uno dedicado.
-- *Regla dura:* nunca dos números escribiéndole a la misma persona.
-- *Hecho cuando:* el número recibe el código de Meta y queda verificado en *API Setup*. El PIN de la verificación en dos pasos lo elige y lo guarda el infoproductor: hace falta para volver a registrar el número después de aprobado el nombre visible.
+- **Nunca dos números, ni dos sistemas, escribiéndole a la misma persona.** Cada automatización que manda lo mismo que un flujo nuestro se corta justo antes de prender el nuestro, mirado en su panel; en GHL, borrando el disparador del workflow (pasarlo a borrador congela también a los que ya están adentro). El día 0 no se corta nada: la instancia no manda.
+- **El permiso para escribirle a alguien sale del formulario, no del checkout.** El carrito, el pago fallido y el primer contacto le escriben solo a quien dejó antes un formulario de GHL con la aclaración de WhatsApp (paso 17, `carrito`). Una aliada sin esos formularios en las landings que reciben tráfico no tiene a quién recuperarle un carrito: se sabe antes de instalar (guía §0).
 
-**El portfolio comercial de Meta.** Para prender. No depende de nada.
-- *Primera opción:* todo en el portfolio del infoproductor, con quien instala como admin: la app, la cuenta de WhatsApp, la cuenta de mensajería, el usuario del sistema y el token. Una cuenta de mensajería no se mueve a otro negocio después.
-- *Si falla:* sin portfolio, se crea a nombre del infoproductor, nunca al de quien instala. Sin empresa registrada no hay verificación clásica: el techo de 250 destinatarios nuevos por día sube igual con 2.000 mensajes de buena calidad en 30 días.
-- *Hecho cuando:* quien instala entra como admin y ve «Cuentas de WhatsApp» y «Pagos» en la configuración del negocio. La verificación del negocio se pide apenas se pueda y no se espera.
+### Las firmas y las pruebas
 
-**La cuenta de mensajería, el medio de pago y el registro del número.** Para prender. Dependen del número y del portfolio.
-- *Primera opción:* crear la app de Meta (caso de uso WhatsApp), agregar y verificar el número, cargar el **medio de pago en la cuenta de mensajería** y registrar el número. La moneda se elige al crear la cuenta y no se cambia.
-- *Si falla:* el medio de pago de la cuenta publicitaria no sirve. Sin medio de pago, toda plantilla falla con `131042`. Una cuenta con la línea de crédito de un proveedor no deja cargar un medio de pago propio: el proveedor la tiene que retirar.
-- *Hecho cuando:* el número figura conectado y la cuenta de mensajería muestra un medio de pago activo. Se anotan el App ID, el Phone Number ID y el ID de la cuenta, que son distintos.
-
-**El nombre visible.** No bloquea el envío: mientras no esté aprobado, la persona ve el número.
-- *Primera opción:* un nombre que se relacione con el nombre legal del portfolio y que esté escrito igual en el sitio. Se mira el nombre legal antes de pedirlo.
-- *Si falla:* un nombre de persona solo, o escrito distinto que en el sitio, se rechaza. Se pide otro con el rubro al lado o con «by <empresa>».
-- *Hecho cuando:* está pedido.
-
-**Las plantillas.** Para prender. Dependen de la cuenta de mensajería, porque son de la cuenta y no del número.
-- *Primera opción:* el juego por defecto del producto (`plantillas/README.md` de la instancia: primer contacto, carrito, pago fallido, reactivación y seguimiento con cupón), completado con los datos de la llamada. El infoproductor aprueba el texto y quien instala las manda a revisión apenas existe la cuenta. El carrito y todo lo que lleve cupón o urgencia va como marketing. El código del cupón va en el botón, no en el texto.
-- *Si falla:* una plantilla rechazada se corrige y se vuelve a mandar. El idioma no se cambia después de crearla: una en otro idioma es otra plantilla, y se borra y se recrea. Sin la plantilla del carrito, el carrito no se prende; el entrante sí.
-- *Hecho cuando:* el catálogo del inbox en Chatwoot las muestra aprobadas, con nombre, idioma y categoría exactos, y queda guardado en `evidencia/`.
-
-**El token de Meta y el inbox de Chatwoot.** Dependen del número verificado. Se hacen en el paso 16.
-
-**Hotmart.** Para el día 0. Depende del acceso del infoproductor, con permiso de webhooks.
-- *Primera opción:* el acceso a la cuenta dueña del producto. Se preguntan los webhooks que ya existen (se pueden tener varios), el `off=` de cada landing, **si está prendido el recuperador propio de Hotmart o su WhatsApp de carrito**, a qué número manda el botón de WhatsApp del checkout y si hay un cupón.
-- *Si falla:* si la cuenta de Hotmart es de otra empresa, el acceso lo da esa empresa.
-- *Hecho cuando:* el evento de prueba de Hotmart, o uno real, llega al bridge y responde 200 (paso 10).
-
-**GHL, si el infoproductor lo usa.** Depende del acceso a la subcuenta.
-- *Primera opción:* la lista de cada workflow que manda WhatsApp hoy, con su disparador, **mirada en el panel** (el carrito y el pago fallido, sobre todo), y el ID de cada formulario.
-- *Si falla:* si la subcuenta no está pagada, la entrada de los formularios se puede cortar sin aviso.
-- *Hecho cuando:* está la lista de lo que escribe hoy.
-
-**Las landings, los formularios y el consentimiento.** 🔴 **De esto depende a quién le escribe el carrito:** el carrito, el pago fallido y el primer contacto le escriben solo a quien dejó antes un formulario con la aclaración de WhatsApp (paso 17, `carrito`). Una aliada sin formularios de GHL en las landings que reciben tráfico no tiene a quién recuperarle un carrito: se sabe en la llamada, antes de instalar.
-- *Primera opción:* cada formulario de GHL que se va a listar muestra la aclaración de WhatsApp, y la política del sitio nombra a WhatsApp. El texto exacto va a un archivo propio de la instancia (`consentimiento/<aliada>-whatsapp-contact-v1.md`), con la etiqueta que declara `consentimiento.copy_version`.
-- *Si falla:* un formulario propio o de ManyChat hoy no tiene entrada (exige firmar el envío, y esos formularios no firman). Esas personas quedan fuera del primer flujo: se anota cuántas ventas vienen por ahí. Si la política no nombra WhatsApp, la cambia el infoproductor antes de prender. Se pregunta por el orgánico en la llamada.
-- *Hecho cuando:* cada formulario que se va a listar muestra la aclaración (con captura) y la política nombra WhatsApp.
-
-**El conocimiento del agente.** Para prender el entrante; el día 0 alcanza el borrador. Depende de que el infoproductor conteste.
-- *Primera opción:* la v1 sale de lo público (la landing, el checkout y la ayuda de Hotmart) y prioriza las situaciones más típicas. Lo que no tiene fuente va a `[no_confirmado]` y el agente lo deriva. La fuente real es quien contesta hoy los chats.
-- *Si falla:* sin los materiales prometidos, la v1 sale igual con lo público, y lo demás llega por las rondas de feedback. Sin chats exportados, la voz sale del SOUL común del producto. Los chats exportados son datos personales de los leads: nunca van al repo ni a un chat.
-- *Hecho cuando:* el conocimiento está en `estado = "aprobado"`, firmado por quien aprueba el conocimiento, y `validate` da `VALIDA` (pasos 4 y 5).
-
-**Slack.** Para el día 0, si la instancia lo usa: las apps se crean desde manifiestos versionados (`dia-0.md`).
-- *Las apps:* la del Automation Expert (paso 11), la de las alertas (paso 12) y, con la `1.17.0`, la del conector propio (paso 14). La de la revisión diaria va cuando se prenda la revisión.
-- *Sin Slack:* la derivación llega al team de Chatwoot y quien atiende las derivaciones la mira ahí; las alertas críticas llegan por email (healthchecks.io); el Automation Expert no tiene por dónde hablar, y su sección se saca de `hermes.toml` (paso 11).
-- *Hecho cuando:* cada app está instalada, con su token guardado fuera de todo chat, y su bot en su canal.
-
-**Las personas.** Se nombran en la llamada. Cada rol tiene un nombre: el responsable comercial (confirma los datos y aprueba el conocimiento), quien contesta hoy los chats (normalmente también quien atiende las derivaciones), quien aprueba el texto de las plantillas, quien toma las alertas, quien administra el Automation Expert, quien custodia la clave de los respaldos, los revisores de la revisión diaria si se prende, y el admin del portfolio si no es el infoproductor. Si el infoproductor está solo, cubre todos los roles del negocio.
-- *Hecho cuando:* cada rol tiene un nombre, y quien atiende las derivaciones queda **sola** en el team de Chatwoot (el team reparte la conversación entre sus miembros).
-
-**Las firmas.** Son decisiones escritas que el producto exige, y cada una la escribe quien decide, nunca quien instala. Ninguna hace falta para el día 0:
-1. la aprobación del conocimiento (`aprobado_por`, `aprobado_el`);
+**Las firmas** son decisiones escritas que el producto exige. Cada una la escribe quien decide, nunca quien instala, en un PR del repo de la instancia, y ninguna hace falta para el día 0:
+1. la aprobación del conocimiento (`aprobado_por`, `aprobado_el`; paso 4);
 2. la aceptación del riesgo del adaptador de GHL, si hay formularios de GHL (paso 17);
 3. la revisión diaria en un disco sin cifrar (ADR 0024), solo si la revisión diaria se prende;
 4. el OK comercial para abrir cada flujo;
 5. los topes: cuántos mensajes por día y la primera cohorte, cerrada antes de abrir a todos.
-- *Hecho cuando:* `validate` y `/ready` muestran las que el producto lee (el conocimiento aprobado, `ghl_adapter_risk: accepted:…`).
 
-**Las pruebas.**
-- Dos identidades de prueba con teléfono y email distintos: una para la corrida de envío y otra para la de compra. La que compra queda frenada para siempre (`purchase_by_identity`). Los teléfonos de prueba los elige quien instala en el momento: no se precargan en ningún archivo.
-- Una compra real temprano, apenas anda el webhook de Hotmart (el día 0, si se puede): el nombre exacto del producto y la forma del teléfono se confirman recién con un payload real.
-- Carritos reales para la prueba del carrito. Si no entra ninguno, la prueba real se corre al primero que entre.
-- *Hecho cuando:* la corrida de envío llegó al teléfono y la respuesta cayó en Chatwoot, y la de compra canceló la secuencia.
+`validate` y `/ready` muestran las que el producto lee (el conocimiento aprobado, `ghl_adapter_risk: accepted:…`).
 
-**Lo que ya le escribe a los leads.** Regla dura: **nunca dos números, ni dos sistemas, escribiéndole a la misma persona.**
-- *Primera opción:* cada automatización que manda lo mismo que un flujo nuestro (el carrito, el pago fallido, el recuperador o el WhatsApp de Hotmart) se corta justo antes de prender el nuestro, mirado en su panel. En GHL se corta **borrando el disparador** del workflow: pasarlo a borrador congela también a los que ya están adentro.
-- *Si falla:* si nadie tiene el acceso para cortarlo, ese flujo nuestro no se prende. Una persona que escribe a mano desde el número viejo sigue con sus conversaciones y no le escribe a quien entró por un flujo nuestro.
-- *Hecho cuando:* antes de prender el carrito, cada sistema que manda lo mismo figura cortado en su panel. El día 0 no se corta nada: la instancia no manda.
+**Las pruebas:** dos identidades de prueba con teléfono y email distintos, una para la corrida de envío y otra para la de compra (la que compra queda frenada para siempre, `purchase_by_identity`). Los teléfonos de prueba los elige quien instala en el momento: no se precargan en ningún archivo. La corrida de compra de cada flujo de salida necesita cómo comprar con una identidad de prueba (un cupón casi del 100 % o un reembolso, guía §4.5). El nombre exacto del producto y la forma del teléfono se confirman con un payload real (pasos 8 y 10).
 
-**Lo que es del producto y no se le pregunta a nadie.** Se resuelve antes del día 0:
+### Lo que es del producto y no se le pregunta a nadie
+
 - la versión: la de `producto` en el `instancia.toml` de la plantilla, o una posterior (paso 6);
-- el conector de Slack: el propio de la instancia desde la `1.17.0`, o el compartido mientras la plantilla no lo traiga (paso 14);
+- el conector de Slack: cada instancia tiene el suyo, en su stack, desde la `1.17.0` (paso 14);
 - el teléfono por país: `src/bridge/phones.py` tiene una regla propia para México y Argentina. Un número de otro país pasa tal cual, y eso no está probado con ningún país fuera de esos dos.
 
-**Verificación del paso 0:** el día siguiente a la llamada, cada recurso de terceros está pedido y tiene un responsable con nombre, y el repo de la instancia tiene anotado de cada uno de dónde salió y su estado (nunca un valor secreto). «Antes del día 0» de `dia-0.md` está completo antes de arrancar el paso 6.
+**Verificación del paso 0:** cada pedido del checklist de la guía (§4.0) enviado, con dueño y fecha, y el repo de la instancia con anotado de dónde sale cada recurso y su estado (nunca un valor secreto: de un PIN o un token se anota dónde está guardado). «Antes del día 0» de `dia-0.md` está completo antes de arrancar el paso 6.
 
 ## 1. Crear el repo de la instancia
 
@@ -182,12 +138,40 @@ Todo se mide en la fuente, no se pregunta de memoria:
 |---|---|
 | Producto e hotlink de Hotmart | La landing publicada: el botón o el script de checkout apunta a `pay.hotmart.com/<hotlink>?off=<oferta>`. Se confirma que `https://pay.hotmart.com/<hotlink>?off=<oferta>` abre el checkout real |
 | Una oferta por landing | Cada landing trae su `off=`. Se abre cada una en un navegador y se anota landing → oferta. Una oferta que ninguna landing usa **no** va al manifiesto |
-| Cuenta, inbox y team de Chatwoot | En Chatwoot: *Settings → Inboxes* (el ID está en la URL del inbox) y *Settings → Teams* |
+| Cuenta, inbox y team de Chatwoot | Los crea `crear-cuenta.rb` (abajo, «La cuenta de Chatwoot de la aliada»): una cuenta propia, nunca una bandeja en la cuenta de otra aliada |
 | Plantillas de Meta | En Chatwoot, las plantillas sincronizadas del inbox; o en el WhatsApp Manager. Se anota **nombre, idioma y estado exactos**: una plantilla aprobada en otro idioma es otra plantilla |
 | Precio y moneda | El checkout de Hotmart |
 | Los hosts, el contenedor de la base de Chatwoot, el canal de las alertas | EasyPanel (Settings de cada servicio), `docker ps --format '{{.Names}}'` en el servidor y Slack. Van a `despliegue/despliegue.toml` |
 
-**Verificación:** cada valor anotado lleva de dónde salió y la fecha, en `conocimiento/knowledge-fuentes.md` del repo de la instancia.
+**Verificación:** cada valor anotado lleva de dónde salió y la fecha, en `conocimiento/knowledge-fuentes.md` del repo de la instancia. Lo que se lee antes de hablar con nadie (el mapa de ofertas, el checkout país por país, la política y la aclaración de cada formulario) está en la guía, §3.2.
+
+### La cuenta de Chatwoot de la aliada
+
+En un Chatwoot compartido **cada aliada es una cuenta**: una bandeja en la cuenta de otra queda adentro de la de ella. La instancia necesita cuenta, team de derivaciones y bandeja propios, y sus tres IDs van a `[chatwoot]` de `instancia.toml` (paso 3). La bandeja es una API provisoria hasta que llegue el número (paso 8 y paso 16), salvo que el número ya esté registrado y se use su inbox desde el principio. Hace falta el OK de quien opera el Chatwoot compartido. Las dos piezas están en `despliegue/chatwoot/` del repo de la instancia, con el comando exacto en su cabecera; desde la carpeta del repo, en la Mac:
+
+1. **La foto de antes**, en una sesión de solo lectura de la base de Chatwoot:
+
+   ```sh
+   ssh <servidor> 'D=$(docker ps -q --filter label=com.docker.swarm.service.name=<servicio de la base de Chatwoot>); \
+     docker exec -i -e PGOPTIONS="-c default_transaction_read_only=on" "$D" \
+     psql -U postgres -d <base de Chatwoot> -X -qAt -v ON_ERROR_STOP=1' < despliegue/chatwoot/foto.sql > chatwoot-antes.txt
+   ```
+
+2. **La cuenta, el team y la bandeja**, con `rails runner` en el contenedor de la **app** de Chatwoot (el que no termina en `-db`, `-sidekiq` ni `-redis`):
+
+   ```sh
+   ssh <servidor> 'C=$(docker ps -q --filter label=com.docker.swarm.service.name=<servicio de la app de Chatwoot>); \
+     [ "$(printf "%s\n" "$C" | grep -c .)" = 1 ] || { echo "FRENO: esperaba un contenedor y hay: $C"; exit 1; }; \
+     docker exec -i -e CUENTA="<Marca>" -e TEAM="<aliada> - revisión humana" -e BANDEJA="<Marca> provisoria (API)" "$C" \
+       sh -c "cat > /tmp/crear-cuenta.rb && bundle exec rails runner /tmp/crear-cuenta.rb; r=\$?; rm -f /tmp/crear-cuenta.rb; exit \$r"' \
+     < despliegue/chatwoot/crear-cuenta.rb
+   ```
+
+3. **La foto de después** (el comando del punto 1 a `chatwoot-despues.txt`) y `diff chatwoot-antes.txt chatwoot-despues.txt`.
+
+El contenedor se elige siempre por el nombre exacto del servicio, con el label de Swarm: `docker ps -f name=…` es un filtro por subcadena y toma también `-db`, `-sidekiq` y `-redis` (en Maribel, el 2026-10-23, el primer intento fue al contenedor de la base y no hizo nada).
+
+**Verificación:** el punto 2 termina en `CUENTA_OK account_id=N equipo_derivacion=N inbox_id=N`, y si ya hay una cuenta con ese nombre frena sin crear nada. El `diff` muestra solo las filas nuevas (la cuenta, el team, la bandeja y `channel_api` con una más): si cambió una fila de otra cuenta, se frena y se avisa. El diff va a `evidencia/` (no trae datos personales). Quien atiende las derivaciones se suma a la cuenta y queda **sola** en el team (paso 16; el team reparte la conversación entre sus miembros).
 
 ## 3. Completar `instancia.toml` y `despliegue.toml`
 
@@ -289,7 +273,7 @@ Docker lee cada `env_file` del stack al desplegar: si falta uno, el deploy no ap
 **Los que genera `generar.py`** (secretos, se conservan una vez creados):
 - en `db.env`: `POSTGRES_PASSWORD`, `AUTHENTICATOR_PASSWORD`, `JWT_SECRET` y `JWT_EXP`;
 - en `rest.env`: `PGRST_DB_URI` y `PGRST_JWT_SECRET`, derivados de los anteriores;
-- en `bridge.env`: `SUPABASE_SERVICE_ROLE_KEY` (un JWT de rol `service_role` firmado con el `JWT_SECRET` de la base), `HERMES_API_KEY` (la clave con la que el bridge le habla a su Hermes; el paso 11 la pone en el profile), `GHL_PRECHECKOUT_ADAPTER_TOKEN` (no se rota en cada despliegue: GHL lo tiene copiado), `CHATWOOT_WEBHOOK_SECRET` (nace provisional; el paso 16 lo reemplaza por el que devuelve Chatwoot) y los tres del Automation Expert: `AUTOMATION_EXPERT_READ_TOKEN`, `AUTOMATION_EXPERT_CHANGE_TOKEN` y `AUTOMATION_EXPERT_CHANGE_DB_KEY` (un JWT de rol `automation_expert_change`, firmado con el mismo secreto que el de `service_role` y distinto de él).
+- en `bridge.env`: `SUPABASE_SERVICE_ROLE_KEY` (un JWT de rol `service_role` firmado con el `JWT_SECRET` de la base), `HERMES_API_KEY` (la clave con la que el bridge le habla a su Hermes; el paso 11 la pone en el profile), `GHL_PRECHECKOUT_ADAPTER_TOKEN` (no se rota en cada despliegue: GHL lo tiene copiado), `CHATWOOT_WEBHOOK_SECRET` (nace al azar; el paso 16 lo reemplaza por el que devuelve Chatwoot) y los tres del Automation Expert: `AUTOMATION_EXPERT_READ_TOKEN`, `AUTOMATION_EXPERT_CHANGE_TOKEN` y `AUTOMATION_EXPERT_CHANGE_DB_KEY` (un JWT de rol `automation_expert_change`, firmado con el mismo secreto que el de `service_role` y distinto de él).
 
 **Los que escribe `generar.py` y no son secretos** (los fija la instancia; se conservan):
 `INSTANCE_MANIFEST_PATH`, `SUPABASE_BASE_URL`, `CHATWOOT_BASE_URL` (el host **público** de Chatwoot: el bridge baja los audios solo de ese host), `CHATWOOT_ACCOUNT_ID`, `CHATWOOT_INBOX_ID`, `MESSAGING_CHANNEL=chatwoot`, `HERMES_MODEL_NAME` (igual a `[agente].modelo`), `HERMES_API_BASE_URL` (`http://hermes:8642/v1`), `COMMERCIAL_KNOWLEDGE_ENABLED`, `AGENT_PROVENANCE_TENANT_REF`, `AGENT_PROVENANCE_SCOPE_REF`, `CHATWOOT_CUT_B_SCOPE_KEY` y `_VERSION`, `HANDOFF_PROJECTION_POLICY_KEY` y `_VERSION`, `LANCEMOS_PILOT_SCOPE_KEY`, `LANCEMOS_PILOT_TENANT_KEY`, `LANCEMOS_PILOT_CHANNEL_PROVIDER=waba`, `LANCEMOS_PILOT_CHANNEL_ACCOUNT_REF=chatwoot-inbox:<inbox>`, `FOLLOWUP_POLICY_KEY` y `_VERSION`, y `GHL_PRECHECKOUT_ADAPTER_ENABLED=false`. Las claves de scopes y políticas son las que siembra el paso 8.
@@ -303,7 +287,7 @@ Docker lee cada `env_file` del stack al desplegar: si falta uno, el deploy no ap
 
 **Los que se copian de un panel o salen de una API** (nunca por chat):
 - `HOTMART_HOTTOK`: el hottok de la configuración de webhooks de la cuenta de Hotmart. Lo pide `despliegue/hotmart/cargar-hottok.py` (paso 10), con `PORTABLE_HOTMART_PURCHASE_STOP_ENABLED=true`.
-- `OPENROUTER_API_KEY` en `hermes.env`: la key de OpenRouter de la instancia, con un tope de gasto (paso 11). La misma va en `bridge.env` para la transcripción de audios, copiada sin mostrarla (paso 17, `inbound`).
+- `OPENROUTER_API_KEY` en `hermes.env`: la key de OpenRouter de la instancia, con un tope de gasto (paso 11). La misma va en `bridge.env` para la transcripción de audios: `cargar-key-openrouter.py --tambien-bridge` la escribe en los dos archivos sin mostrarla (paso 17, `inbound`).
 - Los tokens de la app de Slack del Automation Expert, en `automation-expert.env` (paso 11).
 - Con Slack: `SLACK_CONNECTOR_BEARER_TOKEN`, `OPERATOR_CORRELATION_READ_TOKEN` y `OPERATOR_CORRELATION_WRITE_TOKEN`. Los genera `despliegue/slack/conectar-slack.py` (paso 14).
 - Para prender (paso 16): `CHATWOOT_CONTROL_API_ACCESS_TOKEN`, `CHATWOOT_AGENT_BOT_ID` y `CHATWOOT_AGENT_BOT_ACCESS_TOKEN` (`despliegue/chatwoot/cargar-tokens-chatwoot.py`), `CHATWOOT_PAUSE_MACRO_ID`, `CHATWOOT_RESUME_MACRO_ID` y `CHATWOOT_OPT_OUT_MACRO_ID` (a mano, no son secretos) y `CHATWOOT_WEBHOOK_SECRET` (`despliegue/chatwoot/apuntar-webhook.py`).
@@ -313,7 +297,7 @@ Docker lee cada `env_file` del stack al desplegar: si falta uno, el deploy no ap
 
 **Verificación:**
 - `generar.py` termina con `escritos: db.env, rest.env, bridge.env (600)`, nombra solo claves, nunca valores, y dice `flags en true: ninguno`.
-- Hasta el paso 16, `provisionales:` lista los cuatro de Chatwoot (`CHATWOOT_WEBHOOK_SECRET`, `CHATWOOT_AGENT_BOT_ID`, `CHATWOOT_CONTROL_API_ACCESS_TOKEN`, `CHATWOOT_PAUSE_MACRO_ID`). En solo escucha es lo esperado: el bridge arranca y `/ready` responde, pero no hay conversación.
+- Hasta el paso 16, `provisionales:` lista tres de Chatwoot: `CHATWOOT_AGENT_BOT_ID`, `CHATWOOT_CONTROL_API_ACCESS_TOKEN` y `CHATWOOT_PAUSE_MACRO_ID`. El cuarto que nace sin su valor real, `CHATWOOT_WEBHOOK_SECRET`, no figura porque nace al azar y no como marcador: lo reemplaza `apuntar-webhook.py` (paso 16). En solo escucha es lo esperado: el bridge arranca y `/ready` responde, pero no hay conversación.
 - `ls -l /opt/<stack>/secretos` muestra permisos `-rw-------`.
 - Cada nombre de `.env.example` está en el archivo, salvo los flags de flujos que todavía no se prendieron. En ATT1 faltaban tres flags del entrante que nadie vio hasta el 2026-10-05 (setter-instancia-att1#18): la lista se compara nombre por nombre, no de memoria.
 
@@ -482,13 +466,15 @@ Es lo que hace que la instancia «escuche». Hace falta alguien con acceso a la 
 
    Lo pide sin mostrarlo y lo carga junto con `PORTABLE_HOTMART_PURCHASE_STOP_ENABLED=true` (el freno por compra: el bridge no arranca con el hottok y esa capacidad apagada). Después, el redeploy del bridge.
 2. **El webhook** en Hotmart, versión 2.0.0, del producto, con un nombre que diga la instancia («Setter <aliada>»), hacia `https://<dominio del bridge>/webhooks/hotmart`, con tres eventos: *Compra aprobada*, *Abandono de carrito* y *Compra cancelada*. Los webhooks que ya existen (GHL, Zapier) siguen: se pueden tener varios.
+3. **«Solo guardar»** (desde la `1.18.0`, #323): `PORTABLE_HOTMART_CAPTURE_ENABLED=true` en `bridge.env`, a mano y con respaldo (`cp -p bridge.env bridge.env.<fecha>-antes-de-solo-guardar`), y el redeploy. Una instancia que sube desde la `1.17.1` lo recibe de `despliegue/subida/pasos/v1.18.0.toml` (paso 9, «Actualizar el bridge»). Exige el manifiesto, `PORTABLE_HOTMART_PURCHASE_STOP_ENABLED` y `HOTMART_HOTTOK`: sin ellos el bridge no arranca. Va el día 0, porque es lo que hace que la instancia junte los carritos y los pagos rechazados mientras está en solo escucha.
 
-**Qué cambia:** una compra aprobada marca como comprada la intención de esa persona. El carrito y la compra cancelada se contestan `200 ignored` hasta que se prenda su flujo. Una oferta ajena se contesta con `200`, nunca con un error. **No sale ningún mensaje:** es el primero de los flags que el día 0 está en `true` a propósito (`despliegue/dia-0.md`).
+**Qué cambia:** una compra aprobada marca como comprada la intención de esa persona. Con «solo guardar», el carrito y el pago rechazado de un flujo apagado se guardan en `webhook_events` en la misma transacción que los deja `ignored` / `listen_only_capture`, así que ningún worker los toma nunca, tampoco el día que se prende su flujo (desde ahí, los nuevos van por el flujo). Sin «solo guardar», el carrito y la compra cancelada se contestan `200 ignored` sin guardarse hasta que se prenda su flujo. Una oferta ajena se contesta con `200`, nunca con un error. **No sale ningún mensaje:** el freno por compra y «solo guardar» son dos de los flags que el día 0 están en `true` a propósito (`despliegue/dia-0.md`, paso 15).
 
 **Verificación:**
 - La prueba del panel de Hotmart manda un envío por evento, y los tres vuelven con `200` (`portable_purchase_stop_event_ignored`, sin guardar nada). En ATT1, el 2026-10-04 a las 23:16Z.
 - El historial del webhook en Hotmart queda en `2xx`.
-- **Con la primera compra real** (o una de prueba) se confirman dos datos que hasta ahí son supuestos: que `data.product.name` es exactamente `[hotmart].product_name`, y con qué forma llega el teléfono. Hotmart guarda el historial de envíos de cada webhook, y ahí se ve el payload. `chequear.sh` (paso 15) ve el último evento de Hotmart en la base.
+- **Con la primera compra real** (o una de prueba) se confirman dos datos que hasta ahí son supuestos: que `data.product.name` es exactamente `[hotmart].product_name`, y con qué forma llega el teléfono. Hotmart guarda el historial de envíos de cada webhook, y ahí se ve el payload. `chequear.sh` (paso 15) ve el último evento de Hotmart en la base. El botón de prueba no cierra ese punto: manda un producto de prueba y no se guarda.
+- **«Solo guardar»:** `grep -c "^PORTABLE_HOTMART_CAPTURE_ENABLED=true$" bridge.env` da `1`, y con el primer carrito real, en una sesión de solo lectura de la base de la instancia, `select event_type, processing_status, processing_error, count(*) from public.webhook_events where source = 'hotmart' group by 1, 2, 3;` muestra `PURCHASE_OUT_OF_SHOPPING_CART | ignored | listen_only_capture`, y `recovery_cases`, `scheduled_actions` y `followup_delivery_attempts` siguen en cero filas.
 
 ## 11. Hermes: el agente comercial y el Automation Expert
 
@@ -545,15 +531,23 @@ El respaldo diario cifrado fuera del VPS: la base de la instancia, sus secretos,
 
 ## 14. Slack: el conector y las tarjetas
 
-Opcional. Sin Slack, se borra `[slack]` de `instancia.toml` y las derivaciones llegan solo al team de Chatwoot. Con Slack, el bridge le manda las tarjetas (las derivaciones, las compras) al conector de Slack, y el conector las publica en el canal de la instancia. El día 0 no sale ninguna tarjeta, porque no hay derivaciones: se deja conectado y se prueba al prender el entrante.
+Opcional. Sin Slack, se borra `[slack]` de `instancia.toml` y las derivaciones llegan solo al team de Chatwoot; el conector queda corriendo apagado. Con Slack, el bridge le manda las tarjetas (las derivaciones, las compras) al conector, y el conector las publica en el canal de la instancia. El día 0 no sale ninguna tarjeta, porque no hay derivaciones: se deja conectado y la tarjeta de prueba espera al entrante. Qué piezas de Slack son obligatorias y cuáles no: guía §5.8.
 
-**El conector propio de la instancia (llega con la `1.17.0`).** Desde la `1.17.0` del producto (#315) el conector puede correr una sola instancia: el mismo conector, con **una sola clave** en cada mapa `SLACK_TENANT_*_JSON` (la `ally_ref` de la instancia), y el `http` interno entre el bridge y el conector del mismo stack, acotado a un `host:puerto` declarado (`SLACK_OPERATOR_INTERNAL_HOST` en el conector, `SLACK_CONNECTOR_INTERNAL_HOST` en el bridge). La forma de la configuración y las reglas de esa excepción están en `docs/contracts/slack-operations-connector-v1.md` §10. La app es una por instancia, desde `deploy/slack-app-manifest-instancia-v1.json`: solo `chat:write`, la interactividad hacia `https://<host del conector>/slack/interactions`, sin Socket Mode, sin Events API y sin slash commands. Cómo se crea: `docs/operations/slack-app-connection-runbook.md` §8. **El servicio del conector en el stack de la plantilla, su ruta de Traefik y el script que escribe su archivo de variables entran con el tag de la `1.17.0`, en su propio PR de la plantilla:** sus nombres finales los fija ese PR, y este paso se completa con él. Lo que no cubre todavía: la revisión diaria valida `SLACK_CONNECTOR_BASE_URL` como `https` por su cuenta (`src/bridge/daily_feedback_app.py`), así que sigue hablándole al conector por su host público.
+**Cada instancia tiene su propio conector**, desde la `1.17.0` del producto (#315) y setter-instancia-plantilla#11: el servicio `slack-connector` del stack (imagen `setter-slack-connector`, del mismo tag que el bridge), con **una sola clave** en cada mapa `SLACK_TENANT_*_JSON` (la `ally_ref` de la instancia). El bridge le habla por la red interna y el conector al bridge también, acotados a un `host:puerto` declarado (`SLACK_CONNECTOR_INTERNAL_HOST` en el bridge, `SLACK_OPERATOR_INTERNAL_HOST` en el conector); la revisión diaria también le habla por la red interna desde la `1.17.1` (#319). La forma de la configuración y las reglas de esa excepción están en `docs/contracts/slack-operations-connector-v1.md` §10. `generar.py` escribe `secretos/slack-connector.env` siempre, con el conector apagado y sin los secretos de la app.
 
-**Mientras tanto, el conector compartido.** El orden es el canal, el bot en el canal, el tenant en el conector y recién después el bridge: si el conector no conoce al tenant contesta 401, y el bridge deja ese aviso en `terminal_failed`, sin reintento. El tenant del conector es `<aliada>` (el `ally_ref` del manifiesto): su canal en `SLACK_TENANT_CHANNELS_JSON`, su token en `SLACK_TENANT_TOKENS_JSON` y, si se quiere, su nombre en `SLACK_TENANT_LABELS_JSON` (`deploy/slack-connector.env.example`). `despliegue/slack/conectar-slack.py` genera los tokens, prueba en seco el conector y el bridge con su código real (`CONECTOR_OK` y `BRIDGE_OK`) y recién ahí escribe. El conector es compartido y no arranca con una configuración inválida: la línea nueva se prueba en seco antes de redesplegarlo, porque un error deja sin Slack también a las otras instancias.
+1. **La app**, una por instancia, desde `deploy/slack-app-manifest-instancia-v1.json`: solo `chat:write`, la interactividad hacia `https://<host del conector>/slack/interactions`, sin Socket Mode, sin Events API y sin slash commands. Cómo se crea: `docs/operations/slack-app-connection-runbook.md` §8. El canal, y el bot invitado al canal.
+2. **El repo de la instancia:** `[slack].canal` en `instancia.toml`; `[slack].conector`, `.team_id` y `.operadores` en `despliegue/despliegue.toml`; el host en `despliegue/traefik/<aliada>-slack-connector.yaml`, copiado a `/etc/easypanel/traefik/config/`. El repo al servidor.
+3. **Conectar**, primero en seco y después de verdad, desde la terminal de quien opera (pide el bot token y el signing secret sin mostrarlos):
 
-En el bridge son cuatro flags, que se prenden con el entrante (paso 17), no el día 0: `SLACK_CONNECTOR_PROJECTION_ENABLED`, `CORRELATION_PRERESOLUTION_ENABLED`, `OPERATOR_CORRELATION_READ_ENABLED` y `OPERATOR_CORRELATION_WRITE_ENABLED`.
+   ```sh
+   ssh <servidor> 'python3 /opt/<stack>/instancia/despliegue/slack/conectar-slack.py --probar'
+   ssh -t <servidor> 'python3 /opt/<stack>/instancia/despliegue/slack/conectar-slack.py'
+   ```
 
-**Verificación:** el día 0, `conectar-slack.py` termina en `CONECTOR_OK` y `BRIDGE_OK` y el bridge tiene `SLACK_CONNECTOR_BASE_URL` (`chequear.sh`, punto 13). Con el entrante prendido, una derivación de prueba saca una tarjeta en el canal con el link a la conversación. En ATT1, el 2026-10-06 a las 16:01Z (setter-instancia-att1#21).
+   Genera los tres tokens de la instancia (`SLACK_CONNECTOR_BEARER_TOKEN`, `OPERATOR_CORRELATION_READ_TOKEN` y `OPERATOR_CORRELATION_WRITE_TOKEN`), prueba en seco el conector y el bridge con su código real (`CONECTOR_OK` y `BRIDGE_OK`) y recién ahí escribe los dos archivos, cada uno con su respaldo. **En `bridge.env` deja en `true` los cuatro flags de Slack:** `SLACK_CONNECTOR_PROJECTION_ENABLED`, `CORRELATION_PRERESOLUTION_ENABLED`, `OPERATOR_CORRELATION_READ_ENABLED` y `OPERATOR_CORRELATION_WRITE_ENABLED`. En el conector prende la entrada, los botones y el chequeo de Slack (`SLACK_INGRESS_ENABLED`, `SLACK_INTERACTIONS_ENABLED`, `SLACK_CONNECTIVITY_CHECK_ENABLED`). Después, el redeploy del stack entero (el mismo deploy toma los dos archivos).
+4. **Las tarjetas, aparte:** `SLACK_NOTIFICATIONS_ENABLED=true` en `slack-connector.env` con `SLACK_ACTIVATION_MODE=one_shot` primero, la verificación, y recién ahí `continuous` (`docs/contracts/slack-operations-connector-v1.md` y las fases B a D de `docs/operations/slack-app-connection-runbook.md`). `conectar-slack.py` no las prende.
+
+**Verificación:** el día 0, `conectar-slack.py` termina en `CONECTOR_OK` y `BRIDGE_OK`, y `chequear.sh` (punto 13) ve el conector contestando `/health` y el bridge hablándole por la red interna (`SLACK_CONNECTOR_BASE_URL=http://<stack>_slack-connector:8000`). Con el entrante prendido, una derivación de prueba saca una tarjeta en el canal con el link a la conversación. En ATT1, con el conector compartido de entonces, el 2026-10-06 a las 16:01Z (setter-instancia-att1#21).
 
 ## 15. El chequeo: instalada en solo escucha
 
@@ -583,7 +577,7 @@ Cada línea dice `ok`, `FALTA` (con el paso que lo arregla), `AVISO` o `SALIDA`.
 - **`NO ES SOLO ESCUCHA`** (sale con 3): algo prendido le puede mandar un mensaje a una persona. Se apaga **antes que nada**, con el respaldo del archivo del bridge o `piloto.sh pausar`, y se vuelve a correr.
 
 **Qué queda apagado el día 0, y cómo se ve que no sale nada:**
-- **Los flags de salida en `false`**, como los deja `generar.py` (paso 7). Los únicos en `true` a propósito son `PORTABLE_HOTMART_PURCHASE_STOP_ENABLED` (paso 10), `AUTOMATION_EXPERT_READ_ENABLED` (paso 11) y, si los formularios de GHL ya se conectan, `GHL_PRECHECKOUT_ADAPTER_ENABLED`, que deja intenciones y no manda. `chequear.sh` los nombra como «prendidos a propósito» y da `SALIDA` con cualquier flag de salida en `true` (la lista está en `despliegue/chequeo.py`).
+- **Los flags de salida en `false`**, como los deja `generar.py` (paso 7). Los únicos en `true` a propósito son `PORTABLE_HOTMART_PURCHASE_STOP_ENABLED` (paso 10), `PORTABLE_HOTMART_CAPTURE_ENABLED` («solo guardar», paso 10, desde la `1.18.0`), `AUTOMATION_EXPERT_READ_ENABLED` (paso 11) y, si los formularios de GHL ya se conectan, `GHL_PRECHECKOUT_ADAPTER_ENABLED`, que deja intenciones y no manda. `chequear.sh` los nombra como «prendidos a propósito» (`DIA_0` en `despliegue/chequeo.py`) y da `SALIDA` con cualquier flag de salida en `true` (la lista está en el mismo archivo). Con el conector conectado (paso 14), sus cuatro flags del bridge también están en `true`: no mandan nada sin derivaciones, y el chequeo los muestra como `AVISO`.
 - **Los controles del piloto en `inactive`**, como los siembra el paso 8: `sh /opt/<stack>/instancia/despliegue/base/piloto.sh estado`. Con un control en `armed` y sus flags prendidos salen mensajes: el chequeo da `SALIDA`.
 - **Sin número de WhatsApp:** no hay inbox de WhatsApp Cloud conectado. El chequeo lee el tipo de la bandeja en la base de Chatwoot, en solo lectura, y da `AVISO` si es de WhatsApp.
 - **Las plantillas de Meta comentadas** en `[plantillas]` y **los `[flujos]` en `false`**.
@@ -594,7 +588,7 @@ La prueba del chequeo sin VPS está en la plantilla (`pruebas/chequeo/correr.sh`
 
 ## 16. Chatwoot: el inbox, el AgentBot y el webhook
 
-Para prender: depende del número verificado (paso 0) y de la ruta pública del bridge (paso 9).
+Para prender: depende del número verificado (guía §4.1 a §4.3) y de la ruta pública del bridge (paso 9).
 
 1. **El token de Meta.** Un usuario del sistema admin en el portfolio, con la app y las dos cuentas (WhatsApp y mensajería) asignadas con control total. El token se genera con vencimiento **Nunca** y los permisos `whatsapp_business_management` y `whatsapp_business_messaging`. Meta lo muestra una sola vez: va directo al inbox de Chatwoot, nunca a un chat. Un token de usuario común vence a los 60 días y corta todo.
 2. **El inbox.** En Chatwoot, un inbox de WhatsApp Cloud por la carga manual, con el Phone Number ID, el ID de la cuenta y el token. Chatwoot configura el webhook en Meta. Se anotan los IDs de la cuenta y del inbox, y se pasan al manifiesto.
@@ -645,7 +639,7 @@ Para prender: depende del número verificado (paso 0) y de la ruta pública del 
 
 ## 17. Prender los flujos de a uno
 
-**El orden:** `inbound` → `carrito` → `pago_fallido` → el resto. El carrito va primero entre los de salida porque es el de más volumen y el que ya se probó de punta a punta en ATT1 (decisión del 2026-10-17). Cada flujo: `true` en el manifiesto (PR en el repo de la instancia), sus flags en `bridge.env`, el redeploy, una prueba controlada y la medición del efecto antes de pasar al siguiente. Desde acá `chequear.sh` deja de terminar en `INSTALADA`: lo que antes era `SALIDA` es lo que se prendió a propósito. El paso a paso con los comandos de la instancia está en `despliegue/camino-a-produccion.md`.
+**El orden:** primero `inbound`, siempre, antes que cualquier plantilla. **El primer flujo de salida es el que reemplaza lo que ya le escribe a los leads**, elegido por su disparador real y no por su nombre (en ATT1, `carrito`; en Maribel, `precheckout`, porque su «carrito» de GHL dispara con el formulario); si no corre nada y hay formularios de GHL, `carrito`. Después, el resto, de a uno. Sin formularios de GHL, solo se prende `inbound`. El porqué y lo que se copia del flujo que ya corre están en la guía, §8.3. Las secciones de abajo van por flujo, no en el orden en que se prenden. Cada flujo: `true` en el manifiesto (PR en el repo de la instancia), sus flags en `bridge.env`, el redeploy, una prueba controlada y la medición del efecto antes de pasar al siguiente. Desde acá `chequear.sh` deja de terminar en `INSTALADA`: lo que antes era `SALIDA` es lo que se prendió a propósito. El paso a paso con los comandos de la instancia está en `despliegue/camino-a-produccion.md`.
 
 **El manifiesto es el techo:** un flag prendido con su flujo en `false` no deja arrancar al bridge. Y al revés, el flujo en `true` sin su flag no hace nada: el bridge mira el flag. Por eso el manifiesto se puede mergear antes que el flag.
 
@@ -676,12 +670,12 @@ Para prender: depende del número verificado (paso 0) y de la ruta pública del 
 No es un flujo de salida: el agente contesta a quien escribe primero. Va antes de cualquier plantilla, porque sin él un «No más mensajes» o un pedido de ayuda del lead se pierden. Antes, el conocimiento aprobado (firma 1) y quien atiende las derivaciones dada de alta y sola en el team (paso 16).
 
 1. PR a `instancia.toml` con `inbound = true`.
-2. En `bridge.env`, los flags del entrante: `HERMES_SHADOW_ENABLED`, `CHATWOOT_AUTOMATED_REPLIES_ENABLED`, `CHATWOOT_CUT_B_ADMISSION_ENABLED`, `CHATWOOT_CUT_B_AGENT_ENABLED`, `CHATWOOT_DURABLE_OPT_OUT_ENABLED`, `CHATWOOT_HUMAN_PAUSE_ENABLED`, `HUMAN_HANDOFF_ADMISSION_ENABLED`, `HUMAN_HANDOFF_PROJECTION_ENABLED`, `CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED`, `PAYMENT_LINK_ENABLED` y la reanudación, `CONVERSATION_RESUME_ENABLED=true` con `CONVERSATION_RESUME_MAX=10`. Sin la reanudación, una conversación derivada no vuelve nunca al agente. Para que la derivación le avise a la persona con un mensaje corto y fijo («Le paso tu consulta al equipo y te responden por este mismo chat.», sin plazo ni nombre), `HANDOFF_NOTICE_ENABLED=true` (F-034; exige `HUMAN_HANDOFF_ADMISSION_ENABLED`). Apagado, la derivación no le escribe nada. Para que una baja nueva reciba una sola línea de confirmación, sin vender, `OPT_OUT_CONFIRMATION_ENABLED=true` (E-107; exige `CHATWOOT_DURABLE_OPT_OUT_ENABLED` y `CHATWOOT_AUTOMATED_REPLIES_ENABLED`), con el texto de la instancia en `OPT_OUT_CONFIRMATION_TEXT` si no sirve el del producto («Listo, no te escribimos más.»): una línea, sin link, cupón, precio ni pregunta, o el bridge no arranca. Apagado, la baja se registra y no se contesta. Y `COMMERCIAL_KNOWLEDGE_ENABLED=true` con el conocimiento aprobado.
+2. En `bridge.env`, los flags del entrante: `HERMES_SHADOW_ENABLED`, `CHATWOOT_AUTOMATED_REPLIES_ENABLED`, `CHATWOOT_CUT_B_ADMISSION_ENABLED`, `CHATWOOT_CUT_B_AGENT_ENABLED`, `CHATWOOT_DURABLE_OPT_OUT_ENABLED`, `CHATWOOT_HUMAN_PAUSE_ENABLED`, `HUMAN_HANDOFF_ADMISSION_ENABLED`, `HUMAN_HANDOFF_PROJECTION_ENABLED`, `CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED`, `PAYMENT_LINK_ENABLED` y la reanudación, `CONVERSATION_RESUME_ENABLED=true` con `CONVERSATION_RESUME_MAX=10`. Sin la reanudación, una conversación derivada no vuelve nunca al agente. Para que la derivación le avise a la persona con un mensaje corto y fijo («Le paso tu consulta al equipo y te responden por este mismo chat.», sin plazo ni nombre), `HANDOFF_NOTICE_ENABLED=true` (F-034; exige `HUMAN_HANDOFF_ADMISSION_ENABLED`). Apagado, la derivación no le escribe nada. Para que una baja nueva reciba una sola línea de confirmación, sin vender, `OPT_OUT_CONFIRMATION_ENABLED=true` (E-107; exige `CHATWOOT_DURABLE_OPT_OUT_ENABLED` y `CHATWOOT_AUTOMATED_REPLIES_ENABLED`), con el texto de la instancia en `OPT_OUT_CONFIRMATION_TEXT` si no sirve el del producto («Listo, no te escribimos más.»): una línea, sin link, cupón, precio ni pregunta, o el bridge no arranca. Apagado, la baja se registra y no se contesta. Desde la `1.19.0`, para que quien atiende una derivación vea en una nota privada el último link de pago que recibió esa persona (y su cupón, si vino del carrito), `HANDOFF_LINK_NOTE_ENABLED=true` (#333; exige `HUMAN_HANDOFF_ADMISSION_ENABLED`). La pausa del agente al comprar, `PURCHASE_AGENT_PAUSE_ENABLED=true` (#334), exige el manifiesto, `RESOLUTION_WORKER_ENABLED`, `HOTMART_PURCHASE_WORKER_ENABLED`, la API de control de Chatwoot y `CHATWOOT_PAUSE_MACRO_ID`: prendida sin eso, el bridge no arranca. Y `COMMERCIAL_KNOWLEDGE_ENABLED=true` con el conocimiento aprobado.
 3. Los tres que completan el entrante:
    - `CHATWOOT_REPLY_SPLITTER_ENABLED`, el divisor de respuestas, con `HERMES_REPLY_SPLITTER_PROVIDER` y `HERMES_REPLY_SPLITTER_MODEL_NAME`. El proveedor tiene que tener credenciales en el Hermes de la instancia: en ATT1 va por OpenRouter con `z-ai/glm-5.3-flash` (ejemplo), porque su Hermes no tiene credenciales de Anthropic y con esa configuración el divisor manda la respuesta entera;
    - `CHATWOOT_STALLED_MONITOR_ENABLED`, el monitor de conversaciones trabadas, con los valores por defecto salvo `CHATWOOT_STALLED_MAX_PAGES` (constante del repo). Si un barrido falla, `/ready` da 503 hasta el siguiente; el healthcheck mira `/health`, así que eso no reinicia el bridge;
-   - `CHATWOOT_AUDIO_TRANSCRIPTION_ENABLED`, la transcripción de audios, con `OPENROUTER_API_KEY` en `bridge.env` (la misma de `hermes.env`, copiada sin mostrarla). Sin el flag, un audio de un lead queda sin respuesta, sin derivación y sin una línea en el log.
-4. Con Slack, los cuatro flags del bridge del paso 14.
+   - `CHATWOOT_AUDIO_TRANSCRIPTION_ENABLED`, la transcripción de audios, con `OPENROUTER_API_KEY` en `bridge.env` (la misma de `hermes.env`: `ssh -t <servidor> 'python3 /opt/<stack>/instancia/despliegue/hermes/cargar-key-openrouter.py --tambien-bridge'`). Sin el flag, un audio de un lead queda sin respuesta, sin derivación y sin una línea en el log.
+4. Con Slack, los cuatro flags del bridge del paso 14 ya los escribió `conectar-slack.py`: se miran con `grep`, no se vuelven a escribir.
 5. El redeploy.
 6. La prueba, desde un teléfono de prueba: que conteste con el conocimiento aprobado, que mande el enlace cuando se lo piden y que derive cuando se le pide una persona. Una nota de voz. Al final, y con **otro** teléfono, «No más mensajes».
 
@@ -727,7 +721,7 @@ Le escribe una plantilla a quien abandona el checkout de Hotmart. **A quién le 
 - `consented_intent`: a todo carrito correlacionado con un formulario con permiso de WhatsApp, sin cohorte. Es el de la apertura.
 - `manual_cohort`: a los contactos inscriptos a mano, sin exigir la intención del formulario.
 
-Un carrito sin formulario, sin el permiso o de alguien que pidió «No más mensajes» no se planifica en los dos modos con consentimiento: queda `failed` con `pilot_scope_rejected:pilot_audience_intent_unresolved`, `…_consented_intent_not_authorized` o `…_consented_intent_prior_opt_out`, y no le llega nada. **El permiso para escribirle sale del formulario, no del checkout:** una aliada sin formularios con la aclaración no tiene carritos que el setter pueda cubrir, y la apertura a todos no le escribe a nadie (paso 0, «Las landings, los formularios y el consentimiento»). El `manual_cohort` sirve para las pruebas con los teléfonos de quien instala, no para leads.
+Un carrito sin formulario, sin el permiso o de alguien que pidió «No más mensajes» no se planifica en los dos modos con consentimiento: queda `failed` con `pilot_scope_rejected:pilot_audience_intent_unresolved`, `…_consented_intent_not_authorized` o `…_consented_intent_prior_opt_out`, y no le llega nada. **El permiso para escribirle sale del formulario, no del checkout:** una aliada sin formularios con la aclaración no tiene carritos que el setter pueda cubrir, y la apertura a todos no le escribe a nadie (paso 0, «Dos reglas duras»; guía §0). El `manual_cohort` sirve para las pruebas con los teléfonos de quien instala, no para leads.
 
 El carrito y el pago fallido **comparten el scope de recuperación**: los dos salen con la versión que está armada y gastan los mismos topes. Por eso el carrito se abre con el pago fallido apagado (abajo).
 
@@ -795,7 +789,7 @@ En ATT1, el E2E del carrito fue el 2026-10-06 (setter-instancia-att1#23), y qued
 4. En un PR del repo de la instancia, `LANCEMOS_PILOT_SCOPE_VERSION` pasa a la versión nueva en las constantes de `generar.py`. Se mergea recién en este paso, porque `generar.py` reescribe sus constantes en cada corrida: con ese PR en el servidor antes de activar, cualquier corrida y redeploy dejarían el carrito sin planificar. Después, el repo al servidor, `generar.py` y el redeploy.
    **Se verifica:** `generar.py` dice `cambiaron en esta corrida: LANCEMOS_PILOT_SCOPE_VERSION`, con los mismos flags en `true` que antes (si nombra otra constante, mirar antes de redesplegar); se reinicia solo el bridge; `/ready` da 200 con `pilot_boundary: configured` y `automation_state: inactive`. Mientras la versión del bridge y la activa no coincidan, `/ready` da 503 `pilot_active_scope_mismatch` y un carrito queda `failed` con `pilot_scope_rejected:pilot_scope_version_mismatch` sin reintento: los puntos 3 y 4 van seguidos.
 5. **Armar, con el pago fallido apagado.** Se mira antes que `PORTABLE_HOTMART_PAYMENT_FAILURE_ENABLED` no esté en `true` en `bridge.env` y que `pago_fallido = false` en el manifiesto: con el scope compartido, la versión abierta lo abriría a todos. Después, `piloto.sh armar` la versión nueva.
-6. **Enseguida, el corte de lo que ya le escribe a los leads** (paso 0): quien tiene el acceso corta la entrada de la recuperación del otro sistema, mirado en su panel (en GHL, borrando el disparador del workflow). Las personas que ya están adentro terminan su secuencia. Si se corta antes del punto 5, los carritos de ese rato no reciben nada; si se demora, un lead con permiso recibe los dos mensajes. ⚠ Cortar la entrada deja sin mensaje también a los carritos que el setter no cubre (sin formulario, sin permiso o con baja): es una decisión de cobertura, que se toma mirando qué parte de los carritos y de las ventas tiene una intención nuestra.
+6. **Enseguida, el corte de lo que ya le escribe a los leads** (paso 0, «Dos reglas duras»; guía §8.8): quien tiene el acceso corta la entrada de la recuperación del otro sistema, mirado en su panel (en GHL, borrando el disparador del workflow). Las personas que ya están adentro terminan su secuencia. Si se corta antes del punto 5, los carritos de ese rato no reciben nada; si se demora, un lead con permiso recibe los dos mensajes. ⚠ Cortar la entrada deja sin mensaje también a los carritos que el setter no cubre (sin formulario, sin permiso o con baja): es una decisión de cobertura, que se toma mirando qué parte de los carritos y de las ventas tiene una intención nuestra.
 
 **Se verifica:** el próximo carrito real de un lead con permiso queda planificado, sin cohorte, y sale:
 - la base muestra un caso nuevo de fuente `hotmart` y un intento aceptado, con la versión abierta en `armed`;
