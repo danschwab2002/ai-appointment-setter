@@ -14,6 +14,7 @@ import httpx
 from bridge.chatwoot import ChatwootProtocolError, ChatwootReplyDeliveryUnknownError
 from bridge.checkout_issuance import generate_issuance_ulid
 from bridge.payment_link import PaymentLinkUnavailable, render_payment_link_reply
+from bridge.payment_link_coupon import payment_link_with_coupon
 from bridge.payment_link_template import (
     parse_payment_link_template,
     payment_link_button_suffix,
@@ -53,6 +54,7 @@ async def deliver_checkout_issuance_v2(
     expected_jid: str | None = None,
     link_template_name: str | None = None,
     link_template_language: str | None = None,
+    link_coupon_code: str | None = None,
     part_delay_seconds: float = 0.0,
     part_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> CheckoutDeliveryResult:
@@ -63,6 +65,12 @@ async def deliver_checkout_issuance_v2(
     emision va en la parte del link, como siempre, y el cierre de la emision
     queda atado a ese mensaje. Si la plantilla no esta disponible, el link sale
     escrito, en un solo mensaje, como antes.
+
+    Con ``link_coupon_code`` (``PAYMENT_LINK_COUPON_CODE``) el link que ve la
+    persona lleva ``&offDiscount=<codigo codificado>``: el texto, el boton y lo
+    que queda escrito en Chatwoot, los tres iguales. La fila de la base guarda
+    el link sin cupon, como el seguimiento con cupon; la atribucion por ``sck``
+    no cambia. Si el link de la base ya trae un cupon (personal), manda ese.
     """
 
     context = {
@@ -92,9 +100,20 @@ async def deliver_checkout_issuance_v2(
         raise CheckoutDeliveryError("checkout_issuance_reservation_incomplete")
 
     try:
+        delivered_url = payment_link_with_coupon(
+            reservation.checkout_url_final, link_coupon_code
+        )
+    except ValueError:
+        # El cupon se valida al arrancar; aca solo llega un link que no es de
+        # Hotmart, el mismo caso que render_payment_link_reply rechaza abajo.
+        return CheckoutDeliveryResult(
+            "blocked", "payment_link_reply_rejected", reservation.issuance_id, None
+        )
+
+    try:
         content = render_payment_link_reply(
             preamble=preamble,
-            final_url=reservation.checkout_url_final,
+            final_url=delivered_url,
         )
     except PaymentLinkUnavailable:
         return CheckoutDeliveryResult(
@@ -106,7 +125,7 @@ async def deliver_checkout_issuance_v2(
         inbox_id=chatwoot_inbox_id,
         template_name=link_template_name,
         expected_language=link_template_language,
-        final_url=reservation.checkout_url_final,
+        final_url=delivered_url,
     )
 
     authorization = None
