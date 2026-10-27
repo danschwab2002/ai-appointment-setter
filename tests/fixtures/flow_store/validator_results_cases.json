@@ -1,7 +1,7 @@
 {
  "_generated": {
   "generator": "tests/test_flow_validator.py (test_the_bridge_json_with_the_base_is_the_one_in_the_repo)",
-  "date": "2026-10-26",
+  "date": "2026-10-27",
   "from": "los casos negativo y positivo de cada codigo de CASES, dos bordes del resultado y validator_json() con las dos fases y los dos actores",
   "regenerate": "FLOW_STORE_FIXTURE_DIR=tests/fixtures/flow_store uv run pytest tests/test_flow_validator.py"
  },
@@ -2445,6 +2445,43 @@
   },
   {
    "code": "rollback_target_not_found",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "same_event_native_flows",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "same_event_native_flows",
+      "kind": "ciclo",
+      "path": "/0",
+      "reason": "Otro flujo nativo del mismo producto, prendido o en la cohorte, arranca con el mismo evento. El motor abre un solo caso por evento y elige el flujo por su identificador, no por prioridad: a quien le toquen los dos le llega uno solo, al azar, y el otro no arranca.",
+      "alternative": "Pausar o apagar el otro flujo en la misma propuesta, o disparar este con otro evento."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "same_event_native_flows",
    "case": "positivo",
    "result": {
     "blocks": [],

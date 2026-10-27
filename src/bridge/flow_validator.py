@@ -514,6 +514,20 @@ SAME_TRIGGER_UNRELATED = _spec(
     "same_trigger_unrelated", None, KIND_WARNING,
     "Otro flujo del mismo producto tiene el mismo disparador, y no hay relación entre los dos.",
 )
+# Dos flujos nativos con el mismo evento (E-139). El motor abre un solo caso por
+# evento (recovery_cases.abandonment_event_id es unico) y admite los flujos en
+# orden de flow_id (admit_flow_engine_event_v1, 20261024000200): gana el de
+# flow_id menor, que para un flujo nuevo es un UUID al azar, y el otro queda con
+# evento_con_otro_flujo. No mira prioridad para el mismo evento.
+# Decision de Dan del 2026-10-27: es bloqueo tambien en la cohorte, porque ahi la
+# persona igual recibe uno solo, elegido al azar.
+SAME_EVENT_NATIVE_FLOWS = _spec(
+    "same_event_native_flows", None, KIND_CYCLE,
+    "Otro flujo nativo del mismo producto, prendido o en la cohorte, arranca con el mismo evento. El "
+    "motor abre un solo caso por evento y elige el flujo por su identificador, no por prioridad: a quien "
+    "le toquen los dos le llega uno solo, al azar, y el otro no arranca.",
+    alternative="Pausar o apagar el otro flujo en la misma propuesta, o disparar este con otro evento.",
+)
 WAIT_WITHOUT_CONTESTA = _spec(
     "wait_without_contesta", None, KIND_WARNING,
     "Mientras espera, si la persona contesta otra plantilla nuestra, el agente no le responde hasta que este mensaje salga o venza.",
@@ -554,7 +568,7 @@ _VALIDATOR_CODES: tuple[CodeSpec, ...] = (
     FLOW_HAS_NO_VERSION, EN_CURSO_NOT_SUPPORTED, CLIENT_PURCHASE_OK_MISSING,
     ALWAYS_WITH_MARKETING, RECOVERY_WITHOUT_CAP, SILENCE_WITHOUT_PURCHASE_EXIT,
     SAME_TRIGGER_UNRELATED, WAIT_WITHOUT_CONTESTA, SILENCE_WINDOW_SHORTER_THAN_CLOSED_GAP,
-    EMPTY_BRANCH_WITH_LE_GANA_A,
+    EMPTY_BRANCH_WITH_LE_GANA_A, SAME_EVENT_NATIVE_FLOWS,
 )
 
 # El catalogo cerrado: cada codigo con su regla y su tipo. required_key_missing
@@ -956,6 +970,7 @@ class _Run:
                 self._switch_off(index, item, flow)
         for subject in self.subjects:
             self._subject(subject)
+        self._same_event_native()
         total = json_size([item.to_json() for item in self.normalized])
         if total is None or total > ITEMS_MAX_BYTES:
             self.blocks.append(INVALID_VALUE.at("", reason=(
@@ -1709,6 +1724,52 @@ class _Run:
                     warn.add(EMPTY_BRANCH_WITH_LE_GANA_A, at)
         self.warnings.extend(warn.findings)
 
+    # -- Dos flujos nativos con el mismo evento (E-139) --------------------
+
+    def _final_states(self) -> dict[str, str]:
+        """El estado en que la propuesta deja cada flujo: el de la foto, con los items aplicados."""
+        states = {flow.flow_id: flow.state for flow in self.world.flows}
+        for item, flow in zip(self.items, self.flows):
+            if item.is_new_flow:
+                states[flow.flow_id] = COHORT
+            elif item.tipo == "prender":
+                states[flow.flow_id] = COHORT if item.a is not None else "prendido"
+            elif item.tipo == "apagar":
+                states[flow.flow_id] = "apagado"
+        return states
+
+    def _same_event_native(self) -> None:
+        """Un flujo nativo que la propuesta toca y deja con el mismo evento que otro nativo del producto.
+
+        Los dos tienen que quedar abiertos al evento (``prendido`` o ``cohorte``;
+        ``pausado`` no abre caso y ``apagado`` no se admite). Es un bloqueo para todos
+        y para la cohorte: a quien le toquen los dos le llega uno solo, al azar.
+        Una ``prioridad`` no lo levanta: el motor no la mira para el mismo evento.
+        """
+        states = self._final_states()
+        flows: dict[str, WorldFlow] = {flow.flow_id: flow for flow in self.world.flows}
+        for flow in self.flows:
+            flows.setdefault(flow.flow_id, flow)
+        first: dict[str, int] = {}
+        for index, flow in enumerate(self.flows):
+            first.setdefault(flow.flow_id, index)
+        open_states = ("prendido", COHORT)
+        for flow_id, index in first.items():
+            flow = flows[flow_id]
+            mine = _native_event(self.effective.get(flow_id))
+            if not flow.native or states.get(flow_id) not in open_states or mine is None:
+                continue
+            item = self.items[index]
+            at = finding_path((index, "definicion", "dispara") if item.definicion is not None else (index,))
+            for other in flows.values():
+                if other.flow_id == flow_id or other.product_ref != flow.product_ref or not other.native:
+                    continue
+                if states.get(other.flow_id) not in open_states:
+                    continue
+                if _native_event(self.effective.get(other.flow_id)) != mine:
+                    continue
+                self.blocks.append(SAME_EVENT_NATIVE_FLOWS.at(at))
+
     def _same_trigger_unrelated(self, subject: _Subject) -> bool:
         definition = subject.definition
         flow = subject.flow
@@ -1719,6 +1780,9 @@ class _Run:
         my_refs = _relations(definition, _own_product(definition, flow))
         for other in self.world.flows:
             if other.flow_id == flow.flow_id or other.product_ref != flow.product_ref:
+                continue
+            if flow.native and other.native:
+                # Dos nativos: lo mira _same_event_native, que sabe que la prioridad no los separa.
                 continue
             theirs = self.effective.get(other.flow_id)
             if theirs is None or _trigger_signature(theirs) != mine:
@@ -1785,6 +1849,12 @@ def _trigger_signature(definition: Mapping[str, Any]) -> tuple[str, str] | None:
     if not isinstance(speaker, str) or is_unresolved(speaker):
         return None
     return ("silencio", speaker)
+
+
+def _native_event(definition: Mapping[str, Any] | None) -> str | None:
+    """El evento con el que el motor admite un flujo nativo (``dispara.evento``), o ``None``."""
+    event = _get(definition, "dispara", "evento") if isinstance(definition, Mapping) else None
+    return event if isinstance(event, str) and not is_unresolved(event) else None
 
 
 def _relations(definition: Mapping[str, Any], own_product: str) -> set[tuple[str, str]]:
