@@ -3,7 +3,7 @@
 - **Estado:** aceptado como contrato conceptual el 2026-10-15; sin implementación (lo construye la 1b). El contrato no describe nada desplegado ni activado. Lo que dice de ATT1 es lo que pasó, con su fecha y de dónde sale.
 - **Fecha:** 2026-10-15
 - **ADR:** [ADR-0025](../decisions/0025-cada-instancia-tiene-su-hermes-declarado-por-el-producto.md) §7, [ADR-0007](../decisions/0007-durable-next-action-engine.md) §5 y [ADR-0017](../decisions/0017-central-slack-operations-connector.md)
-- **Contrato:** `flow-change-cycle-v1`, versión `1.9.0`. La 1.1.0 suma «Lo que fijó la implementación (1.1.0)»: lo que decidió la construcción del almacén (#243) y que este contrato dejaba abierto. No cambia ninguna decisión de Dan. La 1.2.0 suma «Lo que fija el comando del operador (1.2.0)», con un valor por defecto que revisa Dan: el operador también arma propuestas. La 1.3.0 suma «Lo que fijan las rutas del agente (1.3.0)»: la forma de las rutas y de las herramientas del Automation Expert, sin la pausa (otro valor por defecto que revisa Dan), y una ruta de lectura del almacén. La 1.4.0 suma «La simulación en la vista previa (1.4.0)»: validar arma la simulación con el motor, y aprobar registra la que quedó congelada. La 1.5.0 suma «Registrar un flujo y crear su ruta (1.5.0)»: dos subcomandos del operador para poner un flujo del legado en el almacén. La 1.6.0 suma «Lo que el agente necesita para no errarle (1.6.0)»: el motivo de un 422 de entrada, el ítem listo para copiar en `/flow-store` y cuándo sale cada mensaje antes y después del cambio. La 1.7.0 la construye el PR 4 del hito 4 (migración `20261024000600`), escrita antes del merge: el bridge contesta `1.7.0` (`CONTRACT_VERSION`, `flow_change_api.py`). Suma «Crear un flujo: el ítem `nuevo` y la cohorte (1.7.0)»: con el motor nativo del contrato `flow-engine-v2`, una propuesta puede crear un flujo, que se publica para la cohorte de prueba (decisiones D2 y D6 de Dan del 2026-10-24). La 1.8.0 la construye el PR 5 (migración `20261025000100`), escrita antes del merge: el bridge contesta `1.8.0`. Suma «Volver a la cohorte: `prender` con `a: cohorte` (1.8.0)». La 1.9.0 (2026-10-26) enmienda la decisión 2 por una decisión de Dan del mismo día: el sí se da en una página del bridge con «Sign in with Slack», a la que se llega por un botón de URL que el Automation Expert deja en su DM («El sí por un link en el chat del Automation Expert (1.9.0)»). Reemplaza el botón firmado del conector central; las demás decisiones del 2026-10-15 no cambian. Es un contrato antes de construir: no hay nada de eso desplegado, y el bridge sigue contestando `1.8.0` hasta que lo construya su PR.
+- **Contrato:** `flow-change-cycle-v1`, versión `1.9.0`. La 1.1.0 suma «Lo que fijó la implementación (1.1.0)»: lo que decidió la construcción del almacén (#243) y que este contrato dejaba abierto. No cambia ninguna decisión de Dan. La 1.2.0 suma «Lo que fija el comando del operador (1.2.0)», con un valor por defecto que revisa Dan: el operador también arma propuestas. La 1.3.0 suma «Lo que fijan las rutas del agente (1.3.0)»: la forma de las rutas y de las herramientas del Automation Expert, sin la pausa (otro valor por defecto que revisa Dan), y una ruta de lectura del almacén. La 1.4.0 suma «La simulación en la vista previa (1.4.0)»: validar arma la simulación con el motor, y aprobar registra la que quedó congelada. La 1.5.0 suma «Registrar un flujo y crear su ruta (1.5.0)»: dos subcomandos del operador para poner un flujo del legado en el almacén. La 1.6.0 suma «Lo que el agente necesita para no errarle (1.6.0)»: el motivo de un 422 de entrada, el ítem listo para copiar en `/flow-store` y cuándo sale cada mensaje antes y después del cambio. La 1.7.0 la construye el PR 4 del hito 4 (migración `20261024000600`), escrita antes del merge: el bridge contesta `1.7.0` (`CONTRACT_VERSION`, `flow_change_api.py`). Suma «Crear un flujo: el ítem `nuevo` y la cohorte (1.7.0)»: con el motor nativo del contrato `flow-engine-v2`, una propuesta puede crear un flujo, que se publica para la cohorte de prueba (decisiones D2 y D6 de Dan del 2026-10-24). La 1.8.0 la construye el PR 5 (migración `20261025000100`), escrita antes del merge: el bridge contesta `1.8.0`. Suma «Volver a la cohorte: `prender` con `a: cohorte` (1.8.0)». La 1.9.0 (2026-10-26) enmienda la decisión 2 por una decisión de Dan del mismo día: el sí se da en una página del bridge con «Sign in with Slack», a la que se llega por un botón de URL que el Automation Expert deja en su DM («El sí por un link en el chat del Automation Expert (1.9.0)»). Reemplaza el botón firmado del conector central; las demás decisiones del 2026-10-15 no cambian. El 2026-10-27 Dan aprobó los valores de ese canal que quedaban abiertos («Lo que decidió Dan el 2026-10-27 sobre el canal»), y la misma 1.9.0 los escribe como decididos: la lista de Maribel, los dos pasos para lo que llega a todos, el aviso de otra propuesta abierta, el aviso al canal de alertas y la carga de la cohorte desde la página. Es un contrato antes de construir: no hay nada de eso desplegado, y el bridge sigue contestando `1.8.0` hasta que lo construya su PR.
 - **Alcance:** cómo se cambia un flujo que ya está escrito como dato. Fija:
   - quién lo propone;
   - qué lleva la propuesta y cómo se valida;
@@ -465,7 +465,7 @@ La tercera parte de las herramientas (la T4c): `src/bridge/flow_change_simulatio
   - `{"status": "built", "summary": {...}, "summary_sha256": "<64 hex>", "cambios": [...]}`. `summary` es el de `flow_replay.simulate`: los disparos, cuántos cambian, y el resumen de la vigente y de la propuesta. `summary_sha256` es el sha256 del resumen en JSON canónico (claves ordenadas, sin espacios, UTF-8). `cambios` trae hasta 20 disparos, con el fin antes y después.
   - `{"status": "failed", "reason_code": "..."}` cuando no se pudo armar. Los motivos:
     - `flow_engine_unavailable`: la base no tiene las funciones del motor, o no contestaron;
-    - `flow_engine_history_too_large`: la historia pasa de 1 MB;
+    - `flow_engine_history_too_large`: la historia pasa de 4 MB (4.000.000 bytes, migración `20261021000300`; antes era 1 MB);
     - `flow_engine_history_invalid`: la historia no tiene la forma cerrada de la captura v3, que es la prueba de privacidad;
     - `flow_engine_read_invalid` y `flow_engine_capabilities_unknown`: la lectura del motor no es la del contrato;
     - `simulation_multi_product`: la propuesta toca más de un producto;
@@ -534,11 +534,11 @@ Escrito al construir el PR 5 del hito 4 (2026-10-25, migración `20261025000100`
 
 ## El sí por un link en el chat del Automation Expert (1.9.0)
 
-Decisión de Dan del 2026-10-26 (≈13:10Z), que enmienda la decisión 2: *«Dale vamos con A′. Con el botón-link en el chat del AE»*. Escrita antes de construir nada: no afirma que nada esté desplegado ni activado. Mientras no exista, el sí lo sigue dando el comando del operador, que corre Dan («Lo que fija el comando del operador (1.2.0)»).
+Decisión de Dan del 2026-10-26 (≈13:10Z), que enmienda la decisión 2: *«Dale vamos con A′. Con el botón-link en el chat del AE»*. Corregida el 2026-10-27 con las decisiones de Dan de ese día (≈17:08Z, *todas las recomendaciones*; ver «Lo que decidió Dan el 2026-10-27 sobre el canal»). Escrita antes de construir nada: no afirma que nada esté desplegado ni activado. Mientras no exista, el sí lo sigue dando el comando del operador, que corre Dan («Lo que fija el comando del operador (1.2.0)»).
 
 **Por qué hace falta.** Sin esto, cada cambio que pide Brayan pasa por Dan en la terminal del VPS (`APROBADORES=dan`), y Brayan no puede operar el Automation Expert solo.
 
-**Lo que sigue igual del 2026-10-15:** aprueban Dan y Brayan, con una lista por instancia que se cambia con un PR; Brayan puede aprobar lo que pidió él; pausar lo pide un aprobador y es inmediato; lo que está en curso sigue con su versión; publicar revalida contra la base, con el plazo de 24 horas y `flow_change_stale_base`.
+**Lo que sigue igual del 2026-10-15:** una lista de aprobadores por instancia que se cambia con un PR (en ATT1, Dan y Brayan; en Maribel, solo Dan: decisión 1 del 2026-10-27); Brayan puede aprobar lo que pidió él; pausar lo pide un aprobador y es inmediato; lo que está en curso sigue con su versión; publicar revalida contra la base, con el plazo de 24 horas y `flow_change_stale_base`.
 
 ### El recorrido
 
@@ -561,17 +561,20 @@ El patrón es el de la página de la revisión diaria (`daily-feedback-productio
 - `GET /flow-approval/auth/slack/start?p=<proposal_id>` crea un `state` y un `nonce` aleatorios, guarda solo sus hashes con un vencimiento de 10 minutos y redirige al OIDC de Slack con el scope `openid`. La vuelta va a una URL fija, configurada por instancia.
 - `GET /flow-approval/auth/slack/callback` consume el `state` una sola vez, cambia el `code` por el token por HTTPS y valida el `id_token`: el issuer fijo de Slack, la audiencia (el client ID de la app), el vencimiento, el `nonce`, y que `https://slack.com/team_id` sea el workspace de la instancia. El `sub` tiene que corresponder exacto con `https://slack.com/user_id`.
 - Recién ahí mira la lista de aprobadores. Quien no está ve «No estás en la lista de aprobadores de esta instancia», y no se crea sesión.
-- **La sesión** es un secreto aleatorio de 256 bits en una cookie `__Host-` con `Secure`, `HttpOnly`, `SameSite=Lax` y `Path=/`; la base guarda solo su sha256, con el ID de Slack y el vencimiento. Dura como máximo 8 horas (valor por defecto, ver «Decisiones abiertas»). Salir la revoca.
+- **La sesión** es un secreto aleatorio de 256 bits en una cookie `__Host-` con `Secure`, `HttpOnly`, `SameSite=Lax` y `Path=/`; la base guarda solo su sha256, con el ID de Slack y el vencimiento. Dura como máximo 8 horas, como la revisión diaria (decisión 4 del 2026-10-27). Salir la revoca.
 - **Cada pedido, GET o POST, vuelve a validar** la sesión en la base y que el ID siga en la lista de aprobadores de ese momento. Sacar a alguien de la lista le corta el acceso en el próximo clic, aunque su cookie no haya vencido.
 - **CSRF:** todo lo que escribe es un POST con un token derivado de la sesión con un HMAC (separación de dominio), en un campo oculto, independiente de la cookie. El bridge exige además que el `Origin` sea el de la página. Después de un POST, redirige (PRG).
 - **Los headers** son los de la revisión diaria: `no-store`, `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` y una CSP sin scripts de terceros.
 
 ### La lista de aprobadores
 
-- **Vive en el repo de la instancia,** declarada con los IDs de Slack del workspace de la instancia (en ATT1, Dan y Brayan), y llega al bridge como configuración: `FLOW_APPROVAL_SLACK_TEAM_ID` y `FLOW_APPROVAL_SLACK_APPROVERS`. **Se cambia con un PR al repo de la instancia** y la subida de su configuración (decisión 1).
+- **Vive en el repo de la instancia,** declarada con los IDs de Slack del workspace de la instancia, y llega al bridge como configuración: `FLOW_APPROVAL_SLACK_TEAM_ID` y `FLOW_APPROVAL_SLACK_APPROVERS`. **Se cambia con un PR al repo de la instancia** y la subida de su configuración (decisión 1).
+- **Quiénes, por instancia (decisión 1 del 2026-10-27):**
+  - **ATT1:** Dan y Brayan (decidido el 2026-10-15).
+  - **Maribel:** solo Dan, hasta que Dan nombre a quien opere sus flujos. Esa persona se suma con un PR al repo de Maribel. Como los usuarios que el profile acepta tienen que estar en la lista (abajo), el `SLACK_ALLOWED_USERS` del Automation Expert de Maribel queda también en Dan solo.
 - El bridge no arranca con el canal prendido si la lista está vacía o si un ID no tiene la forma `^[UW][A-Z0-9]{8,20}$`.
 - Los usuarios que el profile acepta (`SLACK_ALLOWED_USERS`) siguen teniendo que estar en esta lista («Elecciones técnicas, con su valor por defecto»).
-- **Valor por defecto:** la base no guarda la lista; la verifica el bridge en cada pedido. Ver «Decisiones abiertas».
+- **La base no guarda la lista;** la verifica el bridge en cada pedido, desde la configuración de la instancia (decisión 7 del 2026-10-27).
 
 ### Qué se puede hacer en la página
 
@@ -580,11 +583,43 @@ El patrón es el de la página de la revisión diaria (`daily-feedback-productio
 | **Aprobar y publicar** | La propuesta está `validada` o `aprobada`, no venció, y su simulación guardada está `built` | Aprueba y publica en un solo POST (ver abajo). |
 | **Descartar** | La propuesta está en `borrador`, `validada` o `aprobada` | `_flow_change_discard` con el aprobador `slack`. Pide un motivo, de una línea. |
 | **Pausar** | En cada flujo de la propuesta que esté `prendido` o en `cohorte` | `_flow_change_pause` con el aprobador `slack` y la generación que mostró la página. Es inmediato y no pasa por una propuesta. Con otra generación, la página se recarga y no pausa. |
+| **Sumar un teléfono a la cohorte** | En cada flujo nativo en `cohorte`, en la lista de flujos y en el resultado de publicar un flujo nuevo | Lo mismo que `cohorte … agregar` del comando del operador, con el aprobador `slack` (ver «Cargar la cohorte desde la página»). |
 | **Volver atrás** | Siempre, como explicación | La página dice a qué versión se volvería y que se pide en el DM: «volvé a la versión anterior». Es una propuesta más (§6), que el agente arma y valida, y que llega con su propio botón. La página no arma propuestas. |
 
 Además, `GET /flow-approval/` (con sesión) lista los flujos de la instancia con su estado y su versión, con el botón de pausar, y las propuestas `validada` o `aprobada` que no vencieron. Sirve para pausar sin esperar un mensaje del agente.
 
-**Sin simulación construida, la página no publica:** dice el motivo de la vista previa y que la publica el operador con `--sin-simulacion`, como hoy. El botón no tiene ese atajo.
+**Sin simulación construida, la página no publica:** dice el motivo de la vista previa y que la publica el operador con `--sin-simulacion`, como hoy. El botón no tiene ese atajo (decisión 10 del 2026-10-27).
+
+### Un clic o dos pasos
+
+Decisión 2 del 2026-10-27. Lo que solo toca a la cohorte de prueba, o frena algo, se hace con un clic; lo que llega a todos o corta lo que está en curso pide un segundo paso.
+
+- **Un clic:** pausar, descartar, sumar un teléfono a la cohorte, y aprobar y publicar una propuesta cuyos ítems llegan todos solo a la cohorte: un `nuevo`, un `prender` con `a: cohorte`, y una `version` o un `volver` de un flujo que está en `cohorte`.
+- **Dos pasos:** aprobar y publicar una propuesta con al menos un ítem que:
+  - pasa un flujo a todos (`prender` sin `a`);
+  - cambia un flujo que ya llega a todos (una `version` o un `volver` de un flujo `prendido`);
+  - apaga un flujo (`apagar`);
+  - cancela lo que espera (`en_curso: cancelar`, cuando el motor lo acepte).
+- **El segundo paso** es una pantalla aparte, después del primer clic, que dice en una línea qué hace: «llega a todos» o «corta lo que está en curso», con el flujo y la cuenta de lo que está en curso de la vista previa. Recién su botón aprueba y publica.
+- **Lo decide el bridge, no la página:** el bridge clasifica la propuesta con la vista previa guardada y el estado del control que relee (`a_quien`, `estado` y `en_curso` de cada ítem). Un POST de una propuesta de dos pasos sin el campo del segundo paso no aprueba ni publica, y vuelve a la pantalla del segundo paso. El campo va atado a la sesión, a la propuesta y a su `fingerprint`, con el mismo HMAC que el token de CSRF.
+- **Ante la duda, dos pasos:** un ítem que el bridge no sabe clasificar (por ejemplo, una `version` de un flujo `pausado`, que no llega a nadie hasta un `prender`) pide el segundo paso. Así un ítem nuevo del ciclo nace con dos pasos hasta que una versión de este contrato diga otra cosa.
+
+### Si hay otra propuesta abierta del mismo flujo
+
+Decisión 5 del 2026-10-27. Lo de antes sigue: una propuesta validada no se edita, y si cambió la base, no publica (`flow_change_stale_base`). Además:
+
+- La página de una propuesta muestra un aviso arriba si hay **otra propuesta abierta** (`borrador`, `validada` o `aprobada`, sin vencer) que toca alguno de sus flujos: el flujo, el estado de la otra y cuándo se validó, sin su para qué.
+- El aviso informa, no bloquea: si las dos se publican, la segunda frena sola por `flow_change_stale_base`. El texto lo dice: «si publicás esta, la otra va a tener que validarse de nuevo».
+- Lo lee el bridge con su propia función de la base (ver «Lo que pide a la base»), al cargar la página y otra vez en el primer clic de publicar.
+
+### Cargar la cohorte desde la página
+
+Decisión 11 del 2026-10-27, en la v1 del canal. Sin esto, quien crea un flujo con el agente no lo puede probar sin Dan.
+
+- **Es lo mismo que la terminal, por el mismo camino de la base:** la página llama a la función de la cohorte del almacén (la de `operator_flow_cohort_v1`, «Lo que fija el PR 4 (1.7.0)») por un envoltorio del rol `flow_change_approver`, con la acción `agregar` y el actor `slack` con el ID verificado de quien lo cargó. Mismos límites: hasta 5 por flujo (`flow_cohort_full`) y solo en un flujo nativo (`flow_cohort_needs_native_flow`), con los mismos motivos de error.
+- **El teléfono se escribe una vez y nunca se muestra de vuelta.** Va en un POST, en un campo sin autocompletar; el bridge lo pasa a la base y no lo guarda, no lo registra en sus logs ni lo pone en la tabla de sesiones. La página muestra solo lo que devuelve la base: `{ok, action, changed, members, max_members}`. El evento `flow_cohort_changed` queda como hoy, sin teléfono ni contacto.
+- **Sacar a alguien de la cohorte** sigue en la terminal (`cohorte … sacar`).
+- **El agente no lo carga:** el teléfono no pasa por el modelo.
 
 ### Publicar desde la página
 
@@ -608,6 +643,12 @@ Del lado del bridge, en este orden:
 
 - La aprobación, con `approved_by_kind = slack` y `approved_by_ref` = el ID de Slack verificado, en la propuesta y en `flow_definitions`, y el evento `flow_change_approved`.
 - La pausa y el descarte, con el actor `slack` y su ID, en `flow_change_events`.
+- La carga de la cohorte, con el actor `slack` y su ID, en `flow_cohort_changed`, sin teléfono.
+- **Un aviso de una línea en el canal de alertas de la instancia** cada vez que se publica o se pausa algo desde la página (decisión 6 del 2026-10-27):
+  - dice el flujo, qué pasó («publicada la versión N para la cohorte», «publicada para todos», «pausado») y quién, como mención a su ID de Slack, con el link a la página;
+  - sale por el mismo productor del conector de Slack que usan los avisos del motor (MOT-001 y MOT-002, `flow_engine_runtime.py`), después de que la base confirmó;
+  - no lleva teléfonos, ni el para qué, ni texto del modelo;
+  - si el aviso no sale, la publicación o la pausa no se deshacen; la página dice que el aviso no salió. Sin conector en la instancia, no avisa, y la página lo dice.
 - El ingreso y la salida, en la tabla de sesiones, con el ID y las horas y sin nada más (no van a `flow_change_events`, cuya lista de eventos es cerrada). La base no guarda el token de Slack, ni el `code`, ni el `id_token`.
 
 ### Si falla después del sí
@@ -615,11 +656,12 @@ Del lado del bridge, en este orden:
 - Si la publicación falla después de aprobar (por ejemplo, `flow_change_stale_base`, un bloqueo nuevo en la revalidación o el catálogo que no contesta), la propuesta queda `aprobada` y sin publicar, como dice «Elecciones técnicas, con su valor por defecto».
 - La página lo muestra en el mismo momento, con el motivo, y ofrece «Reintentar publicar» mientras no venza. Reintentar hace el recorrido de arriba desde el paso 1; la aprobación ya registrada no se repite.
 - Si la base de la propuesta cambió, no hay reintento que sirva: la página dice que hay que pedirle al agente una propuesta nueva.
-- La página no le avisa al agente. Valor por defecto: el aviso por el DM queda afuera de la v1 del canal.
+- La página no le avisa al agente: el aviso por el DM queda afuera de la v1 del canal (decisión 9 del 2026-10-27).
 
 ### El flag
 
 - `FLOW_APPROVAL_ENABLED`, **apagado por defecto.** Apagado, las rutas `/flow-approval/` contestan 404 y el plugin no postea el link: dice en el DM que el sí lo da el operador, como hoy.
+- **La app de Slack del «Sign in with Slack» es la del Automation Expert de cada instancia** (decisión 12 del 2026-10-27): se le suma el permiso de entrar (`openid`) y la URL de vuelta, y se reinstala. No es la app de la revisión diaria.
 - Prendido, el bridge exige al arrancar: la clave del rol, el client ID y el secreto de la app de Slack, la URL de vuelta, el workspace, la lista de aprobadores y el secreto de la sesión, cada uno distinto de los demás secretos del bridge.
 - El plugin postea el link solo si la configuración del profile dice que el canal está prendido. Apagar el flag del bridge sin apagar el del profile deja links que dan 404; no publica nada.
 
@@ -629,6 +671,8 @@ Una migración propia (el número lo asigna la coordinadora), con el molde de `2
 
 - el rol `flow_change_approver`, `NOLOGIN NOINHERIT`, concedido solo a `authenticator`;
 - envoltorios `SECURITY DEFINER` con `search_path` fijo, que solo ejecuta ese rol, sobre los helpers del almacén con la clase `slack`: releer una propuesta con su vista previa, leer el almacén de la instancia, aprobar, publicar, pausar y descartar;
+- una lectura de las otras propuestas abiertas que tocan los mismos flujos que una propuesta, con su estado y su hora de validación, sin su para qué (decisión 5);
+- un envoltorio de la cohorte con la acción `agregar` y el actor `slack` (decisión 11), sobre la misma función que usa el comando del operador;
 - la tabla de sesiones y la de `state` del OIDC, con solo hashes, y sus funciones de crear, consumir, validar y revocar;
 - sin permisos sobre tablas para el rol, ni para la API.
 
@@ -637,16 +681,23 @@ Una migración propia (el número lo asigna la coordinadora), con el molde de `2
 - **A, un clic dentro del chat del agente:** en Socket Mode el clic no viene firmado, la clave queda en el mismo proceso que el modelo separada solo por configuración, y Hermes no controla quién aprieta el botón de un plugin.
 - **B, el botón firmado del conector central (decisión 2 original):** el botón le aparece a Brayan fuera del chat del agente, y obliga a tocar el conector compartido con Johanna o a armar otro; 6 a 10 días contra 4 a 6.
 
-### Decisiones abiertas, con su valor por defecto
+### Lo que decidió Dan el 2026-10-27 sobre el canal
 
-Dan no las decidió; se construye con el valor por defecto y se cambian con una versión menor de este contrato.
+Dan aprobó el 2026-10-27 (≈17:08Z) todas las recomendaciones de la lista de valores del canal (filas 0 a 12). Están escritas arriba, donde corresponde; acá va la lista. Se cambian con una versión menor de este contrato.
 
-- **Una confirmación o dos.** Valor por defecto: un solo clic en «Aprobar y publicar», porque la página ya es la confirmación y muestra la vista previa completa. La alternativa es un segundo paso «¿Seguro?».
-- **Cuánto dura la sesión.** Valor por defecto: 8 horas, como la revisión diaria. La alternativa es un día.
-- **Dónde se verifica la lista de aprobadores.** Valor por defecto: en el bridge, desde la configuración de la instancia. La alternativa es una tabla de la base que los envoltorios miren también.
-- **Volver atrás desde la página.** Valor por defecto: la página no arma propuestas; se pide en el DM. La alternativa es que la página arme la propuesta de `volver`, que exige que la clase `slack` pueda pedir propuestas.
-- **El aviso al agente cuando la publicación falla.** Valor por defecto: no hay aviso; lo muestra la página.
-- **Publicar sin simulación desde la página.** Valor por defecto: no; queda para el operador.
+0. **«Un botón en el chat de Slack» es este canal.** El botón está en el DM del Automation Expert y aprobar es un clic más en la página que abre. Aprobar sin salir de Slack es la opción A, descartada.
+1. **Quién aprueba:** en ATT1, Dan y Brayan; en Maribel, solo Dan hasta que nombre a quien opere sus flujos, que se suma con un PR («La lista de aprobadores»).
+2. **Un clic o dos pasos:** un clic para la cohorte, pausar y descartar; dos pasos para pasar a todos, cambiar un flujo que llega a todos, apagar y cancelar lo que espera («Un clic o dos pasos»).
+3. **El botón vale 24 horas** desde que el agente valida. Vencido, la página lo dice y el agente valida de nuevo.
+4. **La sesión dura 8 horas,** como la revisión diaria.
+5. **Si algo cambió:** una propuesta validada no se edita y una base cambiada no publica (`flow_change_stale_base`); además, la página avisa si hay otra propuesta abierta del mismo flujo («Si hay otra propuesta abierta del mismo flujo»).
+6. **Qué queda registrado:** lo de «Lo que queda registrado», más una línea en el canal de alertas de la instancia al publicar o pausar.
+7. **La lista de aprobadores** se verifica en el bridge, desde la configuración de la instancia, y se cambia con un PR.
+8. **Volver atrás no se pide desde la página:** se pide en el DM y llega con su propio botón.
+9. **Sin aviso al agente** si la publicación falla en la v1: lo muestra la página.
+10. **Sin publicar sin simulación** desde la página: queda para el comando del operador.
+11. **La cohorte se carga desde la página,** en la v1 («Cargar la cohorte desde la página»).
+12. **El «Sign in with Slack» lo hace la app del Automation Expert de cada instancia** («El flag»).
 
 ## Lo que se confirma al construir
 
