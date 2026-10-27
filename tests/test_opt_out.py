@@ -201,3 +201,78 @@ def test_does_not_count_a_reason_a_question_or_a_word_inside_other_text(
     message: str,
 ) -> None:
     assert detect_explicit_opt_out([message]) is None
+
+
+# La prueba del entrante de Maribel (27/10 12:31Z, v1.20.1): «no me hablen más»
+# no registro ninguna baja y el agente contesto como si la hubiera registrado.
+# Es el texto real de ese mensaje; las demas son sus variantes con «hablar» y
+# «molestar» en tu, vos y ustedes.
+def test_detects_the_real_maribel_message_of_2026_10_27() -> None:
+    match = detect_explicit_opt_out(["no me hablen más"])
+
+    assert match is not None
+    assert match.rule_key == "do_not_talk_again"
+    assert match.message_index == 0
+
+
+@pytest.mark.parametrize(
+    ("message", "rule_key"),
+    [
+        ("No me hablen más", "do_not_talk_again"),
+        ("No me hablen mas", "do_not_talk_again"),
+        ("No me hablen", "do_not_talk_again"),
+        ("No me hables más", "do_not_talk_again"),
+        ("No me hablés más", "do_not_talk_again"),
+        ("No me hable más, por favor", "do_not_talk_again"),
+        ("Ya no me hablen", "do_not_talk_again"),
+        ("Dejen de hablarme", "do_not_talk_again"),
+        ("Deja de hablarme", "do_not_talk_again"),
+        ("Dejá de hablarme", "do_not_talk_again"),
+        ("No quiero que me hablen", "do_not_talk_again"),
+        ("No quiero que me hablen más", "do_not_talk_again"),
+        ("No me molesten más", "do_not_bother_again"),
+        ("No me molesten", "do_not_bother_again"),
+        ("No me molestes más", "do_not_bother_again"),
+        ("No me molestés más", "do_not_bother_again"),
+        ("No me moleste más", "do_not_bother_again"),
+        ("Dejen de molestarme", "do_not_bother_again"),
+        ("Deja de molestarme", "do_not_bother_again"),
+        ("Dejá de molestarme por favor", "do_not_bother_again"),
+        ("No quiero que me molesten", "do_not_bother_again"),
+        ("No quiero que me escriban", "do_not_write_again"),
+        ("Hola, no me interesa. No me hablen más, gracias", "do_not_talk_again"),
+    ],
+)
+def test_detects_hablar_and_molestar_opt_outs(message: str, rule_key: str) -> None:
+    match = detect_explicit_opt_out([message])
+    assert match is not None
+    assert match.rule_key == rule_key
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        # Cortar un tema no es cortar la conversacion.
+        "No me hablen más de precios",
+        "No me hables de cuotas",
+        "¿Me pueden dejar de hablar de cuotas?",
+        "Dejen de hablarme de la oferta",
+        # Preguntas y citas.
+        "¿No me van a hablar más?",
+        "¿Me dejan de molestar?",
+        'Mi esposo dice "no me molesten más"',
+        "«No me hablen más»",
+        # Una razon o un momento.
+        "No me molesten, estoy en el trabajo",
+        "No me hablen hasta el lunes",
+        # Enojo o desinteres sin pedir que corten: no es una baja.
+        "Basta",
+        "Basta!",
+        "No me interesa",
+        "No me molesta",
+    ],
+)
+def test_does_not_count_hablar_or_molestar_about_a_topic_a_question_or_a_quote(
+    message: str,
+) -> None:
+    assert detect_explicit_opt_out([message]) is None

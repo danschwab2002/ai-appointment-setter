@@ -431,3 +431,13 @@ def test_payment_guide_names_the_knowledge_section_the_bridge_renders() -> None:
 
     assert "la sección «Pagos»" in COMMON
     assert '"## Pagos"' in source
+
+
+def test_the_agent_never_confirms_an_opt_out_and_points_to_the_phrase_the_system_takes() -> None:
+    # Prueba del entrante de Maribel (2026-10-27 12:31Z, v1.20.1): con «no me
+    # hablen más» el sistema no registro la baja y el agente contesto «Entendido,
+    # no te escribiremos más». La baja la registra solo el bridge (opt_out.py);
+    # el agente no la confirma y manda a la frase que el sistema si toma.
+    style = _section(COMMON, "## Estilo")
+    assert "Nunca prometas dejar de escribir ni confirmes una baja" in style
+    assert "«No más mensajes», o derivá con `handoff`." in style
