@@ -14,7 +14,7 @@ Lo que ya está en `main` y todavía no tiene versión. El número se elige al p
 
 ## [1.20.4] - 2026-10-27
 
-Un parche sobre la 1.20.3, con tres PR. El primero trae el cupón fijo de la instancia en el link del agente, apagado por defecto (#349, E-148). El segundo hace que dos flujos nativos con el mismo evento no puedan quedar prendidos juntos (#348, E-139). El tercero es solo documentación: el contrato del sí por un botón-link del Automation Expert (#339). Sin migración y sin campos nuevos en el manifiesto. Hay una variable nueva, que vacía no cambia nada. Solo cambia el Python del bridge: `payment_link_coupon.py` (nuevo), `checkout_delivery.py` y `app.py` (#349), y `flow_validator.py`, `flow_change_simulation.py` y `flow_change_operator.py` (#348). Los profiles no cambian.
+Un parche sobre la 1.20.3, con tres PR. El primero trae el cupón fijo de la instancia en el link del agente, apagado por defecto (#349, E-148). El segundo hace que dos flujos nativos con el mismo evento no puedan quedar prendidos juntos (#348, E-139). El tercero es solo documentación: el contrato del sí por un botón-link del Automation Expert (#339). Sin migración y sin campos nuevos en el manifiesto. Hay una variable nueva, que vacía no cambia nada. Solo cambia el Python del bridge: `payment_link_coupon.py` (nuevo), `checkout_delivery.py`, `app.py` y una cita de línea en `flow_parity.py` (#349), y `flow_validator.py`, `flow_change_simulation.py` y `flow_change_operator.py` (#348). Los profiles no cambian.
 
 ### Agregado
 
