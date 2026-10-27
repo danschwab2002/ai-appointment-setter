@@ -324,12 +324,6 @@ def _same_event_for_all(other_state: str) -> list[Finding]:
     return list(check([item], in_world=flows, catalog=native_catalog()).blocks)
 
 
-def _same_event_in_cohort(other: bool) -> list[Finding]:
-    """Una bienvenida nueva en la cohorte, con o sin otra prendida para todos."""
-    flows = world(_native_welcome("bienvenida", WELCOME_ID, "prendido")) if other else world()
-    return run_new(key="bienvenida_ae", in_world=flows)
-
-
 def _personal_touches(count: int) -> list[dict[str, Any]]:
     """``count`` envios con ``cupon: personal``, separados por 24 h."""
     steps: list[dict[str, Any]] = []
@@ -677,9 +671,7 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
         lambda: run(flow_def("descuento"), "descuento"),
     ),
     "same_trigger_unrelated": (lambda: _same_trigger(False), lambda: _same_trigger(True)),
-    "same_event_native_flows": (lambda: _same_event_in_cohort(True), lambda: _same_event_in_cohort(False)),
-    "same_event_native_flows_for_all": (lambda: _same_event_for_all("prendido"),
-                                        lambda: _same_event_for_all("pausado")),
+    "same_event_native_flows": (lambda: _same_event_for_all("prendido"), lambda: _same_event_for_all("pausado")),
     "wait_without_contesta": (
         lambda: run(flow_def("precheckout"), "precheckout"),
         lambda: run(with_(flow_def("precheckout"), lambda d: d["termina"].update(si=["compra", "contesta"])),
@@ -756,7 +748,7 @@ def test_each_code_has_a_positive_neighbour_that_does_not_produce_it(code: str) 
 def test_every_code_of_the_closed_catalog_has_its_cases() -> None:
     assert set(CASES) == fv.BLOCK_CODES | fv.WARNING_CODES
     assert not fv.BLOCK_CODES & fv.WARNING_CODES
-    assert len(fv.WARNING_CODES) == 8
+    assert len(fv.WARNING_CODES) == 7
 
 
 def test_every_code_of_the_closed_catalog_is_produced_by_some_case() -> None:
@@ -837,7 +829,7 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         "rollback_target_is_active", "state_transition_invalid", "flow_has_no_version",
         "en_curso_not_supported", "identifier_not_allowed", "client_purchase_ok_missing",
         "flow_already_registered", "new_flow_must_start_in_cohort", "prender_a_cohorte_needs_paused_native",
-        "same_event_native_flows_for_all",
+        "same_event_native_flows",
     }
     assert all(pairs == {(None, "advertencia")} for code, pairs in fv.CODE_RULES.items()
                if code in fv.WARNING_CODES)
@@ -1494,7 +1486,6 @@ WARNING_PATHS = {
     "always_with_marketing": "/0/definicion/horario",
     "empty_branch_with_le_gana_a": "/0/definicion/pasos/0",
     "recovery_without_cap": "/0/definicion/topes",
-    "same_event_native_flows": "/0/definicion/dispara",
     "same_trigger_unrelated": "/0/definicion/dispara",
     "silence_window_shorter_than_closed_gap": "/0/definicion/dispara/silencio",
     "silence_without_purchase_exit": "/0/definicion/termina/si",
@@ -1502,7 +1493,7 @@ WARNING_PATHS = {
 }
 
 
-def test_the_hand_written_warning_paths_are_the_eight_warnings() -> None:
+def test_the_hand_written_warning_paths_are_the_seven_warnings() -> None:
     assert set(WARNING_PATHS) == fv.WARNING_CODES
 
 

@@ -16,11 +16,11 @@ mensajes «si fuera para todos» sin mirar al otro flujo.
 
 Lo que fija esta rama:
 
-* a todos (D1): un flujo nativo que queda ``prendido`` con el mismo evento que
-  otro nativo ``prendido`` del mismo producto es un bloqueo,
-  ``same_event_native_flows_for_all``, con o sin ``prioridad`` (D3);
-* en la cohorte (D2): si uno de los dos queda en ``cohorte``, es la advertencia
-  ``same_event_native_flows``, que la vista previa le muestra al aprobador;
+* (D1, D2) un flujo nativo que la propuesta toca y deja ``prendido`` o en
+  ``cohorte`` con el mismo evento que otro nativo del mismo producto, tambien
+  ``prendido`` o en ``cohorte``, es el bloqueo ``same_event_native_flows``. Vale
+  igual en la cohorte (decision de Dan del 2026-10-27): ahi la persona tambien
+  recibe uno solo, al azar. Una ``prioridad`` no lo levanta (D3);
 * la simulacion de un ``nuevo`` (D4) nombra los flujos con los que comparte el
   evento, en ``comparte_el_evento_con``.
 
@@ -56,8 +56,7 @@ from bridge.flow_definition import FlowWorld, ProposalItem, WorldFlow
 
 WELCOME_ID = "0000000b-0000-4000-8000-0000000b0001"
 SECOND_ID = "0000000b-0000-4000-8000-0000000b0002"
-FOR_ALL = "same_event_native_flows_for_all"
-COHORT_WARNING = "same_event_native_flows"
+BLOCK = "same_event_native_flows"
 OLD_WARNING = "same_trigger_unrelated"
 
 
@@ -94,13 +93,13 @@ def test_turning_on_for_all_a_native_flow_that_shares_the_event_with_one_on_for_
     # La bienvenida esta prendida para todos y la segunda, probada en la cohorte, se pasa a todos.
     flows = [_native("bienvenida", WELCOME_ID, "prendido"), _native("bienvenida_ae", SECOND_ID, "cohorte")]
     blocks, _ = _codes([_prender("bienvenida_ae", SECOND_ID)], flows)
-    assert FOR_ALL in blocks
+    assert BLOCK in blocks
 
 
 def test_the_block_points_at_the_item_and_says_how_to_get_out() -> None:
     flows = [_native("bienvenida", WELCOME_ID, "prendido"), _native("bienvenida_ae", SECOND_ID, "cohorte")]
     result = check([_prender("bienvenida_ae", SECOND_ID)], in_world=world(*flows), catalog=native_catalog())
-    [finding] = [f for f in result.blocks if f.code == FOR_ALL]
+    [finding] = [f for f in result.blocks if f.code == BLOCK]
     assert finding.path == "/0"
     assert finding.kind == "ciclo" and finding.rule is None
     assert finding.alternative and "pausar" in finding.alternative.lower()
@@ -112,7 +111,7 @@ def test_a_declared_priority_does_not_lift_the_block_because_the_engine_does_not
     flows = [_native("bienvenida", WELCOME_ID, "prendido"),
              _native("bienvenida_ae", SECOND_ID, "cohorte", second)]
     blocks, _ = _codes([_prender("bienvenida_ae", SECOND_ID)], flows)
-    assert FOR_ALL in blocks
+    assert BLOCK in blocks
 
 
 def test_a_new_version_of_a_flow_on_for_all_with_the_event_of_another_on_for_all_is_blocked() -> None:
@@ -122,55 +121,61 @@ def test_a_new_version_of_a_flow_on_for_all_with_the_event_of_another_on_for_all
     flows = [_native("bienvenida", WELCOME_ID, "prendido"), _native("bienvenida_ae", SECOND_ID, "prendido")]
     draft = fd.as_draft(flows[1].versions[1])
     blocks, _ = _codes([_version("bienvenida_ae", SECOND_ID, draft)], flows)
-    assert FOR_ALL in blocks
+    assert BLOCK in blocks
 
 
 def test_turning_off_the_other_in_the_same_proposal_clears_the_block() -> None:
     flows = [_native("bienvenida", WELCOME_ID, "prendido"), _native("bienvenida_ae", SECOND_ID, "cohorte")]
-    blocks, warnings = _codes([_apagar("bienvenida", WELCOME_ID), _prender("bienvenida_ae", SECOND_ID)], flows)
-    assert FOR_ALL not in blocks and COHORT_WARNING not in warnings
+    blocks, _ = _codes([_apagar("bienvenida", WELCOME_ID), _prender("bienvenida_ae", SECOND_ID)], flows)
+    assert BLOCK not in blocks
 
 
 def test_a_paused_or_off_other_flow_does_not_compete() -> None:
     # Pausado no abre caso (flujo_pausado sale antes del chequeo del evento); apagado ni se admite.
     for state in ("pausado", "apagado"):
         flows = [_native("bienvenida", WELCOME_ID, state), _native("bienvenida_ae", SECOND_ID, "cohorte")]
-        blocks, warnings = _codes([_prender("bienvenida_ae", SECOND_ID)], flows)
-        assert FOR_ALL not in blocks and COHORT_WARNING not in warnings, state
+        blocks, _ = _codes([_prender("bienvenida_ae", SECOND_ID)], flows)
+        assert BLOCK not in blocks, state
 
 
 def test_the_block_also_stops_the_draft() -> None:
     # El agente se entera al guardar, no recien al validar.
     flows = [_native("bienvenida", WELCOME_ID, "prendido"), _native("bienvenida_ae", SECOND_ID, "cohorte")]
     blocks, _ = _codes([_prender("bienvenida_ae", SECOND_ID)], flows, phase="draft")
-    assert FOR_ALL in blocks
+    assert BLOCK in blocks
 
 
-# ----------------------------------------------------------------- en la cohorte: advertencia
+# ----------------------------------------------------------------- en la cohorte: tambien bloqueo (D2)
 
 
-def test_a_new_flow_in_the_cohort_with_the_event_of_one_on_for_all_is_a_warning() -> None:
+def test_a_new_flow_in_the_cohort_with_the_event_of_one_on_for_all_is_blocked() -> None:
+    # El caso del AE creando un flujo en Maribel al lado de uno que ya corre.
     flows = [_native("bienvenida", WELCOME_ID, "prendido")]
     result = check([new_item(welcome(), "bienvenida_ae")], actor="automation_expert",
                    in_world=world(*flows), catalog=native_catalog(), draft_base={})
-    assert FOR_ALL not in {f.code for f in result.blocks}
-    warnings = [f for f in result.warnings if f.code == COHORT_WARNING]
-    assert len(warnings) == 1 and warnings[0].path == "/0/definicion/dispara"
-    # La vieja no se repite para el mismo par.
+    blocks = [f for f in result.blocks if f.code == BLOCK]
+    assert len(blocks) == 1 and blocks[0].path == "/0/definicion/dispara"
+    # La vieja advertencia no se repite para el mismo par.
     assert OLD_WARNING not in {f.code for f in result.warnings}
 
 
-def test_back_to_the_cohort_next_to_one_on_for_all_is_a_warning() -> None:
+def test_two_flows_in_the_cohort_with_the_same_event_are_blocked() -> None:
+    flows = [_native("bienvenida", WELCOME_ID, "cohorte")]
+    result = check([new_item(welcome(), "bienvenida_ae")], actor="automation_expert",
+                   in_world=world(*flows), catalog=native_catalog(), draft_base={})
+    assert BLOCK in {f.code for f in result.blocks}
+
+
+def test_back_to_the_cohort_next_to_one_on_for_all_is_blocked() -> None:
     flows = [_native("bienvenida", WELCOME_ID, "prendido"), _native("bienvenida_ae", SECOND_ID, "pausado")]
-    blocks, warnings = _codes([_prender("bienvenida_ae", SECOND_ID, a="cohorte")], flows)
-    assert FOR_ALL not in blocks and COHORT_WARNING in warnings
+    blocks, _ = _codes([_prender("bienvenida_ae", SECOND_ID, a="cohorte")], flows)
+    assert BLOCK in blocks
 
 
-def test_turning_on_for_all_next_to_one_in_the_cohort_is_a_warning() -> None:
-    # La de la cohorte le gana a sus contactos si tiene el flow_id menor: lo ve el aprobador.
+def test_turning_on_for_all_next_to_one_in_the_cohort_is_blocked() -> None:
     flows = [_native("bienvenida", WELCOME_ID, "cohorte"), _native("bienvenida_ae", SECOND_ID, "pausado")]
-    blocks, warnings = _codes([_prender("bienvenida_ae", SECOND_ID)], flows)
-    assert FOR_ALL not in blocks and COHORT_WARNING in warnings
+    blocks, _ = _codes([_prender("bienvenida_ae", SECOND_ID)], flows)
+    assert BLOCK in blocks
 
 
 def test_another_event_or_another_product_does_not_compete() -> None:
@@ -180,8 +185,8 @@ def test_another_event_or_another_product_does_not_compete() -> None:
     flows = [WorldFlow(flow_id=WELCOME_ID, product_ref="att1", flow_key="bienvenida", state="prendido",
                        active_version=1, generation=1, versions={1: other_event_def}, native=True),
              _native("bienvenida_ae", SECOND_ID, "cohorte")]
-    blocks, warnings = _codes([_prender("bienvenida_ae", SECOND_ID)], flows)
-    assert FOR_ALL not in blocks and COHORT_WARNING not in warnings
+    blocks, _ = _codes([_prender("bienvenida_ae", SECOND_ID)], flows)
+    assert BLOCK not in blocks
 
 
 def test_legacy_flows_keep_the_old_warning() -> None:
@@ -189,16 +194,16 @@ def test_legacy_flows_keep_the_old_warning() -> None:
     from test_flow_validator import _same_trigger
 
     codes = found(_same_trigger(False))
-    assert OLD_WARNING in codes and FOR_ALL not in codes and COHORT_WARNING not in codes
+    assert OLD_WARNING in codes and BLOCK not in codes
 
 
 def test_one_native_flow_alone_is_clean() -> None:
     flows = [_native("bienvenida_ae", SECOND_ID, "cohorte")]
-    blocks, warnings = _codes([_prender("bienvenida_ae", SECOND_ID)], flows)
-    assert FOR_ALL not in blocks and COHORT_WARNING not in warnings
+    blocks, _ = _codes([_prender("bienvenida_ae", SECOND_ID)], flows)
+    assert BLOCK not in blocks
     alone = check([new_item(welcome(), "bienvenida_ae")], actor="automation_expert", in_world=world(),
                   catalog=native_catalog(), draft_base={})
-    assert not found(alone) & {FOR_ALL, COHORT_WARNING}
+    assert not found(alone) & {BLOCK}
 
 
 # ----------------------------------------------------------------- la simulacion de un nuevo

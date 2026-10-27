@@ -2461,50 +2461,14 @@
    "code": "same_event_native_flows",
    "case": "negativo",
    "result": {
-    "blocks": [],
-    "warnings": [
-     {
-      "rule": null,
-      "code": "same_event_native_flows",
-      "kind": "advertencia",
-      "path": "/0/definicion/dispara",
-      "reason": "Otro flujo nativo del mismo producto arranca con el mismo evento. El motor abre un solo caso por evento: a quien le toquen los dos le llega uno solo, el del flujo que elige por su identificador, y el otro no arranca."
-     }
-    ]
-   },
-   "validator": {
-    "contract": "setter-flujo/v1",
-    "rules_version": 1,
-    "phase": "publish",
-    "actor": "automation_expert"
-   }
-  },
-  {
-   "code": "same_event_native_flows",
-   "case": "positivo",
-   "result": {
-    "blocks": [],
-    "warnings": []
-   },
-   "validator": {
-    "contract": "setter-flujo/v1",
-    "rules_version": 1,
-    "phase": "publish",
-    "actor": "automation_expert"
-   }
-  },
-  {
-   "code": "same_event_native_flows_for_all",
-   "case": "negativo",
-   "result": {
     "blocks": [
      {
       "rule": null,
-      "code": "same_event_native_flows_for_all",
+      "code": "same_event_native_flows",
       "kind": "ciclo",
       "path": "/0",
-      "reason": "Otro flujo del mismo producto, prendido para todos, arranca con el mismo evento. El motor abre un solo caso por evento y elige el flujo por su identificador, no por prioridad: uno de los dos no arrancaría nunca.",
-      "alternative": "Pausar o apagar el otro flujo en la misma propuesta, o dejar este en la cohorte."
+      "reason": "Otro flujo nativo del mismo producto, prendido o en la cohorte, arranca con el mismo evento. El motor abre un solo caso por evento y elige el flujo por su identificador, no por prioridad: a quien le toquen los dos le llega uno solo, al azar, y el otro no arranca.",
+      "alternative": "Pausar o apagar el otro flujo en la misma propuesta, o disparar este con otro evento."
      }
     ],
     "warnings": []
@@ -2517,7 +2481,7 @@
    }
   },
   {
-   "code": "same_event_native_flows_for_all",
+   "code": "same_event_native_flows",
    "case": "positivo",
    "result": {
     "blocks": [],

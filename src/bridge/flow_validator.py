@@ -519,18 +519,14 @@ SAME_TRIGGER_UNRELATED = _spec(
 # orden de flow_id (admit_flow_engine_event_v1, 20261024000200): gana el de
 # flow_id menor, que para un flujo nuevo es un UUID al azar, y el otro queda con
 # evento_con_otro_flujo. No mira prioridad para el mismo evento.
-SAME_EVENT_NATIVE_FLOWS_FOR_ALL = _spec(
-    "same_event_native_flows_for_all", None, KIND_CYCLE,
-    "Otro flujo del mismo producto, prendido para todos, arranca con el mismo evento. El motor abre un "
-    "solo caso por evento y elige el flujo por su identificador, no por prioridad: uno de los dos no "
-    "arrancaría nunca.",
-    alternative="Pausar o apagar el otro flujo en la misma propuesta, o dejar este en la cohorte.",
-)
+# Decision de Dan del 2026-10-27: es bloqueo tambien en la cohorte, porque ahi la
+# persona igual recibe uno solo, elegido al azar.
 SAME_EVENT_NATIVE_FLOWS = _spec(
-    "same_event_native_flows", None, KIND_WARNING,
-    "Otro flujo nativo del mismo producto arranca con el mismo evento. El motor abre un solo caso por "
-    "evento: a quien le toquen los dos le llega uno solo, el del flujo que elige por su identificador, "
-    "y el otro no arranca.",
+    "same_event_native_flows", None, KIND_CYCLE,
+    "Otro flujo nativo del mismo producto, prendido o en la cohorte, arranca con el mismo evento. El "
+    "motor abre un solo caso por evento y elige el flujo por su identificador, no por prioridad: a quien "
+    "le toquen los dos le llega uno solo, al azar, y el otro no arranca.",
+    alternative="Pausar o apagar el otro flujo en la misma propuesta, o disparar este con otro evento.",
 )
 WAIT_WITHOUT_CONTESTA = _spec(
     "wait_without_contesta", None, KIND_WARNING,
@@ -572,7 +568,7 @@ _VALIDATOR_CODES: tuple[CodeSpec, ...] = (
     FLOW_HAS_NO_VERSION, EN_CURSO_NOT_SUPPORTED, CLIENT_PURCHASE_OK_MISSING,
     ALWAYS_WITH_MARKETING, RECOVERY_WITHOUT_CAP, SILENCE_WITHOUT_PURCHASE_EXIT,
     SAME_TRIGGER_UNRELATED, WAIT_WITHOUT_CONTESTA, SILENCE_WINDOW_SHORTER_THAN_CLOSED_GAP,
-    EMPTY_BRANCH_WITH_LE_GANA_A, SAME_EVENT_NATIVE_FLOWS_FOR_ALL, SAME_EVENT_NATIVE_FLOWS,
+    EMPTY_BRANCH_WITH_LE_GANA_A, SAME_EVENT_NATIVE_FLOWS,
 )
 
 # El catalogo cerrado: cada codigo con su regla y su tipo. required_key_missing
@@ -1746,9 +1742,8 @@ class _Run:
         """Un flujo nativo que la propuesta toca y deja con el mismo evento que otro nativo del producto.
 
         Los dos tienen que quedar abiertos al evento (``prendido`` o ``cohorte``;
-        ``pausado`` no abre caso y ``apagado`` no se admite). Si los dos quedan
-        ``prendido`` es un bloqueo: uno no correria nunca para nadie. Si uno queda
-        en la cohorte, es una advertencia: el choque es solo con sus contactos.
+        ``pausado`` no abre caso y ``apagado`` no se admite). Es un bloqueo para todos
+        y para la cohorte: a quien le toquen los dos le llega uno solo, al azar.
         Una ``prioridad`` no lo levanta: el motor no la mira para el mismo evento.
         """
         states = self._final_states()
@@ -1773,10 +1768,7 @@ class _Run:
                     continue
                 if _native_event(self.effective.get(other.flow_id)) != mine:
                     continue
-                if states[flow_id] == "prendido" and states[other.flow_id] == "prendido":
-                    self.blocks.append(SAME_EVENT_NATIVE_FLOWS_FOR_ALL.at(at))
-                else:
-                    self.warnings.append(SAME_EVENT_NATIVE_FLOWS.at(at))
+                self.blocks.append(SAME_EVENT_NATIVE_FLOWS.at(at))
 
     def _same_trigger_unrelated(self, subject: _Subject) -> bool:
         definition = subject.definition
