@@ -1,6 +1,6 @@
 [project]
 name = "ai-appointment-setter"
-version = "1.20.3"
+version = "1.20.4"
 description = "Bridge between Chatwoot, Hermes Agent and Evolution API"
 requires-python = ">=3.12"
 dependencies = [
