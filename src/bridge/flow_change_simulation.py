@@ -37,7 +37,7 @@ from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 from typing import Any
 
-from .flow_definition import ProposalItem
+from .flow_definition import FlowWorld, ProposalItem
 from .flow_engine import ENGINE_CAPABILITIES_V1, EngineFlow, PlanNotSupported, not_supported
 from .flow_parity import CaptureV3
 from .flow_replay import (
@@ -233,7 +233,27 @@ def _count(value: object) -> int:
     return value
 
 
-def build_new_flow_simulation(counts: Any, items: Sequence[ProposalItem]) -> dict[str, Any]:
+def _sharing_the_event(world: FlowWorld | None, product: str, trigger: object) -> list[dict[str, str]]:
+    """Los flujos nativos del producto, abiertos al evento, que arrancan con el mismo (E-139).
+
+    El motor abre un solo caso por evento: con uno de estos al lado, «si fuera
+    para todos» no le llega a todas esas personas. Pausado no abre caso y
+    apagado no se admite, asi que no cuentan.
+    """
+    if world is None or not isinstance(trigger, str):
+        return []
+    found = []
+    for flow in world.flows:
+        definition = flow.active_definition
+        event = ((definition or {}).get("dispara") or {}).get("evento") if isinstance(definition, Mapping) else None
+        if flow.native and flow.product_ref == product and flow.state in ("prendido", "cohorte") \
+                and event == trigger:
+            found.append({"flujo": f"{flow.product_ref}/{flow.flow_key}", "estado": flow.state})
+    return sorted(found, key=lambda entry: entry["flujo"])
+
+
+def build_new_flow_simulation(counts: Any, items: Sequence[ProposalItem], *,
+                              world: FlowWorld | None = None) -> dict[str, Any]:
     """La simulacion de un item ``nuevo``: cuantos disparos de su disparador hubo y a cuantas personas
     les habria llegado si estuviera para todos.
 
@@ -241,6 +261,10 @@ def build_new_flow_simulation(counts: Any, items: Sequence[ProposalItem]) -> dic
     disparador del flujo nuevo, con la ventana de la vista previa. Es una estimacion con los eventos
     reales: con ``repeticion.otra_despues_de: nunca`` le llega una sola vez a cada persona, y mientras
     este en cohorte solo a los contactos de la cohorte. Nunca levanta.
+
+    Con ``world`` (la foto del almacen que ya leyo quien valida), si otro flujo nativo del producto
+    arranca con el mismo evento, el resumen lo nombra en ``comparte_el_evento_con`` (E-139): el motor
+    abre un solo caso por evento y uno de los dos no arranca. Sin ninguno, el resumen es el de antes.
     """
     try:
         if len(items) != 1 or not items[0].is_new_flow:
@@ -261,6 +285,9 @@ def build_new_flow_simulation(counts: Any, items: Sequence[ProposalItem]) -> dic
             "disparos": events, "personas": people, "mensajes_si_fuera_para_todos": people,
             "nace_en": "cohorte",
         }
+        sharing = _sharing_the_event(world, item.producto, trigger)
+        if sharing:
+            summary["comparte_el_evento_con"] = sharing
         return {"status": "built", "summary": summary, "summary_sha256": summary_sha256(summary), "cambios": []}
     except _Failed as failed:
         return {"status": "failed", "reason_code": failed.reason_code}
