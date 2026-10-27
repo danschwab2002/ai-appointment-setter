@@ -12,6 +12,41 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.20.4] - 2026-10-27
+
+Un parche sobre la 1.20.3, con tres PR. El primero trae el cupón fijo de la instancia en el link del agente, apagado por defecto (#349, E-148). El segundo hace que dos flujos nativos con el mismo evento no puedan quedar prendidos juntos (#348, E-139). El tercero es solo documentación: el contrato del sí por un botón-link del Automation Expert (#339). Sin migración y sin campos nuevos en el manifiesto. Hay una variable nueva, que vacía no cambia nada. Solo cambia el Python del bridge: `payment_link_coupon.py` (nuevo), `checkout_delivery.py`, `app.py` y una cita de línea en `flow_parity.py` (#349), y `flow_validator.py`, `flow_change_simulation.py` y `flow_change_operator.py` (#348). Los profiles no cambian.
+
+### Agregado
+
+- **`PAYMENT_LINK_COUPON_CODE`: el cupón fijo de la instancia en el link del agente** (#349, E-148, salida a de E-146).
+  - Vacía, que es el default, el link de `send_payment_link` sale como hasta ahora.
+  - Con un código, el link que ve la persona lleva `&offDiscount=<código>`, codificado con `quote(..., safe="")`. Lo lleva en el texto, en el botón de la plantilla y en la copia que queda en Chatwoot: los tres son el mismo link.
+  - La fila de la base (`checkout_url_final`) guarda el link sin cupón, como el seguimiento con cupón, y la atribución por `sck` no cambia.
+  - Si el link de la base ya trae un `offDiscount` (un cupón personal), manda ese.
+  - El código acepta `[A-Za-z0-9_+-]{1,64}`, y el bridge no arranca con otra cosa.
+  - Medido el 27/10 en el checkout público de Hotmart: `offDiscount=PROTOCOLO10%2B` aplica el 10 %, y el «+» literal llega como espacio y da error.
+
+### Arreglado
+
+- **Dos flujos nativos con el mismo evento ya no se pierden uno al otro en silencio** (#348, E-139). El motor admite el primero por `flow_id` y descarta el otro con `evento_con_otro_flujo`, sin aviso. Ahora, publicar una propuesta que deja prendidos dos flujos nativos del mismo producto con el mismo `dispara.evento` es un bloqueo, `same_event_native_flows` de tipo `ciclo`. Vale tanto en `prendido` como en `cohorte` y frena también el borrador.
+  - La salida es pausar o apagar el otro en la misma propuesta.
+  - Una `prioridad` declarada no levanta el bloqueo, porque el motor no la lee para el mismo evento.
+  - La simulación de un `nuevo` suma `comparte_el_evento_con`.
+  - Los flujos que no son nativos siguen con la advertencia `same_trigger_unrelated`.
+
+### Documentación
+
+- **El sí a un cambio de flujo, por un botón-link en el DM del Automation Expert** (#339, A′; contrato `flow-change-cycle-v1.md` 1.9.0). El sí se da en una página del bridge con «Sign in with Slack», a la que se llega por un botón de URL que el Automation Expert deja en su DM, y reemplaza el botón firmado del conector central. Fija la lista de aprobadores por instancia (ATT1, Dan y Brayan; Maribel, solo Dan), un clic o dos pasos según lo que cambia, el plazo de 24 h del botón, la sesión de 8 h, el aviso de otra propuesta abierta del mismo flujo, la línea al canal de alertas y la carga de la cohorte desde la página, todo detrás de `FLOW_APPROVAL_ENABLED`, apagado por defecto. De paso corrige la 1.4.0: `flow_engine_history_too_large` es 4 MB, no 1 MB. Es un contrato antes de construir: sin código, y el bridge sigue contestando `1.8.0`.
+
+### Qué hace quien actualiza
+
+- **Migración:** ninguna.
+- **Variables:** una nueva y opcional, `PAYMENT_LINK_COUPON_CODE`. Vacía o ausente, no cambia nada.
+- **Profiles:** no cambian.
+- **Maribel:** subir el bridge y la revisión desde la 1.20.3. Entre la 1.20.3 y la 1.20.4 no hay migraciones. Con `PAYMENT_LINK_COUPON_CODE=PROTOCOLO10+` en las variables del bridge, el link del agente llega con el 10 % aplicado. Ojo: no es la misma variable que `CONVERSATION_FOLLOWUP_COUPON_CODE`, que no admite el «+». Después, el E2E: tocar «Retomar proceso» y abrir el link desde el texto y desde el botón.
+- **ATT1:** subir el bridge y la revisión, **sin** la variable nueva. El operador de flujos toma el bloqueo del #348 solo, con el árbol de la 1.20.4 en el VPS.
+- **Johanna:** nada que hacer.
+
 ## [1.20.3] - 2026-10-27
 
 Un parche sobre la 1.20.2, con un PR: «no me hablen más» y «no me molesten» dan de baja, y el agente comercial nunca confirma una baja (#346, E-135). Sin migración, sin variables nuevas y sin campos nuevos en el manifiesto. Cambian el Python del bridge (`src/bridge/opt_out.py`) y el SOUL común del agente comercial (`profiles/agente-comercial-comun/SOUL.md`).
