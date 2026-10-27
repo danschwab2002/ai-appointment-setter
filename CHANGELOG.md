@@ -12,6 +12,28 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.20.3] - 2026-10-27
+
+Un parche sobre la 1.20.2, con un PR: «no me hablen más» y «no me molesten» dan de baja, y el agente comercial nunca confirma una baja (#346, E-135). Sin migración, sin variables nuevas y sin campos nuevos en el manifiesto. Cambian el Python del bridge (`src/bridge/opt_out.py`) y el SOUL común del agente comercial (`profiles/agente-comercial-comun/SOUL.md`).
+
+### Arreglado
+
+- **«No me hablen más» y «no me molesten» dan de baja** (#346, `src/bridge/opt_out.py`). El 27/10 a las 12:31Z, en la prueba del entrante de Maribel, «no me hablen más» no registró ninguna baja: ninguna regla tenía «hablar» ni «molestar». Suma dos reglas, con la misma forma que las de escribir y contactar (la cláusula entera tiene que ser el pedido):
+  - `do_not_talk_again`: «no me hablen / hables / hablés / hable [más]», «ya no me hablen», «dejen / dejá / deje de hablarme», «no quiero que me hablen [más]»;
+  - `do_not_bother_again`: lo mismo con «molestar».
+  - Siguen sin dar baja un tema («no me hablen más de precios»), una pregunta, una cita, una razón o un momento («no me molesten, estoy en el trabajo», «no me hablen hasta el lunes»), «no me interesa», «no me molesta» y «basta» sola (puede ser enojo, y la baja no se deshace).
+  - La columna `normalized_rule_key` acepta cualquier clave `^[a-z0-9_]{1,64}$`: no hace falta migración.
+- **El agente comercial nunca promete dejar de escribir ni confirma una baja** (#346, `profiles/agente-comercial-comun/SOUL.md`, sección «Estilo»). El 27/10 contestó «Entendido, no te escribiremos más» a una baja que el sistema no había registrado. Ahora, si alguien pide no recibir más mensajes, le pide que responda exactamente «No más mensajes», o deriva con `handoff`. Para que la regla entre se sacaron dos oraciones que repetían otra: el SOUL queda en 19.993 caracteres, 7 por debajo del corte de Hermes de 20.000. El SOUL de Johanna no cambia.
+
+### Qué hace quien actualiza
+
+- **Migración:** ninguna.
+- **Variables:** ninguna nueva.
+- **Profiles:** cambia el SOUL común del agente comercial. Rige cuando la instancia instala los profiles de esta versión (`scripts/hermes_instancia.py plan`, `aplicar` y `chequear` desde el árbol del tag), **después** del bridge. El Automation Expert no cambia.
+- **ATT1:** subir el bridge y la revisión, y enseguida el profile del agente comercial. Con `OPT_OUT_CONFIRMATION_ENABLED=false`, una baja nueva se registra y no se contesta.
+- **Maribel:** el bridge y la revisión desde la 1.20.1 (sin migraciones entre la 1.20.1 y la 1.20.3), y enseguida el profile del agente comercial. Con `OPT_OUT_CONFIRMATION_ENABLED=true`, la baja nueva se confirma con una sola línea.
+- **Johanna:** nada que hacer. Su SOUL no cambia; las dos reglas nuevas rigen en su bridge el día que suba a esta versión.
+
 ## [1.20.2] - 2026-10-26
 
 Un parche sobre la 1.20.1, con un PR: la simulación de un flujo del motor en ATT1 vuelve a armarse (#344). Sin migración, sin variables nuevas, sin campos nuevos en el manifiesto y sin cambios en los profiles. Solo cambia el Python del bridge (`src/bridge/flow_capture.py`).
