@@ -13,6 +13,11 @@ declarado: el bridge no lo puede verificar.
 
 Ninguna herramienta aprueba ni publica, y no hay pausa: pausar es del comando
 del operador mientras la base no pueda verificar a quien lo pide.
+
+Con el canal del link prendido (ciclo 1.9.0), una validacion que deja la
+propuesta ``validada`` postea el boton «Revisar y aprobar» en el mismo DM
+(``approval_button.py``). El boton es un link a la pagina del bridge: tampoco
+aprueba.
 """
 
 from __future__ import annotations
@@ -25,6 +30,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import UUID
+
+from . import approval_button
 
 CONTRACT_MAJOR = "1"
 PROFILE_NAME = "automation-expert"
@@ -255,8 +262,29 @@ def validate_flow_change(params: dict[str, object], **kwargs: object) -> str:
     revision = params.get("revision")
     if proposal_id is None or type(revision) is not int:
         return _dumps({"error": "invalid_body"})
-    return _dumps(_request("POST", f"{PREFIX}/flow-changes/{proposal_id}/validate",
-                           {"revision": revision, "requested_by": requested_by}))
+    out = _request("POST", f"{PREFIX}/flow-changes/{proposal_id}/validate",
+                   {"revision": revision, "requested_by": requested_by})
+    _maybe_post_approval_button(proposal_id, out)
+    return _dumps(out)
+
+
+def _maybe_post_approval_button(proposal_id: str, out: dict[str, object]) -> None:
+    """Con la propuesta validada y sin bloqueos, el boton «Revisar y aprobar» (ciclo 1.9.0).
+
+    Lo postea este codigo, nunca el modelo. Con el canal apagado no toca la respuesta.
+    """
+    data = out.get("data")
+    if (
+        "error" in out
+        or not isinstance(data, dict)
+        or data.get("status") != "validada"
+        or data.get("proposal_id") != proposal_id
+        or data.get("blocks")
+    ):
+        return
+    button = approval_button.post_after_validation(proposal_id, setting=_profile_setting, session=_session)
+    if button is not None:
+        data["approval_button"] = button
 
 
 def get_flow_change(params: dict[str, object], **kwargs: object) -> str:
