@@ -409,7 +409,8 @@ ETIQUETAR_NOT_AFTER_TEMPLATE = _spec(
 )
 # La regla 14 de un flujo nativo (flow-engine-v2 §9): lo que la base no abre ni admite.
 _NATIVE_LIMIT = ("Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, "
-                 "manda una sola plantilla de utilidad con nombre y producto, sin botón, y repite por persona")
+                 "manda una sola plantilla de utilidad con variables de entre nombre y producto, sin botón "
+                 "o con botones de URL fija, y repite por persona")
 ENGINE_NOT_SUPPORTED_NATIVE_TRIGGER = _spec(
     NATIVE_UNSUPPORTED_TRIGGER, 14, KIND_NOT_YET,
     "El motor nativo de esta versión solo arranca con la compra.", limit=_NATIVE_LIMIT,
@@ -433,7 +434,8 @@ ENGINE_NOT_SUPPORTED_NATIVE_PRIORITY = _spec(
 ENGINE_NOT_SUPPORTED_NATIVE_SHAPE = _spec(
     "motor_nativo:forma", 14, KIND_NOT_YET,
     "El motor nativo de esta versión no ejecuta esa forma de pasos.", limit=_NATIVE_LIMIT,
-    alternative="Dejar una sola plantilla con [nombre, producto], sin botón, y etiquetar después si hace falta.",
+    alternative=("Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones "
+                 "de URL fija, y etiquetar después si hace falta."),
 )
 ENGINE_NOT_SUPPORTED_ETIQUETAR = _spec(
     "engine_not_supported:etiquetar", 14, KIND_NOT_YET,
@@ -512,6 +514,20 @@ SAME_TRIGGER_UNRELATED = _spec(
     "same_trigger_unrelated", None, KIND_WARNING,
     "Otro flujo del mismo producto tiene el mismo disparador, y no hay relación entre los dos.",
 )
+# Dos flujos nativos con el mismo evento (E-139). El motor abre un solo caso por
+# evento (recovery_cases.abandonment_event_id es unico) y admite los flujos en
+# orden de flow_id (admit_flow_engine_event_v1, 20261024000200): gana el de
+# flow_id menor, que para un flujo nuevo es un UUID al azar, y el otro queda con
+# evento_con_otro_flujo. No mira prioridad para el mismo evento.
+# Decision de Dan del 2026-10-27: es bloqueo tambien en la cohorte, porque ahi la
+# persona igual recibe uno solo, elegido al azar.
+SAME_EVENT_NATIVE_FLOWS = _spec(
+    "same_event_native_flows", None, KIND_CYCLE,
+    "Otro flujo nativo del mismo producto, prendido o en la cohorte, arranca con el mismo evento. El "
+    "motor abre un solo caso por evento y elige el flujo por su identificador, no por prioridad: a quien "
+    "le toquen los dos le llega uno solo, al azar, y el otro no arranca.",
+    alternative="Pausar o apagar el otro flujo en la misma propuesta, o disparar este con otro evento.",
+)
 WAIT_WITHOUT_CONTESTA = _spec(
     "wait_without_contesta", None, KIND_WARNING,
     "Mientras espera, si la persona contesta otra plantilla nuestra, el agente no le responde hasta que este mensaje salga o venza.",
@@ -552,7 +568,7 @@ _VALIDATOR_CODES: tuple[CodeSpec, ...] = (
     FLOW_HAS_NO_VERSION, EN_CURSO_NOT_SUPPORTED, CLIENT_PURCHASE_OK_MISSING,
     ALWAYS_WITH_MARKETING, RECOVERY_WITHOUT_CAP, SILENCE_WITHOUT_PURCHASE_EXIT,
     SAME_TRIGGER_UNRELATED, WAIT_WITHOUT_CONTESTA, SILENCE_WINDOW_SHORTER_THAN_CLOSED_GAP,
-    EMPTY_BRANCH_WITH_LE_GANA_A,
+    EMPTY_BRANCH_WITH_LE_GANA_A, SAME_EVENT_NATIVE_FLOWS,
 )
 
 # El catalogo cerrado: cada codigo con su regla y su tipo. required_key_missing
@@ -954,6 +970,7 @@ class _Run:
                 self._switch_off(index, item, flow)
         for subject in self.subjects:
             self._subject(subject)
+        self._same_event_native()
         total = json_size([item.to_json() for item in self.normalized])
         if total is None or total > ITEMS_MAX_BYTES:
             self.blocks.append(INVALID_VALUE.at("", reason=(
@@ -1066,7 +1083,7 @@ class _Run:
         if depth_of(active) > MAX_DEPTH:
             return
         emitter = _Emitter((index,), collapse=at)
-        categories = self._rule13(emitter, active)
+        categories = self._rule13(emitter, active, flow)
         self._rule17(emitter, active, categories)
         self.blocks.extend(emitter.findings)
 
@@ -1106,7 +1123,7 @@ class _Run:
         if self.publish:
             self._rule11(emitter, definition)
             self._rule12(emitter, definition)
-            categories = self._rule13(emitter, definition)
+            categories = self._rule13(emitter, definition, flow)
             self._rule14_compiles(emitter, definition, flow)
             self._rule14_native(emitter, definition, flow)
             if active is not None:
@@ -1431,8 +1448,13 @@ class _Run:
         if deadline is not None and waits is not None and deadline <= waits:
             emitter.add(VENCE_NOT_AFTER_WAITS, ("termina", "vence"))
 
-    def _rule13(self, emitter: _Emitter, definition: Mapping[str, Any]) -> dict[tuple[Segment, ...], object]:
+    def _rule13(self, emitter: _Emitter, definition: Mapping[str, Any],
+                flow: WorldFlow | None = None) -> dict[tuple[Segment, ...], object]:
         """Las plantillas contra el catalogo. Devuelve la categoria de cada paso resuelto.
+
+        En un flujo nativo (``flow.is_native``) los botones son los que manda el
+        envio nativo (``parse_approved_template(static_url_buttons_only=True)``):
+        ninguno, o de URL fija, sin parametro (E-115).
 
         Un paso resuelto es el que encontro en el catalogo una sola plantilla
         con su nombre y su idioma. Su categoria va tal cual la trae el
@@ -1475,12 +1497,18 @@ class _Run:
             if template.get("status") != "APPROVED":
                 emitter.add(TEMPLATE_NOT_APPROVED, at + ("plantilla",))
                 continue
-            self._template_shape(emitter, step, at, template)
+            self._template_shape(emitter, step, at, template,
+                                 native=flow is not None and flow.is_native)
         return categories
 
     def _template_shape(self, emitter: _Emitter, step: Mapping[str, Any], at: tuple[Segment, ...],
-                        template: Mapping[str, Any]) -> None:
-        """Los marcadores {{1}}..{{n}} y los botones, con la forma de ``parse_approved_template``."""
+                        template: Mapping[str, Any], *, native: bool = False) -> None:
+        """Los marcadores {{1}}..{{n}} y los botones, con la forma de ``parse_approved_template``.
+
+        ``native``: el paso de un flujo nativo. Sus variables las declara el paso, una por
+        marcador y en su orden, y la razon del bloqueo dice cuantos marcadores tiene la
+        plantilla. Sus botones, si no declara ``boton``, solo pueden ser de URL fija.
+        """
         components = template.get("components")
         if not isinstance(components, list) or not all(isinstance(c, Mapping) for c in components):
             emitter.add(TEMPLATE_VARIABLE_COUNT_MISMATCH, at + ("plantilla",),
@@ -1495,7 +1523,8 @@ class _Run:
         elif variables is not None:
             placeholders = sorted({int(number) for number in _PLACEHOLDER.findall(body)})
             if placeholders != list(range(1, len(variables) + 1)) or "{{" in _PLACEHOLDER.sub("", body):
-                emitter.add(TEMPLATE_VARIABLE_COUNT_MISMATCH, at + ("variables",))
+                emitter.add(TEMPLATE_VARIABLE_COUNT_MISMATCH, at + ("variables",),
+                            reason=_native_count_reason(placeholders, variables) if native else None)
         buttons: list[object] = []
         groups = 0
         for component in components:
@@ -1527,6 +1556,12 @@ class _Run:
         # The link opens the group and quick replies may follow it («No más
         # mensajes» after the checkout, 18/10), the same order that
         # ``parse_approved_template(checkout_button=True)`` accepts.
+        if native and button is None:
+            # El envio nativo no manda parametros de boton: solo pasa una URL fija.
+            wrong = _native_button_problem(buttons, groups)
+            if wrong is not None:
+                emitter.add(TEMPLATE_BUTTON_MISMATCH, at + ("plantilla",), reason=wrong)
+            return
         if link == "checkout":
             fits = groups == 1 and bool(buttons) and _is_url_button(buttons[0]) and (
                 buttons[0].get("url") == CHECKOUT_BUTTON_URL) and quick_replies(buttons[1:])
@@ -1689,6 +1724,52 @@ class _Run:
                     warn.add(EMPTY_BRANCH_WITH_LE_GANA_A, at)
         self.warnings.extend(warn.findings)
 
+    # -- Dos flujos nativos con el mismo evento (E-139) --------------------
+
+    def _final_states(self) -> dict[str, str]:
+        """El estado en que la propuesta deja cada flujo: el de la foto, con los items aplicados."""
+        states = {flow.flow_id: flow.state for flow in self.world.flows}
+        for item, flow in zip(self.items, self.flows):
+            if item.is_new_flow:
+                states[flow.flow_id] = COHORT
+            elif item.tipo == "prender":
+                states[flow.flow_id] = COHORT if item.a is not None else "prendido"
+            elif item.tipo == "apagar":
+                states[flow.flow_id] = "apagado"
+        return states
+
+    def _same_event_native(self) -> None:
+        """Un flujo nativo que la propuesta toca y deja con el mismo evento que otro nativo del producto.
+
+        Los dos tienen que quedar abiertos al evento (``prendido`` o ``cohorte``;
+        ``pausado`` no abre caso y ``apagado`` no se admite). Es un bloqueo para todos
+        y para la cohorte: a quien le toquen los dos le llega uno solo, al azar.
+        Una ``prioridad`` no lo levanta: el motor no la mira para el mismo evento.
+        """
+        states = self._final_states()
+        flows: dict[str, WorldFlow] = {flow.flow_id: flow for flow in self.world.flows}
+        for flow in self.flows:
+            flows.setdefault(flow.flow_id, flow)
+        first: dict[str, int] = {}
+        for index, flow in enumerate(self.flows):
+            first.setdefault(flow.flow_id, index)
+        open_states = ("prendido", COHORT)
+        for flow_id, index in first.items():
+            flow = flows[flow_id]
+            mine = _native_event(self.effective.get(flow_id))
+            if not flow.native or states.get(flow_id) not in open_states or mine is None:
+                continue
+            item = self.items[index]
+            at = finding_path((index, "definicion", "dispara") if item.definicion is not None else (index,))
+            for other in flows.values():
+                if other.flow_id == flow_id or other.product_ref != flow.product_ref or not other.native:
+                    continue
+                if states.get(other.flow_id) not in open_states:
+                    continue
+                if _native_event(self.effective.get(other.flow_id)) != mine:
+                    continue
+                self.blocks.append(SAME_EVENT_NATIVE_FLOWS.at(at))
+
     def _same_trigger_unrelated(self, subject: _Subject) -> bool:
         definition = subject.definition
         flow = subject.flow
@@ -1699,6 +1780,9 @@ class _Run:
         my_refs = _relations(definition, _own_product(definition, flow))
         for other in self.world.flows:
             if other.flow_id == flow.flow_id or other.product_ref != flow.product_ref:
+                continue
+            if flow.native and other.native:
+                # Dos nativos: lo mira _same_event_native, que sabe que la prioridad no los separa.
                 continue
             theirs = self.effective.get(other.flow_id)
             if theirs is None or _trigger_signature(theirs) != mine:
@@ -1767,6 +1851,12 @@ def _trigger_signature(definition: Mapping[str, Any]) -> tuple[str, str] | None:
     return ("silencio", speaker)
 
 
+def _native_event(definition: Mapping[str, Any] | None) -> str | None:
+    """El evento con el que el motor admite un flujo nativo (``dispara.evento``), o ``None``."""
+    event = _get(definition, "dispara", "evento") if isinstance(definition, Mapping) else None
+    return event if isinstance(event, str) and not is_unresolved(event) else None
+
+
 def _relations(definition: Mapping[str, Any], own_product: str) -> set[tuple[str, str]]:
     found: set[tuple[str, str]] = set()
     for key in ("le_gana_a", "no_arranca_mientras"):
@@ -1779,6 +1869,39 @@ def _relations(definition: Mapping[str, Any], own_product: str) -> set[tuple[str
 
 def _is_url_button(button: object) -> bool:
     return isinstance(button, Mapping) and button.get("type") == "URL"
+
+
+def _is_static_url(url: object) -> bool:
+    """Una URL fija de un boton (sin ``{{n}}``): el envio no la llena. Como ``approved_templates.is_static_url``."""
+    return isinstance(url, str) and url.startswith("https://") and "{{" not in url and "}}" not in url \
+        and not any(char.isspace() for char in url)
+
+
+def _native_button_problem(buttons: list[object], groups: int) -> str | None:
+    """Por que el envio nativo no manda los botones de esta plantilla, o ``None`` si los manda."""
+    if groups > 1:
+        return "La plantilla tiene más de un grupo de botones, y el motor nativo no sabe mandarla."
+    for button in buttons:
+        if not isinstance(button, Mapping):
+            return "La plantilla tiene un botón que no se puede leer."
+        if button.get("type") == "QUICK_REPLY":
+            return ("La plantilla tiene un botón de respuesta rápida, y el motor nativo solo manda "
+                    "botones de URL fija.")
+        if button.get("type") != "URL":
+            return "La plantilla tiene un botón de otro tipo, y el motor nativo solo manda botones de URL fija."
+        if not _is_static_url(button.get("url")):
+            return ("La plantilla tiene un botón de URL con una variable, y el motor nativo no la llena: "
+                    "solo manda botones de URL fija.")
+    return None
+
+
+def _native_count_reason(placeholders: list[int], variables: list[object]) -> str:
+    """La razon de un conteo distinto en un paso nativo: cuantos marcadores tiene la plantilla."""
+    count = len(placeholders)
+    marks = "ningún marcador" if not count else "un marcador ({{1}})" if count == 1 \
+        else f"{count} marcadores ({{{{1}}}} a {{{{{count}}}}})"
+    return (f"La plantilla tiene {marks} y el paso manda {len(variables)} variables: "
+            "escribí en variables una por marcador, en su orden, de entre nombre y producto.")
 
 
 def _is_dynamic_url(url: object) -> bool:

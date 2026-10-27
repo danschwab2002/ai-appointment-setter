@@ -73,7 +73,7 @@ __all__ = [
     "ENGINE_CAPABILITIES_NATIVE", "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_PARAMETERS", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
     "BolsaLedger", "ControlLine", "Eligible", "EngineCapabilities", "EngineFlow", "Firing", "FlowRef",
     "GateDecision", "GateFacts", "PersonView", "Plan", "PlanInvalid", "PlanNotSupported", "PlannedStep",
-    "RunView", "StartDecision", "evaluate_gate", "first_eligible", "legacy_motivo", "native_not_supported", "not_supported", "plan_start",
+    "RunView", "StartDecision", "evaluate_gate", "first_eligible", "legacy_motivo", "native_not_supported", "native_variables_fit", "not_supported", "plan_start",
     "plan_steps", "pool_zone", "step_start", "wins",
 ]
 
@@ -260,7 +260,9 @@ def not_supported(definition: Mapping[str, Any], capabilities: EngineCapabilitie
 
 # El motor nativo de flow-engine-v2 (§9, el PR 2 en 20261024000200): ejecuta un flujo que nace en el
 # motor, sin legado, disparado por la compra. Un solo envio (la forma de pasos ``nativo:compra``), con
-# ``nombre`` y ``producto``, sin boton, y el paso ``etiquetar`` (lo ejecuta el bridge, PR 3).
+# las variables que declara el paso de entre ``nombre`` y ``producto`` (E-115, 20261026000100), sin
+# boton declarado, y el paso ``etiquetar`` (lo ejecuta el bridge, PR 3). La plantilla puede traer
+# botones de URL fija: no llevan parametro (los mira la regla 13 contra el catalogo).
 ENGINE_CAPABILITIES_NATIVE = EngineCapabilities(
     triggers=frozenset({"compra"}),
     step_types=frozenset({"esperar", "plantilla", "etiquetar"}),
@@ -271,9 +273,23 @@ ENGINE_CAPABILITIES_NATIVE = EngineCapabilities(
     exits=frozenset(),
     relations_between_engine_flows_only=True,
 )
-# Las variables de la forma nativa de la compra (``_flow_engine_native_steps('nativo:compra')``): el
-# compilador exige exactamente esta lista (``variables_differ``).
+# Las variables que el bridge sabe llenar en un paso nativo de la compra
+# (``_flow_engine_native_steps('nativo:compra')``, ``variables_de``): el paso manda las que declara, en
+# su orden, al menos una y ninguna repetida; otra lista es ``variables_differ`` (20261026000100).
 NATIVE_PURCHASE_VARIABLES = ("nombre", "producto")
+
+
+def native_variables_fit(variables: object) -> bool:
+    """Las variables de un paso nativo: una lista no vacia, sin repetidas, de ``NATIVE_PURCHASE_VARIABLES``.
+
+    El mismo criterio que el compilador de la base con ``variables_de`` (20261026000100).
+    """
+    return (
+        isinstance(variables, list)
+        and bool(variables)
+        and all(isinstance(item, str) and item in NATIVE_PURCHASE_VARIABLES for item in variables)
+        and len(set(variables)) == len(variables)
+    )
 # Los motivos con los que la base no abre ni admite un flujo nativo (``_flow_engine_native_unsupported``).
 NATIVE_UNSUPPORTED_TRIGGER = "motor_nativo:disparador"
 NATIVE_UNSUPPORTED_PERMISSION = "motor_nativo:permiso"
@@ -286,7 +302,8 @@ def native_not_supported(definition: Mapping[str, Any]) -> tuple[str, ...]:
 
     Es la regla 14 de un flujo nativo (flow-engine-v2 §9): lo que la base mira al abrirlo y al admitirlo
     (``_flow_engine_native_unsupported``, 20261024000200), y lo que el compilador de la politica rechaza
-    con la forma ``nativo:compra`` (un envio, las variables exactas, sin espera despues del envio).
+    con la forma ``nativo:compra`` (un envio, variables de ``nombre`` y ``producto``, sin espera
+    despues del envio).
     """
     found: list[str] = []
 
@@ -314,7 +331,7 @@ def native_not_supported(definition: Mapping[str, Any]) -> tuple[str, ...]:
         add(code)
     for step in _walk_steps(definition.get("pasos")):
         if step_type(step) == "plantilla" and isinstance(step, Mapping) \
-                and step.get("variables") != list(NATIVE_PURCHASE_VARIABLES):
+                and not native_variables_fit(step.get("variables")):
             add(f"{NOT_SUPPORTED}:variables_differ")
     return tuple(found)
 

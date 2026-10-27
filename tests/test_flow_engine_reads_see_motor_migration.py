@@ -79,6 +79,12 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
         # Las conversaciones del comprador para pausar al agente (20261025000400,
         # E-100): una funcion nueva, no toca ninguna existente.
         "20261025000400_purchase_agent_pause_v1.sql",
+        # La forma nativa con las variables del paso (20261026000100, E-115): parcha la
+        # forma nativa y el compilador, y no toca las funciones de esta.
+        "20261026000100_flow_engine_native_template_shape_v1.sql",
+        # La oferta del evento en el caso nativo (20261026000200, E-122): parcha la
+        # admision nativa y get_followup_execution_context, y no toca las funciones de esta.
+        "20261026000200_flow_engine_native_offer_in_context_v1.sql",
     ]
     native = (MIGRATIONS / "20261024000200_flow_engine_native_v1.sql").read_text(encoding="utf-8")
     assert "read_automation_expert_flows_v1" not in native

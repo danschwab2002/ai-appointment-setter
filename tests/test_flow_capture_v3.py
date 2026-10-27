@@ -219,6 +219,39 @@ def test_a_planted_datum_breaks_the_v3_shape_and_the_message_hides_it(
         assert "@" not in text and "hermes~" not in text
 
 
+# El policy_key de un flujo del motor ('flujo:' || flow_id), el del carrito nativo de ATT1 (att1-db,
+# 2026-10-26, E-127): sin guiones tiene nueve cifras seguidas. Entra solo entero y canonico.
+ENGINE_POLICY_KEY = "flujo:3ad1c523-2869-43f1-82ad-ed2610f2f521"
+POLICY_KEY_PATHS = [
+    ("casos", 1, "policy_key"), ("secuencias", 1, "policy_key"),
+    ("config", "followup_policy_versions", 1, "policy_key"),
+    ("config", "pilot_scope_versions", 1, "policy_key"),
+]
+
+
+@pytest.mark.parametrize("path", POLICY_KEY_PATHS)
+def test_the_policy_key_of_an_engine_flow_keeps_the_v3_shape(path: tuple[Any, ...]) -> None:
+    data = copy.deepcopy(SYNTHETIC)
+    _set(path, ENGINE_POLICY_KEY)(data)
+    assert fc.shape_problems(data, fc.FORM_V3) == []
+
+
+@pytest.mark.parametrize("value", [
+    ENGINE_POLICY_KEY[:-1],                                   # un UUID corto
+    ENGINE_POLICY_KEY + "0",                                  # un UUID largo
+    ENGINE_POLICY_KEY.replace("flujo:", "flujos:"),           # otro prefijo
+    ENGINE_POLICY_KEY.replace("flujo:", ""),                  # sin prefijo: no es una forma fija
+    ENGINE_POLICY_KEY.replace("-", ""),                       # sin guiones
+    "flujo:" + PHONE_DIGITS + "000",                          # un telefono detras de flujo:
+    "att1-" + PHONE_DIGITS,                                   # una clave con un telefono
+])
+def test_any_other_policy_key_with_nine_digits_still_breaks_the_shape(value: str) -> None:
+    data = copy.deepcopy(SYNTHETIC)
+    _set(("casos", 1, "policy_key"), value)(data)
+    assert fc.ShapeProblem("casos[1].policy_key", "tiene nueve o mas digitos seguidos") in \
+        fc.shape_problems(data, fc.FORM_V3)
+
+
 @pytest.mark.parametrize("path", [("cupones", 0, "failure_code"), ("links", 0, "status")])
 def test_the_independent_sweep_also_catches_a_coupon_or_a_url(path: tuple[Any, ...]) -> None:
     data = copy.deepcopy(SYNTHETIC)
@@ -373,3 +406,12 @@ def test_the_real_v3_fixture_comes_from_this_query_and_keeps_its_counts() -> Non
     trims = meta["recortes"]
     expected = {**REAL["_captured"]["conteos"], **{name: trim["fixture"] for name, trim in trims.items()}}
     assert fc.count_sections(fc.restore_fixture(REAL), fc.FORM_V3) == expected
+
+
+def test_the_policy_key_of_an_engine_flow_also_passes_in_the_reevaluations() -> None:
+    # El sintetico no tiene reevaluaciones: van sobre el fixture real del 21/10, que tiene 125.
+    data = copy.deepcopy(REAL)
+    assert data["reevaluaciones"]
+    for row in data["reevaluaciones"]:
+        row["data"]["policy_key"] = ENGINE_POLICY_KEY
+    assert fc.shape_problems(data, fc.FORM_V3) == []

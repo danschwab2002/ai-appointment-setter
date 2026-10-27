@@ -1440,17 +1440,55 @@ def test_handoff_link_note_fingerprint_is_before_the_purchase_agent_pause() -> N
         assert marker in compact_fingerprint, marker
 
 
-def test_purchase_agent_pause_fingerprint_is_last() -> None:
+def test_purchase_agent_pause_fingerprint_is_before_the_native_template_shape() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261025000400 (las conversaciones del comprador para pausar al agente, E-100) es la ultima.
-    fingerprint = sql.split("'20261025000400'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261025000400 (las conversaciones del comprador para pausar al agente, E-100) va
+    # justo antes de la de la forma nativa con las variables del paso (20261026000100, E-115).
+    fingerprint = sql.split("'20261025000400'", 1)[1].split(
+        "    union all\n    select\n        '20261026000100'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261025000400_purchase_agent_pause_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",2,'purchase_agent_pause')")
+    assert compact_fingerprint.endswith(",2,'purchase_agent_pause'")
     for marker in (
         "to_regprocedure('public.read_purchase_agent_pause_conversations_v1(bigint,bigint,text,text,text)')",
         "position('ambiguous'indefinition)>0",
         "andnothas_function_privilege('anon',oid,'EXECUTE')",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_flow_engine_native_template_shape_fingerprint_is_before_the_offer_in_context() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261026000100 (la forma nativa con las variables del paso, E-115) va justo
+    # antes de la de la oferta del evento en el caso nativo (20261026000200, E-122).
+    fingerprint = sql.split("'20261026000100'", 1)[1].split(
+        "    union all\n    select\n        '20261026000200'", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261026000100_flow_engine_native_template_shape_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'flow_engine_native_template_shape'")
+    for marker in (
+        "to_regprocedure('public._flow_engine_native_steps(text)')",
+        "position('variables_de'indefinition)>0",
+        "to_regprocedure('public._flow_engine_compile_policy_core(jsonb,text,integer,text,text)')",
+        "position('flow_engine_native_variables:end'indefinition)>0",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_flow_engine_native_offer_in_context_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261026000200 (la oferta del evento en el caso nativo, E-122) es la ultima.
+    fingerprint = sql.split("'20261026000200'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261026000200_flow_engine_native_offer_in_context_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'flow_engine_native_offer_in_context')")
+    for marker in (
+        "to_regprocedure('public._flow_engine_admit_native_flow(public.flow_controls,public.webhook_events,"
+        "uuid,text,timestamptz,bigint,bigint,text)')",
+        "to_regprocedure('public.get_followup_execution_context(uuid,text,bigint,timestamptz)')",
+        "position('flow_engine_native_offer_in_context'indefinition)>0",
     ):
         assert marker in compact_fingerprint, marker

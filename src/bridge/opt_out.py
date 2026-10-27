@@ -119,6 +119,31 @@ _RULES = (
             + _POLITE_SUFFIX
         ),
     ),
+    # Added 2026-10-27 after the Maribel inbound test: «no me hablen más» was
+    # not taken as an opt-out (12:31Z) while the agent answered as if it had
+    # been. «Hablar» and «molestar», in tú, vos and ustedes; the accent is
+    # already gone after _normalize, so «hablés» arrives as «hables». «Basta»
+    # alone stays out on purpose: it can be anger, and the opt-out is final.
+    (
+        "do_not_talk_again",
+        re.compile(
+            _POLITE_PREFIX
+            + r"(?:ya )?(?:no me (?:hablen|hables|hable)(?: mas)?"
+            + r"|no quiero que me (?:hablen|hables|hable)(?: mas)?"
+            + r"|(?:dejen|deja|deje) de hablarme)"
+            + _POLITE_SUFFIX
+        ),
+    ),
+    (
+        "do_not_bother_again",
+        re.compile(
+            _POLITE_PREFIX
+            + r"(?:ya )?(?:no me (?:molesten|molestes|moleste)(?: mas)?"
+            + r"|no quiero que me (?:molesten|molestes|moleste)(?: mas)?"
+            + r"|(?:dejen|deja|deje) de molestarme)"
+            + _POLITE_SUFFIX
+        ),
+    ),
 )
 # What may surround the request in the same message without changing it: a
 # greeting, thanks, an apology or a plain lack of interest. Anything else (a

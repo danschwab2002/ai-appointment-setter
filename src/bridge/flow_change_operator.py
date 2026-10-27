@@ -189,7 +189,7 @@ def validate_proposal(payload: object, *, environ: Mapping[str, str]) -> dict[st
         if isinstance(unavailable, str):
             simulacion = {"status": "failed", "reason_code": unavailable}
         elif "new_flow_counts" in data:
-            simulacion = build_new_flow_simulation(data.get("new_flow_counts"), items)
+            simulacion = build_new_flow_simulation(data.get("new_flow_counts"), items, world=world)
         elif "engine" in data:
             simulacion = build_simulation(data.get("engine"), data.get("history"), items,
                                           time_zone=instance.time_zone, store=data.get("store"))

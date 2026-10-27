@@ -305,6 +305,25 @@ def _same_trigger(related: bool) -> list[Finding]:
     return run(definition, in_world=world(other))
 
 
+# Dos flujos nativos con el mismo evento (E-139): la bienvenida publicada en el estado que se pide y una
+# segunda bienvenida, nativa, que la propuesta toca.
+WELCOME_ID = "0000000b-0000-4000-8000-0000000b0001"
+SECOND_WELCOME_ID = "0000000b-0000-4000-8000-0000000b0002"
+
+
+def _native_welcome(key: str, flow_id: str, state: str) -> WorldFlow:
+    return WorldFlow(flow_id=flow_id, product_ref="att1", flow_key=key, state=state, active_version=1,
+                     generation=1, versions={1: published({**welcome(), "flujo": key})}, native=True)
+
+
+def _same_event_for_all(other_state: str) -> list[Finding]:
+    """Pasar a todos la segunda bienvenida (en la cohorte) con la primera en ``other_state``."""
+    flows = world(_native_welcome("bienvenida", WELCOME_ID, other_state),
+                  _native_welcome("bienvenida_ae", SECOND_WELCOME_ID, "cohorte"))
+    item = ProposalItem(producto="att1", flujo="bienvenida_ae", flow_id=SECOND_WELCOME_ID, tipo="prender")
+    return list(check([item], in_world=flows, catalog=native_catalog()).blocks)
+
+
 def _personal_touches(count: int) -> list[dict[str, Any]]:
     """``count`` envios con ``cupon: personal``, separados por 24 h."""
     steps: list[dict[str, Any]] = []
@@ -652,6 +671,7 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
         lambda: run(flow_def("descuento"), "descuento"),
     ),
     "same_trigger_unrelated": (lambda: _same_trigger(False), lambda: _same_trigger(True)),
+    "same_event_native_flows": (lambda: _same_event_for_all("prendido"), lambda: _same_event_for_all("pausado")),
     "wait_without_contesta": (
         lambda: run(flow_def("precheckout"), "precheckout"),
         lambda: run(with_(flow_def("precheckout"), lambda d: d["termina"].update(si=["compra", "contesta"])),
@@ -691,7 +711,9 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
         lambda: run_new(),
     ),
     "motor_nativo:forma": (
-        lambda: run_new(welcome(pasos=[{**CONFIRMED_STEP, "variables": ["producto", "nombre"]}])),
+        # Una variable repetida: el paso nativo elige sus variables de entre nombre y producto (E-115),
+        # pero cada una una sola vez.
+        lambda: run_new(welcome(pasos=[{**CONFIRMED_STEP, "variables": ["nombre", "nombre"]}])),
         lambda: run_new(),
     ),
     "engine_not_supported:etiquetar": (
@@ -807,6 +829,7 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         "rollback_target_is_active", "state_transition_invalid", "flow_has_no_version",
         "en_curso_not_supported", "identifier_not_allowed", "client_purchase_ok_missing",
         "flow_already_registered", "new_flow_must_start_in_cohort", "prender_a_cohorte_needs_paused_native",
+        "same_event_native_flows",
     }
     assert all(pairs == {(None, "advertencia")} for code, pairs in fv.CODE_RULES.items()
                if code in fv.WARNING_CODES)

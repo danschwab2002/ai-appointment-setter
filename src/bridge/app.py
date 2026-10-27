@@ -75,6 +75,7 @@ from bridge.purchase_agent_pause import (
 from bridge.product_label import ProductLabeler
 from bridge.product_routes import HotmartUnrouted, ProductRoute, ProductRoutes
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
+from bridge.payment_link_coupon import validate_payment_link_coupon_code
 from bridge.filtering import EventDecision, classify_chatwoot_event
 from bridge.agent_provenance import AgentTurn, CONTEXT_BUILDER_VERSION
 from bridge.hermes import HermesShadowProcessor, payment_link_product
@@ -866,6 +867,9 @@ class Settings:
     # escrito en el mensaje, como siempre.
     payment_link_template_name: str | None = None
     payment_link_template_language: str | None = None
+    # El cupon fijo de la instancia en el link del agente (E-148): vacio, el
+    # link sale como siempre. Ver bridge/payment_link_coupon.py.
+    payment_link_coupon_code: str | None = None
     chatwoot_post_inbound_discount_planning_enabled: bool = False
     commercial_ally_discount_policy_key: str | None = None
     commercial_ally_discount_policy_version: int | None = None
@@ -2057,6 +2061,9 @@ class Settings:
             ),
             payment_link_template_language=(
                 os.getenv("PAYMENT_LINK_TEMPLATE_LANGUAGE", "").strip() or None
+            ),
+            payment_link_coupon_code=(
+                os.getenv("PAYMENT_LINK_COUPON_CODE", "").strip() or None
             ),
             chatwoot_post_inbound_discount_planning_enabled=(
                 os.getenv(
@@ -4085,6 +4092,7 @@ def create_app(
             "DURABLE_OUTBOUND_ENABLED requires LANCEMOS_PILOT_BOUNDARY_ENABLED"
         )
     _validate_hotmart_capture(settings)
+    validate_payment_link_coupon_code(settings.payment_link_coupon_code)
     _validate_precheckout_first_contact(settings)
     _validate_payment_slip_first_contact(settings)
     _validate_payment_failure_own_scope(settings)
@@ -7102,6 +7110,7 @@ def create_app(
                     # plantilla. Si no se puede usar, sale escrito.
                     link_template_name=settings.payment_link_template_name,
                     link_template_language=settings.payment_link_template_language,
+                    link_coupon_code=settings.payment_link_coupon_code,
                     part_delay_seconds=settings.reply_part_delay_seconds,
                     part_sleep=reply_part_sleep,
                 )

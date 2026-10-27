@@ -1,0 +1,69 @@
+{
+  "_capture": {
+    "origen": "validate_flow_engine_native_offer_in_context.mjs: la cadena entera de migraciones (PGlite) con la compra capturada tests/fixtures/hotmart_purchase_approved_att1_bienvenida_20261026.json",
+    "encargo": "E-122",
+    "regenerar": "cd tests/sql/followup_engine && node validate_flow_engine_native_offer_in_context.mjs --emit"
+  },
+  "flow_event": {
+    "fuente": "hotmart",
+    "tipo": "compra",
+    "evento_id": "<EVENT>",
+    "producto_ref": "att1",
+    "oferta": "gopi6lh7",
+    "contacto_id": "<CONTACT>",
+    "momento": "<MOMENTO>",
+    "chatwoot": {
+      "account_id": 2,
+      "inbox_id": 11
+    },
+    "destino": "12025550124"
+  },
+  "admission": {
+    "flow_id": "<FLOW>",
+    "outcome": "motor_arranco",
+    "reason": null,
+    "created": true
+  },
+  "execution_context": {
+    "action_id": "<ACTION>",
+    "action_type": "first_contact_review",
+    "step_key": "first_contact",
+    "recovery_case_id": "<CASE>",
+    "contact_id": "<CONTACT>",
+    "source_event_id": "<EVENT>",
+    "buyer_name": "Edith Garcia Perez",
+    "buyer_email": "comprador.sintetico@example.com",
+    "buyer_phone": "12025550124",
+    "product_name": "Alimenta tu Tiroides",
+    "offer_code": "gopi6lh7",
+    "current_goal": null,
+    "lead_stage": "new"
+  },
+  "execution_context_before_migration": {
+    "action_id": "<ACTION>",
+    "action_type": "first_contact_review",
+    "step_key": "first_contact",
+    "recovery_case_id": "<CASE>",
+    "contact_id": "<CONTACT>",
+    "source_event_id": "<EVENT>",
+    "buyer_name": "Edith Garcia Perez",
+    "buyer_email": "comprador.sintetico@example.com",
+    "buyer_phone": "12025550124",
+    "product_name": "Alimenta tu Tiroides",
+    "offer_code": null,
+    "current_goal": null,
+    "lead_stage": "new"
+  },
+  "step_context": {
+    "template_name": "att1_bienvenida_01",
+    "template_language": "es_MX",
+    "template_variables": [
+      "producto"
+    ],
+    "send_ordinal": 1
+  },
+  "step_tail": {
+    "etiquetar": "cliente",
+    "producto": "Alimenta tu Tiroides"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "_capture": {
+    "fecha": "2026-10-27T18:42:00Z",
+    "origen": "Checkout publico de Hotmart pedido sin sesion con curl (E-146, documentacion/2026-10-27-maribel-link-con-cupon.md del OS). Se leyo el estado que trae la pagina (__NUXT_DATA__): coupon.code, coupon.error, isCouponApplied y el resumen FULL_PRICE/COUPON.",
+    "link_del_agente": "El link que mando el agente de Maribel en el E2E del 2026-10-27 17:16Z (v1.20.3, inbox 13, decision send_payment_link). El sck real se reemplazo por un ULID sintetico de la misma forma (hermes~v1~ mas 26 caracteres): no es un dato personal, pero no hace falta. Sin telefonos ni mails.",
+    "producto": "F107441770M (producto 8443991, El Protocolo Biohacking +), oferta u8ikyx78, la de /epma/evg/vsl/ads-a"
+  },
+  "link_del_agente_e2e": "https://pay.hotmart.com/F107441770M?off=u8ikyx78&checkoutMode=10&src=hermes&sck=hermes~v1~01K8KZQ3M7R2VYB4M6X9CDPTZA",
+  "cupon_de_la_instancia": "PROTOCOLO10+",
+  "medido": [
+    {"sufijo": "", "cupon_aplicado": false, "total_mxn_sin_iva": "1204.31", "error": null},
+    {"sufijo": "&offDiscount=PROTOCOLO10%2B", "cupon_aplicado": true, "total_mxn_sin_iva": "1083.88", "coupon_code": "protocolo10+", "error": null},
+    {"sufijo": "&src=hermes&sck=hermes~v1~01TEST&offDiscount=PROTOCOLO10%2B", "cupon_aplicado": true, "total_mxn_sin_iva": "1083.88", "coupon_code": "protocolo10+", "error": null},
+    {"sufijo": "&offDiscount=protocolo10%2B", "cupon_aplicado": true, "total_mxn_sin_iva": "1083.88", "error": null},
+    {"sufijo": "&offDiscount=PROTOCOLO10+", "cupon_aplicado": false, "coupon_code_recibido": "PROTOCOLO10 ", "error": "hotmart_checkout_error_hmc_024"},
+    {"sufijo": "&offDiscount=PROTOCOLO10", "cupon_aplicado": false, "error": "hotmart_checkout_error_hmc_024"}
+  ]
+}
