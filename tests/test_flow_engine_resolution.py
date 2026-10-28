@@ -291,6 +291,49 @@ def test_e_a_failed_read_of_the_routes_goes_through_the_wrapper() -> None:
     assert base.body_of("plan_lancemos_pilot_cart_recovery") == off.body_of("plan_lancemos_pilot_cart_recovery")
 
 
+# E-165: el motor prendido sin A1 con cupon ni A2/Z (el carrito de un toque de Maribel). Lo que
+# factura es el carrito de la instancia: con la ruta en legado, la llamada de hoy; con una ruta en
+# motor (movida contra el runbook), el carrito va forzado al legado y la base deja la divergencia.
+
+
+def _without_cart_touches(base: _Base) -> tuple[SupabaseClient, FlowEngineRuntime]:
+    client = base.client()
+    runtime = FlowEngineRuntime(supabase=client, instance=INSTANCE, cart_touches_enabled=False)
+    asyncio.run(runtime.routes.refresh_if_due())
+    return client, runtime
+
+
+@pytest.mark.parametrize("routes", [_routes("legado"), _routes(None)])
+def test_f_without_the_cart_touches_and_the_route_in_legacy_the_call_is_today(routes: dict[str, Any]) -> None:
+    off = _Base()
+    _resolve(off, flow_engine=False)
+    base = _Base(routes=routes)
+    client, runtime = _without_cart_touches(base)
+    _resolve(base, flow_engine=True, client=client, runtime=runtime)
+
+    assert "admit_flow_engine_hotmart_v1" not in base.names()
+    assert base.body_of("plan_lancemos_pilot_cart_recovery") == off.body_of("plan_lancemos_pilot_cart_recovery")
+    assert base.status_patches == off.status_patches
+
+
+def test_f_without_the_cart_touches_a_route_in_motor_forces_the_legacy(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    base = _Base(routes=_routes("motor"), admission=[_admission("legado_por_divergencia")])
+    client, runtime = _without_cart_touches(base)
+    with caplog.at_level("WARNING", logger="bridge.resolution"):
+        _resolve(base, flow_engine=True, client=client, runtime=runtime)
+
+    forced = [body["p_force_legacy"] for name, body in base.calls if name == "admit_flow_engine_hotmart_v1"]
+    assert forced == [True]
+    assert [patch["processing_status"] for patch in base.status_patches] == ["processed"]
+    assert "flow_engine_cart_forced_legacy" in caplog.text
+    assert "reason=cart_touches_disabled" in caplog.text
+    # No cuenta como una admision sin respuesta.
+    assert len(runtime.admission_failures) == 0
+    assert runtime.readiness()["flow_engine_cart_touches"] == "disabled"
+
+
 def test_the_cache_reads_the_routes_once_a_minute() -> None:
     base = _Base(routes=_routes("motor"))
     now = [1000.0]

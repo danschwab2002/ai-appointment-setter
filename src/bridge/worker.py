@@ -110,7 +110,7 @@ from bridge.native_flows import (
     NATIVE_NEEDS_DIRECT_TEMPLATE,
     NATIVE_NEEDS_ENGINE,
     NATIVE_CART_TRIGGER,
-    NATIVE_PURCHASE_TRIGGER,
+    NATIVE_PURCHASE_RETRY, NATIVE_PURCHASE_STARTED, NATIVE_PURCHASE_TRIGGER,
     NATIVE_QUEUE_PAGE,
     NATIVE_STEP_CONTEXT_UNAVAILABLE,
     NATIVE_STEP_VARIABLES,
@@ -3695,6 +3695,16 @@ class ResolutionWorker:
                 queued.attempts,
                 outcome,
             )
+            # E-165: la compra que la primera admision no contesto no se pauso (no se sabia si el
+            # flujo nativo la tomaba). Con la respuesta, se pausa si ningun flujo arranco.
+            purchase = parse_hotmart_purchase_payload(queued.payload)
+            if self._purchase_agent_pause is not None and purchase is not None:
+                await self._pause_agent_for_purchase(
+                    queued.webhook_event_id,
+                    queued.payload,
+                    purchase,
+                    native_outcome=outcome,
+                )
 
     async def _pause_agent_for_purchase(
         self,
@@ -3702,19 +3712,30 @@ class ResolutionWorker:
         payload: dict[str, Any],
         purchase: HotmartPurchaseData,
         *,
-        native_product: str | None,
+        native_outcome: str | None,
     ) -> None:
         """E-100: after the purchase is applied, the agent stops answering the buyer.
 
-        Only for a product of the instance. With a native flow on for that
-        product the pause is skipped: its welcome template goes to the same
-        conversation, and a paused conversation stops proactive sends. It never
-        fails the purchase: ``pause_buyer`` logs and returns.
+        Only for a product of the instance. Since E-165 the pause is skipped
+        only for the buyer a native purchase flow took (``native_outcome`` is
+        ``admitida``: its welcome template goes to the same conversation, and a
+        paused conversation stops proactive sends), and while the native
+        admission has not answered (``reintentar``: the queue retry pauses if
+        no flow started). A buyer outside the cohort, one the flow does not
+        take, or one it can never take is paused as without the flow.
+        ``None`` is a purchase without a native flow on. It never fails the
+        purchase: ``pause_buyer`` logs and returns.
         """
         assert self._purchase_agent_pause is not None
-        if native_product is not None:
+        if native_outcome == NATIVE_PURCHASE_STARTED:
             logger.info(
-                "purchase_agent_pause_skipped event_id=%s reason=native_flow_on",
+                "purchase_agent_pause_skipped event_id=%s reason=native_flow_started",
+                event_id,
+            )
+            return
+        if native_outcome == NATIVE_PURCHASE_RETRY:
+            logger.info(
+                "purchase_agent_pause_skipped event_id=%s reason=native_admission_pending",
                 event_id,
             )
             return
@@ -3790,15 +3811,20 @@ class ResolutionWorker:
                 purchase.event_id,
                 result.outcome,
             )
-            if self._purchase_agent_pause is not None:
-                await self._pause_agent_for_purchase(
-                    event_id, payload, purchase, native_product=native_product
-                )
+            native_outcome: str | None = None
             if native_product is not None:
                 # Primero la compra corto lo abierto (choque 2 del diseno);
                 # recien ahora arranca el flujo nativo. Con not_found (una
                 # venta sin caso del recuperador) tambien dispara.
-                await self._admit_native_purchase(event_id, payload, native_product)
+                native_outcome = await self._admit_native_purchase(
+                    event_id, payload, native_product
+                )
+            if self._purchase_agent_pause is not None:
+                # E-165: despues de la admision nativa, para saber si un flujo
+                # tomo al comprador; si no lo tomo, se pausa como sin flujo.
+                await self._pause_agent_for_purchase(
+                    event_id, payload, purchase, native_outcome=native_outcome
+                )
             return
         slip_event = (
             self._payment_slip is not None

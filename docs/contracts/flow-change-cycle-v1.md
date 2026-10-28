@@ -493,6 +493,7 @@ El paso 4 de la T5: `scripts/flow_change_operator.py mover <producto>/<flujo> mo
 - **A `legado`** no lleva revalidación (`p_revalidation` nulo). Frena antes del código si el scope del legado no está `armed`. Es la vuelta atrás de la T5: apagar `FLOW_ENGINE_ENABLED` no saca la ruta de `motor`.
 - **Pasa la generación que leyó** como `p_expected_generation`: si otro la movió en el medio, la base contesta `flow_route_generation_stale` y el comando sale con 3. Con la ruta ya en el destino, no escribe ni pide el código.
 - **Lo en curso no se mueve**, y el comando lo dice antes del código, con los dos conteos.
+- **El carrito a `motor` pide A1 y A2/Z en el bridge** (E-165, `flow-engine-v2` 2.8.0, sección 20). El motor ya arranca sin ellos, y un bridge sin ellos manda cada carrito de una ruta en `motor` al legado. La base no conoce los flags del bridge, así que el comando lo dice antes del código: `/ready` tiene que decir `flow_engine_cart_touches: enabled`.
 - **Andy no lo corre.** Lo corre una persona en una terminal (`ssh -t`).
 
 ## Crear un flujo: el ítem `nuevo` y la cohorte (1.7.0)

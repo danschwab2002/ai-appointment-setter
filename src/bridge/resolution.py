@@ -142,6 +142,15 @@ async def _admit_through_engine(
     on, the call goes with ``p_force_legacy`` (principle 1.4).
     """
     force_legacy = flow_engine.admission_failures.should_force_legacy(webhook_event_id)
+    if not flow_engine.cart_touches_enabled:
+        # E-165: la ruta esta en motor y el bridge no corre A1 con cupon ni A2/Z. El motor
+        # cerraria A2 como no soportado: el carrito va al legado, que lo atiende con el carrito
+        # de esta instancia, y la base deja la divergencia (MOT-001 la avisa).
+        logger.warning(
+            "flow_engine_cart_forced_legacy event_id=%s reason=cart_touches_disabled",
+            webhook_event_id,
+        )
+        force_legacy = True
     try:
         admission = await supabase.admit_flow_engine_cart(
             webhook_event_id=webhook_event_id,

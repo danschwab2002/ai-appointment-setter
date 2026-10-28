@@ -2924,21 +2924,40 @@ FLOW_ENGINE_REQUIRED_FLAGS = (
         "dispatcher_approved_template_direct_enabled",
         "DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED",
     ),
+)
+# Lo que necesita una ruta del carrito del legado en ``motor`` (E-165): A1 con cupon y A2/Z.
+# Ya no frena el arranque del motor: una instancia con el carrito de un toque (Maribel) prende
+# el motor por sus flujos nativos sin cambiar su carrito. Sin ellos, el carrito de una ruta en
+# ``motor`` va forzado al legado (``FlowEngineRuntime.cart_touches_enabled``).
+FLOW_ENGINE_CART_ROUTE_FLAGS = (
     ("recovery_discount_first_touch_enabled", "RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED"),
     ("recovery_cart_followups_enabled", "RECOVERY_CART_FOLLOWUPS_ENABLED"),
 )
 
 
+def flow_engine_cart_touches_enabled(settings: Settings) -> bool:
+    """Si el bridge corre A1 con cupon y A2/Z: lo que pide una ruta del carrito en ``motor``."""
+    return all(
+        getattr(settings, field_name) is True
+        for field_name, _ in FLOW_ENGINE_CART_ROUTE_FLAGS
+    )
+
+
 def _validate_flow_engine(settings: Settings) -> None:
     """Startup gates of the flow engine bridge (flow-engine-v1, section 8).
 
-    The engine runs the cart with its three touches: the bridge needs the
-    instance manifest (the instance mark of every read), the pilot boundary
-    (the legacy scope of the admission), the resolution worker (the batch that
-    admits the cart), the dispatcher in direct template mode (without it the
-    step does not use the template of the pinned version) and A1 with its
-    coupon plus A2 and Z (without them an engine A2 would close as
-    unsupported). Off, nothing is read.
+    The bridge needs the instance manifest (the instance mark of every read),
+    the pilot boundary (the legacy scope of the admission), the resolution
+    worker (the batch that admits the cart and the purchase) and the dispatcher
+    in direct template mode (without it the step does not use the template of
+    the pinned version). Off, nothing is read.
+
+    Since E-165, A1 with its coupon and A2/Z (``FLOW_ENGINE_CART_ROUTE_FLAGS``)
+    no longer stop the start: they are what a legacy cart route in ``motor``
+    needs (without them an engine A2 would close as unsupported), not what the
+    native flows need. A bridge without them sends the cart of a route in
+    ``motor`` to the legacy (``p_force_legacy``) and ``/ready`` says
+    ``flow_engine_cart_touches: disabled``.
     """
     if not settings.flow_engine_enabled:
         return
@@ -5023,6 +5042,7 @@ def create_app(
                 "tenant_ref": settings.instance_manifest.tenant_ref,
                 "ally_ref": settings.instance_manifest.ally_ref,
             },
+            cart_touches_enabled=flow_engine_cart_touches_enabled(settings),
         )
     # MOT-001 (flow-engine-v1, seccion 8): comparte el productor del conector
     # de Slack; sin conector, no avisa y /ready dice sin_slack.
