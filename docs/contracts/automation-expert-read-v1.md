@@ -751,7 +751,7 @@ De solo lectura, `stable`, `security definer` con `search_path` fijo, y solo par
 **La regla, `purchase_after_accepted_send_v1`, es un valor por defecto que decide Dan (D-080-1):**
 
 - una venta es una compra aprobada de Hotmart de un producto de la instancia, contada una vez por transacción;
-- va al recorrido al que el recuperador ya la ató (`by_case`: `recovery_cases.purchase_event_id`, que escribe la correlación de la compra al cerrar el caso abierto, y que es único);
+- va al recorrido al que el recuperador ya la ató (`by_case`: `recovery_cases.purchase_event_id`, que escribe la correlación de la compra al cerrar el caso abierto, y que es único). Desde `20261028000400` (E-169), una compra con el link de un caso también gana ese caso si ya estaba cerrado, como `sequence_exhausted` después del único envío de la bienvenida: esa venta va por `by_case` y no por identidad;
 - si no la ató ningún caso, va por la persona (`by_identity`): al recorrido del motor de la misma persona (su mail en `contact_points`) con el último envío aceptado por Chatwoot en los 7 días antes de la compra. Sin esto, un flujo de un solo envío nunca vendería: la bienvenida cierra su caso al salir (medido en PGlite: el caso queda `sequence_exhausted` y la otra compra no se ata a él);
 - la compra que disparó el recorrido no cuenta para ese recorrido;
 - el toque (`by_step`) es el último paso aceptado antes de la compra; una compra atada a un caso sin ningún envío antes va aparte (`purchases_before_send`).

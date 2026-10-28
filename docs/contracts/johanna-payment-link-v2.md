@@ -96,6 +96,8 @@ For `PURCHASE_APPROVED`, Hotmart supplies SCK at `data.purchase.origin.sck`. The
 
 Correlation proves which issuance produced the sale, not that the original contact was the final buyer of a shared link.
 
+**A purchase with our link always counts (E-169, migration `20261028000400`, Dan's rule of 2026-10-28).** The issuance is marked `purchase_matched` even when its purchase intent is no longer `waiting_for_purchase` (bought through another issuance that shares it, or cancelled); the intent moves to `purchased` only if it was waiting. When the issuance carries a recovery case (`recovery_first_touch`: the cart touches, the payment failure variant), the purchase wins that case in any state that is not `won`: open as before (`won`), or already closed (`sequence_exhausted`, `cancelled`, `expired`, `escalated`, `lost`, `unreachable`, `error`: `won_after_close`). A closed case keeps its `closed_at`; the case context (`purchase_case_status_before`) and the `purchase_detected` conversation event (`case_status_before`) keep the status it had. A case already won by another purchase, or a purchase that already won another case, is left as it is. The migration applies the same rule to the purchases already matched. A purchase through any other path after the sequence ended still does not count: the identity admission keeps looking only at open cases.
+
 ## Safety and rollout
 
 Immediate opt-out, known purchase, takeover/handoff, pause, replaced sequence, identity mismatch, conversation mismatch, stale trigger, invalid catalog, or persistence failure blocks before POST. URLs must not enter logs, errors, screenshots, or broad audit output.

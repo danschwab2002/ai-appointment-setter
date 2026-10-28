@@ -71,7 +71,9 @@ const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.end
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Despues va solo la de sumar ofertas a un scope publicado (E-163), que no toca lo de esta.
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261028000300_pilot_scope_offer_append_v1.sql'])) {
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261028000300_pilot_scope_offer_append_v1.sql',
+  // La compra con nuestro link cuenta siempre (E-169): no toca lo de esta.
+  '20261028000400_purchase_by_our_link_counts_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de sumar ofertas`, names.slice(position + 1));
 }
 if (maribel.name !== 'maribel_retomar_proceso_01' || maribel.category !== 'MARKETING') {

@@ -39,17 +39,19 @@ def test_it_is_one_transaction_and_the_last() -> None:
     # Y despues, la pagina de aprobacion (20261028000100, A′ PR 2).
     # Y despues, el carrito nativo (20261028000200, E-161).
     # Despues, sumar ofertas a un scope publicado (20261028000300, E-163).
-    assert names[-1] == "20261028000300_pilot_scope_offer_append_v1.sql"
-    assert names[-2] == "20261028000200_flow_engine_native_cart_v1.sql"
-    assert names[-3] == "20261028000100_flow_change_slack_approver_v1.sql"
-    assert names[-4] == "20261026000200_flow_engine_native_offer_in_context_v1.sql"
-    assert names[-5] == "20261026000100_flow_engine_native_template_shape_v1.sql"
-    assert names[-6] == "20261025000400_purchase_agent_pause_v1.sql"
-    assert names[-7] == "20261025000300_handoff_link_note_v1.sql"
-    assert names[-8] == "20261025000200_payment_failure_product_name_btrim.sql"
-    assert names[-9] == "20261025000100_automation_expert_native_reads_v1.sql"
-    assert names[-10] == MIGRATION.name
-    assert names[-11] == "20261024000500_flow_engine_native_bridge_v1.sql"
+    # Despues, la compra con nuestro link cuenta siempre (20261028000400, E-169).
+    assert names[-1] == "20261028000400_purchase_by_our_link_counts_v1.sql"
+    assert names[-2] == "20261028000300_pilot_scope_offer_append_v1.sql"
+    assert names[-3] == "20261028000200_flow_engine_native_cart_v1.sql"
+    assert names[-4] == "20261028000100_flow_change_slack_approver_v1.sql"
+    assert names[-5] == "20261026000200_flow_engine_native_offer_in_context_v1.sql"
+    assert names[-6] == "20261026000100_flow_engine_native_template_shape_v1.sql"
+    assert names[-7] == "20261025000400_purchase_agent_pause_v1.sql"
+    assert names[-8] == "20261025000300_handoff_link_note_v1.sql"
+    assert names[-9] == "20261025000200_payment_failure_product_name_btrim.sql"
+    assert names[-10] == "20261025000100_automation_expert_native_reads_v1.sql"
+    assert names[-11] == MIGRATION.name
+    assert names[-12] == "20261024000500_flow_engine_native_bridge_v1.sql"
 
 
 def test_the_validator_is_in_the_npm_chain() -> None:
@@ -62,7 +64,8 @@ def test_the_validator_is_in_the_npm_chain() -> None:
         " && node validate_flow_engine_native_offer_in_context.mjs --check"
         " && node validate_flow_change_slack_approver.mjs"
         " && node validate_flow_engine_native_cart.mjs --check"
-        " && node validate_pilot_scope_offer_append.mjs")
+        " && node validate_pilot_scope_offer_append.mjs"
+        " && node validate_purchase_by_our_link_counts.mjs")
 
 
 def test_only_the_simulation_read_is_granted_and_only_to_service_role_and_the_agent() -> None:

@@ -175,7 +175,9 @@ def test_the_migration_only_opens_the_append_and_is_one_transaction() -> None:
     without_append = re.sub(r"\n\s*if coalesce\(current_setting.*?end if;\n", "\n", mine, flags=re.S)
     assert re.sub(r"\s+", " ", without_append) == re.sub(r"\s+", " ", body)
     names = sorted(path.name for path in MIGRATION.parent.glob("*.sql"))
-    assert names[-1] == MIGRATION.name
+    # Despues va la compra con nuestro link (20261028000400, E-169).
+    assert names[-2] == MIGRATION.name
+    assert names[-1] == "20261028000400_purchase_by_our_link_counts_v1.sql"
 
 
 def test_the_read_sql_reads_and_never_writes() -> None:

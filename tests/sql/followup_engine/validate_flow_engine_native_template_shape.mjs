@@ -31,7 +31,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026102600020
   '20261028000100_flow_change_slack_approver_v1.sql',
   '20261028000200_flow_engine_native_cart_v1.sql',
   // Sumar ofertas a un scope publicado (E-163): solo el trigger de pilot_scope_versions.
-  '20261028000300_pilot_scope_offer_append_v1.sql'])) {
+  '20261028000300_pilot_scope_offer_append_v1.sql',
+  // La compra con nuestro link cuenta siempre (E-169): el helper del cierre por el link y el correlador.
+  '20261028000400_purchase_by_our_link_counts_v1.sql'])) {
   fail(`despues de ${MIGRATION} van solo la de la oferta en el caso nativo, la de la pagina de aprobacion y la del carrito nativo`, names.slice(position + 1));
 }
 

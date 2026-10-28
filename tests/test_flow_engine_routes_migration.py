@@ -97,6 +97,9 @@ def test_it_is_one_transaction_and_comes_right_after_the_t4b() -> None:
         # Sumar ofertas a un scope publicado (20261028000300, E-163): solo el
         # trigger de pilot_scope_versions.
         "20261028000300_pilot_scope_offer_append_v1.sql",
+        # La compra con nuestro link cuenta siempre (20261028000400, E-169):
+        # el helper del cierre por el link y el correlador.
+        "20261028000400_purchase_by_our_link_counts_v1.sql",
     ]
 
 
