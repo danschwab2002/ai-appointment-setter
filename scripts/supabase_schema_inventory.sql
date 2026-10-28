@@ -5926,6 +5926,22 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'flow_engine_native_cart'
+    union all
+    select
+        '20261028000300',
+        '20261028000300_pilot_scope_offer_append_v1.sql',
+        -- Sumar ofertas a un scope del piloto publicado (E-163): el trigger de
+        -- pilot_scope_versions con la excepcion pedida por la transaccion.
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.validate_pilot_scope_version()')
+              and position('pilot_scope_offer_append' in definition) > 0
+              and position('pilot_scope.offer_append' in definition) > 0
+              and position('published_pilot_scope_is_immutable' in definition) > 0
+        )::int,
+        1,
+        'pilot_scope_offer_append'
 )
 select
     version,

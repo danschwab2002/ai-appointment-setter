@@ -131,7 +131,9 @@ if (JSON.stringify(names.slice(position + 1))
   // nativa firmada por slack. No toca lo que esta prueba mira.
   '20261028000100_flow_change_slack_approver_v1.sql',
   // El carrito nativo (E-161): parcha la admision y el arranque nativos y vuelve a crear el contexto del paso.
-  '20261028000200_flow_engine_native_cart_v1.sql'])) {
+  '20261028000200_flow_engine_native_cart_v1.sql',
+  // Sumar ofertas a un scope publicado (E-163): solo el trigger de pilot_scope_versions.
+  '20261028000300_pilot_scope_offer_append_v1.sql'])) {
   fail(`despues de ${MIGRATION} van solo la de F-036, la del bridge nativo, la del AE que crea flujos y la de sus lecturas`,
     names.slice(position + 1));
 }

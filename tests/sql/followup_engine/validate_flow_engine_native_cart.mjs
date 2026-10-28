@@ -70,7 +70,10 @@ const results = {};
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-if (position !== names.length - 1) fail(`${MIGRATION} tiene que ser la ultima`, names.slice(position + 1));
+// Despues va solo la de sumar ofertas a un scope publicado (E-163), que no toca lo de esta.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261028000300_pilot_scope_offer_append_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de sumar ofertas`, names.slice(position + 1));
+}
 if (maribel.name !== 'maribel_retomar_proceso_01' || maribel.category !== 'MARKETING') {
   fail('el fixture no es la plantilla de Maribel');
 }
