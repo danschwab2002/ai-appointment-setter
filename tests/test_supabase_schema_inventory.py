@@ -1477,14 +1477,16 @@ def test_flow_engine_native_template_shape_fingerprint_is_before_the_offer_in_co
         assert marker in compact_fingerprint, marker
 
 
-def test_flow_engine_native_offer_in_context_fingerprint_is_last() -> None:
+def test_flow_engine_native_offer_in_context_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261026000200 (la oferta del evento en el caso nativo, E-122) es la ultima.
-    fingerprint = sql.split("'20261026000200'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261026000200 (la oferta del evento en el caso nativo, E-122) va justo antes de
+    # la de la pagina de aprobacion.
+    fingerprint = sql.split("'20261026000200'", 1)[1].split("'20261028000100'", 1)[0]
+    fingerprint = fingerprint.rsplit("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261026000200_flow_engine_native_offer_in_context_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",2,'flow_engine_native_offer_in_context')")
+    assert compact_fingerprint.endswith(",2,'flow_engine_native_offer_in_context'")
     for marker in (
         "to_regprocedure('public._flow_engine_admit_native_flow(public.flow_controls,public.webhook_events,"
         "uuid,text,timestamptz,bigint,bigint,text)')",
@@ -1492,3 +1494,26 @@ def test_flow_engine_native_offer_in_context_fingerprint_is_last() -> None:
         "position('flow_engine_native_offer_in_context'indefinition)>0",
     ):
         assert marker in compact_fingerprint, marker
+
+
+def test_flow_change_slack_approver_fingerprint_is_last_and_names_the_role_only_through_to_regrole() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261028000100 (la pagina de aprobacion, A′ PR 2) es la ultima.
+    fingerprint = sql.split("'20261028000100'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261028000100_flow_change_slack_approver_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",6,'flow_change_slack_approver')")
+    for marker in (
+        "to_regclass('public.flow_approval_oidc_states')",
+        "to_regclass('public.flow_approval_sessions')",
+        "to_regprocedure('public.approver_approve_flow_change_v1(jsonb,text,uuid,text)')",
+        "to_regprocedure('public.approver_flow_cohort_v1(jsonb,text,text,text,text,text)')",
+        "position('flow_change_slack_approver(20261028000100)'indefinition)>0",
+        "position('flow_change_slack_approver:laclasedelactor'indefinition)>0",
+    ):
+        assert marker in compact_fingerprint, marker
+    # El inventario corre antes de aplicar, cuando el rol no existe: el rol solo aparece adentro
+    # de to_regrole.
+    code = re.sub(r"--[^\n]*", "", fingerprint)
+    assert code.count("'flow_change_approver'") == code.count("to_regrole('flow_change_approver')")
