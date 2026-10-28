@@ -622,6 +622,29 @@ def test_deployment_declares_automation_expert_change_default_off(tmp_path: Path
     assert settings.automation_expert_change_db_key is None
 
 
+def test_deployment_declares_flow_approval_default_off(tmp_path: Path) -> None:
+    # flow-change-cycle-v1 1.9.0 (A′ PR 3a): el flag de la pagina de aprobacion,
+    # su app de Slack, la lista, el secreto de la sesion y el JWT de su rol llegan
+    # al contenedor por compose.yaml, apagados y vacios por defecto.
+    env_lines = (PROJECT_ROOT / ".env.example").read_text().splitlines()
+    compose = (PROJECT_ROOT / "compose.yaml").read_text()
+    names = (("FLOW_APPROVAL_ENABLED", "false"), ("FLOW_APPROVAL_BASE_URL", ""),
+             ("FLOW_APPROVAL_SLACK_TEAM_ID", ""), ("FLOW_APPROVAL_SLACK_APPROVERS", ""),
+             ("FLOW_APPROVAL_SLACK_CLIENT_ID", ""), ("FLOW_APPROVAL_SLACK_CLIENT_SECRET", ""),
+             ("FLOW_APPROVAL_SESSION_SECRET", ""), ("FLOW_CHANGE_APPROVER_DB_KEY", ""))
+    for name, default in names:
+        assert f"{name}={default}" in env_lines
+        assert f"{name}: ${{{name}:-{default}}}" in compose
+    settings = Settings(
+        webhook_secret="test-secret",
+        allowed_jid="12025550123@s.whatsapp.net",
+        capture_dir=tmp_path,
+        max_age_seconds=300,
+    )
+    assert settings.flow_approval_enabled is False
+    assert settings.flow_change_approver_db_key is None
+
+
 def test_deployment_declares_flow_engine_default_off(tmp_path: Path) -> None:
     # flow-engine-v1, seccion 8: el flag del bridge del motor llega al
     # contenedor por compose.yaml, apagado por defecto.

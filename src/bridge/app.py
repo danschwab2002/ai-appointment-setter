@@ -128,7 +128,7 @@ from bridge.opt_out_confirmation import (
     opt_out_confirmation_already_sent,
     validate_opt_out_confirmation_text,
 )
-from bridge import flow_change_api
+from bridge import flow_approval, flow_change_api
 from bridge.automation_expert_read import (
     CHATWOOT_MAX_MESSAGES_PER_CONVERSATION,
     CHATWOOT_READ_TIMEOUT_SECONDS,
@@ -360,6 +360,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # Las rutas de cambio del Automation Expert (flow-change-cycle-v1), con la
     # misma marca de instancia.
     "automation_expert_change_enabled",
+    # La pagina de aprobacion (flow-change-cycle-v1 1.9.0, A′ PR 3a): la
+    # instancia sale del manifiesto, y la lista de aprobadores, de la
+    # configuracion de la instancia.
+    "flow_approval_enabled",
     # El bridge del motor de flujos (flow-engine-v1, seccion 8): la instancia
     # sale del manifiesto, y lo que ejecuta cada flujo, de su ruta en la base.
     "flow_engine_enabled",
@@ -897,6 +901,17 @@ class Settings:
     automation_expert_change_enabled: bool = False
     automation_expert_change_token: str | None = None
     automation_expert_change_db_key: str | None = None
+    # flow-change-cycle-v1 1.9.0: la pagina de aprobacion con «Sign in with
+    # Slack» (A′ PR 3a, solo muestra). Apagada, las rutas /flow-approval/ no
+    # existen. Los tres secretos son distintos de todo otro valor.
+    flow_approval_enabled: bool = False
+    flow_approval_base_url: str | None = None
+    flow_approval_slack_team_id: str | None = None
+    flow_approval_slack_approvers: str | None = None
+    flow_approval_slack_client_id: str | None = None
+    flow_approval_slack_client_secret: str | None = None
+    flow_approval_session_secret: str | None = None
+    flow_change_approver_db_key: str | None = None
     # flow-engine-v1, seccion 8: el bridge del motor de flujos (la T2.4).
     # Apagado, el bridge no lee nada del motor y hace exactamente lo de hoy.
     flow_engine_enabled: bool = False
@@ -2183,6 +2198,30 @@ class Settings:
             ),
             automation_expert_change_db_key=(
                 os.getenv("AUTOMATION_EXPERT_CHANGE_DB_KEY", "").strip() or None
+            ),
+            flow_approval_enabled=(
+                os.getenv("FLOW_APPROVAL_ENABLED", "false").lower() == "true"
+            ),
+            flow_approval_base_url=(
+                os.getenv("FLOW_APPROVAL_BASE_URL", "").strip() or None
+            ),
+            flow_approval_slack_team_id=(
+                os.getenv("FLOW_APPROVAL_SLACK_TEAM_ID", "").strip() or None
+            ),
+            flow_approval_slack_approvers=(
+                os.getenv("FLOW_APPROVAL_SLACK_APPROVERS", "").strip() or None
+            ),
+            flow_approval_slack_client_id=(
+                os.getenv("FLOW_APPROVAL_SLACK_CLIENT_ID", "").strip() or None
+            ),
+            flow_approval_slack_client_secret=(
+                os.getenv("FLOW_APPROVAL_SLACK_CLIENT_SECRET", "").strip() or None
+            ),
+            flow_approval_session_secret=(
+                os.getenv("FLOW_APPROVAL_SESSION_SECRET", "").strip() or None
+            ),
+            flow_change_approver_db_key=(
+                os.getenv("FLOW_CHANGE_APPROVER_DB_KEY", "").strip() or None
             ),
             flow_engine_enabled=(
                 os.getenv("FLOW_ENGINE_ENABLED", "false").lower() == "true"
@@ -3745,6 +3784,8 @@ def create_app(
     lead_first_name_client: FirstNameInferenceClient | None = None,
     audio_transcriber: AudioTranscriber | None = None,
     flow_change_store: flow_change_api.FlowChangeStore | None = None,
+    flow_approval_store: flow_approval.ApprovalStore | None = None,
+    flow_approval_oidc: flow_approval.SlackIdTokenClient | None = None,
 ) -> FastAPI:
     configure_bridge_event_log()  # los info revisados, al log (E-084)
     boolean_fields = [
@@ -3817,6 +3858,8 @@ def create_app(
             instance_readiness["automation_expert_read"] = "enabled"
         if settings.automation_expert_change_enabled:
             instance_readiness["automation_expert_change"] = "enabled"
+        if settings.flow_approval_enabled:
+            instance_readiness["flow_approval"] = "enabled"
         ghl_adapter_risk = _ghl_adapter_risk_readiness(settings.instance_manifest)
         if ghl_adapter_risk is not None:
             instance_readiness["ghl_adapter_risk"] = ghl_adapter_risk
@@ -4105,6 +4148,9 @@ def create_app(
     # flow-change-cycle-v1: manifiesto, Supabase, la lectura prendida, la clave
     # del plugin distinta de todo y el JWT del rol (nunca la key de service_role).
     flow_change_api.check_settings(settings)
+    # flow-change-cycle-v1 1.9.0: la pagina de aprobacion exige su app de
+    # Slack, la lista, el secreto de la sesion y el JWT de su rol.
+    flow_approval.check_settings(settings)
     pilot_fields = (
         (settings.pilot_scope_key, "LANCEMOS_PILOT_SCOPE_KEY"),
         (settings.pilot_scope_version, "LANCEMOS_PILOT_SCOPE_VERSION"),
@@ -7982,6 +8028,25 @@ def create_app(
             ally_ref=change_manifest.ally_ref,
             time_zone=change_manifest.time_zone,
             inbox_id=change_manifest.chatwoot_inbox_id,
+        )
+
+    approval_config = flow_approval.check_settings(settings)
+    if approval_config is not None:
+        # flow-change-cycle-v1 1.9.0 (A′ PR 3a): la pagina de aprobacion, que
+        # solo muestra. Con el flag apagado las rutas no existen y dan 404.
+        # Tiene su propio cliente de la base, con el JWT de su rol: nunca el
+        # de service_role ni el del Automation Expert.
+        flow_approval.register_flow_approval_routes(
+            app,
+            config=approval_config,
+            store=flow_approval_store or flow_approval.ApprovalStore(
+                base_url=settings.supabase_base_url or "",
+                db_key=approval_config.db_key,
+            ),
+            oidc=flow_approval_oidc or flow_approval.SlackIdTokenClient(
+                client_id=approval_config.client_id,
+                client_secret=approval_config.client_secret,
+            ),
         )
 
     if settings.automation_expert_read_enabled:
