@@ -105,7 +105,10 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026102400060
   // La forma nativa con las variables del paso (E-115): parcha la forma nativa y el compilador.
   '20261026000100_flow_engine_native_template_shape_v1.sql',
   // La oferta del evento en el caso nativo (E-122): parcha la admision nativa y el contexto del despacho.
-  '20261026000200_flow_engine_native_offer_in_context_v1.sql'])) {
+  '20261026000200_flow_engine_native_offer_in_context_v1.sql',
+  // La pagina de aprobacion (A′ PR 2): el rol del aprobador, sus sesiones, la cohorte con slack y la ruta
+  // nativa firmada por slack. No toca lo que esta prueba mira.
+  '20261028000100_flow_change_slack_approver_v1.sql'])) {
   fail(`despues de ${MIGRATION} van solo la del AE que crea flujos y la de sus lecturas nativas`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(

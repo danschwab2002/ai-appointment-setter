@@ -670,7 +670,12 @@ const lockTimeouts = (await query(`
    order by 1`)).map((row) => row.proname);
 check(sameJson(lockTimeouts, [
   '_flow_change_approve', '_flow_change_pause', '_flow_change_publish', '_flow_change_record_validation',
-  // operator_flow_cohort_v1 (20261024000600) bloquea el control del flujo para cargar su cohorte.
+  // _flow_cohort_change y operator_flow_cohort_v1 (20261024000600, 20261028000100) bloquean el control del
+  // flujo para cargar su cohorte.
+  '_flow_cohort_change',
+  // Los envoltorios del aprobador que escriben (20261028000100, la pagina de aprobacion).
+  'approver_approve_flow_change_v1', 'approver_flow_cohort_v1', 'approver_pause_flow_v1',
+  'approver_publish_flow_change_v1',
   'operator_approve_flow_change_v1', 'operator_flow_cohort_v1', 'operator_pause_flow_v1',
   'operator_publish_flow_change_v1', 'operator_record_flow_change_validation_v1',
 ]), '2: lock_timeout de 5 s en las que esperan locks', lockTimeouts);

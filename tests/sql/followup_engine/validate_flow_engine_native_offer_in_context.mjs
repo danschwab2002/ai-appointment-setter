@@ -54,7 +54,10 @@ const results = {};
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-if (position !== names.length - 1) fail(`${MIGRATION} tiene que ser la ultima`, names.slice(position + 1));
+// Despues va solo la de la pagina de aprobacion (A′ PR 2), que no toca la admision ni el despacho.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261028000100_flow_change_slack_approver_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de la pagina de aprobacion`, names.slice(position + 1));
+}
 if (captured.payload.event !== 'PURCHASE_APPROVED' || captured.payload.data.purchase.offer.code !== 'gopi6lh7'
     || captured.payload.data.product.id !== 5071808) {
   fail('el fixture no es la compra capturada de la bienvenida de ATT1');

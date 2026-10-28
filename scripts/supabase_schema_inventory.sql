@@ -5802,6 +5802,90 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'flow_engine_native_offer_in_context'
+    union all
+    select
+        '20261028000100',
+        '20261028000100_flow_change_slack_approver_v1.sql',
+        -- El rol de la pagina de aprobacion existe, sin login, sin heredar y sin
+        -- atributos. Como con el del Automation Expert, el rol solo se nombra
+        -- adentro de to_regrole: el inventario corre tambien antes de aplicar.
+        (
+            select count(*) = 1
+            from pg_roles r
+            where r.oid = to_regrole('flow_change_approver')
+              and not r.rolcanlogin and not r.rolinherit and not r.rolsuper
+              and not r.rolbypassrls and not r.rolcreaterole
+        )::int
+        -- Las dos tablas de la sesion, con RLS.
+        + (
+            select count(*) = 2
+            from pg_class c
+            where c.oid in (to_regclass('public.flow_approval_oidc_states'),
+                            to_regclass('public.flow_approval_sessions'))
+              and c.relrowsecurity
+        )::int
+        -- Sus trece funciones: security definer y search_path fijo ...
+        + (
+            select count(*) = 13
+            from functions
+            where oid in (
+                to_regprocedure('public.begin_flow_approval_oidc_v1(jsonb,text,text,text,timestamptz)'),
+                to_regprocedure('public.consume_flow_approval_oidc_v1(jsonb,text)'),
+                to_regprocedure('public.create_flow_approval_session_v1(jsonb,text,text,text,text,timestamptz)'),
+                to_regprocedure('public.validate_flow_approval_session_v1(jsonb,text)'),
+                to_regprocedure('public.revoke_flow_approval_session_v1(jsonb,text)'),
+                to_regprocedure('public.approver_get_flow_change_proposal_v1(jsonb,text,uuid)'),
+                to_regprocedure('public.approver_read_flow_store_v1(jsonb,text)'),
+                to_regprocedure('public.approver_read_open_flow_changes_v1(jsonb,text,uuid)'),
+                to_regprocedure('public.approver_approve_flow_change_v1(jsonb,text,uuid,text)'),
+                to_regprocedure('public.approver_publish_flow_change_v1(jsonb,text,uuid,text,jsonb)'),
+                to_regprocedure('public.approver_pause_flow_v1(jsonb,text,text,text,bigint,text)'),
+                to_regprocedure('public.approver_discard_flow_change_v1(jsonb,text,uuid,text)'),
+                to_regprocedure('public.approver_flow_cohort_v1(jsonb,text,text,text,text,text)')
+            )
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+        )::int
+        -- ... que solo ejecuta el rol: ni anon, ni authenticated, ni service_role.
+        + (
+            select count(*) = 13
+            from functions
+            where oid in (
+                to_regprocedure('public.begin_flow_approval_oidc_v1(jsonb,text,text,text,timestamptz)'),
+                to_regprocedure('public.consume_flow_approval_oidc_v1(jsonb,text)'),
+                to_regprocedure('public.create_flow_approval_session_v1(jsonb,text,text,text,text,timestamptz)'),
+                to_regprocedure('public.validate_flow_approval_session_v1(jsonb,text)'),
+                to_regprocedure('public.revoke_flow_approval_session_v1(jsonb,text)'),
+                to_regprocedure('public.approver_get_flow_change_proposal_v1(jsonb,text,uuid)'),
+                to_regprocedure('public.approver_read_flow_store_v1(jsonb,text)'),
+                to_regprocedure('public.approver_read_open_flow_changes_v1(jsonb,text,uuid)'),
+                to_regprocedure('public.approver_approve_flow_change_v1(jsonb,text,uuid,text)'),
+                to_regprocedure('public.approver_publish_flow_change_v1(jsonb,text,uuid,text,jsonb)'),
+                to_regprocedure('public.approver_pause_flow_v1(jsonb,text,text,text,bigint,text)'),
+                to_regprocedure('public.approver_discard_flow_change_v1(jsonb,text,uuid,text)'),
+                to_regprocedure('public.approver_flow_cohort_v1(jsonb,text,text,text,text,text)')
+            )
+              and coalesce(has_function_privilege(to_regrole('flow_change_approver'), oid, 'EXECUTE'), false)
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+        )::int
+        -- La cohorte del operador pasa por la misma funcion que la pagina ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.operator_flow_cohort_v1(jsonb,text,text,text,text,text,text)')
+              and position('flow_change_slack_approver(20261028000100)' in definition) > 0
+        )::int
+        -- ... y el evento de la ruta nativa dice slack cuando la firma un ID de Slack.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.record_flow_engine_route_change()')
+              and position('flow_change_slack_approver: la clase del actor' in definition) > 0
+        )::int,
+        6,
+        'flow_change_slack_approver'
 )
 select
     version,
