@@ -5,6 +5,7 @@ lectura (automation-expert-read): este suma solo la guarda del profile para
 sus herramientas.
 """
 
+from .approval_button import ACTION_ID, ack_only
 from .schemas import GET_FLOW_CHANGE, GET_FLOW_DEFINITIONS, PROPOSE_FLOW_CHANGE, VALIDATE_FLOW_CHANGE
 from .tools import (
     PROFILE_NAME,
@@ -40,3 +41,7 @@ def register(ctx):
     ):
         ctx.register_tool(name=name, toolset="automation_expert_change", schema=schema, handler=handler)
     ctx.register_hook("pre_tool_call", make_profile_guard(getattr(ctx, "profile_name", None)))
+    # El clic en el boton de URL «Revisar y aprobar»: Slack lo avisa igual, y se reconoce sin hacer nada.
+    register_action = getattr(ctx, "register_slack_action_handler", None)
+    if callable(register_action):
+        register_action(ACTION_ID, ack_only)
