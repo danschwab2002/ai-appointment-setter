@@ -109,11 +109,11 @@ from bridge.native_flows import (
     NATIVE_ANCHOR,
     NATIVE_NEEDS_DIRECT_TEMPLATE,
     NATIVE_NEEDS_ENGINE,
+    NATIVE_PURCHASE_TEMPLATE_CATEGORIES,
     NATIVE_PURCHASE_TRIGGER,
     NATIVE_QUEUE_PAGE,
     NATIVE_STEP_CONTEXT_UNAVAILABLE,
     NATIVE_STEP_VARIABLES,
-    NATIVE_TEMPLATE_CATEGORY,
     admit_native_purchase,
     apply_native_tail,
     purchase_product_ref,
@@ -1744,10 +1744,10 @@ class DurableDispatcher:
         """The send of a native step (flow-engine-v2): its pinned template.
 
         A first contact with the variables the step declares, in its order,
-        out of ``nombre`` and ``producto``, in a utility template of the
-        Chatwoot catalog (rule 17 of the schema). The step declares no button;
-        the template may carry URL buttons with a fixed URL, which need no
-        parameter (E-115), and nothing else. Without the engine flag it closes for good
+        out of ``nombre`` and ``producto``, in a template whose category the
+        permission accepts: utility with ``compra``, the only native one (rule 17).
+        The step declares no button; the template may carry fixed URL buttons
+        (E-115) and quick replies (2.6.0), and nothing else. Without the engine flag it closes for good
         (``flow_engine_native_needs_engine``): it never goes out with the
         template of the manifest. A step context that did not answer is
         retried; a shape the bridge cannot build closes for good.
@@ -1821,9 +1821,9 @@ class DurableDispatcher:
                 inbox,
                 template_name=step_template.template_name,
                 expected_language=step_template.template_language,
-                expected_category=NATIVE_TEMPLATE_CATEGORY,
+                expected_category=NATIVE_PURCHASE_TEMPLATE_CATEGORIES,
                 parameter_count=len(variables),
-                static_url_buttons_only=True,
+                parameterless_buttons_only=True,
             )
             message = approved.render(ordered)
             processed = approved.processed_params(ordered)
@@ -1848,7 +1848,7 @@ class DurableDispatcher:
             template_name=step_template.template_name,
             template_params={
                 "name": step_template.template_name,
-                "category": NATIVE_TEMPLATE_CATEGORY,
+                "category": approved.category,
                 "language": step_template.template_language,
                 "processed_params": processed,
             },

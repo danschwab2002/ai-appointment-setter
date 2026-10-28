@@ -18,7 +18,7 @@ See ``docs/contracts/approved-template-direct-dispatch-v1.md``.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 
 # Meta caps the body of a template at 1024 characters, variables included. The
@@ -149,11 +149,11 @@ def parse_approved_template(
     *,
     template_name: str,
     expected_language: str,
-    expected_category: str,
+    expected_category: str | Collection[str],
     parameter_count: int,
     checkout_button: bool = False,
     url_button: str | None = None,
-    static_url_buttons_only: bool = False,
+    parameterless_buttons_only: bool = False,
 ) -> ApprovedTemplate:
     """Pick one template from the inbox catalog and fail closed on any doubt.
 
@@ -170,12 +170,19 @@ def parse_approved_template(
     ``url_button=CHECKOUT_BUTTON_URL``; giving both with another URL is an
     error of the caller.
 
-    ``static_url_buttons_only``: the send of a native step (flow-engine-v2).
-    Its buttons may only be URL buttons with a fixed URL, without a variable
-    («Completar mi perfil» of the ATT1 welcome, 26/10): the send carries no
-    button parameter, so a fixed URL needs nothing. A URL button with a
-    variable is ``url_button_with_variable``; a quick reply or any other button
-    is ``unsupported_button``. It excludes ``checkout_button`` and
+    ``expected_category``: the category the template must have, or the set of
+    categories the caller accepts (the send of a native step: only ``UTILITY``
+    with ``permiso: compra``, rule 17; ``MARKETING`` or ``UTILITY`` with any
+    other permission, flow-engine-v2 2.6.0). ``ApprovedTemplate.category`` is
+    the one of the catalog.
+
+    ``parameterless_buttons_only``: the send of a native step (flow-engine-v2).
+    Its buttons may only be the ones the send fills with nothing: URL buttons
+    with a fixed URL, without a variable («Completar mi perfil» of the ATT1
+    welcome, 26/10), and quick replies («Retomar proceso» and «No mas
+    mensajes» of Maribel, 2.6.0), in any order inside the one group of buttons.
+    A URL button with a variable is ``url_button_with_variable``; any other
+    button is ``unsupported_button``. It excludes ``checkout_button`` and
     ``url_button``.
 
     ``approved_template_unavailable``: the catalog is unreadable, the template
@@ -193,8 +200,16 @@ def parse_approved_template(
         not isinstance(url_button, str) or _URL_BUTTON_RE.fullmatch(url_button) is None
     ):
         raise ValueError("approved_template_url_button_invalid")
-    if static_url_buttons_only and (checkout_button or url_button is not None):
-        raise ValueError("approved_template_static_url_buttons_conflict")
+    if parameterless_buttons_only and (checkout_button or url_button is not None):
+        raise ValueError("approved_template_parameterless_buttons_conflict")
+    if isinstance(expected_category, str):
+        accepted_categories = frozenset({expected_category.strip()})
+    else:
+        accepted_categories = frozenset(
+            item.strip() for item in expected_category if isinstance(item, str)
+        )
+    if not accepted_categories or "" in accepted_categories:
+        raise ValueError("approved_template_expected_category_invalid")
     if checkout_button:
         if url_button is not None and url_button != CHECKOUT_BUTTON_URL:
             raise ValueError("approved_template_url_button_conflict")
@@ -230,7 +245,7 @@ def parse_approved_template(
     if template.get("status") != "APPROVED":
         raise ApprovedTemplateError(REASON_UNAVAILABLE, "not_approved")
     category = template.get("category")
-    if not isinstance(category, str) or category.strip() != expected_category.strip():
+    if not isinstance(category, str) or category.strip() not in accepted_categories:
         raise ApprovedTemplateError(REASON_MISMATCH, "category_mismatch")
 
     components = template.get("components")
@@ -265,8 +280,10 @@ def parse_approved_template(
                 isinstance(button, dict) for button in buttons
             ):
                 raise ApprovedTemplateError(REASON_MISMATCH, "unsupported_button")
-            if static_url_buttons_only:
+            if parameterless_buttons_only:
                 for button in buttons:
+                    if button.get("type") == "QUICK_REPLY":
+                        continue
                     if button.get("type") != "URL":
                         raise ApprovedTemplateError(REASON_MISMATCH, "unsupported_button")
                     if not is_static_url(button.get("url")):

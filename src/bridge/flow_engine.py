@@ -262,7 +262,9 @@ def not_supported(definition: Mapping[str, Any], capabilities: EngineCapabilitie
 # motor, sin legado, disparado por la compra. Un solo envio (la forma de pasos ``nativo:compra``), con
 # las variables que declara el paso de entre ``nombre`` y ``producto`` (E-115, 20261026000100), sin
 # boton declarado, y el paso ``etiquetar`` (lo ejecuta el bridge, PR 3). La plantilla puede traer
-# botones de URL fija: no llevan parametro (los mira la regla 13 contra el catalogo).
+# botones de URL fija y de respuesta rapida: no llevan parametro (los mira la regla 13 contra el
+# catalogo, flow-engine-v2 2.6.0). ``buttons`` vacio es el ``boton`` que declara el paso, no los
+# botones de la plantilla.
 ENGINE_CAPABILITIES_NATIVE = EngineCapabilities(
     triggers=frozenset({"compra"}),
     step_types=frozenset({"esperar", "plantilla", "etiquetar"}),
