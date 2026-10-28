@@ -94,6 +94,9 @@ def test_it_is_one_transaction_and_comes_right_after_the_t4b() -> None:
         # El carrito nativo (20261028000200, E-161): parcha la admision y el arranque nativos,
         # la simulacion y la historia del AE, y vuelve a crear flow_engine_execution_context_v1.
         "20261028000200_flow_engine_native_cart_v1.sql",
+        # Sumar ofertas a un scope publicado (20261028000300, E-163): solo el
+        # trigger de pilot_scope_versions.
+        "20261028000300_pilot_scope_offer_append_v1.sql",
     ]
 
 

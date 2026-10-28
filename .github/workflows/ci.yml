@@ -119,6 +119,16 @@ jobs:
         run: >-
           createdb -h 127.0.0.1 -p 5432 flow_store_inbox_binding_ci
           && uv run python tests/sql/followup_engine/real_postgres_inbox_binding_version.py
+      - name: Verify adding offers to a running instance on PostgreSQL
+        env:
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          DATABASE_URL: postgresql://postgres@127.0.0.1:5432/flow_store_add_offers_ci
+          PSQL: /usr/bin/psql
+          ALLOW_DISPOSABLE_DATABASE: flow-store
+        run: >-
+          createdb -h 127.0.0.1 -p 5432 flow_store_add_offers_ci
+          && uv run python tests/sql/followup_engine/real_postgres_add_instance_offers.py
       - name: Verify flow engine route races on PostgreSQL
         env:
           PGUSER: postgres

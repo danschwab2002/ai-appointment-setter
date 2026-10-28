@@ -2206,26 +2206,11 @@ class SupabaseClient:
         if response.status_code != 200 or len(rows) != 1:
             raise SupabaseError(f"{operation}_not_active")
         row = rows[0]
-        supported = {item.name for item in fields(CommercialAllyConfig)}
-        if any(name not in row for name in supported) or row.get("status") != "active":
+        if not isinstance(row, dict) or row.get("status") != "active":
             raise SupabaseError(f"{operation}_invalid_row")
-        values = {name: row[name] for name in supported}
         try:
-            if not isinstance(values["additional_offer_codes"], list):
-                raise ValueError
-            values["additional_offer_codes"] = tuple(values["additional_offer_codes"])
-            if not isinstance(values["additional_offer_landings"], list):
-                raise ValueError
-            values["additional_offer_landings"] = tuple(
-                OfferLanding.from_json(landing)
-                for landing in values["additional_offer_landings"]
-            )
-            price = values["product_price"]
-            if isinstance(price, bool) or not isinstance(price, (str, int, float)):
-                raise ValueError
-            values["product_price"] = Decimal(str(price))
-            resolved = CommercialAllyConfig(**values)
-        except (AttributeError, InvalidOperation, TypeError, ValueError) as exc:
+            resolved = CommercialAllyConfig.from_binding_row(row)
+        except ValueError as exc:
             raise SupabaseError(f"{operation}_invalid_row") from exc
         if resolved != expected:
             raise SupabaseError(f"{operation}_config_drift")

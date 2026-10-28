@@ -1521,19 +1521,38 @@ def test_flow_change_slack_approver_fingerprint_is_before_the_native_cart_and_na
     assert code.count("'flow_change_approver'") == code.count("to_regrole('flow_change_approver')")
 
 
-def test_flow_engine_native_cart_fingerprint_is_last() -> None:
+def test_flow_engine_native_cart_fingerprint_is_before_the_offer_append() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261028000200 (el carrito nativo, E-161) es la ultima.
-    fingerprint = sql.split("'20261028000200'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261028000200 (el carrito nativo, E-161) va justo antes de la de sumar
+    # ofertas a un scope publicado (20261028000300, E-163).
+    fingerprint = sql.split("'20261028000200'", 1)[1].split(
+        "    union all\n    select\n        '20261028000300'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261028000200_flow_engine_native_cart_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",3,'flow_engine_native_cart')")
+    assert compact_fingerprint.endswith(",3,'flow_engine_native_cart'")
     for marker in (
         "to_regprocedure('public._flow_engine_native_cart_reason(uuid,uuid,text)')",
         "to_regprocedure('public._flow_engine_native_cart_audience(uuid,uuid,text,text,text)')",
         "position('flow_engine_native_cart'indefinition)>0",
         "to_regprocedure('public.flow_engine_execution_context_v1(uuid)')",
         "position('entry_permission'indefinition)>0",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_pilot_scope_offer_append_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261028000300 (sumar ofertas a un scope publicado, E-163) es la ultima.
+    fingerprint = sql.split("'20261028000300'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261028000300_pilot_scope_offer_append_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",1,'pilot_scope_offer_append')")
+    for marker in (
+        "to_regprocedure('public.validate_pilot_scope_version()')",
+        "position('pilot_scope_offer_append'indefinition)>0",
+        "position('pilot_scope.offer_append'indefinition)>0",
+        "position('published_pilot_scope_is_immutable'indefinition)>0",
     ):
         assert marker in compact_fingerprint, marker

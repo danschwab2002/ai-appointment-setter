@@ -29,7 +29,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026102600020
   // La pagina de aprobacion (A′ PR 2): el rol del aprobador, sus sesiones, la cohorte con slack y la ruta
   // nativa firmada por slack. No toca lo que esta prueba mira.
   '20261028000100_flow_change_slack_approver_v1.sql',
-  '20261028000200_flow_engine_native_cart_v1.sql'])) {
+  '20261028000200_flow_engine_native_cart_v1.sql',
+  // Sumar ofertas a un scope publicado (E-163): solo el trigger de pilot_scope_versions.
+  '20261028000300_pilot_scope_offer_append_v1.sql'])) {
   fail(`despues de ${MIGRATION} van solo la de la oferta en el caso nativo, la de la pagina de aprobacion y la del carrito nativo`, names.slice(position + 1));
 }
 

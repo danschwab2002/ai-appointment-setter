@@ -452,7 +452,34 @@ En la base de Johanna, después de aplicar la `000400` y la `000500`: `select co
 
 Una instancia con `[adaptadores.ghl]`, sin aceptación y con `LANCEMOS_PILOT_BOUNDARY_ENABLED=true` necesita la `000300` aplicada **antes** del bridge 1.3.0: el arranque lee el modo de audiencia del scope y, sin esa función, no arranca.
 
-**Por qué se completa la fila y no se publica un `binding_version` nuevo.** Los eventos ya admitidos guardan su `binding_version` en la procedencia (`commercial_ally_hotmart_event_bindings`), y las RPC de planificación exigen que esa versión siga `active`; la política de compra (`commercial_ally_hotmart_purchase_policies`) también va por versión. Retirar la versión 1 dejaría sin planificar lo que ya entró. Completar las landings solo agrega: ninguna intención ni evento se validó contra ellas (antes el formulario de esas landings se rechazaba). Lo que no se toca una vez publicado son los valores de negocio (producto, precio, ofertas, consentimiento).
+**Por qué se completa la fila y no se publica un `binding_version` nuevo.** Los eventos ya admitidos guardan su `binding_version` en la procedencia (`commercial_ally_hotmart_event_bindings`), y las RPC de planificación exigen que esa versión siga `active`; la política de compra (`commercial_ally_hotmart_purchase_policies`) también va por versión. Retirar la versión 1 dejaría sin planificar lo que ya entró. Completar las landings solo agrega: ninguna intención ni evento se validó contra ellas (antes el formulario de esas landings se rechazaba). Lo que no se toca una vez publicado son los valores de negocio (producto, precio, consentimiento); las ofertas, solo para sumar una al final (abajo).
+
+### Sumar una oferta a una instancia que ya corre
+
+Una landing nueva con otra oferta del mismo producto (en Maribel, el 2026-10-28, la orgánica `org-a` con `mmliigg5`) no entra sola: su formulario da `422 ghl_landing_unknown` y su carrito moriría en `pilot_offer_mismatch`. La oferta está en cinco lugares, y `scripts/add_instance_offers.py` (desde 1.21.0, con la migración `20261028000300`) la suma a todos en una transacción, **sin publicar ninguna versión nueva y sin tocar ningún control del piloto**:
+
+- la **misma fila** del binding activo (`additional_offer_codes` y `additional_offer_landings`, iguales a los que arma el bridge con el manifiesto nuevo), por lo de «Por qué se completa la fila» de arriba;
+- un scope de intención activo por oferta, con el `max_lookback` de la oferta por defecto;
+- una fila activa del catálogo del scope entrante del binding (el catálogo solo admite filas nuevas);
+- la oferta al final de `additional_offer_codes` de cada scope del piloto del producto al que apunta un control no cerrado, **en la misma versión**. Es lo único que la base deja editar de un scope publicado, y lo pide la transacción para cada fila (el ajuste local `pilot_scope.offer_append`). Una versión nueva perdería casos: el arranque de cada envío se autoriza con la versión con la que se planificó el caso, y con el control en otra da `pilot_scope_version_mismatch` (el caso queda reservado sin salir); y los carritos que entran entre la activación y el redeploy del bridge (que lee la versión de sus variables) mueren al planificar. Sumando en la misma versión, el carrito no se frena: ningún control se pausa, se activa ni se arma.
+
+El orden, siempre este:
+
+1. **El PR de la instancia** con el `[[hotmart.ofertas]]` nuevo (una por landing; la oferta por defecto no cambia), y `validate` en VALIDA. Se mergea, y **🔴 entre el merge y el paso 3 nadie sincroniza el repo de la instancia ni reinicia el bridge**: un bridge que arranca con el manifiesto nuevo antes de que la base tenga la oferta no resuelve su binding (`/ready` 503) y, con `SLACK_CONNECTOR_PROJECTION_ENABLED=true`, no arranca.
+2. **En seco**, en el servidor, desde el árbol del producto de la versión que corre, con el manifiesto nuevo en un archivo aparte (no en `/opt/<stack>/instancia`):
+
+   ```sh
+   CONTENEDOR_DB=<stack>_db python3 scripts/add_instance_offers.py --manifiesto <instancia.toml nuevo> --ofertas <a,b> --quien <q>
+   ```
+
+   Dice cada fila que crea o cambia, que ningún control se toca, y si con el manifiesto nuevo el bridge daría `commercial_ally_binding: active`. Frena sin escribir si la base no es exactamente el manifiesto nuevo sin esas ofertas (otro precio, otro inbox, una oferta sacada o reordenada): eso no es sumar una oferta.
+3. **`--aplicar`**: lo mismo con `commit`, con un código que se tipea. Dice cuánto duró la transacción.
+4. **Enseguida**, sincronizar el repo de la instancia y el redeploy del bridge (`docker service update --force <stack>_appointment-bridge`). Hasta el redeploy, el bridge viejo atiende todo lo de antes, pero su `/ready` da 503 `commercial_ally_binding_unavailable` (la fila ya tiene la oferta y su manifiesto no).
+5. **`--verificar`**, con `CONTENEDOR_BRIDGE=<stack>_appointment-bridge`: cada oferta en su scope de intención, en el catálogo y en cada scope del piloto, la predicción del `/ready` y el `/ready` real en 200.
+
+Correrlo otra vez no cambia nada. Volver atrás no es correrlo al revés: el comando solo suma. Si hubiera que sacar una oferta, se vuelve el manifiesto y se deja la oferta en la base (un formulario o un carrito de esa landing vuelve a rechazarse en el bridge); sacarla de la base es otra versión del binding y de cada scope, con el costo de arriba.
+
+**Lo que este comando no resuelve:** una oferta con otro precio o en otra moneda que la del binding (el binding tiene un solo `product_price` y una sola `currency`, y el manifiesto de hoy no declara precio por oferta), y dos landings con la misma oferta (`additional_offer_landings` lleva una landing por oferta).
 
 ## 10. Hotmart entrando
 
