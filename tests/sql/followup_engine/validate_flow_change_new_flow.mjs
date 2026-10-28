@@ -109,7 +109,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026102500010
   '20261026000200_flow_engine_native_offer_in_context_v1.sql',
   // La pagina de aprobacion (A′ PR 2): el rol del aprobador, sus sesiones, la cohorte con slack y la ruta
   // nativa firmada por slack. No toca lo que esta prueba mira.
-  '20261028000100_flow_change_slack_approver_v1.sql'])) {
+  '20261028000100_flow_change_slack_approver_v1.sql',
+  // El carrito nativo (E-161): parcha la admision y el arranque nativos y vuelve a crear el contexto del paso.
+  '20261028000200_flow_engine_native_cart_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de las lecturas nativas del AE`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(
@@ -333,8 +335,9 @@ const WELCOME = {};
   if (everyone?.code !== '22023' || everyone.message !== 'new_flow_must_start_in_cohort') {
     fail('prender distinto de cohorte', everyone?.message ?? 'paso');
   }
-  // Un flujo del legado: el carrito no lo ejecuta el motor nativo. Con un validador que mintiera, la base
-  // igual no lo abre.
+  // Un flujo del legado: el carrito de tres toques (A1, A2 y Z) no lo ejecuta el motor nativo, que manda un
+  // solo envio (desde 20261028000200 el disparador y el permiso pasan: lo frena la forma). Con un validador
+  // que mintiera, la base igual no lo abre.
   const cart = cartDefinition(A.funnel);
   delete cart.topes.bolsa;
   const legacy = await agentProposes([bridgeItem('carrito_nuevo', (item) => {
@@ -342,7 +345,7 @@ const WELCOME = {};
     delete item.ok_del_cliente;
   })], { result: CLEAN });
   const legacyPublished = await publish(legacy);
-  if (legacyPublished.ok || legacyPublished.reason_code !== 'motor_nativo:disparador'
+  if (legacyPublished.ok || legacyPublished.reason_code !== 'motor_nativo:forma'
       || await controlByKey('carrito_nuevo')) {
     fail('un flujo del legado no se crea', legacyPublished);
   }
@@ -500,8 +503,9 @@ const outcomeFor = (rows) => one(rows.filter((row) => row.flow_id === WELCOME.fl
          !== JSON.stringify(['contract', 'events', 'people', 'product_ref', 'since', 'trigger', 'until'])) {
     fail('el conteo de la simulacion', counts);
   }
+  // El carrito cuenta desde 20261028000200 (E-161); el pago rechazado sigue sin disparador nativo.
   const otherTrigger = await errorOf(() => sql(`select public.read_flow_engine_native_trigger_counts_v1($1::jsonb, $2,
-    'carrito', now() - interval '1 day')`, [JSON.stringify(INSTANCE), A.funnel]));
+    'pago_fallido', now() - interval '1 day')`, [JSON.stringify(INSTANCE), A.funnel]));
   const tooWide = await errorOf(() => sql(`select public.read_flow_engine_native_trigger_counts_v1($1::jsonb, $2,
     'compra', now() - interval '9 days')`, [JSON.stringify(INSTANCE), A.funnel]));
   if (otherTrigger?.message !== 'flow_engine_native_trigger_invalid' || tooWide?.message !== 'flow_engine_history_window_too_wide') {

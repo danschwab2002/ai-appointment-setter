@@ -1006,6 +1006,9 @@ class FlowEngineStepContext:
     template_variables: tuple[str, ...]
     template_button: dict[str, str] | None
     legacy_dispatch_ok: bool
+    # El entra.permiso de la version fijada (20261028000200, E-161). None con una
+    # base sin la migracion: el envio nativo sigue exigiendo utilidad.
+    entry_permission: str | None = None
 
 
 @dataclass(frozen=True)
@@ -6460,6 +6463,9 @@ class SupabaseClient:
             )
         ):
             raise SupabaseError(f"{operation}_invalid_row")
+        permission = row.get("entry_permission")
+        if permission is not None and (not isinstance(permission, str) or not permission):
+            raise SupabaseError(f"{operation}_invalid_row")
         return FlowEngineStepContext(
             flow_id=_required_string(row, "flow_id", operation=operation),
             version=_required_positive_int(row, "version", operation=operation),
@@ -6472,6 +6478,7 @@ class SupabaseClient:
             template_variables=tuple(variables),
             template_button=dict(button) if button is not None else None,
             legacy_dispatch_ok=_required_bool(row, "legacy_dispatch_ok", operation=operation),
+            entry_permission=permission,
         )
 
     async def read_flow_engine_routes(

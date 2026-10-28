@@ -1496,14 +1496,16 @@ def test_flow_engine_native_offer_in_context_fingerprint() -> None:
         assert marker in compact_fingerprint, marker
 
 
-def test_flow_change_slack_approver_fingerprint_is_last_and_names_the_role_only_through_to_regrole() -> None:
+def test_flow_change_slack_approver_fingerprint_is_before_the_native_cart_and_names_the_role_only_through_to_regrole() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261028000100 (la pagina de aprobacion, A′ PR 2) es la ultima.
-    fingerprint = sql.split("'20261028000100'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261028000100 (la pagina de aprobacion, A′ PR 2) va justo antes de la del
+    # carrito nativo (20261028000200, E-161).
+    fingerprint = sql.split("'20261028000100'", 1)[1].split(
+        "    union all\n    select\n        '20261028000200'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261028000100_flow_change_slack_approver_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",6,'flow_change_slack_approver')")
+    assert compact_fingerprint.endswith(",6,'flow_change_slack_approver'")
     for marker in (
         "to_regclass('public.flow_approval_oidc_states')",
         "to_regclass('public.flow_approval_sessions')",
@@ -1517,3 +1519,21 @@ def test_flow_change_slack_approver_fingerprint_is_last_and_names_the_role_only_
     # de to_regrole.
     code = re.sub(r"--[^\n]*", "", fingerprint)
     assert code.count("'flow_change_approver'") == code.count("to_regrole('flow_change_approver')")
+
+
+def test_flow_engine_native_cart_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261028000200 (el carrito nativo, E-161) es la ultima.
+    fingerprint = sql.split("'20261028000200'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261028000200_flow_engine_native_cart_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",3,'flow_engine_native_cart')")
+    for marker in (
+        "to_regprocedure('public._flow_engine_native_cart_reason(uuid,uuid,text)')",
+        "to_regprocedure('public._flow_engine_native_cart_audience(uuid,uuid,text,text,text)')",
+        "position('flow_engine_native_cart'indefinition)>0",
+        "to_regprocedure('public.flow_engine_execution_context_v1(uuid)')",
+        "position('entry_permission'indefinition)>0",
+    ):
+        assert marker in compact_fingerprint, marker

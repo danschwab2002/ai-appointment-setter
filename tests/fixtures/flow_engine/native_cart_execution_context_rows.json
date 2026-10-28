@@ -1,0 +1,44 @@
+{
+  "_capture": {
+    "origen": "validate_flow_engine_native_cart.mjs: la cadena entera de migraciones (PGlite), el formulario y el carrito por las admisiones portables, y el paso con la plantilla de Maribel",
+    "encargo": "E-161",
+    "regenerar": "cd tests/sql/followup_engine && node validate_flow_engine_native_cart.mjs --emit"
+  },
+  "flow_event": {
+    "fuente": "hotmart",
+    "tipo": "carrito",
+    "evento_id": "<EVENT>",
+    "producto_ref": "att1",
+    "oferta": "<OFERTA>",
+    "contacto_id": "<CONTACT>",
+    "momento": "<MOMENTO>",
+    "chatwoot": {
+      "account_id": 2,
+      "inbox_id": 11
+    },
+    "destino": "<DESTINO>"
+  },
+  "admission": {
+    "flow_id": "<FLOW>",
+    "outcome": "motor_arranco",
+    "reason": null,
+    "created": true
+  },
+  "step_context": {
+    "flow_id": "<FLOW>",
+    "version": 1,
+    "product_ref": "att1",
+    "flow_key": "carrito_nativo",
+    "step_key": "first_contact",
+    "send_ordinal": 1,
+    "template_name": "maribel_retomar_proceso_01",
+    "template_language": "es_MX",
+    "template_variables": [
+      "nombre",
+      "producto"
+    ],
+    "template_button": null,
+    "legacy_dispatch_ok": false,
+    "entry_permission": "formulario"
+  }
+}

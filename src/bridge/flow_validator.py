@@ -408,18 +408,19 @@ ETIQUETAR_NOT_AFTER_TEMPLATE = _spec(
     alternative="Ponerlo después del envío, una sola vez.",
 )
 # La regla 14 de un flujo nativo (flow-engine-v2 §9): lo que la base no abre ni admite.
-_NATIVE_LIMIT = ("Un flujo nativo, en esta versión del motor: lo dispara la compra, entra con permiso: compra, "
-                 "manda una sola plantilla de utilidad con variables de entre nombre y producto, sin botón "
-                 "o con botones de URL fija, y repite por persona")
+_NATIVE_LIMIT = ("Un flujo nativo, en esta versión del motor: lo dispara la compra (permiso: compra, plantilla "
+                 "de utilidad) o el carrito (permiso: formulario, termina con la compra); manda una sola "
+                 "plantilla con variables de entre nombre y producto, sin botón declarado, y repite por persona")
 ENGINE_NOT_SUPPORTED_NATIVE_TRIGGER = _spec(
     NATIVE_UNSUPPORTED_TRIGGER, 14, KIND_NOT_YET,
-    "El motor nativo de esta versión solo arranca con la compra.", limit=_NATIVE_LIMIT,
-    alternative="Disparar con dispara: {evento: compra}. Otro evento es de un flujo del legado.",
+    "El motor nativo de esta versión solo arranca con la compra o con el carrito.", limit=_NATIVE_LIMIT,
+    alternative="Disparar con dispara: {evento: compra} o {evento: carrito}. Otro evento es de un flujo del legado.",
 )
 ENGINE_NOT_SUPPORTED_NATIVE_PERMISSION = _spec(
     NATIVE_UNSUPPORTED_PERMISSION, 14, KIND_NOT_YET,
-    "El motor nativo de esta versión solo entra con permiso: compra.", limit=_NATIVE_LIMIT,
-    alternative="Usar permiso: compra, con el OK del cliente.",
+    "El motor nativo de esta versión entra con permiso: compra si lo dispara la compra, y con permiso: "
+    "formulario si lo dispara el carrito.", limit=_NATIVE_LIMIT,
+    alternative="Con la compra, permiso: compra y el OK del cliente; con el carrito, permiso: formulario.",
 )
 ENGINE_NOT_SUPPORTED_NATIVE_REPEAT = _spec(
     NATIVE_UNSUPPORTED_REPEAT, 14, KIND_NOT_YET,

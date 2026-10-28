@@ -109,13 +109,13 @@ from bridge.native_flows import (
     NATIVE_ANCHOR,
     NATIVE_NEEDS_DIRECT_TEMPLATE,
     NATIVE_NEEDS_ENGINE,
-    NATIVE_PURCHASE_TEMPLATE_CATEGORIES,
+    NATIVE_CART_TRIGGER,
     NATIVE_PURCHASE_TRIGGER,
     NATIVE_QUEUE_PAGE,
     NATIVE_STEP_CONTEXT_UNAVAILABLE,
     NATIVE_STEP_VARIABLES,
     admit_native_purchase,
-    apply_native_tail,
+    apply_native_tail, cart_product_ref, native_step_categories,
     purchase_product_ref,
 )
 from bridge.product_label import ProductLabeler
@@ -1745,7 +1745,7 @@ class DurableDispatcher:
 
         A first contact with the variables the step declares, in its order,
         out of ``nombre`` and ``producto``, in a template whose category the
-        permission accepts: utility with ``compra``, the only native one (rule 17).
+        permission of its pinned version accepts: utility with ``compra`` (rule 17), also marketing otherwise.
         The step declares no button; the template may carry fixed URL buttons
         (E-115) and quick replies (2.6.0), and nothing else. Without the engine flag it closes for good
         (``flow_engine_native_needs_engine``): it never goes out with the
@@ -1821,7 +1821,7 @@ class DurableDispatcher:
                 inbox,
                 template_name=step_template.template_name,
                 expected_language=step_template.template_language,
-                expected_category=NATIVE_PURCHASE_TEMPLATE_CATEGORIES,
+                expected_category=native_step_categories(step_template.entry_permission),
                 parameter_count=len(variables),
                 parameterless_buttons_only=True,
             )
@@ -3596,6 +3596,27 @@ class ResolutionWorker:
             return None
         return product_ref
 
+    def _native_cart_product(self, payload: dict[str, Any]) -> str | None:
+        """The product of a cart with a native cart flow on or in its cohort, or None (E-161).
+
+        None without the engine flag, without the portable runtime, or without
+        such a flow: the cart goes exactly as today, without any new call.
+        """
+        if self._flow_engine is None or self._commercial_ally_config is None:
+            return None
+        if not self._flow_engine.native_flows.any_on():
+            return None
+        product_ref = cart_product_ref(
+            payload,
+            commercial_ally_config=self._commercial_ally_config,
+            product_routes=self._product_routes,
+        )
+        if product_ref is None or not self._flow_engine.native_flows.wants(
+            product_ref, NATIVE_CART_TRIGGER
+        ):
+            return None
+        return product_ref
+
     async def _admit_native_purchase(
         self, event_id: str, payload: dict[str, Any], product_ref: str
     ) -> str:
@@ -3856,6 +3877,11 @@ class ResolutionWorker:
                 # Solo el carrito: el pago rechazado y la ficha nunca pasan
                 # por la admision del motor.
                 resolver_kwargs["flow_engine"] = self._flow_engine
+                # flow-engine-v2 2.7.0 (E-161): con un flujo nativo del carrito
+                # de ese producto, el carrito va primero a la admision nativa.
+                native_cart_product = self._native_cart_product(payload)
+                if native_cart_product is not None:
+                    resolver_kwargs["native_cart_product_ref"] = native_cart_product
             report = await resolve_event(
                 webhook_event_id=event_id,
                 payload=payload,
