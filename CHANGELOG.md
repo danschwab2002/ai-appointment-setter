@@ -12,6 +12,22 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.20.5] - 2026-10-28
+
+Una versión chica sobre la 1.20.4, con un solo cambio, apagado por defecto: el pago rechazado con su scope y su política propios, sin las variantes de B1 (E-157). Es para que el pago rechazado de Maribel espere 15 minutos sin demorar el carrito. Sin migración y sin campos nuevos en el manifiesto. Hay una variable nueva, `PAYMENT_FAILURE_OWN_POLICY_ENABLED`, que en false no cambia nada. Solo cambia el Python del bridge: `app.py` y una cita de línea en `flow_parity.py`. Los profiles no cambian.
+
+**Qué hace quien actualiza:** nada, si no prende el flag. Para prenderlo: publicar el scope y la política del pago rechazado de la instancia, armar el scope, cargar las cuatro constantes (`LANCEMOS_PILOT_PAYMENT_FAILURE_SCOPE_KEY`/`_VERSION`, `PAYMENT_FAILURE_FOLLOWUP_POLICY_KEY`/`_VERSION`) y recién después el flag y el redeploy. ATT1 no cambia: corre con `PAYMENT_FAILURE_VARIANTS_ENABLED`.
+
+### Agregado
+
+- **`PAYMENT_FAILURE_OWN_POLICY_ENABLED`: el pago rechazado con su scope y su política propios, sin las variantes** (E-157, el camino (a) de E-155). Apagado por defecto.
+  - Prendido, el pago rechazado se planifica con `LANCEMOS_PILOT_PAYMENT_FAILURE_SCOPE_*` y `PAYMENT_FAILURE_FOLLOWUP_POLICY_*`, igual que con B1: espera la gracia de su política (en Maribel, 15 minutos) y gasta los topes de su scope. Sale la plantilla de hoy, `WABA_PAYMENT_FAILURE_TEMPLATE_NAME`.
+  - El carrito no cambia: sigue con `LANCEMOS_PILOT_SCOPE_*` y `FOLLOWUP_POLICY_*`.
+  - No arranca sin los cuatro valores del scope y la política, sin `PORTABLE_HOTMART_PAYMENT_FAILURE_ENABLED`, sin `LANCEMOS_PILOT_BOUNDARY_ENABLED` o sin `WABA_PAYMENT_FAILURE_TEMPLATE_NAME`. No pide el modo directo, el worker del cupón ni las cuatro plantillas de B1.
+  - `/ready` publica `portable_payment_failure_own_scope`, como con B1.
+  - Con `PAYMENT_FAILURE_VARIANTS_ENABLED` también prendido, manda B1: ATT1 no cambia.
+  - Sin migración: la base tiene todo desde `20261019000200`. Solo cambia `src/bridge/app.py`.
+
 ## [1.20.4] - 2026-10-27
 
 Un parche sobre la 1.20.3, con tres PR. El primero trae el cupón fijo de la instancia en el link del agente, apagado por defecto (#349, E-148). El segundo hace que dos flujos nativos con el mismo evento no puedan quedar prendidos juntos (#348, E-139). El tercero es solo documentación: el contrato del sí por un botón-link del Automation Expert (#339). Sin migración y sin campos nuevos en el manifiesto. Hay una variable nueva, que vacía no cambia nada. Solo cambia el Python del bridge: `payment_link_coupon.py` (nuevo), `checkout_delivery.py`, `app.py` y una cita de línea en `flow_parity.py` (#349), y `flow_validator.py`, `flow_change_simulation.py` y `flow_change_operator.py` (#348). Los profiles no cambian.

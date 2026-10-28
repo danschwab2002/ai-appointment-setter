@@ -287,6 +287,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # politica propios de LANCEMOS_PILOT_PAYMENT_FAILURE_SCOPE_* y
     # PAYMENT_FAILURE_FOLLOWUP_POLICY_*.
     "payment_failure_variants_enabled",
+    # El pago rechazado con su scope y su politica propios, sin las variantes
+    # (E-157): la plantilla de hoy (WABA_PAYMENT_FAILURE_TEMPLATE_NAME), con la
+    # gracia de su politica y los topes de su scope. El carrito no cambia.
+    "payment_failure_own_policy_enabled",
     # B2 o Z del pago rechazado, 24 h despues de B1 (contrato
     # portable-payment-failure-followup-v1); las plantillas son del runtime y
     # el paso, de la politica del pago rechazado de la instancia.
@@ -717,9 +721,9 @@ class Settings:
     waba_payment_slip_due_day_template_name: str | None = None
     waba_payment_slip_due_day_template_category: str | None = None
     # El pago rechazado con su propio scope y su politica (migracion
-    # 20261019000200): los cuatro, y solo con PAYMENT_FAILURE_VARIANTS_ENABLED.
-    # Con el flag apagado no se leen y el pago fallido se planifica con los del
-    # carrito, como hasta la 1.11.
+    # 20261019000200): los cuatro, y solo con PAYMENT_FAILURE_VARIANTS_ENABLED
+    # o PAYMENT_FAILURE_OWN_POLICY_ENABLED. Con los dos apagados no se leen y el
+    # pago fallido se planifica con los del carrito, como hasta la 1.11.
     pilot_payment_failure_scope_key: str | None = None
     pilot_payment_failure_scope_version: int | None = None
     payment_failure_followup_policy_key: str | None = None
@@ -727,6 +731,10 @@ class Settings:
     # B1 en cuatro variantes (decision de Dan del 18/10). Apagado, sale la
     # plantilla de hoy (WABA_PAYMENT_FAILURE_TEMPLATE_NAME).
     payment_failure_variants_enabled: bool = False
+    # El scope y la politica propios sin las variantes (E-157): sale la
+    # plantilla de hoy, con la gracia de la politica propia. No exige el modo
+    # directo, el worker del cupon ni las cuatro plantillas de B1.
+    payment_failure_own_policy_enabled: bool = False
     waba_payment_failure_template_coupon: str | None = None
     waba_payment_failure_template_two_refusals: str | None = None
     waba_payment_failure_template_insufficient_funds: str | None = None
@@ -1816,6 +1824,10 @@ class Settings:
                 os.getenv("PAYMENT_FAILURE_VARIANTS_ENABLED", "false").lower()
                 == "true"
             ),
+            payment_failure_own_policy_enabled=(
+                os.getenv("PAYMENT_FAILURE_OWN_POLICY_ENABLED", "false").lower()
+                == "true"
+            ),
             waba_payment_failure_template_coupon=(
                 os.getenv("WABA_PAYMENT_FAILURE_TEMPLATE_COUPON", "").strip() or None
             ),
@@ -2900,18 +2912,31 @@ def _validate_flow_engine(settings: Settings) -> None:
 
 
 def _validate_payment_failure_own_scope(settings: Settings) -> None:
-    """B1 del pago rechazado: su scope y su politica propios, y las variantes.
+    """El pago rechazado con su scope y su politica propios, con o sin B1.
 
-    Como la ficha, todo cuelga de un flag: apagado, el bridge arranca igual
-    con las constantes cargadas y no las lee (el pago fallido se planifica con
-    el scope y la politica del carrito, como hasta la 1.11). Prendido, exige
-    los cuatro valores del scope y la politica (a medias, el planificador
-    rechazaria cada rechazo con pilot_policy_mismatch), el modo directo, el
-    worker del cupon (B1-saldo lleva su cupon) y las cuatro plantillas.
+    Como la ficha, todo cuelga de un flag: con los dos apagados, el bridge
+    arranca igual con las constantes cargadas y no las lee (el pago fallido se
+    planifica con el scope y la politica del carrito, como hasta la 1.11).
+    Cualquiera de los dos exige los cuatro valores del scope y la politica (a
+    medias, el planificador rechazaria cada rechazo con pilot_policy_mismatch).
+
+    - PAYMENT_FAILURE_VARIANTS_ENABLED (B1 entero) exige ademas el modo
+      directo, el worker del cupon (B1-saldo lleva su cupon) y las cuatro
+      plantillas.
+    - PAYMENT_FAILURE_OWN_POLICY_ENABLED (E-157), sin las variantes, sale con
+      la plantilla de hoy: exige WABA_PAYMENT_FAILURE_TEMPLATE_NAME y nada de
+      B1. Lo que cambia es la gracia y los topes, los del scope propio.
     """
-    if not settings.payment_failure_variants_enabled:
+    if not (
+        settings.payment_failure_variants_enabled
+        or settings.payment_failure_own_policy_enabled
+    ):
         return
-    flag = "PAYMENT_FAILURE_VARIANTS_ENABLED"
+    flag = (
+        "PAYMENT_FAILURE_VARIANTS_ENABLED"
+        if settings.payment_failure_variants_enabled
+        else "PAYMENT_FAILURE_OWN_POLICY_ENABLED"
+    )
     own = (
         settings.pilot_payment_failure_scope_key,
         settings.pilot_payment_failure_scope_version,
@@ -2965,6 +2990,12 @@ def _validate_payment_failure_own_scope(settings: Settings) -> None:
             "PAYMENT_FAILURE_FOLLOWUP_POLICY_KEY must differ from "
             "FOLLOWUP_POLICY_KEY and PAYMENT_SLIP_FOLLOWUP_POLICY_KEY"
         )
+    if not settings.payment_failure_variants_enabled:
+        # Sin las variantes sale la plantilla de hoy: sin ella no hay que
+        # mandar, y cada rechazo planificado venceria sin mensaje.
+        if not settings.waba_payment_failure_template_name:
+            raise ValueError(f"{flag} requires WABA_PAYMENT_FAILURE_TEMPLATE_NAME")
+        return
     if not settings.dispatcher_approved_template_direct_enabled:
         raise ValueError(f"{flag} requires DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED")
     if not settings.recovery_coupon_worker_enabled:
@@ -4154,8 +4185,9 @@ def create_app(
         if settings.portable_hotmart_payment_slip_enabled
         else None
     )
-    # El scope propio del pago rechazado (B1): otra clave y otra version, el
-    # mismo tenant y el mismo canal. Lo leen el worker (planifica contra el) y
+    # El scope propio del pago rechazado (B1, o sin las variantes con
+    # PAYMENT_FAILURE_OWN_POLICY_ENABLED): otra clave y otra version, el mismo
+    # tenant y el mismo canal. Lo leen el worker (planifica contra el) y
     # /ready; el envio lo autoriza contra el scope del caso.
     payment_failure_pilot_boundary = (
         PilotBoundaryConfig(
@@ -4165,7 +4197,10 @@ def create_app(
             channel_provider=settings.pilot_channel_provider,  # type: ignore[arg-type]
             channel_account_ref=settings.pilot_channel_account_ref,  # type: ignore[arg-type]
         )
-        if settings.payment_failure_variants_enabled
+        if (
+            settings.payment_failure_variants_enabled
+            or settings.payment_failure_own_policy_enabled
+        )
         and settings.pilot_payment_failure_scope_key is not None
         else None
     )
@@ -8654,8 +8689,8 @@ def create_app(
                     payment_slip_status.runtime_state
                 ),
             }
-        # El pago rechazado con su propio scope (B1): igual que la ficha, la
-        # clave solo aparece cuando el scope esta configurado.
+        # El pago rechazado con su propio scope (B1 o sin las variantes): igual
+        # que la ficha, la clave solo aparece cuando el scope esta configurado.
         if payment_failure_pilot_boundary is not None:
             if shared_supabase is None:
                 raise HTTPException(
