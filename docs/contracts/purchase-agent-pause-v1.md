@@ -46,9 +46,16 @@ inválidos: `22023 invalid_purchase_agent_pause_read`.
 - No frena la compra: cualquier error (la lectura, Chatwoot, la nota) va al log
   (`purchase_agent_pause_failed`, `purchase_agent_pause_note_not_sent`) y la
   compra queda aplicada. No hay reintento.
-- No pausa si hay un flujo nativo prendido para ese producto
-  (`reason=native_flow_on`): su plantilla de bienvenida va a la misma
-  conversación, y una conversación pausada frena los envíos proactivos.
+- No pausa al comprador que tomó un flujo nativo de compra
+  (`reason=native_flow_started`): su plantilla de bienvenida va a la misma
+  conversación, y una conversación pausada frena los envíos proactivos. Desde
+  E-165 (`flow-engine-v2` 2.8.0, sección 20) la pausa va después de la
+  admisión nativa: el comprador que el flujo no tomó (fuera de la cohorte, ya
+  disparado, sin flujo o sin poder entrar) se pausa como sin flujo nativo.
+  Mientras la admisión no contesta (`reason=native_admission_pending`) espera,
+  y la vuelta de la cola que obtiene respuesta pausa si ningún flujo arrancó.
+  Hasta la 1.20.5, un flujo nativo en `cohorte` o `prendido` salteaba la pausa
+  para todos los compradores del producto (`reason=native_flow_on`).
 - No pausa compras de un producto que no es de la instancia
   (`reason=other_product`) ni compras sin mail ni teléfono.
 - No quita etiquetas de Chatwoot (la del carrito de GHL no existe acá).

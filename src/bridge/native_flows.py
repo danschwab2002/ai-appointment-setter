@@ -90,6 +90,12 @@ def native_step_categories(entry_permission: str | None) -> frozenset[str]:
     return native_template_categories(entry_permission)
 
 
+# Lo que devuelve ``admit_native_purchase`` (E-165): la admision contesto y un flujo arranco
+# (``admitida``), contesto sin arrancar ninguno (``sin_arranque``: fuera de la cohorte, la persona
+# no entra o no hay flujo), o no contesto (``reintentar``). ``descartada:<motivo>`` nunca puede.
+NATIVE_PURCHASE_STARTED = "admitida"
+NATIVE_PURCHASE_NOT_STARTED = "sin_arranque"
+NATIVE_PURCHASE_RETRY = "reintentar"
 NATIVE_STEP_VARIABLES = frozenset({"nombre", "producto"})
 NATIVE_QUEUE_PAGE = 5
 CLIENT_LABEL = "cliente"
@@ -328,10 +334,13 @@ async def admit_native_purchase(
 ) -> str:
     """Admit one applied purchase to its native flows and close it in the queue.
 
-    Returns what happened, for the log: ``admitida`` (the admission answered,
-    with any outcome), ``descartada:<motivo>`` (it never can, the queue closes
-    it) or ``reintentar`` (the admission or a lookup did not answer: the queue
-    keeps it and counts the attempt). Never raises.
+    Returns what happened: ``admitida`` (the admission answered and a native
+    flow started for the buyer, ``motor_arranco``), ``sin_arranque`` (it
+    answered and none started: outside the cohort, the person does not enter,
+    or no flow), ``descartada:<motivo>`` (it never can, the queue closes it) or
+    ``reintentar`` (the admission or a lookup did not answer: the queue keeps
+    it and counts the attempt). The worker pauses the agent for every outcome
+    but ``admitida`` and ``reintentar`` (E-165). Never raises.
     """
     try:
         purchase = parse_hotmart_purchase_payload(payload)
@@ -380,7 +389,7 @@ async def admit_native_purchase(
             webhook_event_id,
             type(exc).__name__,
         )
-        outcome = "reintentar"
+        outcome = NATIVE_PURCHASE_RETRY
         done = False
     else:
         for row in rows:
@@ -391,7 +400,8 @@ async def admit_native_purchase(
                 row.outcome,
                 row.reason,
             )
-        outcome = "admitida"
+        started = any(row.outcome == "motor_arranco" for row in rows)
+        outcome = NATIVE_PURCHASE_STARTED if started else NATIVE_PURCHASE_NOT_STARTED
         done = True
     if outcome.startswith("descartada"):
         logger.warning(

@@ -34,6 +34,9 @@ FLOW_KEYS = {
     # cola de la compra nativa. Todas en memoria: /ready no llama a la base.
     "flow_engine_native_read", "flow_engine_native_on", "flow_engine_start_rejections_unnotified",
     "flow_engine_native_queue_pending",
+    # E-165 (flow-engine-v2 2.8.0): si el bridge corre A1 con cupon y A2/Z, lo que pide una ruta
+    # del carrito en motor. El de esta prueba los corre: enabled.
+    "flow_engine_cart_touches",
 }
 
 
@@ -115,6 +118,7 @@ def test_on_before_the_first_read_it_is_pending(tmp_path: Path) -> None:
     assert payload["flow_engine_native_on"] == "0"
     assert payload["flow_engine_start_rejections_unnotified"] == "unknown"
     assert payload["flow_engine_native_queue_pending"] == "unknown"
+    assert payload["flow_engine_cart_touches"] == "enabled"
     # /ready no lee las rutas: eso es del lote.
     assert "routes" not in authority.calls
 

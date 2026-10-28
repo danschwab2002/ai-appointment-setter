@@ -273,15 +273,30 @@ def test_a_purchase_of_another_product_does_not_pause() -> None:
     assert supabase.reads == [] and chatwoot.paused == []
 
 
-def test_with_a_native_flow_on_the_pause_is_skipped() -> None:
+@pytest.mark.parametrize("native_outcome", ["admitida", "reintentar"])
+def test_the_pause_is_skipped_only_for_the_buyer_a_native_flow_took(native_outcome: str) -> None:
+    # E-165: con el flujo nativo que arranco (o mientras la admision no contesto), no se pausa.
     supabase, chatwoot = _WorkerSupabase(), _PauseChatwoot()
     worker = _worker(supabase, chatwoot)
     asyncio.run(
         worker._pause_agent_for_purchase(
-            EVENT_ID, _purchase_payload(), _purchase(), native_product="att1"
+            EVENT_ID, _purchase_payload(), _purchase(), native_outcome=native_outcome
         )
     )
     assert supabase.reads == [] and chatwoot.paused == []
+
+
+@pytest.mark.parametrize("native_outcome", ["sin_arranque", "descartada:sin_telefono"])
+def test_a_buyer_no_native_flow_took_is_paused(native_outcome: str) -> None:
+    # E-165: fuera de la cohorte, sin flujo o sin poder entrar nunca, se pausa como sin flujo nativo.
+    supabase, chatwoot = _WorkerSupabase(), _PauseChatwoot()
+    worker = _worker(supabase, chatwoot)
+    asyncio.run(
+        worker._pause_agent_for_purchase(
+            EVENT_ID, _purchase_payload(), _purchase(), native_outcome=native_outcome
+        )
+    )
+    assert [call["conversation_id"] for call in chatwoot.paused] == [40]
 
 
 # ------------------------------------------------- el cliente de Chatwoot real

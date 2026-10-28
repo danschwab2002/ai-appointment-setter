@@ -905,6 +905,11 @@ def cmd_mover(ops: Ops, args: argparse.Namespace) -> int:
         if out.get("ok") is not True or revalidation.get("blocks") != []:
             ops.show("bloqueos", [(b.get("code"), b.get("path")) for b in out.get("blocks_detail", [])])
             raise Refused("la version activa tiene bloqueos con el motor: no se mueve", EXIT_BLOCKED)
+        if route.get("legacy_kind") == "carrito":
+            # E-165 (flow-engine-v2 2.8.0, seccion 20): el motor arranca sin A1 ni A2/Z, y sin ellos el bridge
+            # manda este carrito al legado. La base no conoce los flags del bridge: los verifica el operador.
+            ops.say("antes del codigo, verifica que /ready del bridge diga flow_engine_cart_touches: enabled (A1 con "
+                    "cupon y A2/Z prendidos): con disabled, el bridge manda cada carrito al legado y MOT-001 avisa")
     elif route.get("legacy_runtime_state") != "armed":
         raise Refused(f"el scope {route.get('legacy_scope_key')} no esta armado: la base no vuelve la ruta a legado "
                       "(armalo con piloto.sh)")

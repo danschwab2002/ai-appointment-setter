@@ -131,6 +131,9 @@ def test_to_motor_revalidates_the_active_version_with_the_image_and_moves_with_t
     code, out = run(MOVE, docker, terminal)
     assert code == script.EXIT_OK, out
     assert terminal.asked == 1
+    # E-165: el bridge sin A1 ni A2/Z manda el carrito al legado; el operador lo mira en /ready.
+    assert "flow_engine_cart_touches: enabled" in out
+    assert out.index("flow_engine_cart_touches") < out.index("despues (la ruta ya se movio")
     [write] = docker.writes()
     assert "select public.operator_route_flow_v1(" in write
     assert (_copy_value(write, "executor"), _copy_value(write, "generation")) == ("motor", "0")
