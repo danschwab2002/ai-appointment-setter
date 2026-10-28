@@ -1,0 +1,162 @@
+# Fixture: instancia.toml de danschwab2002/setter-instancia-maribel, origin/main 4b07f72 (2026-10-28), copiado
+# tal cual para tests/sql/followup_engine/real_postgres_add_instance_offers.py (E-163). Ningun campo es secreto.
+#
+# Manifiesto de la instancia maribel del setter.
+# Referencia de cada campo: docs/referencia-manifiesto.md del repo del producto
+# (danschwab2002/ai-appointment-setter). Ningun campo de este archivo es secreto.
+#
+# Cada <COMPLETAR: ...> dice que va y de donde se mide (docs/instalar.md del producto, paso 2: todo
+# se mide en la fuente, no se pregunta de memoria). Un marcador no carga a proposito: mientras quede
+# uno, `validate` falla y verificar.py lo nombra. Cada valor que se completa lleva al lado, en un
+# comentario, de donde salio y la fecha (como en conocimiento/knowledge-fuentes.md).
+#
+# Los nombres del producto no cambian con la instancia: tenant_ref = "lancemos" es el tenant del
+# portfolio de las aliadas (el mismo en todas), y las variables LANCEMOS_PILOT_* de despliegue/ son
+# nombres del codigo.
+
+schema = "setter-instancia/v2"
+producto = "v1.20.5"   # el tag del producto que se instala: la version que corre la primera instancia, o una posterior
+
+# Solo lo que ya llega de verdad (instalar.md, paso 3). "intencion" va si los formularios de la
+# landing entran por el adaptador de GHL ([adaptadores.ghl], abajo) o por /webhooks/lead.
+eventos = ["carrito", "pago_fallido", "compra", "entrante", "intencion"]   # intencion: el formulario «VSL Maribel» por el adaptador de GHL (E-131, 2026-10-26); entra cuando Dan crea en GHL el workflow que lo manda al bridge
+
+[instancia]
+tenant_ref = "lancemos"
+ally_ref = "maribel"
+funnel_ref = "maribel"
+binding_version = 2   # v2 (E-131): del inbox 12, la bandeja provisoria, al inbox de WhatsApp del numero. La publica scripts/publish_inbox_binding_version.py del producto (despliegue/camino-a-produccion.md, «El numero: el binding v2»)
+marca = "El Protocolo"   # PROVISIONAL: la marca del sitio (www.elprotocolo.net, title «El Protocolo de Juventud Epigenetica») y del checkout; medido 2026-10-23 (E-041). Se confirma en la llamada de arranque
+zona_horaria = "America/Mexico_City"   # PROVISIONAL: el checkout cobra en MXN y el pedido a Marcela del 23/10 pide un chip de Mexico; medido 2026-10-23 (E-041). Se confirma con el pais de los carritos
+
+[hotmart]
+# Todo se mide en la landing publicada y en el checkout publico (pay.hotmart.com/<hotlink>).
+product_id = 8443991   # el principal de la central Infinity INC; confirmado por E-043 y aprobado por Dan el 2026-10-23 23:35Z (reportes/E-043.md). Fuera: el viejo 7556706, el order bump 8451764 y el upsell 7596407
+hotlink = "F107441770M"   # el boton de ads-a arma pay.hotmart.com/F107441770M (buildCheckoutUrl, plan del 2x2 del 21/10) y abre el checkout real; medido 2026-10-23 (E-041)
+product_name = "El Protocolo Biohacking +"   # confirmado por E-043 y aprobado por Dan el 2026-10-23 23:35Z (reportes/E-043.md). La API de Hotmart lo devuelve con un espacio al final; el bridge recorta (hotmart._str hace strip) y la base compara con btrim, asi que va sin el espacio. El data.product.name del webhook no esta medido: se mira con la primera compra
+moneda = "MXN"   # el checkout F107441770M?off=u8ikyx78, «Total de MXN 1.204,31»; medido 2026-10-23 (E-041)
+precio = "1397"   # MXN 1.397, el precio de la oferta u8ikyx78 (265 de 368 ventas en 30 dias; el resto son totales en cuotas); confirmado por E-043 y aprobado por Dan el 2026-10-23 23:35Z (reportes/E-043.md)
+
+# Una por landing (instalar.md, paso 2). Exactamente una lleva por_defecto = true. Una oferta que
+# ninguna landing usa no va. Una oferta de la recuperacion de otra plataforma (GHL) queda afuera a
+# proposito: el lead vuelve a la oferta que vio.
+[[hotmart.ofertas]]
+codigo = "u8ikyx78"   # la oferta de la pauta (/epma/evg/vsl/ads -> ads-a), 85 % de las ventas del principal; confirmado por E-043 y aprobado por Dan el 2026-10-23 23:35Z (reportes/E-043.md)
+site = "elprotocolo"
+landing_id = "epma-vsl-ads-a"
+url = "https://www.elprotocolo.net/epma/evg/vsl/ads-a"   # 200; /epma/evg/vsl sin version da 404; medido 2026-10-23 (E-041)
+origen = "pauta"   # pauta, organico u otro
+por_defecto = true
+
+[chatwoot]
+# Settings -> Inboxes (el ID esta en la URL del inbox) y Settings -> Teams, sin comillas.
+account_id = 3   # la cuenta «Maribel» del Chatwoot del VPS, creada el 2026-10-23 22:45Z con rails runner (E-041, OK de Dan, opcion A)
+inbox_id = 13   # binding v2 (E-131): el inbox «Maribel WhatsApp», Channel::Whatsapp, cuenta 3, creado por Dan el 2026-10-26 (medido en solo lectura). Antes: 12, la bandeja API «Maribel provisoria (API)», creada el 2026-10-23 22:45Z (E-041)
+equipo_derivacion = 3   # el team «maribel - revisión humana», vacio, creada el 2026-10-23 22:45Z con rails runner (E-041, OK de Dan, opcion A)
+
+# El canal de las tarjetas del conector de la instancia (HND-001 de cada derivacion, MOT-001/MOT-002 del motor,
+# COR-* con «Revisar caso»): #feed-chatwoot-elprotocolo-maribel, en el workspace Lancemos (TNTLBQ72T). Publica
+# la app «maribel Setter» (A0CCQ1A0DFW, bot U0CCL4W0V5Y), creada e invitada por Dan el 2026-10-27 (E-145).
+# El bridge no lo lee: lo guarda el conector (SLACK_TENANT_CHANNELS_JSON, que arma generar.py desde aca).
+# Las alertas van a otro canal ([alertas].canal de despliegue.toml), con otra app. El dia 0 fue sin Slack
+# (decision de Dan, 2026-10-23): hasta este canal, las derivaciones iban solo al team de Chatwoot, y siguen
+# yendo ahi tambien.
+[slack]
+canal = "C0CCM98HWL9"
+
+[inbound]
+scope_key = "maribel-inbound"
+scope_version = 2   # la v2 la publica el binding v2 (copia de la v1 con el inbox nuevo); la v1 queda con el 12
+
+[consentimiento]
+# La etiqueta del texto de consentimiento que ve la persona en el formulario. El texto y donde se
+# midio van en consentimiento/maribel-whatsapp-contact-v1.md. Si el texto cambia, cambia la version.
+copy_version = "maribel-whatsapp-contact-v1"
+
+[plantillas]
+# Una por plantilla APROBADA en Meta, con el nombre y el idioma exactos (una aprobada en otro idioma
+# es otra plantilla). Una que todavia no esta aprobada se deja comentada: su flujo no se puede
+# prender y validate lo avisa. El juego por defecto, con sus textos y su categoria, esta en
+# plantillas/README.md, y de ahi sale cada linea de abajo.
+# precheckout: el carrito de GHL como primer contacto tras el formulario (decision de Dan del 2026-10-25), copiada
+# en el vault (productos/soporte-infoproductores/documentacion/plantillas-meta-maribel.json, E-097). Se mergea
+# recien con la plantilla APROBADA en Meta en la WABA del numero (E-130): el nombre y el idioma, los exactos.
+precheckout = { nombre = "maribel_retomar_proceso_01", idioma = "es_MX", parametros = ["nombre", "producto"] }
+# carrito: el carrito de Hotmart (maribel-recuperacion) con la MISMA plantilla del primer contacto, ya APROBADA en Meta
+# como MARKETING (id 2485253711966773): su texto es el del carrito de GHL. Decision de Dan del 2026-10-27 (E-140, E-142).
+carrito = { nombre = "maribel_retomar_proceso_01", idioma = "es_MX", parametros = ["nombre", "producto"] }
+# pago_fallido: el pago rechazado de Hotmart (PURCHASE_CANCELED, en el mismo scope maribel-recuperacion) con la MISMA
+# plantilla, ya APROBADA como MARKETING: su texto («Tu inscripcion no se proceso», el 10 % y «Retomar proceso») le
+# calza a quien intento pagar. Va con la categoria comun (WABA_TEMPLATE_CATEGORY=MARKETING), sin
+# WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY. Pedido de Dan del 2026-10-27 (E-153). GHL de Maribel no tiene este flujo.
+pago_fallido = { nombre = "maribel_retomar_proceso_01", idioma = "es_MX", parametros = ["nombre", "producto"] }
+# reactivacion = { nombre = "maribel_reactivacion_01", idioma = "<COMPLETAR: es_MX...>" }
+# descuento = { nombre = "maribel_seguimiento_descuento_01", idioma = "<COMPLETAR: es_MX...>" }
+
+[agente]
+# El profile del agente comercial en el Hermes propio de la instancia (el servicio hermes del stack,
+# instalado desde hermes.toml). Tiene que ser el HERMES_MODEL_NAME del bridge, o no arranca.
+modelo = "agente-comercial"
+conocimiento = "conocimiento/knowledge-v6.toml"   # v6 (E-153, 2026-10-27): la v5 mas una regla para quien toca «Retomar proceso» despues de un pago rechazado. Sin firmar: la firma la pone Dan. La v5 (firmada por Dan el 2026-10-27) queda como historia
+
+[flujos]
+# Todos en false (instalar.md, paso 3). Se prenden de a uno al final, cada uno con su PR, su flag en
+# el archivo del bridge y su prueba controlada (despliegue/camino-a-produccion.md). El manifiesto es
+# el techo: un flag prendido con su flujo en false no arranca. inbound = true exige el conocimiento
+# aprobado.
+inbound = true   # E-131: el entrante, con el conocimiento v4 aprobado (la firma 1). Sus flags van a mano en el archivo del bridge (cabecera de generar.py, «Entrante»)
+precheckout = true   # E-131: el primer contacto tras el formulario (maribel-primer-contacto). Exige la aceptacion del riesgo de [adaptadores.ghl]; sus flags van a mano (cabecera de generar.py)
+carrito = true   # E-142: la recuperacion v2 (el carrito de Hotmart), primero en cohorte (maribel-recuperacion v3). Su flag va a mano: PORTABLE_HOTMART_RECOVERY_ENABLED (cabecera de generar.py)
+pago_fallido = true   # E-153: el pago rechazado (B1 sin variantes: un mensaje, con el scope y la politica del carrito, espera 0). Su flag va a mano: PORTABLE_HOTMART_PAYMENT_FAILURE_ENABLED (cabecera de generar.py). Exige la aceptacion del riesgo de [adaptadores.ghl], ya firmada
+reactivacion = false
+descuento = false
+
+[guardas]
+# Si un mensaje nombra uno de estos terminos junto con una accion, el bridge deriva a una persona sin
+# pasar por el agente. Son raices ("levotiroxin" cubre levotiroxina). No dejar acciones_sensibles
+# vacia: con una lista vacia la guarda encuentra cualquier palabra y deriva todos los mensajes.
+# PROVISIONAL (E-041): raices genericas de salud (medicamentos, suplementos, hormonas); se revisan en la llamada y con el conocimiento.
+terminos_sensibles = ["medicacion", "medicamento", "farmaco", "pastilla", "suplement", "hormon"]
+acciones_sensibles = ["dejar", "suspender", "interrumpir"]
+
+[adaptadores.ghl]
+# Si los formularios de la landing son de GHL (manual de recursos, secciones 8 y 9). Para usarla:
+# "intencion" en eventos, y cada formulario se lista SOLO despues de verificar que muestra la
+# aclaracion de consentimiento.copy_version (listarlo afirma whatsapp_contact = true para cada envio).
+# MazKMboXGJHzkoINIcsC  «VSL Maribel», el modal «Ultimo paso» de ads-a (epma-vsl-ads-a). Medido en su
+#                       widget publico el 2026-10-26 a las 22:33Z (E-131): arriba de Enviar, sin casilla,
+#                       la frase de Lancemos del 03/10 («... conforme a la Politica de Privacidad de este
+#                       sitio.»), con nombre completo, telefono y correo obligatorios; la politica
+#                       enlazada (/politica-de-privacidad) nombra WhatsApp. El texto byte a byte esta en
+#                       consentimiento/maribel-whatsapp-contact-v1.md. El mismo formulario esta en la
+#                       organica org-a, que no es una oferta de este manifiesto: un envio desde org-a da
+#                       422 ghl_landing_unknown.
+formularios = ["MazKMboXGJHzkoINIcsC"]
+#
+# La aceptacion del riesgo del adaptador: las tres o ninguna, escritas A MANO por quien decide por la
+# instancia, en un PR propio (mergearlo es la firma). Ningun codigo las escribe. Sin ellas, con esta
+# seccion, el bridge no arranca con precheckout ni pago_fallido en true, ni con un scope del piloto de
+# audiencia con consentimiento y la frontera prendida. El marcador entre < y > no carga.
+# LA FIRMA (E-131): este PR la trae. Las dos primeras lineas las escribe A MANO quien decide,
+# reemplazando el marcador entero (con los < >): su nombre, y la fecha del dia en que firma, sin
+# comillas (por ejemplo 2026-10-27). La tercera es el nombre del contrato que se acepta y no se
+# cambia. Mientras quede un marcador, validate falla. Firmar confirma tambien, para Maribel, el riesgo
+# del texto del formulario (consentimiento/maribel-whatsapp-contact-v1.md, «El riesgo que queda»).
+riesgo_aceptado_por = "Dan Schwab"
+riesgo_aceptado_el  = 2026-10-26
+riesgo_contrato     = "ghl-precheckout-adapter-v1"
+
+# [revision_diaria]
+# La revision diaria (despliegue/revision-diaria/): nace apagada, con esta seccion comentada y el servicio
+# revision comentado en despliegue/stack.yaml. Se prende con los pasos del README ("La revision diaria").
+# Los cuatro revisores, en la forma "reviewer_ref:SLACK_USER_ID" (reviewer_ref en minusculas; el ID U...
+# del workspace de [revision_diaria].slack_team_id de despliegue.toml). Cada uno entra a la pagina con su
+# usuario de Slack y es responsable del borrado del lote a las 72 h. El bridge no los lee: los toma
+# despliegue/revision-diaria/generar-revision.py para DAILY_FEEDBACK_REVIEWERS_JSON (el producto exige
+# exactamente cuatro), y el servicio los escribe en la base al arrancar.
+# revisores = [
+#   "<COMPLETAR: reviewer_ref:SLACK_USER_ID del primer revisor>",
+#   "<COMPLETAR: reviewer_ref:SLACK_USER_ID del segundo revisor>",
+#   "<COMPLETAR: reviewer_ref:SLACK_USER_ID del tercer revisor>",
+#   "<COMPLETAR: reviewer_ref:SLACK_USER_ID del cuarto revisor>",
+# ]

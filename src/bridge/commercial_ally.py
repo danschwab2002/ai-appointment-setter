@@ -151,6 +151,42 @@ class CommercialAllyConfig:
         except (AttributeError, InvalidOperation, TypeError, ValueError) as exc:
             raise ValueError("commercial ally manifest contains invalid values") from exc
 
+    @classmethod
+    def from_binding_row(cls, row: object) -> CommercialAllyConfig:
+        """The row of ``resolve_commercial_ally_runtime_binding``, as the bridge reads it.
+
+        The same conversion the bridge does before comparing the row against
+        its manifest (``SupabaseClient.resolve_commercial_ally_runtime_binding``),
+        so a script that predicts that comparison (``scripts/add_instance_offers.py``)
+        cannot drift from it. Extra columns of the row (``status``, the
+        timestamps) are ignored; a missing field or a value of another shape
+        raises ``ValueError``.
+        """
+
+        if not isinstance(row, dict):
+            raise ValueError("commercial ally binding row must be an object")
+        supported = {item.name for item in fields(cls)}
+        if any(name not in row for name in supported):
+            raise ValueError("commercial ally binding row is missing fields")
+        values = {name: row[name] for name in supported}
+        try:
+            if not isinstance(values["additional_offer_codes"], list):
+                raise ValueError
+            values["additional_offer_codes"] = tuple(values["additional_offer_codes"])
+            if not isinstance(values["additional_offer_landings"], list):
+                raise ValueError
+            values["additional_offer_landings"] = tuple(
+                OfferLanding.from_json(landing)
+                for landing in values["additional_offer_landings"]
+            )
+            price = values["product_price"]
+            if isinstance(price, bool) or not isinstance(price, (str, int, float)):
+                raise ValueError
+            values["product_price"] = Decimal(str(price))
+            return cls(**values)
+        except (AttributeError, InvalidOperation, TypeError, ValueError) as exc:
+            raise ValueError("commercial ally binding row contains invalid values") from exc
+
     def __post_init__(self) -> None:
         refs = (
             self.tenant_ref,
