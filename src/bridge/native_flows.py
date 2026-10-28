@@ -50,9 +50,29 @@ NATIVE_PURCHASE_TRIGGER = "compra"
 NATIVE_NEEDS_DIRECT_TEMPLATE = "flow_engine_native_needs_direct_template"
 NATIVE_NEEDS_ENGINE = "flow_engine_native_needs_engine"
 NATIVE_STEP_CONTEXT_UNAVAILABLE = "flow_engine_native_step_context_unavailable"
-# La categoria de la plantilla de un flujo nativo con permiso compra (regla 17
-# del esquema: una sola plantilla de utilidad).
-NATIVE_TEMPLATE_CATEGORY = "UTILITY"
+# La categoria de la plantilla de un paso nativo sale del permiso del flujo
+# (flow-engine-v2 2.6.0): con ``permiso: compra`` solo utilidad (regla 17 del
+# esquema: una sola plantilla de utilidad); con cualquier otro permiso, la de
+# marketing tambien. La base solo admite hoy flujos nativos de la compra con
+# permiso compra (``motor_nativo:permiso``, 20261024000200), y el contexto del
+# paso no trae el permiso: el envio usa ``NATIVE_PURCHASE_PERMISSION`` hasta que
+# otro disparador nativo lo traiga.
+NATIVE_PURCHASE_PERMISSION = "compra"
+NATIVE_UTILITY_CATEGORY = "UTILITY"
+NATIVE_MARKETING_CATEGORY = "MARKETING"
+
+
+def native_template_categories(permission: object) -> frozenset[str]:
+    """Las categorias que acepta el envio de un paso nativo con ese permiso (2.6.0)."""
+    if permission == NATIVE_PURCHASE_PERMISSION:
+        return frozenset({NATIVE_UTILITY_CATEGORY})
+    return frozenset({NATIVE_MARKETING_CATEGORY, NATIVE_UTILITY_CATEGORY})
+
+
+# Lo que acepta hoy el envio de un paso nativo: el de la compra.
+NATIVE_PURCHASE_TEMPLATE_CATEGORIES = native_template_categories(NATIVE_PURCHASE_PERMISSION)
+
+
 NATIVE_STEP_VARIABLES = frozenset({"nombre", "producto"})
 NATIVE_QUEUE_PAGE = 5
 CLIENT_LABEL = "cliente"

@@ -6,8 +6,11 @@ es_MX), leida del catalogo de la bandeja 11 el 2026-10-26 por E-113:
 Tiene un encabezado de texto fijo («Notificación»), un cuerpo con un solo
 ``{{1}}`` (el producto, segun su ejemplo) y un boton URL fijo
 («Completar mi perfil», sin variable). En el mismo fixture van la ficha de
-efectivo (boton URL con ``{{1}}`` y respuesta rapida) y el carrito (tres
-respuestas rapidas), que un flujo nativo sigue sin poder mandar.
+efectivo (boton URL con ``{{1}}`` y respuesta rapida), que un flujo nativo
+sigue sin poder mandar, y el carrito (tres respuestas rapidas, MARKETING): desde
+flow-engine-v2 2.6.0 (E-158) sus botones pasan, y lo frena la categoria con
+``permiso: compra`` (regla 17). La plantilla de Maribel, con respuestas rapidas,
+esta en ``test_flow_engine_native_quick_replies.py``.
 
 La prueba de aceptacion es la prueba en seco de E-113: el mismo item que
 mandaria el Automation Expert, por el doble del bridge
@@ -69,7 +72,7 @@ def _parse(name: str, count: int, **kwargs: object):
 
 
 def test_a_fixed_url_button_goes_without_button_parameters() -> None:
-    approved = _parse("att1_bienvenida_01", 1, static_url_buttons_only=True)
+    approved = _parse("att1_bienvenida_01", 1, parameterless_buttons_only=True)
     assert approved.has_checkout_button is False and approved.button_url is None
     assert approved.processed_params({"1": PRODUCT}) == {"body": {"1": PRODUCT}}
     assert approved.render({"1": PRODUCT}) == WELCOME_BODY.replace("{{1}}", PRODUCT)
@@ -88,19 +91,24 @@ def test_without_the_flag_the_fixed_url_button_is_refused_as_before() -> None:
 
 @pytest.mark.parametrize(("name", "count", "detail"), [
     ("att1_ficha_efectivo_01", 4, "url_button_with_variable"),
-    ("att1_carrito_abandonado_01", 2, "unsupported_button"),
-], ids=["url con variable", "respuesta rapida"])
+], ids=["url con variable"])
 def test_other_buttons_stay_refused_in_a_native_send(name: str, count: int, detail: str) -> None:
     body = next(c["text"] for c in REAL[name]["components"] if c["type"] == "BODY")
     assert body.count("{{") == count
     with pytest.raises(ApprovedTemplateError) as error:
-        _parse(name, count, static_url_buttons_only=True)
+        _parse(name, count, parameterless_buttons_only=True)
     assert (error.value.reason, error.value.detail) == ("approved_template_mismatch", detail)
 
 
+def test_quick_replies_go_without_button_parameters_in_a_native_send() -> None:
+    # 2.6.0 (E-158): las tres respuestas rapidas del carrito pasan, sin parametros de boton.
+    approved = _parse("att1_carrito_abandonado_01", 2, parameterless_buttons_only=True)
+    assert approved.processed_params({"1": "María", "2": PRODUCT}) == {"body": {"1": "María", "2": PRODUCT}}
+
+
 def test_the_flag_excludes_a_declared_url_button() -> None:
-    with pytest.raises(ValueError, match="approved_template_static_url_buttons_conflict"):
-        _parse("att1_bienvenida_01", 1, static_url_buttons_only=True, checkout_button=True)
+    with pytest.raises(ValueError, match="approved_template_parameterless_buttons_conflict"):
+        _parse("att1_bienvenida_01", 1, parameterless_buttons_only=True, checkout_button=True)
 
 
 @pytest.mark.parametrize(("url", "fixed"), [
@@ -144,7 +152,7 @@ def test_the_native_step_sends_the_real_welcome_with_one_body_parameter(tmp_path
 @pytest.mark.parametrize(("name", "variables"), [
     ("att1_ficha_efectivo_01", ("nombre", "producto")),
     ("att1_carrito_abandonado_01", ("nombre", "producto")),
-], ids=["url con variable", "respuesta rapida"])
+], ids=["url con variable", "marketing con permiso compra"])
 def test_a_native_step_with_another_button_never_goes_out(tmp_path: Path, name: str,
                                                           variables: tuple[str, ...]) -> None:
     authority = _NativeAuthority(step=_step(template_name=name, template_variables=variables))
@@ -242,17 +250,25 @@ def test_the_welcome_with_the_default_variables_says_how_many_markers_it_has(rea
     assert "template_button_mismatch" not in {code for code, _ in _blocks(result)}
 
 
-@pytest.mark.parametrize(("name", "variables", "said"), [
-    ("att1_ficha_efectivo_01", ["nombre", "producto"], "URL con una variable"),
-    ("att1_carrito_abandonado_01", ["nombre", "producto"], "respuesta rápida"),
-], ids=["url con variable", "respuesta rapida"])
-def test_a_native_flow_with_another_button_is_blocked_with_a_clear_reason(
-        real_catalog: None, name: str, variables: list[str], said: str) -> None:
-    _, result = _propose_and_validate([{"plantilla": name, "variables": variables}, {"etiquetar": "cliente"}])
+def test_a_native_flow_with_a_variable_url_button_is_blocked_with_a_clear_reason(real_catalog: None) -> None:
+    _, result = _propose_and_validate(
+        [{"plantilla": "att1_ficha_efectivo_01", "variables": ["nombre", "producto"]}, {"etiquetar": "cliente"}])
 
     assert result["status"] == "borrador"
     [block] = [b for b in result["blocks"] if b["code"] == "template_button_mismatch"]
-    assert said in block["reason"]
+    assert "URL con una variable" in block["reason"]
+
+
+def test_a_native_flow_with_quick_replies_is_blocked_only_by_the_category(real_catalog: None) -> None:
+    # 2.6.0 (E-158): las respuestas rapidas del carrito ya no frenan; con permiso compra, la
+    # plantilla MARKETING la frena la 17.
+    _, result = _propose_and_validate(
+        [{"plantilla": "att1_carrito_abandonado_01", "variables": ["nombre", "producto"]}, {"etiquetar": "cliente"}])
+
+    assert result["status"] == "borrador"
+    codes = {code for code, _ in _blocks(result)}
+    assert "template_button_mismatch" not in codes
+    assert "purchase_permission_requires_single_utility_send" in codes
 
 
 # -- Lo que sabe el Automation Expert --------------------------------------------

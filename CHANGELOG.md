@@ -12,6 +12,16 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Agregado
+
+- **El motor nativo manda plantillas con botones de respuesta rápida, y la categoría sale del permiso** (E-158, PR 1 del hito 4 de la versión 1; contrato `flow-engine-v2` 2.6.0, sección 18).
+  - El validador (regla 13) y el envío de un paso nativo aceptan respuestas rápidas, solas o junto a botones de URL fija, sin parámetros de botón. Siguen frenados un botón de URL con variable y dos grupos de botones. Lo motivó `maribel_retomar_proceso_01` («Retomar proceso» y «No mas mensajes»).
+  - La categoría: con `permiso: compra`, solo `UTILITY` (regla 17, sin cambios); con otro permiso, también `MARKETING` (`native_flows.native_template_categories`). Como la base solo admite hoy flujos nativos de la compra, en producción el envío nativo sigue exigiendo `UTILITY`: queda listo para el disparador `carrito`.
+  - `parse_approved_template` recibe una categoría o un conjunto, y su parámetro `static_url_buttons_only` pasa a llamarse `parameterless_buttons_only`. Solo lo usa el envío nativo.
+  - El SOUL del Automation Expert y la página `chatwoot-whatsapp` de su biblioteca dicen que las respuestas rápidas salen solas y que con la compra la plantilla tiene que ser de utilidad.
+  - El contrato `flow-engine-v2` alinea la sección 9 con el código: el nativo tiene sus propias capacidades y no hereda las de la v1.
+  - Sin migración ni campos nuevos. Cambia el Python del bridge (`approved_templates.py`, `flow_validator.py`, `native_flows.py`, `worker.py` y un comentario en `flow_engine.py`) y el profile `automation-expert` (`SOUL.md` y la biblioteca). Sin flujos nativos, nada cambia.
+
 ## [1.20.5] - 2026-10-28
 
 Una versión chica sobre la 1.20.4, con un solo cambio, apagado por defecto: el pago rechazado con su scope y su política propios, sin las variantes de B1 (E-157). Es para que el pago rechazado de Maribel espere 15 minutos sin demorar el carrito. Sin migración y sin campos nuevos en el manifiesto. Hay una variable nueva, `PAYMENT_FAILURE_OWN_POLICY_ENABLED`, que en false no cambia nada. Solo cambia el Python del bridge: `app.py` y una cita de línea en `flow_parity.py`. Los profiles no cambian.

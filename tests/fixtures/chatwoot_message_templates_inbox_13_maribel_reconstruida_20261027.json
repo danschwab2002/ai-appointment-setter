@@ -1,0 +1,47 @@
+{
+  "_capture": {
+    "origen": "RECONSTRUIDA, no leida del catalogo de Chatwoot. El cuerpo y los botones son el pedido exacto que meta_plantillas.py subio a Meta el 2026-10-26T23:24Z para la WABA de Maribel (la funcion pedido() del script sobre su fuente, plantillas-meta-maribel.json del OS, vuelta a correr el 2026-10-27T23:55Z). El id, APPROVED y la categoria MARKETING (Meta la recategorizo: se subio como UTILITY) salen de meta_plantillas.py listar --instancia maribel, el 2026-10-27 ~00:35Z (runbook del dia de prender de Maribel). parameter_format como lo sincroniza Chatwoot (la captura del inbox 11 del 2026-10-26).",
+    "captured_at": null,
+    "reconstruida_el": "2026-10-27",
+    "pendiente": "Reemplazar por la captura de channel_whatsapp.message_templates del inbox 13 (Maribel WhatsApp, cuenta 3), en solo lectura, como la del inbox 11 de E-113. Si Meta cambio el cuerpo o los botones al aprobarla, la captura manda.",
+    "anonimizado": "No hace falta: es la definicion de una plantilla, sin datos de personas.",
+    "lo_que_prueba": "La plantilla de los flujos de Maribel (primer contacto, carrito y pago rechazado): cuerpo con {{1}} nombre y {{2}} producto, dos respuestas rapidas («Retomar proceso» y «No mas mensajes», sin tilde, como en GHL), sin encabezado y en MARKETING. Un paso nativo la manda con un permiso que no es compra; con permiso compra, la regla 17 la frena por la categoria."
+  },
+  "message_templates": [
+    {
+      "id": "2485253711966773",
+      "name": "maribel_retomar_proceso_01",
+      "status": "APPROVED",
+      "category": "MARKETING",
+      "language": "es_MX",
+      "components": [
+        {
+          "type": "BODY",
+          "text": "Hola {{1}}, revisamos tu intento de compra   - Orden de compra *{{2}}* .\n\nTu inscripción  no se proceso.\nMotivo: Puede que hayas dejado tu compra incompleta por una duda durante el proceso o simplemente porque no pudiste finalizar a tiempo 💛 por eso, para que no pierdas esta oportunidad,   tienes un *10% de descuento* especial para retomar tu compra, da clic en el *botón para redimirlo*\n\nResponde si necesitas ayuda para completar tu compra.",
+          "example": {
+            "body_text": [
+              [
+                "María",
+                "El Protocolo Biohacking +"
+              ]
+            ]
+          }
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "type": "QUICK_REPLY",
+              "text": "Retomar proceso"
+            },
+            {
+              "type": "QUICK_REPLY",
+              "text": "No mas mensajes"
+            }
+          ]
+        }
+      ],
+      "parameter_format": "POSITIONAL"
+    }
+  ]
+}

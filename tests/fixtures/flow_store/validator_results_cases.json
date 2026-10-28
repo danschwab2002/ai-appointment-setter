@@ -2076,17 +2076,7 @@
    "code": "prender_a_cohorte_needs_paused_native",
    "case": "positivo",
    "result": {
-    "blocks": [
-     {
-      "rule": 13,
-      "code": "template_button_mismatch",
-      "kind": "proteccion",
-      "path": "/0",
-      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
-      "reason": "La plantilla tiene un botón de respuesta rápida, y el motor nativo solo manda botones de URL fija.",
-      "alternative": "Declarar el botón que tiene la plantilla, o elegir otra."
-     }
-    ],
+    "blocks": [],
     "warnings": []
    },
    "validator": {

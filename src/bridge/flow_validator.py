@@ -1453,8 +1453,10 @@ class _Run:
         """Las plantillas contra el catalogo. Devuelve la categoria de cada paso resuelto.
 
         En un flujo nativo (``flow.is_native``) los botones son los que manda el
-        envio nativo (``parse_approved_template(static_url_buttons_only=True)``):
-        ninguno, o de URL fija, sin parametro (E-115).
+        envio nativo (``parse_approved_template(parameterless_buttons_only=True)``):
+        ninguno, de URL fija (E-115) o de respuesta rapida (flow-engine-v2 2.6.0),
+        sin parametro. La categoria la mira la 17: con ``permiso: compra``, solo
+        ``UTILITY``; con otro permiso, tambien ``MARKETING``.
 
         Un paso resuelto es el que encontro en el catalogo una sola plantilla
         con su nombre y su idioma. Su categoria va tal cual la trae el
@@ -1507,7 +1509,8 @@ class _Run:
 
         ``native``: el paso de un flujo nativo. Sus variables las declara el paso, una por
         marcador y en su orden, y la razon del bloqueo dice cuantos marcadores tiene la
-        plantilla. Sus botones, si no declara ``boton``, solo pueden ser de URL fija.
+        plantilla. Sus botones, si no declara ``boton``, solo pueden ser de URL fija o de
+        respuesta rapida.
         """
         components = template.get("components")
         if not isinstance(components, list) or not all(isinstance(c, Mapping) for c in components):
@@ -1878,20 +1881,25 @@ def _is_static_url(url: object) -> bool:
 
 
 def _native_button_problem(buttons: list[object], groups: int) -> str | None:
-    """Por que el envio nativo no manda los botones de esta plantilla, o ``None`` si los manda."""
+    """Por que el envio nativo no manda los botones de esta plantilla, o ``None`` si los manda.
+
+    Manda los que no llevan parametro: los de URL fija (E-115) y los de respuesta rapida
+    (flow-engine-v2 2.6.0), en cualquier orden, como ``parse_approved_template(
+    parameterless_buttons_only=True)``.
+    """
     if groups > 1:
         return "La plantilla tiene más de un grupo de botones, y el motor nativo no sabe mandarla."
     for button in buttons:
         if not isinstance(button, Mapping):
             return "La plantilla tiene un botón que no se puede leer."
         if button.get("type") == "QUICK_REPLY":
-            return ("La plantilla tiene un botón de respuesta rápida, y el motor nativo solo manda "
-                    "botones de URL fija.")
+            continue
         if button.get("type") != "URL":
-            return "La plantilla tiene un botón de otro tipo, y el motor nativo solo manda botones de URL fija."
+            return ("La plantilla tiene un botón de otro tipo, y el motor nativo solo manda botones de URL fija "
+                    "y de respuesta rápida.")
         if not _is_static_url(button.get("url")):
             return ("La plantilla tiene un botón de URL con una variable, y el motor nativo no la llena: "
-                    "solo manda botones de URL fija.")
+                    "solo manda botones de URL fija y de respuesta rápida.")
     return None
 
 

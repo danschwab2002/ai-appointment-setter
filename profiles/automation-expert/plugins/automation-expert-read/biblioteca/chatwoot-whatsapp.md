@@ -11,7 +11,9 @@ Una plantilla que no existe se escribe como `{a_crear: <nombre>}`: el flujo se g
 
 **La plantilla de un flujo de la compra** (un flujo nativo) manda las variables que el paso escribe en `variables`: una por marcador, en su orden, de entre `nombre` (el de quien compró, como viene de Hotmart) y `producto`. Por ejemplo, una plantilla cuyo único marcador es el producto lleva `variables: ["producto"]`. El catálogo no se lista desde acá: el nombre de la plantilla y qué es cada marcador los da quien la pidió. La validación compara `variables` con la plantilla aprobada y, si no coinciden, `template_variable_count_mismatch` dice cuántos marcadores tiene.
 
-**Los botones de esa plantilla.** Puede tener botones con un link fijo (por ejemplo, «Completar mi perfil» a un formulario): salen tal cual, sin nada que llenar. Un botón de respuesta rápida, o uno con un link que cambia por persona, la frena (`template_button_mismatch`, con el motivo): no se corrige en el pedido, hay que pedirle a Meta otra plantilla.
+**Los botones de esa plantilla.** Puede tener botones con un link fijo (por ejemplo, «Completar mi perfil» a un formulario) y de respuesta rápida (por ejemplo, «Retomar proceso» y «No mas mensajes»): salen tal cual, sin nada que llenar, y la respuesta a un botón la atiende el agente. Uno con un link que cambia por persona la frena (`template_button_mismatch`, con el motivo): no se corrige en el pedido, hay que pedirle a Meta otra plantilla.
+
+**La categoría de esa plantilla.** Con `permiso: compra`, solo `UTILITY` (regla 17). Con otro permiso, también `MARKETING`; hoy el motor nativo solo arranca con la compra, así que todavía no hay flujo nativo con otro permiso.
 
 **La ventana de 24 horas.** Después del último mensaje de la persona, durante 24 horas se le puede escribir texto libre; pasadas las 24 horas, solo una plantilla aprobada (Meta lo rechaza con 131047).
 
