@@ -203,6 +203,7 @@ async def resolve_event(
     commercial_ally_config: CommercialAllyConfig | None = None,
     event_type: str | None = None,
     flow_engine: FlowEngineRuntime | None = None,
+    native_cart_product_ref: str | None = None,
 ) -> SituationReport:
     """Resolve identity for one webhook event and return a situation report.
 
@@ -215,6 +216,11 @@ async def resolve_event(
     6. Fetch conversations, recovery_cases, channel_identities.
     7. Build and return the SituationReport.
     8. Mark the webhook_event as 'processed'.
+
+    ``native_cart_product_ref`` (E-161, flow-engine-v2 2.7.0): the product of a
+    cart with a native cart flow on or in its cohort. Only then the cart goes
+    first to the native admission, and the legacy (or the engine of the cart)
+    plans only what no native flow takes. None is exactly today's path.
     """
     if event_type == EVENT_PURCHASE_CANCELED:
         buyer = (
@@ -427,12 +433,58 @@ async def resolve_event(
                 planner = supabase.plan_payment_slip_recovery
             else:
                 planner = supabase.plan_cart_recovery
+            # flow-engine-v2 2.7.0 (E-161): un carrito con un flujo nativo del
+            # carrito prendido o en cohorte va primero a la admision nativa. Un
+            # evento abre un solo caso: si el nativo lo toma, el legado no
+            # planifica. Sin ese flujo, ninguna llamada nueva.
+            native_cart = None
+            if (
+                flow_engine is not None
+                and native_cart_product_ref is not None
+                and buyer.event_type == EVENT_CART_ABANDONMENT
+                and portable_identity_allowed
+                and external_user_id is not None
+                and chatwoot_account_id is not None
+                and chatwoot_inbox_id is not None
+            ):
+                from bridge.native_flows import (
+                    NATIVE_CART_PENDING,
+                    NATIVE_CART_REFUSED,
+                    NATIVE_CART_STARTED,
+                    admit_native_cart,
+                )
+
+                native_cart = await admit_native_cart(
+                    supabase,
+                    runtime=flow_engine,
+                    webhook_event_id=webhook_event_id,
+                    product_ref=native_cart_product_ref,
+                    contact_id=contact_id,
+                    offer_code=buyer.offer_code,
+                    moment=abandoned_at,
+                    chatwoot_account_id=chatwoot_account_id,
+                    chatwoot_inbox_id=chatwoot_inbox_id,
+                    destination=external_user_id,
+                )
+                if native_cart.outcome == NATIVE_CART_PENDING:
+                    raise ResolutionError(FLOW_ENGINE_ADMISSION_PENDING)
+                if native_cart.outcome == NATIVE_CART_REFUSED:
+                    error = f"flow_engine_no_start:{native_cart.reason}"
+                    await supabase.update_event_status(
+                        event_id=webhook_event_id, status="failed", error=error
+                    )
+                    raise ResolutionError(error)
+                if native_cart.outcome != NATIVE_CART_STARTED:
+                    native_cart = None
             # flow-engine-v1, seccion 8: solo con el flag, solo el carrito, y
             # solo con la ruta del scope de la frontera en motor. Con la ruta
             # en legado, sin ruta, sin lectura buena o sin flag, la llamada es
             # exactamente la de hoy.
             engine_pilot_boundary = pilot_boundary
-            if (
+            if native_cart is not None:
+                assert native_cart.recovery_case_id is not None
+                recovery_case_id = native_cart.recovery_case_id
+            elif (
                 flow_engine is not None
                 and buyer.event_type == EVENT_CART_ABANDONMENT
                 and engine_pilot_boundary is not None

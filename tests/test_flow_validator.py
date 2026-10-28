@@ -694,7 +694,8 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
         lambda: run_new(),
     ),
     "motor_nativo:disparador": (
-        lambda: run_new(welcome(dispara={"evento": "carrito"}, entra={"permiso": "formulario"},
+        # El pago rechazado: el motor nativo arranca con la compra y, desde E-161, con el carrito.
+        lambda: run_new(welcome(dispara={"evento": "pago_fallido"}, entra={"permiso": "formulario"},
                                 pasos=[copy.deepcopy(CONFIRMED_STEP)])),
         lambda: run_new(),
     ),

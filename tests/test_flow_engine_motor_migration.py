@@ -95,6 +95,9 @@ def test_it_is_one_transaction_and_comes_before_the_bridge_reads() -> None:
         # La pagina de aprobacion (20261028000100, A′ PR 2): suma su rol, sus
         # sesiones y sus envoltorios, y no toca las funciones de esta.
         "20261028000100_flow_change_slack_approver_v1.sql",
+        # El carrito nativo (20261028000200, E-161): parcha la admision y el arranque nativos,
+        # la simulacion y la historia del AE, y vuelve a crear flow_engine_execution_context_v1.
+        "20261028000200_flow_engine_native_cart_v1.sql",
     ]
     later = (MIGRATIONS / names[position + 1]).read_text(encoding="utf-8")
     assert "create or replace" not in later.lower()

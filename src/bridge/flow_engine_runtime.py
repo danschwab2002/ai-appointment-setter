@@ -239,6 +239,9 @@ class FlowEngineRuntime:
             supabase=supabase, instance=instance, clock=clock
         )
         self.admission_failures = FlowEngineAdmissionFailures()
+        # flow-engine-v2 2.7.0 (E-161): la admision nativa del carrito cuenta aparte, para no
+        # forzar al legado la admision del motor del mismo evento.
+        self.native_admission_failures = FlowEngineAdmissionFailures()
         # Los escribe el aviso de las divergencias (MOT-001) con su ultima
         # lectura; hasta la primera, unknown.
         self.divergences_unnotified: int | None = None

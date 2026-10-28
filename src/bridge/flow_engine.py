@@ -259,22 +259,28 @@ def not_supported(definition: Mapping[str, Any], capabilities: EngineCapabilitie
 
 
 # El motor nativo de flow-engine-v2 (§9, el PR 2 en 20261024000200): ejecuta un flujo que nace en el
-# motor, sin legado, disparado por la compra. Un solo envio (la forma de pasos ``nativo:compra``), con
-# las variables que declara el paso de entre ``nombre`` y ``producto`` (E-115, 20261026000100), sin
-# boton declarado, y el paso ``etiquetar`` (lo ejecuta el bridge, PR 3). La plantilla puede traer
-# botones de URL fija y de respuesta rapida: no llevan parametro (los mira la regla 13 contra el
-# catalogo, flow-engine-v2 2.6.0). ``buttons`` vacio es el ``boton`` que declara el paso, no los
-# botones de la plantilla.
+# motor, sin legado, disparado por la compra o, desde 20261028000200 (E-161, §19), por el carrito
+# abandonado. Un solo envio (las formas de pasos ``nativo:compra`` y ``nativo:carrito``), con las
+# variables que declara el paso de entre ``nombre`` y ``producto`` (E-115, 20261026000100), sin boton
+# declarado, y el paso ``etiquetar`` (lo ejecuta el bridge, PR 3; la regla 5 lo deja solo con la
+# compra). La salida ``compra`` (la del carrito: la compra corta el caso antes del envio, el freno de la
+# reevaluacion). La plantilla puede traer botones de URL fija y de respuesta rapida: no llevan parametro
+# (los mira la regla 13 contra el catalogo, flow-engine-v2 2.6.0). ``buttons`` vacio es el ``boton`` que
+# declara el paso, no los botones de la plantilla.
 ENGINE_CAPABILITIES_NATIVE = EngineCapabilities(
-    triggers=frozenset({"compra"}),
+    triggers=frozenset({"compra", "carrito"}),
     step_types=frozenset({"esperar", "plantilla", "etiquetar"}),
     max_sends_per_path=1,
     waits_between_sends=False,
     variables=frozenset({"nombre", "producto"}),
     buttons=frozenset(),
-    exits=frozenset(),
+    exits=frozenset({"compra"}),
     relations_between_engine_flows_only=True,
 )
+# El permiso con el que entra cada disparador nativo (``_flow_engine_native_unsupported``, 20261028000200):
+# la compra con ``compra`` (la regla 17: una sola plantilla de utilidad) y el carrito con ``formulario``
+# (la intencion con consentimiento que la admision portable correlaciono con ese carrito).
+NATIVE_PERMISSION_BY_TRIGGER: Mapping[str, str] = MappingProxyType({"compra": "compra", "carrito": "formulario"})
 # Las variables que el bridge sabe llenar en un paso nativo de la compra
 # (``_flow_engine_native_steps('nativo:compra')``, ``variables_de``): el paso manda las que declara, en
 # su orden, al menos una y ninguna repetida; otra lista es ``variables_differ`` (20261026000100).
@@ -303,9 +309,10 @@ def native_not_supported(definition: Mapping[str, Any]) -> tuple[str, ...]:
     """Lo que el motor nativo no ejecuta de una definicion, en orden; vacio si la ejecuta.
 
     Es la regla 14 de un flujo nativo (flow-engine-v2 §9): lo que la base mira al abrirlo y al admitirlo
-    (``_flow_engine_native_unsupported``, 20261024000200), y lo que el compilador de la politica rechaza
-    con la forma ``nativo:compra`` (un envio, variables de ``nombre`` y ``producto``, sin espera
-    despues del envio).
+    (``_flow_engine_native_unsupported``, 20261024000200 y 20261028000200: el disparador, el permiso que
+    le corresponde, la repeticion, la prioridad y un solo envio), y lo que el compilador de la politica
+    rechaza con las formas ``nativo:compra`` y ``nativo:carrito`` (un envio, variables de ``nombre`` y
+    ``producto``, sin espera despues del envio).
     """
     found: list[str] = []
 
@@ -314,10 +321,12 @@ def native_not_supported(definition: Mapping[str, Any]) -> tuple[str, ...]:
             found.append(code)
 
     trigger = definition.get("dispara")
-    if trigger != {"evento": "compra"}:
+    event = trigger.get("evento") if isinstance(trigger, Mapping) and set(trigger) == {"evento"} else None
+    if not isinstance(event, str) or event not in NATIVE_PERMISSION_BY_TRIGGER:
         add(NATIVE_UNSUPPORTED_TRIGGER)
+        event = None
     entry = definition.get("entra")
-    if not isinstance(entry, Mapping) or entry.get("permiso") != "compra":
+    if not isinstance(entry, Mapping) or entry.get("permiso") != NATIVE_PERMISSION_BY_TRIGGER.get(event or "compra"):
         add(NATIVE_UNSUPPORTED_PERMISSION)
     caps = definition.get("topes")
     repeat = caps.get("repeticion") if isinstance(caps, Mapping) else None

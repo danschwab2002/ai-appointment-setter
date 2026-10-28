@@ -108,7 +108,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026102400060
   '20261026000200_flow_engine_native_offer_in_context_v1.sql',
   // La pagina de aprobacion (A′ PR 2): el rol del aprobador, sus sesiones, la cohorte con slack y la ruta
   // nativa firmada por slack. No toca lo que esta prueba mira.
-  '20261028000100_flow_change_slack_approver_v1.sql'])) {
+  '20261028000100_flow_change_slack_approver_v1.sql',
+  // El carrito nativo (E-161): parcha la admision y el arranque nativos y vuelve a crear el contexto del paso.
+  '20261028000200_flow_engine_native_cart_v1.sql'])) {
   fail(`despues de ${MIGRATION} van solo la del AE que crea flujos y la de sus lecturas nativas`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(

@@ -5886,6 +5886,46 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         6,
         'flow_change_slack_approver'
+    union all
+    select
+        '20261028000200',
+        '20261028000200_flow_engine_native_cart_v1.sql',
+        -- El carrito nativo (E-161): las dos funciones del permiso del carrito,
+        -- de nadie de la API ...
+        (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public._flow_engine_native_cart_reason(uuid,uuid,text)'),
+                to_regprocedure('public._flow_engine_native_cart_audience(uuid,uuid,text,text,text)')
+            )
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- ... la admision y el arranque nativos con el permiso del carrito ...
+        + (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public._flow_engine_admit_native_flow(public.flow_controls,public.webhook_events,uuid,text,timestamptz,bigint,bigint,text)'),
+                to_regprocedure('public._flow_engine_authorize_native_tail(uuid,uuid,public.flow_engine_runs,public.recovery_cases,public.flow_controls,timestamptz)')
+            )
+              and position('flow_engine_native_cart' in definition) > 0
+        )::int
+        -- ... y el contexto del paso con el permiso, solo de service_role.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.flow_engine_execution_context_v1(uuid)')
+              and position('entry_permission' in definition) > 0
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        3,
+        'flow_engine_native_cart'
 )
 select
     version,

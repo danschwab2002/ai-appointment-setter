@@ -1,13 +1,17 @@
 """El bridge del motor nativo (contrato flow-engine-v2, el PR 3 del hito 4, E-065).
 
-Un flujo nativo nace en el motor, sin legado (en este hito: la bienvenida
-despues de la compra). Este modulo tiene las dos puntas que el bridge le pone:
+Un flujo nativo nace en el motor, sin legado (la bienvenida despues de la
+compra y, desde E-161, el carrito de un toque). Este modulo tiene las puntas
+que el bridge le pone:
 
 - **La compra va a la admision nativa** (``admit_native_purchase``), despues de
   que el worker la aplico y corto los casos abiertos. El worker la anota en la
   cola de la base antes de aplicarla; si la admision no contesta, la compra
   sigue en la cola y el lote la reintenta. El contacto se resuelve sin tocar el
   estado del evento: ese lo deja ``apply_hotmart_purchase_approved``.
+- **El carrito va a la admision nativa antes que al legado**
+  (``admit_native_cart``, flow-engine-v2 2.7.0): lo llama el resolver con el
+  contacto ya resuelto; si un flujo nativo lo toma, el legado no planifica.
 - **El paso ``etiquetar: cliente``** (``apply_native_tail``), despues de que la
   plantilla del paso quedo aceptada: la etiqueta ``cliente`` por un macro que
   solo la suma (el patron de ``ProductLabeler``) y una nota privada con el
@@ -21,6 +25,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
 
@@ -45,6 +50,8 @@ logger = logging.getLogger(__name__)
 # admision nativa, y ninguna otra accion la tiene.
 NATIVE_ANCHOR = "flow_engine_event"
 NATIVE_PURCHASE_TRIGGER = "compra"
+# El carrito abandonado (E-161, flow-engine-v2 2.7.0): entra con permiso formulario.
+NATIVE_CART_TRIGGER = "carrito"
 # Una accion nativa solo sale con la plantilla del paso, en el modo directo y
 # con el motor prendido: nunca por Hermes ni con la plantilla del manifiesto.
 NATIVE_NEEDS_DIRECT_TEMPLATE = "flow_engine_native_needs_direct_template"
@@ -53,10 +60,9 @@ NATIVE_STEP_CONTEXT_UNAVAILABLE = "flow_engine_native_step_context_unavailable"
 # La categoria de la plantilla de un paso nativo sale del permiso del flujo
 # (flow-engine-v2 2.6.0): con ``permiso: compra`` solo utilidad (regla 17 del
 # esquema: una sola plantilla de utilidad); con cualquier otro permiso, la de
-# marketing tambien. La base solo admite hoy flujos nativos de la compra con
-# permiso compra (``motor_nativo:permiso``, 20261024000200), y el contexto del
-# paso no trae el permiso: el envio usa ``NATIVE_PURCHASE_PERMISSION`` hasta que
-# otro disparador nativo lo traiga.
+# marketing tambien. Desde 20261028000200 (E-161) el contexto del paso trae el
+# permiso de la version fijada (``entry_permission``) y el envio lo usa con
+# ``native_step_categories``; sin el dato, el de ``NATIVE_PURCHASE_PERMISSION``.
 NATIVE_PURCHASE_PERMISSION = "compra"
 NATIVE_UTILITY_CATEGORY = "UTILITY"
 NATIVE_MARKETING_CATEGORY = "MARKETING"
@@ -69,8 +75,19 @@ def native_template_categories(permission: object) -> frozenset[str]:
     return frozenset({NATIVE_MARKETING_CATEGORY, NATIVE_UTILITY_CATEGORY})
 
 
-# Lo que acepta hoy el envio de un paso nativo: el de la compra.
+# Lo que acepta el envio de un paso nativo de la compra, y el de uno cuyo permiso no llego.
 NATIVE_PURCHASE_TEMPLATE_CATEGORIES = native_template_categories(NATIVE_PURCHASE_PERMISSION)
+
+
+def native_step_categories(entry_permission: str | None) -> frozenset[str]:
+    """Las categorias del envio de un paso nativo, con el permiso de su version fijada (E-161).
+
+    El contexto del paso trae ``entry_permission`` desde 20261028000200. Sin el (una base sin la
+    migracion), el envio sigue como antes: solo utilidad. Nunca abre ``MARKETING`` por falta del dato.
+    """
+    if not isinstance(entry_permission, str) or not entry_permission:
+        return NATIVE_PURCHASE_TEMPLATE_CATEGORIES
+    return native_template_categories(entry_permission)
 
 
 NATIVE_STEP_VARIABLES = frozenset({"nombre", "producto"})
@@ -108,6 +125,132 @@ def purchase_product_ref(
     if purchase is None or purchase.product_id != commercial_ally_config.hotmart_product_id:
         return None
     return commercial_ally_config.funnel_ref
+
+
+def cart_product_ref(
+    payload: Mapping[str, object],
+    *,
+    commercial_ally_config: CommercialAllyConfig | None,
+    product_routes: ProductRoutes | None,
+) -> str | None:
+    """The product of the instance a cart belongs to, by Hotmart id (E-161).
+
+    Like ``purchase_product_ref``, for a ``PURCHASE_OUT_OF_SHOPPING_CART``
+    payload: with several products, its route (product and offer); with one,
+    the product id of the payload against the instance.
+    """
+    if product_routes is not None:
+        route = product_routes.for_hotmart(payload)
+        return None if isinstance(route, HotmartUnrouted) else route.config.funnel_ref
+    if commercial_ally_config is None:
+        return None
+    data = payload.get("data")
+    product = data.get("product") if isinstance(data, Mapping) else None
+    product_id = product.get("id") if isinstance(product, Mapping) else None
+    if type(product_id) is not int or product_id != commercial_ally_config.hotmart_product_id:
+        return None
+    return commercial_ally_config.funnel_ref
+
+
+# What a native cart admission leaves to the resolver (E-161, flow-engine-v2 2.7.0).
+NATIVE_CART_STARTED = "arranco"          # a native run owns the event: no legacy planner
+NATIVE_CART_REFUSED = "no_arranca"       # a native flow took the person and did not start: no legacy
+NATIVE_CART_UNCLAIMED = "sin_reclamo"    # no native flow takes the person: the legacy plans as today
+NATIVE_CART_PENDING = "pendiente"        # the admission did not answer: the event stays received
+# Not taking the person: outside the cohort, or the flow went off or paused after the read.
+NATIVE_CART_UNCLAIMED_REASONS = frozenset({"fuera_de_cohorte", "flujo_apagado", "flujo_pausado"})
+
+
+@dataclass(frozen=True)
+class NativeCartAdmission:
+    outcome: str
+    recovery_case_id: str | None = None
+    reason: str | None = None
+
+
+async def admit_native_cart(
+    supabase: SupabaseClient,
+    *,
+    runtime: FlowEngineRuntime,
+    webhook_event_id: str,
+    product_ref: str,
+    contact_id: str,
+    offer_code: str | None,
+    moment: str,
+    chatwoot_account_id: int,
+    chatwoot_inbox_id: int,
+    destination: str,
+) -> NativeCartAdmission:
+    """Admit a cart to the native cart flows of its product, before the legacy planner.
+
+    One event opens one case (``recovery_cases.abandonment_event_id`` is
+    unique), so the native admission goes first and the legacy only plans what
+    no native flow takes: ``sin_reclamo`` (``sin_flujo``, outside the cohort, or
+    a flow off or paused). ``arranco`` hands the native case to the resolver;
+    ``no_arranca`` (the person is the flow's and did not enter) ends the event
+    without the legacy, like the cart of the engine (``motor_no_arranca``).
+    A call that did not answer is ``pendiente`` (the event stays received and
+    the batch tries again) up to the third consecutive failure; the fourth call
+    still asks (a lost answer may have left the case created), and if it fails
+    too, the legacy plans. A deterministic rejection goes to the legacy. Never
+    raises.
+    """
+    failures = runtime.native_admission_failures
+    # Desde el cuarto intento seguido sin respuesta se le pregunta igual (una respuesta perdida
+    # pudo dejar el caso creado, y la repeticion lo devuelve), pero si vuelve a fallar planifica
+    # el legado en vez de dejar el evento esperando.
+    forced = failures.should_force_legacy(webhook_event_id)
+    flow_event: dict[str, object] = {
+        "fuente": "hotmart",
+        "tipo": NATIVE_CART_TRIGGER,
+        "evento_id": webhook_event_id,
+        "producto_ref": product_ref,
+        "oferta": offer_code
+        if offer_code and len(offer_code) <= 64 and set(offer_code) <= _OFFER
+        else None,
+        "contacto_id": contact_id,
+        "momento": moment,
+        "chatwoot": {"account_id": chatwoot_account_id, "inbox_id": chatwoot_inbox_id},
+        "destino": destination,
+    }
+    try:
+        rows = await supabase.admit_flow_engine_event(runtime.instance, flow_event)
+    except SupabasePermanentError as exc:
+        logger.warning(
+            "flow_engine_native_cart_rejected event_id=%s reason=%s",
+            webhook_event_id,
+            exc.reason,
+        )
+        return NativeCartAdmission(NATIVE_CART_UNCLAIMED, reason=exc.reason)
+    except SupabaseError as exc:
+        count = failures.record_failure(webhook_event_id)
+        logger.warning(
+            "flow_engine_native_cart_unavailable event_id=%s failures=%s forced=%s error=%s",
+            webhook_event_id,
+            count,
+            forced,
+            type(exc).__name__,
+        )
+        if forced:
+            failures.clear(webhook_event_id)
+            return NativeCartAdmission(NATIVE_CART_UNCLAIMED, reason="forzado_al_legado")
+        return NativeCartAdmission(NATIVE_CART_PENDING, reason="admision_sin_respuesta")
+    failures.clear(webhook_event_id)
+    for row in rows:
+        logger.info(
+            "flow_engine_native_admission event_id=%s flow_id=%s outcome=%s reason=%s",
+            webhook_event_id,
+            row.flow_id,
+            row.outcome,
+            row.reason,
+        )
+    for row in rows:
+        if row.outcome == "motor_arranco" and row.recovery_case_id is not None:
+            return NativeCartAdmission(NATIVE_CART_STARTED, recovery_case_id=row.recovery_case_id)
+    for row in rows:
+        if row.outcome == "motor_no_arranca" and row.reason not in NATIVE_CART_UNCLAIMED_REASONS:
+            return NativeCartAdmission(NATIVE_CART_REFUSED, reason=row.reason)
+    return NativeCartAdmission(NATIVE_CART_UNCLAIMED)
 
 
 async def resolve_purchase_contact(
