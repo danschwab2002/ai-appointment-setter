@@ -664,6 +664,9 @@ Del lado del bridge, en este orden:
 - **La app de Slack del «Sign in with Slack» es la del Automation Expert de cada instancia** (decisión 12 del 2026-10-27): se le suma el permiso de entrar (`openid`) y la URL de vuelta, y se reinstala. No es la app de la revisión diaria.
 - Prendido, el bridge exige al arrancar: la clave del rol, el client ID y el secreto de la app de Slack, la URL de vuelta, el workspace, la lista de aprobadores y el secreto de la sesión, cada uno distinto de los demás secretos del bridge.
 - El plugin postea el link solo si la configuración del profile dice que el canal está prendido. Apagar el flag del bridge sin apagar el del profile deja links que dan 404; no publica nada.
+- **Del lado del profile** (el plugin `automation-expert-change`, `approval_button.py`), tres variables del `.env` del profile: `FLOW_APPROVAL_ENABLED` (`true` lo prende; cualquier otro valor, o ninguno, lo deja apagado), `FLOW_APPROVAL_BASE_URL` (https y solo el dominio público del bridge, sin ruta, sin query y sin usuario) y el `SLACK_BOT_TOKEN` de la app del agente, el mismo con el que Hermes contesta en ese DM. El DM y el hilo salen de la sesión de Hermes (`HERMES_SESSION_CHAT_ID`, que tiene que ser un `D…`, y `HERMES_SESSION_THREAD_ID`).
+- **El botón** es un `button` de Block Kit con `url` y `action_id` `flow_approval_open`, en un bloque `flow_approval`, con texto fijo y el unfurl apagado. Slack igual le avisa a la app cuando alguien lo aprieta: el plugin registra para ese `action_id` un manejador que solo hace `ack` (`register_slack_action_handler`, Hermes 0.21.0).
+- **Lo que vuelve al agente** en `data.approval_button` de `validate_flow_change`: `{"status": "posted"}` o `{"status": "not_posted"}`, con una nota fija. Nunca el link ni el error de Slack. Con el canal apagado, la respuesta queda igual que antes.
 
 ### Lo que pide a la base
 

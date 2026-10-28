@@ -34,6 +34,12 @@ env_requires:
   - name: AUTOMATION_EXPERT_INTERNAL_HOST
     description: "El host:puerto exacto del bridge, el unico al que el plugin le habla por http. En ATT1, att1-bridge:8000."
     required: false
+  - name: FLOW_APPROVAL_ENABLED
+    description: "true prende el boton «Revisar y aprobar» en el DM (flow-change-cycle-v1 1.9.0). Cualquier otro valor, o ninguno, lo deja apagado."
+    required: false
+  - name: FLOW_APPROVAL_BASE_URL
+    description: "La URL publica del bridge para la pagina de aprobacion: https y solo el dominio, sin ruta. Sin ella, el boton no sale."
+    required: false
   - name: OPENROUTER_API_KEY
     description: "La key con tope propia del Automation Expert, cuando el modelo va por OpenRouter."
     required: false
