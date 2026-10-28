@@ -88,6 +88,9 @@ def test_it_is_one_transaction_and_comes_right_after_the_t4b() -> None:
         # La oferta del evento en el caso nativo (20261026000200, E-122): parcha la
         # admision nativa y get_followup_execution_context, y no toca las funciones de esta.
         "20261026000200_flow_engine_native_offer_in_context_v1.sql",
+        # La pagina de aprobacion (20261028000100, A′ PR 2): suma su rol, sus
+        # sesiones y sus envoltorios, y no toca las funciones de esta.
+        "20261028000100_flow_change_slack_approver_v1.sql",
     ]
 
 

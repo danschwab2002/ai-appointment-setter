@@ -23,7 +23,10 @@ const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.end
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Despues va solo la de la oferta del evento en el caso nativo (E-122), que no toca el compilador.
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261026000200_flow_engine_native_offer_in_context_v1.sql'])) {
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261026000200_flow_engine_native_offer_in_context_v1.sql',
+  // La pagina de aprobacion (A′ PR 2): el rol del aprobador, sus sesiones, la cohorte con slack y la ruta
+  // nativa firmada por slack. No toca lo que esta prueba mira.
+  '20261028000100_flow_change_slack_approver_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de la oferta en el caso nativo`, names.slice(position + 1));
 }
 
