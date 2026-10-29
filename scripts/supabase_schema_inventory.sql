@@ -5942,6 +5942,33 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         1,
         'pilot_scope_offer_append'
+    union all
+    select
+        '20261028000400',
+        '20261028000400_purchase_by_our_link_counts_v1.sql',
+        -- La compra con nuestro link cuenta siempre (E-169): el helper gana el
+        -- caso del link abierto o cerrado ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._close_recovery_case_for_checkout_purchase_v1(uuid,uuid,timestamptz)')
+              and position('purchase_by_our_link_counts' in definition) > 0
+              and position('won_after_close' in definition) > 0
+              and not prosecdef
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- ... y el correlador marca la emision aunque la intencion ya no espere.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.correlate_hotmart_checkout_issuance_v2(uuid,text,timestamptz)')
+              and position('purchase_by_our_link_counts' in definition) > 0
+              and position('_close_recovery_case_for_checkout_purchase_v1' in definition) > 0
+        )::int,
+        2,
+        'purchase_by_our_link_counts'
 )
 select
     version,

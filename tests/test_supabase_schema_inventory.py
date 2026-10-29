@@ -1541,18 +1541,38 @@ def test_flow_engine_native_cart_fingerprint_is_before_the_offer_append() -> Non
         assert marker in compact_fingerprint, marker
 
 
-def test_pilot_scope_offer_append_fingerprint_is_last() -> None:
+def test_pilot_scope_offer_append_fingerprint_is_before_the_link_purchase() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261028000300 (sumar ofertas a un scope publicado, E-163) es la ultima.
-    fingerprint = sql.split("'20261028000300'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261028000300 (sumar ofertas a un scope publicado, E-163) va justo antes de
+    # la de la compra con nuestro link (20261028000400, E-169).
+    fingerprint = sql.split("'20261028000300'", 1)[1].split(
+        "    union all\n    select\n        '20261028000400'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261028000300_pilot_scope_offer_append_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",1,'pilot_scope_offer_append')")
+    assert compact_fingerprint.endswith(",1,'pilot_scope_offer_append'")
     for marker in (
         "to_regprocedure('public.validate_pilot_scope_version()')",
         "position('pilot_scope_offer_append'indefinition)>0",
         "position('pilot_scope.offer_append'indefinition)>0",
         "position('published_pilot_scope_is_immutable'indefinition)>0",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_purchase_by_our_link_counts_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261028000400 (la compra con nuestro link cuenta siempre, E-169) es la ultima.
+    fingerprint = sql.split("'20261028000400'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261028000400_purchase_by_our_link_counts_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'purchase_by_our_link_counts')")
+    for marker in (
+        "to_regprocedure('public._close_recovery_case_for_checkout_purchase_v1(uuid,uuid,timestamptz)')",
+        "to_regprocedure('public.correlate_hotmart_checkout_issuance_v2(uuid,text,timestamptz)')",
+        "position('purchase_by_our_link_counts'indefinition)>0",
+        "position('won_after_close'indefinition)>0",
+        "notprosecdef",
     ):
         assert marker in compact_fingerprint, marker
