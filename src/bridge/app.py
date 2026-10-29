@@ -78,7 +78,7 @@ from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_iss
 from bridge.payment_link_coupon import validate_payment_link_coupon_code
 from bridge.filtering import EventDecision, classify_chatwoot_event
 from bridge.agent_provenance import AgentTurn, CONTEXT_BUILDER_VERSION
-from bridge.hermes import HermesShadowProcessor, payment_link_product
+from bridge.hermes import AGENT_TURN_FAILED_REASON_CODE, HermesShadowProcessor, agent_turn_failure_to_hand_off, payment_link_product  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
 from bridge.hotmart import (
     EVENT_CART_ABANDONMENT,
     EVENT_PURCHASE_APPROVED,
@@ -7095,8 +7095,40 @@ def create_app(
                     )
                 return
             completed_proposal = canonical_result.proposal
-        if not settings.automated_replies_enabled or completed_proposal is None:
+        if not settings.automated_replies_enabled:
             return
+        if completed_proposal is None:
+            # E-175 (G1 de Maribel, 28/10): un turno del agente que fallo
+            # (invalid_agent_output o hermes_unavailable) salia de aca sin
+            # contestar, sin derivar y sin log. La conversacion 9 quedo horas
+            # sin respuesta. Ahora la toma una persona, como un audio que no
+            # se pudo transcribir. Otro motivo (la historia de Chatwoot sin
+            # configurar, o sin resultado) sigue saliendo como antes.
+            failure_reason = agent_turn_failure_to_hand_off(
+                shadow_processor, delivery_id=delivery_id
+            )
+            if failure_reason is None:
+                return
+            failed_conversation = payload.get("conversation")
+            logger.warning(
+                "chatwoot_inbound_agent_turn_failed reason=%s conversation=%s",
+                failure_reason,
+                failed_conversation.get("id")
+                if isinstance(failed_conversation, dict)
+                else None,
+            )
+            if not settings.human_handoff_admission_enabled or admission is None:
+                logger.warning(
+                    "chatwoot_agent_turn_failed_handoff_unavailable message=%s",
+                    payload.get("id"),
+                )
+                return
+            completed_proposal = {
+                "decision": "handoff",
+                "reply": "",
+                "qualification_status": "needs_human",
+                "reason_code": AGENT_TURN_FAILED_REASON_CODE,
+            }
 
         message_id = payload.get("id")
         conversation = payload.get("conversation")

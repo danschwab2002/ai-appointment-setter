@@ -762,3 +762,231 @@ def test_a_first_attempt_that_succeeds_keeps_the_historical_shape(
         "delivery_id_hash": digest,
         "proposal": proposal,
     }
+
+
+# --- E-175: la prosa seguida de la propuesta (G1 de Maribel, 28/10) ----------
+
+
+def _fixture(name: str) -> dict[str, object]:
+    return json.loads(
+        (Path(__file__).parent / "fixtures" / name).read_text(encoding="utf-8")
+    )
+
+
+def _prose_then_json_maribel() -> dict[str, object]:
+    return _fixture("hermes_glm_prose_then_json_maribel_20261028.json")
+
+
+def test_rescues_the_valid_proposal_at_the_end_of_a_prose_answer() -> None:
+    """La forma de las respuestas 54 y 56 de Maribel (conversacion 9, 28/10).
+
+    El texto arranca en prosa, la prosa repite el reply, y despues de una
+    linea en blanco viene la propuesta entera. Antes se descartaba y el turno
+    terminaba en invalid_agent_output.
+    """
+    fixture = _prose_then_json_maribel()
+    for content in (fixture["content"], fixture["second_attempt_content"]):
+        assert isinstance(content, str)
+        assert not content.lstrip().startswith(("{", "```"))
+
+        proposal = _parse_agent_proposal(content)
+
+        assert proposal is not None
+        assert _is_valid_proposal(proposal)
+        assert proposal["decision"] == "send_payment_link"
+        assert proposal["reason_code"] == "payment_link_requested"
+        # De la prosa no se usa nada: el reply es el del objeto.
+        prose = content[: content.index("{")]
+        assert prose.strip() == proposal["reply"]
+
+
+def test_rescues_the_att1_shapes_without_separator_and_with_product() -> None:
+    fixture = _fixture("hermes_glm_prose_then_json_att1_20261029.json")
+    responses = fixture["responses"]
+    assert isinstance(responses, list) and len(responses) == 2
+    for response in responses:
+        proposal = _parse_agent_proposal(response["content"])
+        assert proposal is not None
+        assert _is_valid_proposal(
+            proposal, frozenset(response.get("product_keys", ()))
+        )
+
+
+def test_prose_only_answer_still_has_no_proposal() -> None:
+    content = _fixture("hermes_glm_prose_only_maribel_20261028.json")["content"]
+
+    assert _parse_agent_proposal(content) is None
+
+
+def test_rescued_object_without_reply_is_rejected_by_the_same_validator() -> None:
+    content = _fixture(
+        "hermes_glm_prose_then_json_without_reply_maribel_20261028.json"
+    )["content"]
+
+    proposal = _parse_agent_proposal(content)
+
+    assert proposal is not None
+    assert "reply" not in proposal
+    assert _is_valid_proposal(proposal) is False
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        "texto despues",  # algo despues del objeto
+        "dos objetos",  # otro objeto en la prosa
+        "llave en la prosa",  # una llave suelta antes del objeto
+        "objeto partido",  # el objeto no cierra
+        "lista al final",  # termina en una lista, no en un objeto
+    ],
+)
+def test_the_rescue_is_strict(shape: str) -> None:
+    valid = json.dumps(_valid_proposal(), ensure_ascii=False)
+    content = {
+        "texto despues": f"Te ayudo.\n\n{valid}\n\n¿Algo mas?",
+        "dos objetos": f'Te ayudo {{"decision": "handoff"}}.\n\n{valid}',
+        "llave en la prosa": f"Te ayudo }} ya.\n\n{valid}",
+        "objeto partido": f"Te ayudo.\n\n{valid[:-1]}",
+        "lista al final": f"Te ayudo.\n\n[{valid}]",
+    }[shape]
+
+    assert _parse_agent_proposal(content) is None
+
+
+def test_a_bare_object_or_fence_is_not_reported_as_rescued(
+    tmp_path: Path,
+) -> None:
+    """`parsed_from` es una senal positiva: solo en los turnos rescatados."""
+    proposal = _valid_proposal()
+    delivery_id = "bare-object"
+    digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"content": json.dumps(proposal, ensure_ascii=False)}}
+                ]
+            },
+        )
+
+    processor = HermesShadowProcessor(
+        base_url="https://hermes.example.test/v1",
+        api_key="test-hermes-key",
+        model_name="agente-comercial",
+        shadow_dir=tmp_path,
+        transport=httpx.MockTransport(handler),
+    )
+    asyncio.run(processor.run(delivery_id=delivery_id, context={"messages": []}))
+
+    assert "parsed_from" not in json.loads((tmp_path / f"{digest}.json").read_text())
+    assert processor.get_failure_reason(delivery_id=delivery_id) is None
+
+
+def test_a_prose_then_json_turn_completes_on_the_first_attempt(
+    tmp_path: Path,
+) -> None:
+    """En la conversacion 9 esto habria salvado el turno de las 03:59:43Z."""
+    content = _prose_then_json_maribel()["content"]
+    delivery_id = "maribel-conv-9-prose-then-json"
+    digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
+    keys: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        keys.append(request.headers["Idempotency-Key"])
+        return httpx.Response(
+            200,
+            json={
+                "model": "z-ai/glm-5.3-flash",
+                "choices": [{"message": {"content": content}}],
+            },
+        )
+
+    processor = HermesShadowProcessor(
+        base_url="https://hermes.example.test/v1",
+        api_key="test-hermes-key",
+        model_name="agente-comercial",
+        shadow_dir=tmp_path,
+        transport=httpx.MockTransport(handler),
+    )
+    asyncio.run(
+        processor.run(
+            delivery_id=delivery_id,
+            context={"conversation_ref": "9", "messages": []},
+        )
+    )
+
+    expected = _parse_agent_proposal(content)
+    assert json.loads((tmp_path / f"{digest}.json").read_text()) == {
+        "status": "completed",
+        "delivery_id_hash": digest,
+        "proposal": expected,
+        "parsed_from": "prose_then_json",
+    }
+    assert processor.get_completed_proposal(delivery_id=delivery_id) == expected
+    assert keys == [digest]
+
+
+@pytest.mark.parametrize(
+    ("contents", "status_code", "reason"),
+    [
+        # La 52 y la 58: prosa pura y despues un objeto sin reply.
+        (("prose_only", "without_reply"), 200, "invalid_agent_output"),
+        ((), 503, "hermes_unavailable"),
+    ],
+)
+def test_failure_reason_is_readable_after_a_failed_turn(
+    tmp_path: Path,
+    contents: tuple[str, ...],
+    status_code: int,
+    reason: str,
+) -> None:
+    by_name = {
+        "prose_only": _fixture("hermes_glm_prose_only_maribel_20261028.json")[
+            "content"
+        ],
+        "without_reply": _fixture(
+            "hermes_glm_prose_then_json_without_reply_maribel_20261028.json"
+        )["content"],
+    }
+    answers = [by_name[name] for name in contents]
+    delivery_id = f"failed-{reason}"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if status_code != 200:
+            return httpx.Response(status_code, json={"error": "down"})
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": answers.pop(0)}}]}
+        )
+
+    processor = HermesShadowProcessor(
+        base_url="https://hermes.example.test/v1",
+        api_key="test-hermes-key",
+        model_name="agente-comercial",
+        shadow_dir=tmp_path,
+        transport=httpx.MockTransport(handler),
+    )
+    asyncio.run(processor.run(delivery_id=delivery_id, context={"messages": []}))
+
+    assert processor.get_completed_proposal(delivery_id=delivery_id) is None
+    assert processor.get_failure_reason(delivery_id=delivery_id) == reason
+    assert answers == []
+
+
+def test_failure_reason_is_none_without_a_result(tmp_path: Path) -> None:
+    processor = HermesShadowProcessor(
+        base_url="https://hermes.example.test/v1",
+        api_key="test-hermes-key",
+        model_name="agente-comercial",
+        shadow_dir=tmp_path,
+    )
+
+    assert processor.get_failure_reason(delivery_id="nunca-corrio") is None
+    processor.record_failure(
+        delivery_id="sin-historia", reason="chatwoot_history_not_configured"
+    )
+    assert (
+        processor.get_failure_reason(delivery_id="sin-historia")
+        == "chatwoot_history_not_configured"
+    )

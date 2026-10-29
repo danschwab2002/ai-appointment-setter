@@ -254,6 +254,9 @@ Para prender un envío que le escriba primero a un lead faltan su E2E (paso 6 de
       - **Cuándo:** solo si la conversación sigue dentro de la ventana de 24 h, sin asignado y sin `automation_paused`.
       - **Ese rescate no está verificado de punta a punta.**
     - **La tasa en producción con el modelo nuevo todavía no se puede medir.** Evidencia: `operations/2026-09-30-agente-comercial-glm-5-3-flash.md` §5.
+    - **E-175 (2026-10-29, en PR, sin desplegar):** el 28/10 la conversación 9 de Maribel quedó horas sin respuesta con dos turnos `invalid_agent_output`. Dos cambios:
+      - **El rescate:** una respuesta en prosa que termina en una propuesta completa usa esa propuesta (nunca la prosa), con el mismo validador, y el resultado guarda `parsed_from: prose_then_json`. La regla es estricta: el texto termina en el objeto y la prosa no tiene llaves. Fixtures `tests/fixtures/hermes_glm_prose_*` (la forma medida, con texto sintético).
+      - **La red:** un turno que igual falla (`invalid_agent_output` o `hermes_unavailable`) deriva con `agent_turn_failed`, como un audio sin transcribir, y deja `chatwoot_inbound_agent_turn_failed`. Cuelga de `HUMAN_HANDOFF_ADMISSION_ENABLED`. La readmisión del monitor con el `failed` guardado también deriva, sin volver a correr al agente.
 
 ## 10. Próxima tarea aprobada y trabajos congelados
 
