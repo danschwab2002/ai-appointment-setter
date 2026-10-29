@@ -85,6 +85,71 @@ class CanonicalConversationSnapshot:
 
 
 @dataclass(frozen=True)
+class ContactConversation:
+    """Una conversacion de un contacto en un inbox, como la ve el primer toque.
+
+    ``last_inbound_at`` es el ``created_at`` del ultimo mensaje publico de la
+    persona (``message_type`` 0, remitente ``contact``), con o sin texto: una
+    imagen sola cuenta. Es ``None`` cuando no se leyo el historial (la
+    conversacion no tuvo actividad dentro de la ventana pedida) o cuando la
+    persona no escribio en los ultimos mensajes leidos.
+    """
+
+    conversation_id: int
+    status: str
+    last_activity_at: int
+    labels: tuple[str, ...]
+    assignee_present: bool
+    team_present: bool
+    last_inbound_at: int | None
+
+    @property
+    def with_team(self) -> bool:
+        """La tiene el equipo: un agente o un equipo asignado, o la pausa."""
+        return (
+            self.assignee_present
+            or self.team_present
+            or "automation_paused" in self.labels
+        )
+
+
+# Chatwoot devuelve como mucho 20 conversaciones de un contacto, las mas
+# activas, sin paginar (``Contacts::ConversationsController#index``:
+# ``order(last_activity_at: :desc).limit(20)``, leido el 2026-10-29 en el
+# contenedor de produccion). Con 20, la lista puede estar cortada y no se
+# decide sobre ella. Medido ese dia: como mucho 5 por contacto en un inbox.
+_CONTACT_CONVERSATIONS_PAGE_LIMIT = 20
+
+
+def _last_contact_inbound_at(
+    messages: list[dict[str, object]],
+    *,
+    conversation_id: int,
+    contact_id: int,
+) -> int | None:
+    """El ``created_at`` del ultimo mensaje publico de la persona, o ``None``."""
+    latest: int | None = None
+    for message in messages:
+        if message.get("message_type") != 0 or message.get("private") is not False:
+            continue
+        sender = message.get("sender")
+        if not isinstance(sender, dict) or sender.get("type") != "contact":
+            continue
+        created_at = message.get("created_at")
+        if (
+            not isinstance(created_at, int)
+            or isinstance(created_at, bool)
+            or created_at <= 0
+            or message.get("conversation_id") != conversation_id
+            or sender.get("id") != contact_id
+        ):
+            raise ChatwootProtocolError("invalid_contact_inbound_message")
+        if latest is None or created_at > latest:
+            latest = created_at
+    return latest
+
+
+@dataclass(frozen=True)
 class StalledChatwootConversation:
     """A deterministic synthetic webhook admission for one canonical inbound."""
 
@@ -2344,6 +2409,151 @@ class ChatwootClient:
         ):
             raise ChatwootProtocolError("invalid_conversation_id")
         return conversation_id
+
+    async def list_contact_conversations(
+        self,
+        *,
+        contact_id: int,
+        inbox_id: int,
+        messages_since_epoch: int | None = None,
+        messages_limit: int = 20,
+    ) -> list[ContactConversation]:
+        """Las conversaciones del contacto en el inbox. Solo lee.
+
+        ``GET /contacts/{id}/conversations`` trae todas las del contacto, de
+        cualquier inbox, con su estado, ``last_activity_at``, etiquetas y
+        asignacion (``meta.assignee`` y ``meta.team`` aparecen solo cuando
+        hay). Se quedan las del inbox, de la mas activa a la menos.
+
+        Con ``messages_since_epoch``, a cada conversacion con actividad desde
+        esa marca se le leen los ultimos ``messages_limit`` mensajes, como en
+        el barrido de trabadas, para saber cuando escribio la persona por
+        ultima vez. Un entrante dentro de la ventana mueve
+        ``last_activity_at``, asi que una conversacion sin actividad desde la
+        marca no puede tenerlo y no se lee.
+
+        Falla cerrado (``ChatwootProtocolError``) ante un item mal formado, de
+        otro contacto, o una lista que puede venir cortada.
+        """
+        if (
+            not isinstance(contact_id, int)
+            or isinstance(contact_id, bool)
+            or contact_id <= 0
+            or not isinstance(inbox_id, int)
+            or isinstance(inbox_id, bool)
+            or inbox_id <= 0
+            or (
+                messages_since_epoch is not None
+                and (
+                    not isinstance(messages_since_epoch, int)
+                    or isinstance(messages_since_epoch, bool)
+                    or messages_since_epoch <= 0
+                )
+            )
+            or not isinstance(messages_limit, int)
+            or isinstance(messages_limit, bool)
+            or messages_limit <= 0
+        ):
+            raise ValueError("invalid contact conversations read")
+        path = (
+            f"/api/v1/accounts/{self._account_id}/contacts/{contact_id}/conversations"
+        )
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"api_access_token": self._access_token},
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            response = await client.get(path)
+            response.raise_for_status()
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise ChatwootProtocolError("invalid_json") from exc
+        payload = body.get("payload") if isinstance(body, dict) else None
+        if not isinstance(payload, list) or not all(
+            isinstance(item, dict) for item in payload
+        ):
+            raise ChatwootProtocolError("invalid_contact_conversations_payload")
+        if len(payload) >= _CONTACT_CONVERSATIONS_PAGE_LIMIT:
+            raise ChatwootProtocolError("contact_conversations_truncated")
+        conversations: list[ContactConversation] = []
+        seen: set[int] = set()
+        for item in payload:
+            conversation_id = item.get("id")
+            if (
+                not isinstance(conversation_id, int)
+                or isinstance(conversation_id, bool)
+                or conversation_id <= 0
+                or conversation_id in seen
+            ):
+                raise ChatwootProtocolError("invalid_contact_conversation")
+            seen.add(conversation_id)
+            if item.get("inbox_id") != inbox_id:
+                continue
+            status = item.get("status")
+            activity = item.get("last_activity_at")
+            labels = item.get("labels")
+            meta = item.get("meta")
+            sender = meta.get("sender") if isinstance(meta, dict) else None
+            if (
+                status not in _CONVERSATION_STATUSES
+                or not isinstance(activity, int)
+                or isinstance(activity, bool)
+                or activity <= 0
+                or not isinstance(labels, list)
+                or not all(isinstance(label, str) for label in labels)
+                or not isinstance(meta, dict)
+                or not isinstance(sender, dict)
+            ):
+                raise ChatwootProtocolError("invalid_contact_conversation")
+            if sender.get("id") != contact_id:
+                raise ChatwootProtocolError("contact_conversation_scope_mismatch")
+            conversations.append(
+                ContactConversation(
+                    conversation_id=conversation_id,
+                    status=str(status),
+                    last_activity_at=activity,
+                    labels=tuple(labels),
+                    assignee_present=meta.get("assignee") is not None,
+                    team_present=meta.get("team") is not None,
+                    last_inbound_at=None,
+                )
+            )
+        conversations.sort(
+            key=lambda conversation: (
+                conversation.last_activity_at,
+                conversation.conversation_id,
+            ),
+            reverse=True,
+        )
+        if messages_since_epoch is None:
+            return conversations
+        read: list[ContactConversation] = []
+        for conversation in conversations:
+            if conversation.last_activity_at < messages_since_epoch:
+                read.append(conversation)
+                continue
+            messages = await self.get_conversation_messages(
+                conversation_id=conversation.conversation_id,
+                limit=messages_limit,
+            )
+            read.append(
+                ContactConversation(
+                    conversation_id=conversation.conversation_id,
+                    status=conversation.status,
+                    last_activity_at=conversation.last_activity_at,
+                    labels=conversation.labels,
+                    assignee_present=conversation.assignee_present,
+                    team_present=conversation.team_present,
+                    last_inbound_at=_last_contact_inbound_at(
+                        messages,
+                        conversation_id=conversation.conversation_id,
+                        contact_id=contact_id,
+                    ),
+                )
+            )
+        return read
 
     async def send_first_message(
         self,

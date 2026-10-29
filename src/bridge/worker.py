@@ -2944,6 +2944,16 @@ class DurableDispatcher:
                                 isinstance(result, FirstTouchResult)
                                 and result.status == "blocked"
                             ):
+                                # La base guarda solo
+                                # sender_rejected_before_delivery: el motivo
+                                # fino del remitente queda en el log (E-177).
+                                logger.info(
+                                    "followup_sender_blocked reason=%s "
+                                    "policy_key=%s action_id=%s",
+                                    result.reason,
+                                    action.policy_key,
+                                    action.action_id,
+                                )
                                 finalized = await _commit_outcome_despite_cancellation(
                                     self._supabase.finalize_followup_delivery_attempt(
                                         action_id=action.action_id,

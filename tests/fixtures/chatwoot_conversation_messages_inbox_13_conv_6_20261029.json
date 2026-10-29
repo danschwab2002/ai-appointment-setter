@@ -1,0 +1,427 @@
+{
+  "_fixture": {
+    "captured_at": "2026-10-29T15:06:00Z",
+    "source": "GET /api/v1/accounts/3/conversations/6/messages en produccion (Maribel, inbox 13), desde el contenedor del bridge, en solo lectura.",
+    "shape": "payload con los 15 mensajes de la 6: los entrantes (message_type 0) traen sender.type contact; las respuestas del agente, message_type 1 y sender.type agent_bot. El ultimo, 4601, es una imagen sin texto (content null) de las 02:38:06Z.",
+    "sanitized": "Igual que el listado: el texto de cada mensaje es sintetico; ids, timestamps, tipos y content_attributes (con valores sinteticos) son los reales.",
+    "why": "Saber cuando escribio la persona por ultima vez en la 6, que es lo que mira el freno de G3a."
+  },
+  "meta": {
+    "additional_attributes": {},
+    "agent_last_seen_at": "2026-10-28T18:04:19.630Z",
+    "assignee_last_seen_at": null,
+    "contact": {
+      "additional_attributes": {},
+      "blocked": false,
+      "custom_attributes": {},
+      "email": null,
+      "id": 767,
+      "identifier": null,
+      "name": "Contacto de prueba",
+      "phone_number": "+520000000767",
+      "thumbnail": "",
+      "type": "contact"
+    },
+    "labels": []
+  },
+  "payload": [
+    {
+      "content": "Texto sintetico del mensaje 4587",
+      "content_attributes": {},
+      "content_type": "text",
+      "conversation_id": 6,
+      "created_at": 1793154140,
+      "id": 4587,
+      "inbox_id": 13,
+      "message_type": 0,
+      "private": false,
+      "sender": {
+        "additional_attributes": {},
+        "blocked": false,
+        "custom_attributes": {},
+        "email": null,
+        "id": 767,
+        "identifier": null,
+        "name": "Contacto de prueba",
+        "phone_number": "+520000000767",
+        "thumbnail": "",
+        "type": "contact"
+      },
+      "source_id": "wamid.TEST.4587",
+      "status": "sent"
+    },
+    {
+      "content": "Texto sintetico del mensaje 4588",
+      "content_attributes": {
+        "appointment_setter_decision": "reply",
+        "appointment_setter_reason_code": "conversation_active",
+        "appointment_setter_reply_batch_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "appointment_setter_reply_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "appointment_setter_reply_part_count": 3,
+        "appointment_setter_reply_part_index": 1
+      },
+      "content_type": "text",
+      "conversation_id": 6,
+      "created_at": 1793154190,
+      "id": 4588,
+      "inbox_id": 13,
+      "message_type": 1,
+      "private": false,
+      "sender": {
+        "avatar_url": "",
+        "id": 3,
+        "name": "Bot de prueba",
+        "type": "agent_bot"
+      },
+      "source_id": "wamid.TEST.4588",
+      "status": "read"
+    },
+    {
+      "content": "Texto sintetico del mensaje 4589",
+      "content_attributes": {
+        "appointment_setter_decision": "reply",
+        "appointment_setter_reason_code": "conversation_active",
+        "appointment_setter_reply_batch_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "appointment_setter_reply_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "appointment_setter_reply_part_count": 3,
+        "appointment_setter_reply_part_index": 2
+      },
+      "content_type": "text",
+      "conversation_id": 6,
+      "created_at": 1793154195,
+      "id": 4589,
+      "inbox_id": 13,
+      "message_type": 1,
+      "private": false,
+      "sender": {
+        "avatar_url": "",
+        "id": 3,
+        "name": "Bot de prueba",
+        "type": "agent_bot"
+      },
+      "source_id": "wamid.TEST.4589",
+      "status": "read"
+    },
+    {
+      "content": "Texto sintetico del mensaje 4590",
+      "content_attributes": {
+        "appointment_setter_decision": "reply",
+        "appointment_setter_reason_code": "conversation_active",
+        "appointment_setter_reply_batch_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "appointment_setter_reply_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "appointment_setter_reply_part_count": 3,
+        "appointment_setter_reply_part_index": 3
+      },
+      "content_type": "text",
+      "conversation_id": 6,
+      "created_at": 1793154198,
+      "id": 4590,
+      "inbox_id": 13,
+      "message_type": 1,
+      "private": false,
+      "sender": {
+        "avatar_url": "",
+        "id": 3,
+        "name": "Bot de prueba",
+        "type": "agent_bot"
+      },
+      "source_id": "wamid.TEST.4590",
+      "status": "read"
+    },
+    {
+      "content": "Texto sintetico del mensaje 4591",
+      "content_attributes": {},
+      "content_type": "text",
+      "conversation_id": 6,
+      "created_at": 1793154708,
+      "id": 4591,
+      "inbox_id": 13,
+      "message_type": 0,
+      "private": false,
+      "sender": {
+        "additional_attributes": {},
+        "blocked": false,
+        "custom_attributes": {},
+        "email": null,
+        "id": 767,
+        "identifier": null,
+        "name": "Contacto de prueba",
+        "phone_number": "+520000000767",
+        "thumbnail": "",
+        "type": "contact"
+      },
+      "source_id": "wamid.TEST.4591",
+      "status": "sent"
+    },
+    {
+      "content": "Texto sintetico del mensaje 4592",
+      "content_attributes": {
+        "appointment_setter_decision": "reply",
+        "appointment_setter_reason_code": "conversation_active",
+        "appointment_setter_reply_batch_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "appointment_setter_reply_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "appointment_setter_reply_part_count": 3,
+        "appointment_setter_reply_part_index": 1
+      },
+      "content_type": "text",
+      "conversation_id": 6,
+      "created_at": 1793154757,
+      "id": 4592,
+      "inbox_id": 13,
+      "message_type": 1,
+      "private": false,
+      "sender": {
+        "avatar_url": "",
+        "id": 3,
+        "name": "Bot de prueba",
+        "type": "agent_bot"
+      },
+      "source_id": "wamid.TEST.4592",
+      "status": "read"
+    },
+    {
+      "content": "Texto sintetico del mensaje 4593",
+      "content_attributes": {
+        "appointment_setter_decision": "reply",
+        "appointment_setter_reason_code": "conversation_active",
+        "appointment_setter_reply_batch_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "appointment_setter_reply_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "appointment_setter_reply_part_count": 3,
+        "appointment_setter_reply_part_index": 2
+      },
+      "content_type": "text",
+      "conversation_id": 6,
+      "created_at": 1793154760,
+      "id": 4593,
+      "inbox_id": 13,
+      "message_type": 1,
+      "private": false,
+      "sender": {
+        "avatar_url": "",
+        "id": 3,
+        "name": "Bot de prueba",
+        "type": "agent_bot"
+      },
+      "source_id": "wamid.TEST.4593",
+      "status": "read"
+    },
+    {
+      "content": "Texto sintetico del mensaje 4594",
+      "content_attributes": {
+        "appointment_setter_decision": "reply",
+        "appointment_setter_reason_code": "conversation_active",
+        "appointment_setter_reply_batch_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "appointment_setter_reply_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "appointment_setter_reply_part_count": 3,
+        "appointment_setter_reply_part_index": 3
+      },
+      "content_type": "text",
+      "conversation_id": 6,
+      "created_at": 1793154763,
+      "id": 4594,
+      "inbox_id": 13,
+      "message_type": 1,
+      "private": false,
+      "sender": {
+        "avatar_url": "",
+        "id": 3,
+        "name": "Bot de prueba",
+        "type": "agent_bot"
+      },
+      "source_id": "wamid.TEST.4594",
+      "status": "read"
+    },
+    {
+      "content": "Texto sintetico del mensaje 4595",
+      "content_attributes": {
+        "in_reply_to": 4592,
+        "in_reply_to_external_id": "wamid.TEST"
+      },
+      "content_type": "text",
+      "conversation_id": 6,
+      "created_at": 1793154909,
+      "id": 4595,
+      "inbox_id": 13,
+      "message_type": 0,
+      "private": false,
+      "sender": {
+        "additional_attributes": {},
+        "blocked": false,
+        "custom_attributes": {},
+        "email": null,
+        "id": 767,
+        "identifier": null,
+        "name": "Contacto de prueba",
+        "phone_number": "+520000000767",
+        "thumbnail": "",
+        "type": "contact"
+      },
+      "source_id": "wamid.TEST.4595",
+      "status": "sent"
+    },
+    {
+      "content": "Texto sintetico del mensaje 4596",
+      "content_attributes": {
+        "appointment_setter_decision": "reply",
+        "appointment_setter_reason_code": "conversation_active",
+        "appointment_setter_reply_batch_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "appointment_setter_reply_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "appointment_setter_reply_part_count": 3,
+        "appointment_setter_reply_part_index": 1
+      },
+      "content_type": "text",
+      "conversation_id": 6,
+      "created_at": 1793154958,
+      "id": 4596,
+      "inbox_id": 13,
+      "message_type": 1,
+      "private": false,
+      "sender": {
+        "avatar_url": "",
+        "id": 3,
+        "name": "Bot de prueba",
+        "type": "agent_bot"
+      },
+      "source_id": "wamid.TEST.4596",
+      "status": "read"
+    },
+    {
+      "content": "Texto sintetico del mensaje 4597",
+      "content_attributes": {
+        "appointment_setter_decision": "reply",
+        "appointment_setter_reason_code": "conversation_active",
+        "appointment_setter_reply_batch_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "appointment_setter_reply_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "appointment_setter_reply_part_count": 3,
+        "appointment_setter_reply_part_index": 2
+      },
+      "content_type": "text",
+      "conversation_id": 6,
+      "created_at": 1793154963,
+      "id": 4597,
+      "inbox_id": 13,
+      "message_type": 1,
+      "private": false,
+      "sender": {
+        "avatar_url": "",
+        "id": 3,
+        "name": "Bot de prueba",
+        "type": "agent_bot"
+      },
+      "source_id": "wamid.TEST.4597",
+      "status": "sent"
+    },
+    {
+      "content": "Texto sintetico del mensaje 4598",
+      "content_attributes": {
+        "appointment_setter_decision": "reply",
+        "appointment_setter_reason_code": "conversation_active",
+        "appointment_setter_reply_batch_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "appointment_setter_reply_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "appointment_setter_reply_part_count": 3,
+        "appointment_setter_reply_part_index": 3
+      },
+      "content_type": "text",
+      "conversation_id": 6,
+      "created_at": 1793154966,
+      "id": 4598,
+      "inbox_id": 13,
+      "message_type": 1,
+      "private": false,
+      "sender": {
+        "avatar_url": "",
+        "id": 3,
+        "name": "Bot de prueba",
+        "type": "agent_bot"
+      },
+      "source_id": "wamid.TEST.4598",
+      "status": "read"
+    },
+    {
+      "content": "Texto sintetico del mensaje 4599",
+      "content_attributes": {},
+      "content_type": "text",
+      "conversation_id": 6,
+      "created_at": 1793154986,
+      "id": 4599,
+      "inbox_id": 13,
+      "message_type": 0,
+      "private": false,
+      "sender": {
+        "additional_attributes": {},
+        "blocked": false,
+        "custom_attributes": {},
+        "email": null,
+        "id": 767,
+        "identifier": null,
+        "name": "Contacto de prueba",
+        "phone_number": "+520000000767",
+        "thumbnail": "",
+        "type": "contact"
+      },
+      "source_id": "wamid.TEST.4599",
+      "status": "sent"
+    },
+    {
+      "content": "Texto sintetico del mensaje 4600",
+      "content_attributes": {
+        "appointment_setter_reply_hash": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "content_type": "text",
+      "conversation_id": 6,
+      "created_at": 1793155033,
+      "id": 4600,
+      "inbox_id": 13,
+      "message_type": 1,
+      "private": false,
+      "sender": {
+        "avatar_url": "",
+        "id": 3,
+        "name": "Bot de prueba",
+        "type": "agent_bot"
+      },
+      "source_id": "wamid.TEST.4600",
+      "status": "read"
+    },
+    {
+      "attachments": [
+        {
+          "account_id": 3,
+          "content_type": "image/webp",
+          "data_url": "https://chatwoot.test/rails/active_storage/blobs/redirect/prueba.webp",
+          "extension": "webp",
+          "file_size": 37106,
+          "file_type": "image",
+          "height": 512,
+          "id": 268,
+          "message_id": 4601,
+          "thumb_url": "",
+          "width": 512
+        }
+      ],
+      "content": null,
+      "content_attributes": {},
+      "content_type": "text",
+      "conversation_id": 6,
+      "created_at": 1793155086,
+      "id": 4601,
+      "inbox_id": 13,
+      "message_type": 0,
+      "private": false,
+      "sender": {
+        "additional_attributes": {},
+        "blocked": false,
+        "custom_attributes": {},
+        "email": null,
+        "id": 767,
+        "identifier": null,
+        "name": "Contacto de prueba",
+        "phone_number": "+520000000767",
+        "thumbnail": "",
+        "type": "contact"
+      },
+      "source_id": "wamid.TEST.4601",
+      "status": "sent"
+    }
+  ]
+}
