@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -87,6 +88,12 @@ PRECHECKOUT_INTENT_TRIGGER = "precheckout_intent"
 # The first contact after the form has its own approved template. Without it
 # nothing is sent: it never goes out with the cart template.
 FIRST_TOUCH_TEMPLATE_NOT_CONFIGURED = "first_touch_template_not_configured"
+# G3 de Maribel (E-177). La persona escribio dentro de la ventana de
+# FIRST_TOUCH_ACTIVE_CONVERSATION_GUARD_SECONDS: el primer toque no sale.
+FIRST_TOUCH_CONTACT_ACTIVE_CONVERSATION = "contact_active_conversation"
+# Con FIRST_TOUCH_REUSE_OPEN_CONVERSATION_ENABLED, una conversacion abierta del
+# contacto la tiene el equipo (agente o equipo asignado, o automation_paused).
+FIRST_TOUCH_CONTACT_CONVERSATION_WITH_TEAM = "contact_conversation_with_team"
 # The trigger of the first contact after a payment slip (OXXO and the like):
 # the ``anchor_type`` of the action ``plan_portable_payment_slip_recovery``
 # plans. Like the form, it has its own template and no fallback; its values
@@ -595,10 +602,25 @@ class ChatwootMessageSender:
         template: WhatsAppTemplateConfig | None = None,
         whatsapp_equivalence_enabled: bool = False,
         on_conversation_opened: Callable[[int], Awaitable[object]] | None = None,
+        active_conversation_guard_seconds: int = 0,
+        reuse_open_conversation: bool = False,
+        clock: Callable[[], float] = time.time,
     ) -> None:
         """``on_conversation_opened`` corre despues de cada plantilla de primer
         contacto que salio, con la conversacion; hoy, la etiqueta de producto.
-        Es de falla blanda: si lanza, el envio sigue contando como enviado."""
+        Es de falla blanda: si lanza, el envio sigue contando como enviado.
+
+        Las dos de G3 (E-177) solo miran un contacto que ya existe, y apagadas
+        (0 y False, el default) el primer toque es exactamente el de antes:
+
+        * ``active_conversation_guard_seconds``: si la persona escribio en
+          alguna conversacion del inbox dentro de esa ventana, el primer toque
+          se frena con ``contact_active_conversation``.
+        * ``reuse_open_conversation``: la plantilla sale en la conversacion
+          abierta mas activa del contacto en vez de abrir otra; si alguna
+          abierta la tiene el equipo, se frena con
+          ``contact_conversation_with_team``.
+        """
         if (allowed_jid is None and not dynamic_recipient_enabled) or (
             allowed_jid is not None and dynamic_recipient_enabled
         ):
@@ -609,6 +631,16 @@ class ChatwootMessageSender:
             # The equivalent forms of a phone only exist for the portable
             # binding. A sender tied to one fixed JID keeps comparing exactly.
             raise ValueError("whatsapp equivalence requires the dynamic recipient")
+        if (
+            type(active_conversation_guard_seconds) is not int
+            or active_conversation_guard_seconds < 0
+        ):
+            raise ValueError("invalid active conversation guard")
+        if type(reuse_open_conversation) is not bool:
+            raise ValueError("invalid open conversation reuse flag")
+        self._active_conversation_guard_seconds = active_conversation_guard_seconds
+        self._reuse_open_conversation = reuse_open_conversation
+        self._clock = clock
         self._chatwoot = chatwoot
         self._inbox_id = inbox_id
         self._allowed_jid = allowed_jid
@@ -818,9 +850,11 @@ class ChatwootMessageSender:
                     inbox_id=self._inbox_id,
                     phone_number=e164,
                 )
+            created_contact = False
             if contact_binding is None:
                 if require_existing_contact:
                     raise ChatwootProtocolError("existing_contact_required")
+                created_contact = True
                 created_contact_id = await self._chatwoot.create_contact(
                     inbox_id=self._inbox_id,
                     name=buyer_name,
@@ -847,11 +881,20 @@ class ChatwootMessageSender:
                         reason="contact_inbox_source_mismatch",
                     )
             contact_id, source_id = contact_binding
-            conversation_id = await self._chatwoot.create_conversation(
-                inbox_id=self._inbox_id,
-                contact_id=contact_id,
-                source_id=source_id,
-            )
+            existing: int | FirstTouchResult | None = None
+            if not created_contact:
+                # Un contacto recien creado no tiene conversaciones: no se lee.
+                existing = await self._existing_conversation_for(contact_id)
+            if isinstance(existing, FirstTouchResult):
+                return existing
+            if existing is not None:
+                conversation_id = existing
+            else:
+                conversation_id = await self._chatwoot.create_conversation(
+                    inbox_id=self._inbox_id,
+                    contact_id=contact_id,
+                    source_id=source_id,
+                )
             result = await self._chatwoot.send_first_message(
                 conversation_id=conversation_id,
                 content=content,
@@ -898,6 +941,73 @@ class ChatwootMessageSender:
             conversation_id=conversation_id,
             message_id=message_id,
         )
+
+    async def _existing_conversation_for(
+        self, contact_id: int
+    ) -> int | FirstTouchResult | None:
+        """G3 (E-177): frena, elige la conversacion abierta o deja crear otra.
+
+        Devuelve un ``FirstTouchResult`` bloqueado, el id de la conversacion
+        abierta donde va la plantilla, o ``None`` para crear una nueva (lo de
+        siempre). Con las dos apagadas no lee nada. Un error de Chatwoot sube
+        y ``send_first_touch`` lo cierra como ``failed``, igual que la
+        busqueda del contacto.
+        """
+        guard = self._active_conversation_guard_seconds
+        if guard == 0 and not self._reuse_open_conversation:
+            return None
+        now = int(self._clock())
+        since = now - guard if guard > 0 else None
+        conversations = await self._chatwoot.list_contact_conversations(
+            contact_id=contact_id,
+            inbox_id=self._inbox_id,
+            messages_since_epoch=since,
+        )
+        if since is not None:
+            for conversation in conversations:
+                inbound_at = conversation.last_inbound_at
+                if inbound_at is not None and inbound_at >= since:
+                    logger.info(
+                        "first_touch_blocked reason=%s conversation=%s "
+                        "seconds_since_inbound=%s",
+                        FIRST_TOUCH_CONTACT_ACTIVE_CONVERSATION,
+                        conversation.conversation_id,
+                        now - inbound_at,
+                    )
+                    return FirstTouchResult(
+                        status="blocked",
+                        conversation_id=None,
+                        message_id=None,
+                        reason=FIRST_TOUCH_CONTACT_ACTIVE_CONVERSATION,
+                    )
+        if not self._reuse_open_conversation:
+            return None
+        open_conversations = [
+            conversation
+            for conversation in conversations
+            if conversation.status == "open"
+        ]
+        if not open_conversations:
+            return None
+        with_team = [
+            conversation for conversation in open_conversations if conversation.with_team
+        ]
+        if with_team:
+            logger.info(
+                "first_touch_blocked reason=%s conversation=%s",
+                FIRST_TOUCH_CONTACT_CONVERSATION_WITH_TEAM,
+                with_team[0].conversation_id,
+            )
+            return FirstTouchResult(
+                status="blocked",
+                conversation_id=None,
+                message_id=None,
+                reason=FIRST_TOUCH_CONTACT_CONVERSATION_WITH_TEAM,
+            )
+        # La lista viene de la mas activa a la menos.
+        chosen = open_conversations[0].conversation_id
+        logger.info("first_touch_reuses_open_conversation conversation=%s", chosen)
+        return chosen
 
     async def _conversation_opened(self, conversation_id: int) -> None:
         if self._on_conversation_opened is None:

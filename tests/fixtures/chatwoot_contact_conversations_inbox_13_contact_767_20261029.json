@@ -1,0 +1,291 @@
+{
+  "_fixture": {
+    "captured_at": "2026-10-29T15:05:00Z",
+    "source": "GET /api/v1/accounts/3/contacts/767/conversations en produccion (Maribel, inbox 13, WhatsApp Cloud), desde el contenedor del bridge con el token de control, en solo lectura. Es el contacto de las conversaciones 6 y 9 del 28/10 (hallazgos de Maribel, G3 de E-173).",
+    "shape": "Sin paginar y sin meta: payload es la lista de conversaciones del contacto, de cualquier inbox. Cada una trae status, last_activity_at, labels, meta.sender (el contacto) y messages con un solo mensaje (el ultimo). meta.assignee y meta.team no aparecen cuando no hay asignacion (aca, ninguna). can_reply de la 6 ya es false: se capturo fuera de la ventana de 24 h.",
+    "sanitized": "Se redacto adentro del contenedor: todo texto, nombre, telefono, source_id, uuid, url y hash salio redactado, y aca se cambio por valores sinteticos. Ids, timestamps, tipos, estados, etiquetas y la forma son reales.",
+    "why": "Reproducir G3: a las 03:20:00Z del 28/10 la 6 estaba abierta, sin asignar y con el ultimo entrante (una imagen sin texto) a las 02:38:06Z, y el primer toque abrio la 9. Los tests recortan la lista a ese momento sacando la 9 (creada a las 03:20:00Z)."
+  },
+  "payload": [
+    {
+      "account_id": 3,
+      "additional_attributes": {},
+      "agent_last_seen_at": 1793210697,
+      "assignee_last_seen_at": 0,
+      "can_reply": true,
+      "contact_last_seen_at": 0,
+      "created_at": 1793157600,
+      "custom_attributes": {},
+      "first_reply_created_at": 0,
+      "id": 9,
+      "inbox_id": 13,
+      "labels": [],
+      "last_activity_at": 1793210727,
+      "last_non_activity_message": {
+        "account_id": 3,
+        "additional_attributes": {},
+        "content": "Texto sintetico del mensaje 4684",
+        "content_attributes": {
+          "appointment_setter_decision": "reply",
+          "appointment_setter_reason_code": "conversation_active",
+          "appointment_setter_reply_hash": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "content_type": "text",
+        "conversation": {
+          "assignee_id": null,
+          "contact_inbox": {
+            "source_id": "wamid.TEST.4684"
+          },
+          "last_activity_at": 1793210727,
+          "unread_count": 0
+        },
+        "conversation_id": 9,
+        "created_at": 1793210727,
+        "external_source_ids": {},
+        "id": 4684,
+        "inbox_id": 13,
+        "message_type": 1,
+        "private": false,
+        "processed_message_content": "Texto sintetico del mensaje 4684",
+        "sender": {
+          "avatar_url": "",
+          "id": 3,
+          "name": "Bot de prueba",
+          "type": "agent_bot"
+        },
+        "sender_id": 3,
+        "sender_type": "AgentBot",
+        "sentiment": {},
+        "source_id": "wamid.TEST.4684",
+        "status": "read",
+        "updated_at": "2026-10-28T18:19:57.157Z"
+      },
+      "messages": [
+        {
+          "account_id": 3,
+          "additional_attributes": {},
+          "content": "Texto sintetico del mensaje 4684",
+          "content_attributes": {
+            "appointment_setter_decision": "reply",
+            "appointment_setter_reason_code": "conversation_active",
+            "appointment_setter_reply_hash": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "content_type": "text",
+          "conversation": {
+            "assignee_id": null,
+            "contact_inbox": {
+              "source_id": "wamid.TEST.4684"
+            },
+            "last_activity_at": 1793210727,
+            "unread_count": 0
+          },
+          "conversation_id": 9,
+          "created_at": 1793210727,
+          "external_source_ids": {},
+          "id": 4684,
+          "inbox_id": 13,
+          "message_type": 1,
+          "private": false,
+          "processed_message_content": "Texto sintetico del mensaje 4684",
+          "sender": {
+            "avatar_url": "",
+            "id": 3,
+            "name": "Bot de prueba",
+            "type": "agent_bot"
+          },
+          "sender_id": 3,
+          "sender_type": "AgentBot",
+          "sentiment": {},
+          "source_id": "wamid.TEST.4684",
+          "status": "read",
+          "updated_at": "2026-10-28T18:19:57.157Z"
+        }
+      ],
+      "meta": {
+        "channel": "Channel::Whatsapp",
+        "hmac_verified": false,
+        "sender": {
+          "additional_attributes": {},
+          "availability_status": "offline",
+          "blocked": false,
+          "created_at": 1793154140,
+          "custom_attributes": {},
+          "email": null,
+          "id": 767,
+          "identifier": null,
+          "last_activity_at": 1793210685,
+          "name": "Contacto de prueba",
+          "phone_number": "+520000000767",
+          "thumbnail": ""
+        }
+      },
+      "muted": false,
+      "priority": null,
+      "sla_policy_id": null,
+      "snoozed_until": null,
+      "status": "open",
+      "timestamp": 1793210727,
+      "unread_count": 0,
+      "updated_at": 1793210727.960726,
+      "uuid": "00000000-0000-4000-8000-000000000000",
+      "waiting_since": 0
+    },
+    {
+      "account_id": 3,
+      "additional_attributes": {},
+      "agent_last_seen_at": 1793210659,
+      "assignee_last_seen_at": 0,
+      "can_reply": false,
+      "contact_last_seen_at": 0,
+      "created_at": 1793154140,
+      "custom_attributes": {},
+      "first_reply_created_at": 0,
+      "id": 6,
+      "inbox_id": 13,
+      "labels": [],
+      "last_activity_at": 1793155086,
+      "last_non_activity_message": {
+        "account_id": 3,
+        "additional_attributes": {},
+        "attachments": [
+          {
+            "account_id": 3,
+            "content_type": "image/webp",
+            "data_url": "https://chatwoot.test/rails/active_storage/blobs/redirect/prueba.webp",
+            "extension": "webp",
+            "file_size": 37106,
+            "file_type": "image",
+            "height": 512,
+            "id": 268,
+            "message_id": 4601,
+            "thumb_url": "",
+            "width": 512
+          }
+        ],
+        "content": null,
+        "content_attributes": {},
+        "content_type": "text",
+        "conversation": {
+          "assignee_id": null,
+          "contact_inbox": {
+            "source_id": "wamid.TEST.4601"
+          },
+          "last_activity_at": 1793155086,
+          "unread_count": 0
+        },
+        "conversation_id": 6,
+        "created_at": 1793155086,
+        "external_source_ids": {},
+        "id": 4601,
+        "inbox_id": 13,
+        "message_type": 0,
+        "private": false,
+        "processed_message_content": null,
+        "sender": {
+          "additional_attributes": {},
+          "blocked": false,
+          "custom_attributes": {},
+          "email": null,
+          "id": 767,
+          "identifier": null,
+          "name": "Contacto de prueba",
+          "phone_number": "+520000000767",
+          "thumbnail": "",
+          "type": "contact"
+        },
+        "sender_id": 767,
+        "sender_type": "Contact",
+        "sentiment": {},
+        "source_id": "wamid.TEST.4601",
+        "status": "sent",
+        "updated_at": "2026-10-28T02:38:06.355Z"
+      },
+      "messages": [
+        {
+          "account_id": 3,
+          "additional_attributes": {},
+          "attachments": [
+            {
+              "account_id": 3,
+              "content_type": "image/webp",
+              "data_url": "https://chatwoot.test/rails/active_storage/blobs/redirect/prueba.webp",
+              "extension": "webp",
+              "file_size": 37106,
+              "file_type": "image",
+              "height": 512,
+              "id": 268,
+              "message_id": 4601,
+              "thumb_url": "",
+              "width": 512
+            }
+          ],
+          "content": null,
+          "content_attributes": {},
+          "content_type": "text",
+          "conversation": {
+            "assignee_id": null,
+            "contact_inbox": {
+              "source_id": "wamid.TEST.4601"
+            },
+            "last_activity_at": 1793155086,
+            "unread_count": 0
+          },
+          "conversation_id": 6,
+          "created_at": 1793155086,
+          "external_source_ids": {},
+          "id": 4601,
+          "inbox_id": 13,
+          "message_type": 0,
+          "private": false,
+          "processed_message_content": null,
+          "sender": {
+            "additional_attributes": {},
+            "blocked": false,
+            "custom_attributes": {},
+            "email": null,
+            "id": 767,
+            "identifier": null,
+            "name": "Contacto de prueba",
+            "phone_number": "+520000000767",
+            "thumbnail": "",
+            "type": "contact"
+          },
+          "sender_id": 767,
+          "sender_type": "Contact",
+          "sentiment": {},
+          "source_id": "wamid.TEST.4601",
+          "status": "sent",
+          "updated_at": "2026-10-28T02:38:06.355Z"
+        }
+      ],
+      "meta": {
+        "channel": "Channel::Whatsapp",
+        "hmac_verified": false,
+        "sender": {
+          "additional_attributes": {},
+          "availability_status": "offline",
+          "blocked": false,
+          "created_at": 1793154140,
+          "custom_attributes": {},
+          "email": null,
+          "id": 767,
+          "identifier": null,
+          "last_activity_at": 1793210685,
+          "name": "Contacto de prueba",
+          "phone_number": "+520000000767",
+          "thumbnail": ""
+        }
+      },
+      "muted": false,
+      "priority": null,
+      "sla_policy_id": null,
+      "snoozed_until": null,
+      "status": "open",
+      "timestamp": 1793155086,
+      "unread_count": 0,
+      "updated_at": 1793155086.4753401,
+      "uuid": "00000000-0000-4000-8000-000000000000",
+      "waiting_since": 1793155086
+    }
+  ]
+}

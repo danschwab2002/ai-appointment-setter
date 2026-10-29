@@ -258,6 +258,9 @@ JOHANNA_ABANDONMENT_COPY_VERSION = "johanna-abandonment-one-shot-v1"
 JOHANNA_PAYMENT_FAILURE_TEMPLATE_NAME = "johanna_compra_fallida_01"
 JOHANNA_PAYMENT_FAILURE_COPY_VERSION = "johanna-payment-failure-one-shot-v1"
 JOHANNA_ABANDONMENT_BODY_LIMIT_BYTES = 8 * 1024
+# Tope de FIRST_TOUCH_ACTIVE_CONVERSATION_GUARD_SECONDS: un dia. La ventana es
+# para no pisar una conversacion viva, no para callar a quien escribio ayer.
+FIRST_TOUCH_ACTIVE_CONVERSATION_GUARD_MAX_SECONDS = 86_400
 PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "chatwoot_human_pause_enabled",
     # Levantar la pausa no depende del aliado: lo unico especifico es el id del
@@ -291,6 +294,9 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # (E-157): la plantilla de hoy (WABA_PAYMENT_FAILURE_TEMPLATE_NAME), con la
     # gracia de su politica y los topes de su scope. El carrito no cambia.
     "payment_failure_own_policy_enabled",
+    # G3 de Maribel (E-177): el primer toque manda en la conversacion abierta
+    # del contacto en vez de abrir otra. No lleva nada del manifiesto.
+    "first_touch_reuse_open_conversation_enabled",
     # B2 o Z del pago rechazado, 24 h despues de B1 (contrato
     # portable-payment-failure-followup-v1); las plantillas son del runtime y
     # el paso, de la politica del pago rechazado de la instancia.
@@ -693,6 +699,15 @@ class Settings:
     chatwoot_stalled_max_pages: int = 5
     chatwoot_stalled_recovery_cooldown_seconds: float = 300.0
     chatwoot_stalled_max_recovery_admissions: int = 3
+    # G3 de Maribel (E-177), en los remitentes del despachador (el primer
+    # contacto, el carrito y el pago rechazado). 0 = apagado: si la persona
+    # escribio en alguna conversacion del inbox dentro de esta ventana, el
+    # primer toque no sale (contact_active_conversation).
+    first_touch_active_conversation_guard_seconds: int = 0
+    # La plantilla sale en la conversacion abierta del contacto en vez de abrir
+    # otra; si alguna abierta la tiene el equipo, no sale
+    # (contact_conversation_with_team).
+    first_touch_reuse_open_conversation_enabled: bool = False
     hotmart_hottok: str | None = None
     hotmart_max_age_seconds: int = 300
     portable_hotmart_recovery_enabled: bool = False
@@ -1029,6 +1044,19 @@ class Settings:
         chatwoot_stalled_max_recovery_admissions = int(
             os.getenv("CHATWOOT_STALLED_MAX_RECOVERY_ADMISSIONS", "3")
         )
+        first_touch_active_conversation_guard_seconds = int(
+            os.getenv("FIRST_TOUCH_ACTIVE_CONVERSATION_GUARD_SECONDS", "0").strip()
+            or "0"
+        )
+        if not (
+            0
+            <= first_touch_active_conversation_guard_seconds
+            <= FIRST_TOUCH_ACTIVE_CONVERSATION_GUARD_MAX_SECONDS
+        ):
+            raise ValueError(
+                "FIRST_TOUCH_ACTIVE_CONVERSATION_GUARD_SECONDS must be between 0 "
+                f"and {FIRST_TOUCH_ACTIVE_CONVERSATION_GUARD_MAX_SECONDS}"
+            )
         agent_bot_access_token = (
             os.getenv("CHATWOOT_AGENT_BOT_ACCESS_TOKEN", "").strip() or None
         )
@@ -1778,6 +1806,15 @@ class Settings:
             chatwoot_stalled_max_pages=chatwoot_stalled_max_pages,
             chatwoot_stalled_recovery_cooldown_seconds=(
                 chatwoot_stalled_recovery_cooldown_seconds
+            ),
+            first_touch_active_conversation_guard_seconds=(
+                first_touch_active_conversation_guard_seconds
+            ),
+            first_touch_reuse_open_conversation_enabled=(
+                os.getenv(
+                    "FIRST_TOUCH_REUSE_OPEN_CONVERSATION_ENABLED", "false"
+                ).lower()
+                == "true"
             ),
             chatwoot_stalled_max_recovery_admissions=(
                 chatwoot_stalled_max_recovery_admissions
@@ -5206,6 +5243,12 @@ def create_app(
                 template=waba_template,
                 whatsapp_equivalence_enabled=portable_dynamic_recipient,
                 on_conversation_opened=conversation_opened_hook,
+                active_conversation_guard_seconds=(
+                    settings.first_touch_active_conversation_guard_seconds
+                ),
+                reuse_open_conversation=(
+                    settings.first_touch_reuse_open_conversation_enabled
+                ),
             )
         purchase_agent_pause: PurchaseAgentPause | None = None
         if settings.purchase_agent_pause_enabled:
@@ -5334,6 +5377,12 @@ def create_app(
                     template=waba_template,
                     whatsapp_equivalence_enabled=portable_dynamic_recipient,
                     on_conversation_opened=conversation_opened_hook,
+                    active_conversation_guard_seconds=(
+                        settings.first_touch_active_conversation_guard_seconds
+                    ),
+                    reuse_open_conversation=(
+                        settings.first_touch_reuse_open_conversation_enabled
+                    ),
                 )
             if outbound_sender is None or (
                 outbound_agent is None and not approved_template_direct
