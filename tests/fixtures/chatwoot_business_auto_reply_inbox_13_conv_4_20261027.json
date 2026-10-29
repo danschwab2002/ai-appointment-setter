@@ -1,0 +1,188 @@
+{
+  "_fixture": {
+    "captured_at": "2026-10-29T18:10:00Z",
+    "sanitized": "Lista blanca de claves: todo string fuera de ella se reemplaza. name, phone_number, email, source_id del contacto y de cada mensaje (wamid), pubsub_token, avatar, thumbnail y los hashes. content y processed_message_content son SINTETICOS: el 4552 conserva la forma (empieza con «Gracias por comunicarte con», como el real, que tiene 73 caracteres y es igual en el webhook y en el historial) y el 4551 es un texto de plantilla inventado. Los ids de cuenta, inbox, conversacion, contacto, agent bot y mensajes, y los created_at, son los reales.",
+    "shape": "El primer contacto (4551, saliente del agent bot 3, content_attributes.recovery_first_touch_hash) a las 22:15:44Z y, 7 s despues, un entrante de texto (4552) sin in_reply_to. En el webhook created_at es un string ISO; en el historial, segundos epoch. La API de mensajes no trae additional_attributes (ni template_params).",
+    "source": "Conversacion 4 del inbox 13 (WhatsApp Cloud, cuenta 3, Maribel), en produccion. webhook: el message_created del mensaje 4552 que el bridge guardo en /app/data/captures. history: los mensajes 4551 y 4552 tal como los devuelve la API de mensajes de Chatwoot (get_conversation_messages). Leidos en solo lectura y saneados dentro del contenedor del bridge (E-184).",
+    "why": "M8.m1: el entrante era la respuesta automatica del WhatsApp Business de la persona y el agente la tomo como una persona: contesto con tres globos (4553 a 4555)."
+  },
+  "history": [
+    {
+      "content": "Hola Lead, te escribe el equipo. Vimos que tu compra quedó a mitad de camino. Si te quedó una duda, respondé este mensaje.",
+      "content_attributes": {
+        "recovery_first_touch_hash": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "content_type": "text",
+      "conversation_id": 4,
+      "created_at": 1793139344,
+      "id": 4551,
+      "inbox_id": 13,
+      "message_type": 1,
+      "private": false,
+      "sender": {
+        "avatar_url": "",
+        "id": 3,
+        "name": "Agente",
+        "type": "agent_bot"
+      },
+      "source_id": "wamid.SANEADO4551",
+      "status": "read"
+    },
+    {
+      "content": "Gracias por comunicarte con Negocio Ejemplo. ¿En qué podemos ayudarte hoy?",
+      "content_attributes": {},
+      "content_type": "text",
+      "conversation_id": 4,
+      "created_at": 1793139351,
+      "id": 4552,
+      "inbox_id": 13,
+      "message_type": 0,
+      "private": false,
+      "sender": {
+        "additional_attributes": {
+          "avatar_url_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+          "last_avatar_sync_at": "<saneado>"
+        },
+        "blocked": false,
+        "custom_attributes": {},
+        "email": "lead4@example.invalid",
+        "id": 763,
+        "identifier": null,
+        "name": "Lead 4",
+        "phone_number": "+5210000000004",
+        "thumbnail": "",
+        "type": "contact"
+      },
+      "source_id": "wamid.SANEADO4552",
+      "status": "sent"
+    }
+  ],
+  "webhook": {
+    "account": {
+      "id": 3,
+      "name": "Cuenta 3"
+    },
+    "additional_attributes": {},
+    "content": "Gracias por comunicarte con Negocio Ejemplo. ¿En qué podemos ayudarte hoy?",
+    "content_attributes": {},
+    "content_type": "text",
+    "conversation": {
+      "additional_attributes": {},
+      "agent_last_seen_at": 0,
+      "can_reply": true,
+      "channel": "Channel::Whatsapp",
+      "contact_inbox": {
+        "contact_id": 763,
+        "created_at": "2026-10-27T22:15:43.627Z",
+        "hmac_verified": false,
+        "id": 801,
+        "inbox_id": 13,
+        "pubsub_token": "<saneado>",
+        "source_id": "5210000000004",
+        "updated_at": "2026-10-27T22:15:43.627Z"
+      },
+      "contact_last_seen_at": 0,
+      "created_at": 1793139343,
+      "custom_attributes": {},
+      "first_reply_created_at": null,
+      "id": 4,
+      "inbox_id": 13,
+      "labels": [],
+      "last_activity_at": 1793139351,
+      "messages": [
+        {
+          "account_id": 3,
+          "additional_attributes": {},
+          "content": "Gracias por comunicarte con Negocio Ejemplo. ¿En qué podemos ayudarte hoy?",
+          "content_attributes": {},
+          "content_type": "text",
+          "conversation": {
+            "assignee_id": null,
+            "contact_inbox": {
+              "source_id": "5210000000004"
+            },
+            "last_activity_at": 1793139351,
+            "unread_count": 1
+          },
+          "conversation_id": 4,
+          "created_at": 1793139351,
+          "external_source_ids": {},
+          "id": 4552,
+          "inbox_id": 13,
+          "message_type": 0,
+          "private": false,
+          "processed_message_content": "Gracias por comunicarte con Negocio Ejemplo. ¿En qué podemos ayudarte hoy?",
+          "sender": {
+            "additional_attributes": {},
+            "blocked": false,
+            "custom_attributes": {},
+            "email": "lead4@example.invalid",
+            "id": 763,
+            "identifier": null,
+            "name": "Lead 4",
+            "phone_number": "+5210000000004",
+            "thumbnail": "",
+            "type": "contact"
+          },
+          "sender_id": 763,
+          "sender_type": "Contact",
+          "sentiment": {},
+          "source_id": "wamid.SANEADO4552",
+          "status": "sent",
+          "updated_at": "2026-10-27T22:15:51.560Z"
+        }
+      ],
+      "meta": {
+        "assignee": null,
+        "assignee_type": null,
+        "hmac_verified": false,
+        "sender": {
+          "additional_attributes": {},
+          "blocked": false,
+          "custom_attributes": {},
+          "email": "lead4@example.invalid",
+          "id": 763,
+          "identifier": null,
+          "name": "Lead 4",
+          "phone_number": "+5210000000004",
+          "thumbnail": "",
+          "type": "contact"
+        },
+        "team": null
+      },
+      "priority": null,
+      "snoozed_until": null,
+      "status": "open",
+      "timestamp": 1793139351,
+      "unread_count": 1,
+      "updated_at": 1793139351.629635,
+      "waiting_since": 1793139351
+    },
+    "created_at": "2026-10-27T22:15:51.560Z",
+    "event": "message_created",
+    "id": 4552,
+    "inbox": {
+      "id": 13,
+      "name": "WhatsApp Maribel"
+    },
+    "message_type": "incoming",
+    "private": false,
+    "sender": {
+      "account": {
+        "id": 3,
+        "name": "Cuenta 3"
+      },
+      "additional_attributes": {},
+      "avatar": "",
+      "blocked": false,
+      "custom_attributes": {},
+      "email": "lead4@example.invalid",
+      "id": 763,
+      "identifier": null,
+      "name": "Lead 4",
+      "phone_number": "+5210000000004",
+      "thumbnail": ""
+    },
+    "source_id": "wamid.SANEADO4552"
+  }
+}
