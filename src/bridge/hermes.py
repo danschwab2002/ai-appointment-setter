@@ -51,6 +51,31 @@ _DECISION_STATUSES = {
 
 _MAX_PROPOSAL_ATTEMPTS = 2
 
+# E-175: el motivo de la derivacion de un turno del agente que fallo, y los
+# resultados `failed` que derivan. `chatwoot_history_not_configured` no esta:
+# no es una falla del agente sino de la instalacion, y derivar no la arregla.
+AGENT_TURN_FAILED_REASON_CODE = "agent_turn_failed"
+_AGENT_TURN_FAILURES_THAT_HAND_OFF = frozenset(
+    {"invalid_agent_output", "hermes_unavailable"}
+)
+
+
+def agent_turn_failure_to_hand_off(
+    shadow_processor: object | None, *, delivery_id: str
+) -> str | None:
+    """El motivo de un turno fallido que tiene que derivar, o None.
+
+    `get_failure_reason` es opcional en el procesador: uno que no lo tiene
+    (un doble de test viejo) se porta como antes de E-175.
+    """
+    reader = getattr(shadow_processor, "get_failure_reason", None)
+    if reader is None:
+        return None
+    reason = reader(delivery_id=delivery_id)
+    if reason in _AGENT_TURN_FAILURES_THAT_HAND_OFF:
+        return reason
+    return None
+
 
 def _idempotency_key(digest: str, attempt: int) -> str:
     """Return one Idempotency-Key per attempt.
@@ -69,7 +94,67 @@ def _idempotency_key(digest: str, attempt: int) -> str:
     return f"{digest}-retry-{attempt}"
 
 
+_PARSED_FROM_PROSE_THEN_JSON = "prose_then_json"
+
+
 def _parse_agent_proposal(content: object) -> dict[str, object] | None:
+    proposal, _ = _parse_agent_proposal_with_origin(content)
+    return proposal
+
+
+def _parse_agent_proposal_with_origin(
+    content: object,
+) -> tuple[dict[str, object] | None, str | None]:
+    """La propuesta del texto del modelo, y de donde salio.
+
+    El origen es None cuando el texto es la propuesta (entera o en un fence),
+    y `prose_then_json` cuando se rescato del final de un texto en prosa.
+    """
+    proposal = _parse_whole_agent_proposal(content)
+    if proposal is not None:
+        return proposal, None
+    rescued = _rescue_trailing_agent_proposal(content)
+    if rescued is not None:
+        return rescued, _PARSED_FROM_PROSE_THEN_JSON
+    return None, None
+
+
+def _rescue_trailing_agent_proposal(content: object) -> dict[str, object] | None:
+    """El objeto JSON con el que termina un texto en prosa, o None.
+
+    GLM 5.3 Flash a veces escribe primero la respuesta en prosa y despues la
+    propuesta (fixtures hermes_glm_prose_then_json_*): en Maribel, el 28/10,
+    dos turnos seguidos de la conversacion 9 terminaron en invalid_agent_output
+    con una propuesta valida al final del texto, y la persona se quedo sin
+    respuesta. La regla es estricta a proposito, para no inventar nada:
+
+    - el texto termina en el '}' que cierra el objeto (solo espacios despues);
+    - el objeto es uno solo y completo: la prosa de antes no tiene '{' ni '}',
+      asi que no hay dos candidatos ni un objeto partido;
+    - la prosa nunca se manda: de aca sale solo el objeto, y el que llama lo
+      pasa por el mismo validador que a una propuesta entera.
+    """
+    if not isinstance(content, str):
+        return None
+    stripped = content.strip()
+    if not stripped.endswith("}"):
+        return None
+    start = stripped.find("{")
+    if start <= 0:
+        # Sin prosa delante, el texto ya se probo entero y no era una propuesta.
+        return None
+    if "}" in stripped[:start]:
+        return None
+    try:
+        proposal, end = json.JSONDecoder(strict=False).raw_decode(stripped, start)
+    except json.JSONDecodeError:
+        return None
+    if end != len(stripped) or not isinstance(proposal, dict):
+        return None
+    return proposal
+
+
+def _parse_whole_agent_proposal(content: object) -> dict[str, object] | None:
     if not isinstance(content, str):
         return None
 
@@ -292,6 +377,28 @@ class HermesShadowProcessor:
             digest=digest,
         )
 
+    def get_failure_reason(self, *, delivery_id: str) -> str | None:
+        """El motivo del resultado `failed` de un turno, o None si no fallo.
+
+        Lo lee el bridge cuando un turno termina sin propuesta, para derivar
+        a una persona en vez de quedarse callado (agent_turn_failed).
+        """
+        digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
+        try:
+            result = json.loads(
+                (self._shadow_dir / f"{digest}.json").read_text(encoding="utf-8")
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return None
+        if (
+            not isinstance(result, dict)
+            or result.get("delivery_id_hash") != digest
+            or result.get("status") != "failed"
+        ):
+            return None
+        reason = result.get("reason")
+        return reason if isinstance(reason, str) else None
+
     def get_completed_proposal(
         self, *, delivery_id: str
     ) -> dict[str, object] | None:
@@ -452,22 +559,27 @@ class HermesShadowProcessor:
                 json.JSONDecodeError,
             ):
                 proposal = None
+                parsed_from = None
             else:
-                proposal = _parse_agent_proposal(proposal_text)
+                proposal, parsed_from = _parse_agent_proposal_with_origin(
+                    proposal_text
+                )
 
             if isinstance(proposal, dict) and _is_valid_proposal(
                 proposal, self._product_keys
             ):
+                completed: dict[str, object] = {
+                    "status": "completed",
+                    "delivery_id_hash": digest,
+                    "proposal": proposal,
+                }
+                if parsed_from is not None:
+                    # Senal positiva, como `attempts`: solo aparece en los
+                    # turnos rescatados de la prosa, para poder contarlos.
+                    completed["parsed_from"] = parsed_from
                 self._persist_result(
                     digest=digest,
-                    result=self._attempted(
-                        {
-                            "status": "completed",
-                            "delivery_id_hash": digest,
-                            "proposal": proposal,
-                        },
-                        attempt=attempt,
-                    ),
+                    result=self._attempted(completed, attempt=attempt),
                 )
                 await self._record_turn(
                     delivery_id=delivery_id,

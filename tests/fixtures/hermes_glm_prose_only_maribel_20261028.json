@@ -1,0 +1,9 @@
+{
+  "_capture": {
+    "origin": "Forma de respuestas de z-ai/glm-5.3-flash guardadas en el state.db del profile agente-comercial del Hermes de Maribel (stack maribel), leido con mode=ro.",
+    "captured_at": "Respuesta 52 del 28/10/2026, primer intento del turno failed de las 03:59:43Z de la conversacion 9.",
+    "observed_effect": "Prosa pura, sin ningun objeto: no hay propuesta que rescatar. El turno tiene que derivar (agent_turn_failed).",
+    "synthetic": "El texto es SINTETICO: reemplaza al original para no guardar nada de la persona ni de la conversacion. Se conservo la FORMA medida en solo lectura el 29/10/2026 ≈14:30Z: el texto empieza en prosa, la prosa repite el reply, el separador entre la prosa y el objeto, que no haya texto despues del ultimo '}', que la prosa no tenga llaves, las claves del objeto, decision, qualification_status, reason_code, product, captured_fields todos nulos y los 8 missing_fields."
+  },
+  "content": "¡Claro! Con gusto te explico cómo funciona. El programa está pensado para que avances a tu ritmo: las clases quedan grabadas, tienes materiales descargables y una comunidad donde puedes compartir tus avances. Puedes pagar con tarjeta de crédito, débito o en efectivo en OXXO, y el acceso llega a tu correo apenas se confirma el pago. Si quieres, te comparto el enlace para inscribirte y lo completas cuando te quede cómodo."
+}

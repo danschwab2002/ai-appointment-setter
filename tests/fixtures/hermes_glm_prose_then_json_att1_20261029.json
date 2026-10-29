@@ -1,0 +1,23 @@
+{
+  "_capture": {
+    "origin": "Forma de respuestas de z-ai/glm-5.3-flash guardadas en el state.db del profile agente-comercial del Hermes de ATT1 (stack setter-att1), leido con mode=ro.",
+    "captured_at": "Respuestas 476 y 1490, medidas el 29/10/2026: 5 de las 23 respuestas de ATT1 a un turno del agente que no son JSON puro tienen esta forma (68, 476, 1314, 1438 y 1490).",
+    "observed_effect": "Igual que en Maribel. La 476 pega el objeto a la prosa, sin separador; la 1490 trae la clave product (ATT1 declara productos).",
+    "synthetic": "El texto es SINTETICO: reemplaza al original para no guardar nada de la persona ni de la conversacion. Se conservo la FORMA medida en solo lectura el 29/10/2026 ≈14:30Z: el texto empieza en prosa, la prosa repite el reply, el separador entre la prosa y el objeto, que no haya texto despues del ultimo '}', que la prosa no tenga llaves, las claves del objeto, decision, qualification_status, reason_code, product, captured_fields todos nulos y los 8 missing_fields."
+  },
+  "responses": [
+    {
+      "state_db_id": 476,
+      "separator": "",
+      "content": "Qué bueno que te interesa. El programa trabaja la alimentación y los hábitos que más influyen en cómo te sientes día a día.\n\nTienes las clases grabadas, una guía de recetas y sesiones en vivo para resolver dudas. Lo puedes ver desde el celular o la computadora, a tu ritmo, y el acceso es inmediato después del pago. Si te sirve, te cuento qué incluye cada módulo para que veas si es lo que buscas.{\"decision\": \"ask_question\", \"qualification_status\": \"in_progress\", \"reason_code\": \"commercial_response\", \"reply\": \"Qué bueno que te interesa. El programa trabaja la alimentación y los hábitos que más influyen en cómo te sientes día a día.\\n\\nTienes las clases grabadas, una guía de recetas y sesiones en vivo para resolver dudas. Lo puedes ver desde el celular o la computadora, a tu ritmo, y el acceso es inmediato después del pago. Si te sirve, te cuento qué incluye cada módulo para que veas si es lo que buscas.\", \"captured_fields\": {\"person_name\": null, \"location\": null, \"role\": null, \"company_name\": null, \"company_size\": null, \"business_model\": null, \"company_operational\": null, \"can_invest_in_education\": null}, \"missing_fields\": [\"person_name\", \"location\", \"role\", \"company_name\", \"company_size\", \"business_model\", \"company_operational\", \"can_invest_in_education\"]}"
+    },
+    {
+      "state_db_id": 1490,
+      "separator": "\n\n",
+      "product_keys": [
+        "alimenta-tu-tiroides"
+      ],
+      "content": "Perfecto, te dejo el enlace para que completes tu inscripción. Puedes pagar con tarjeta de crédito o débito, PayPal o en efectivo en OXXO, y en cuanto se confirme el pago te llega el acceso al correo. Si en algún paso te aparece un error, me escribes por aquí y lo revisamos juntas para que puedas empezar cuanto antes.\n\n{\"decision\": \"send_payment_link\", \"qualification_status\": \"in_progress\", \"reason_code\": \"payment_link_requested\", \"reply\": \"Perfecto, te dejo el enlace para que completes tu inscripción. Puedes pagar con tarjeta de crédito o débito, PayPal o en efectivo en OXXO, y en cuanto se confirme el pago te llega el acceso al correo. Si en algún paso te aparece un error, me escribes por aquí y lo revisamos juntas para que puedas empezar cuanto antes.\", \"captured_fields\": {\"person_name\": null, \"location\": null, \"role\": null, \"company_name\": null, \"company_size\": null, \"business_model\": null, \"company_operational\": null, \"can_invest_in_education\": null}, \"missing_fields\": [\"person_name\", \"location\", \"role\", \"company_name\", \"company_size\", \"business_model\", \"company_operational\", \"can_invest_in_education\"], \"product\": \"alimenta-tu-tiroides\"}"
+    }
+  ]
+}
