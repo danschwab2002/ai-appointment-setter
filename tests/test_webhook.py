@@ -3315,7 +3315,14 @@ def test_replays_an_existing_multipart_manifest_when_feature_flag_is_off(
     tmp_path: Path,
 ) -> None:
     secret = "webhook-secret"
-    reply = "Primera parte. Segunda parte."
+    # Más de 160 caracteres: una más corta sale en un globo sin el modelo.
+    first_part = (
+        "Primera parte de una respuesta larga, con el detalle del programa, cómo se accede y qué incluye."
+    )
+    second_part = (
+        "Segunda parte, con la pregunta que sigue para entender qué necesitás antes de pasarte el enlace de pago."
+    )
+    reply = f"{first_part} {second_part}"
     model_calls = 0
 
     def split_handler(request: httpx.Request) -> httpx.Response:
@@ -3327,8 +3334,9 @@ def test_replays_an_existing_multipart_manifest_when_feature_flag_is_off(
                 "choices": [
                     {
                         "message": {
-                            "content": (
-                                '{"parts":["Primera parte.","Segunda parte."]}'
+                            "content": json.dumps(
+                                {"parts": [first_part, second_part]},
+                                ensure_ascii=False,
                             )
                         }
                     }
@@ -3347,7 +3355,7 @@ def test_replays_an_existing_multipart_manifest_when_feature_flag_is_off(
     )
     assert asyncio.run(
         splitter.split(conversation_id=123, trigger_message_id=789, reply=reply)
-    ) == ("Primera parte.", "Segunda parte.")
+    ) == (first_part, second_part)
 
     proposal: dict[str, object] = {
         "decision": "ask_question",
@@ -3423,7 +3431,14 @@ def test_missing_manifest_after_claim_does_not_send_from_the_app(
     tmp_path: Path,
 ) -> None:
     secret = "webhook-secret"
-    reply = "Primera parte. Segunda parte."
+    # Más de 160 caracteres: una más corta sale en un globo sin el modelo.
+    first_part = (
+        "Primera parte de una respuesta larga, con el detalle del programa, cómo se accede y qué incluye."
+    )
+    second_part = (
+        "Segunda parte, con la pregunta que sigue para entender qué necesitás antes de pasarte el enlace de pago."
+    )
+    reply = f"{first_part} {second_part}"
 
     def split_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -3432,7 +3447,10 @@ def test_missing_manifest_after_claim_does_not_send_from_the_app(
                 "choices": [
                     {
                         "message": {
-                            "content": '{"parts":["Primera parte.","Segunda parte."]}'
+                            "content": json.dumps(
+                                {"parts": [first_part, second_part]},
+                                ensure_ascii=False,
+                            )
                         }
                     }
                 ]
@@ -3450,7 +3468,7 @@ def test_missing_manifest_after_claim_does_not_send_from_the_app(
     )
     assert asyncio.run(
         splitter.split(conversation_id=123, trigger_message_id=789, reply=reply)
-    ) == ("Primera parte.", "Segunda parte.")
+    ) == (first_part, second_part)
     batch_hash = hashlib.sha256(b"123:789").hexdigest()
     (result_dir / f"{batch_hash}.json").unlink()
 

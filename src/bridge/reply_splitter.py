@@ -14,9 +14,17 @@ from pathlib import Path
 import httpx
 
 
+# A reply shorter than this stays in one bubble and never reaches the model.
+SHORT_REPLY_MAX_CHARS = 160
+# The most bubbles a new split may produce.
+MAX_REPLY_PARTS = 3
+# Manifests persisted before the cap went down to 3 may hold 4 parts; they
+# must keep loading so a replayed batch is not re-split or failed closed.
+_MANIFEST_MAX_PARTS = 4
+
 _SYSTEM_PROMPT = """You split an already approved WhatsApp reply into natural message bubbles.
 Return only one JSON object with exactly this shape: {\"parts\":[\"...\"]}.
-Use between 1 and 4 non-empty parts according to length and natural sentence boundaries.
+Use between 1 and 3 non-empty parts according to length and natural sentence boundaries.
 Do not add, remove, translate, correct, summarize, reorder, or rewrite any word or punctuation.
 Only boundary whitespace may change. Short replies should remain one part.
 """
@@ -59,11 +67,16 @@ def _parse_json_object(content: object) -> dict[str, object] | None:
     return None
 
 
-def _validated_parts(reply: str, proposal: object) -> tuple[str, ...] | None:
+def _validated_parts(
+    reply: str,
+    proposal: object,
+    *,
+    max_parts: int = _MANIFEST_MAX_PARTS,
+) -> tuple[str, ...] | None:
     if not isinstance(proposal, dict) or set(proposal) != {"parts"}:
         return None
     raw_parts = proposal["parts"]
-    if not isinstance(raw_parts, list) or not 1 <= len(raw_parts) <= 4:
+    if not isinstance(raw_parts, list) or not 1 <= len(raw_parts) <= max_parts:
         return None
     if not all(isinstance(part, str) for part in raw_parts):
         return None
@@ -305,6 +318,18 @@ class HermesReplySplitter:
             )
             if cache_exists:
                 return cached
+            if len(reply) < SHORT_REPLY_MAX_CHARS:
+                self._persist(
+                    digest=digest,
+                    result=self._manifest(
+                        status="fallback",
+                        batch_hash=digest,
+                        reply_hash=reply_hash,
+                        parts=(reply,),
+                        reason="short_reply",
+                    ),
+                )
+                return (reply,)
             return await self._request_and_persist(
                 digest=digest,
                 reply_hash=reply_hash,
@@ -367,7 +392,7 @@ class HermesReplySplitter:
                             {
                                 "role": "user",
                                 "content": json.dumps(
-                                    {"reply": reply, "max_parts": 4},
+                                    {"reply": reply, "max_parts": MAX_REPLY_PARTS},
                                     ensure_ascii=False,
                                 ),
                             },
@@ -400,7 +425,11 @@ class HermesReplySplitter:
         ):
             parts = None
         else:
-            parts = _validated_parts(reply, _parse_json_object(content))
+            parts = _validated_parts(
+                reply,
+                _parse_json_object(content),
+                max_parts=MAX_REPLY_PARTS,
+            )
         if parts is None:
             self._persist(
                 digest=digest,
