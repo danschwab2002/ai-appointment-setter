@@ -12,6 +12,61 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.22.0] - 2026-10-29
+
+Una versión menor sobre la 1.21.0, con seis PR, casi todos salidos de las conversaciones reales de Maribel del 27 y el 28/10. Tres son arreglos que rigen solos: un turno del agente que falla ya no deja a la persona sin respuesta (#361), el divisor manda menos globos (#362) y una baja en cualquier mensaje del lote gana al atajo de «Quiero mi 10 %» (#363). Tres son funcionalidad nueva, apagada por defecto: el primer toque no pisa una conversación viva (#364), el cupón del link del agente va solo en la recuperación (#365) y el agente no le contesta a la respuesta automática del WhatsApp Business de la persona (#366).
+
+Sin migraciones, sin campos nuevos en el manifiesto y sin cambios en los profiles. Cuatro variables nuevas en el bridge, todas apagadas por defecto. Es menor y no mayor porque ninguna instancia tiene que cambiar nada para actualizar: lo nuevo viene apagado, y los tres arreglos no le piden nada a quien actualiza.
+
+Lo que cambia sin variable, en toda instancia que suba: el rescate y la derivación de un turno fallido (#361, con `HUMAN_HANDOFF_ADMISSION_ENABLED`), los globos (#362, con el divisor prendido; ATT1 incluida) y la baja en el lote (#363, con `RECOVERY_CART_FOLLOWUPS_ENABLED`; es ATT1). Solo cambia el Python del bridge.
+
+### Agregado
+
+- **El primer toque no pisa una conversación viva** (#364, E-177, G3 de Maribel). Apagado por defecto: con las dos variables apagadas, el primer toque es el de la 1.21.0.
+  - `FIRST_TOUCH_ACTIVE_CONVERSATION_GUARD_SECONDS` (0 = apagado, como mucho 86400): si la persona escribió en cualquier conversación del inbox dentro de la ventana, el envío se frena con `blocked`/`contact_active_conversation`, sin crear conversación ni mandar nada.
+  - `FIRST_TOUCH_REUSE_OPEN_CONVERSATION_ENABLED`: si el contacto tiene una conversación abierta en el inbox, la plantilla sale en esa (la más activa) y conserva el marcador `recovery_first_touch_hash`. Si alguna abierta la tiene el equipo (agente, equipo o `automation_paused`), se frena con `contact_conversation_with_team`. Sin conversación abierta, abre una como hoy.
+  - Vale para los tres flujos que salen por el despachador durable: el primer contacto del formulario, el carrito y el pago rechazado. Solo para un contacto que ya existe: uno recién creado no lee nada.
+  - Lectura nueva, solo `GET`: `ChatwootClient.list_contact_conversations`. Falla cerrado ante un ítem mal formado, de otro contacto, o una lista de 20 (`contact_conversations_truncated`). Un error de Chatwoot al leer cierra el envío como `failed`/`chatwoot_http_error`.
+  - Un envío frenado cierra como hoy (`sender_rejected_before_delivery`) y deja `followup_sender_blocked reason=<motivo> policy_key=<política> action_id=<acción>`; el remitente deja `first_touch_blocked` o `first_touch_reuses_open_conversation`. El flag está en `PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES`, y una ventana fuera de rango no arranca.
+- **El cupón del link del agente va solo en la recuperación** (#365, E-183, M8.c; decisión de Dan del 29/10). `PAYMENT_LINK_COUPON_RECOVERY_ONLY`, apagado por defecto: apagado, el link lleva `PAYMENT_LINK_COUPON_CODE` como hoy y el contexto del agente no cambia.
+  - Prendido, el cupón va solo si la conversación tuvo un toque nuestro de recuperación: un saliente, no una nota privada, con `recovery_first_touch_hash`, `recovery_followup_hash` o `conversation_followup_command_key`. A quien llega por su cuenta, el link sale a precio completo.
+  - El agente lo sabe: `context["payment_link_action"]["coupon_applied"]` es `true` o `false`, decidido con el historial que ya se lee, sin otra llamada a Chatwoot.
+  - Funciones nuevas en `payment_link_coupon.py`. El flag está en `PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES`.
+- **El agente no le contesta a la respuesta automática de un negocio** (#366, E-184, M8.m1). `CHATWOOT_BUSINESS_AUTO_REPLY_GUARD_ENABLED`, apagado por defecto.
+  - Un entrante es una respuesta automática si no es un botón (`in_reply_to`), llegó a 60 s o menos de nuestra última plantilla de la conversación (`recovery_first_touch_hash`, `recovery_followup_hash`, `reactivation_command_key` o `conversation_followup_command_key`) y tiene la forma de una («gracias por comunicarte», «bienvenido a», «en breve», «horario de atención», «mensaje automático»…). En un lote, tienen que cumplirlo todos los mensajes.
+  - Con el flag, ese lote termina antes de la admisión, de los atajos y del agente, y deja `chatwoot_inbound_business_auto_reply_ignored`. Si Chatwoot falla al leer el historial, el trabajo queda para reintentar (`chatwoot_business_auto_reply_scan_unavailable`). El próximo mensaje de la persona sigue normal.
+  - Módulo nuevo `business_auto_reply.py`. El flag está en `PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES` y en `.env.example`.
+
+### Corregido
+
+- **Un turno del agente que falla ya no deja a la persona sin respuesta** (#361, E-175, G1 de Maribel). Sin flag.
+  - Si el modelo contesta en prosa y termina con la propuesta completa, se usa esa propuesta, nunca la prosa, con el mismo validador y una regla estricta: el texto termina en el objeto y la prosa no tiene llaves. El resultado guarda `parsed_from: prose_then_json`.
+  - Si el turno igual falla (`invalid_agent_output` o `hermes_unavailable`), la conversación se deriva con `agent_turn_failed`, como un audio que no se pudo transcribir, y queda `chatwoot_inbound_agent_turn_failed`. Cuelga de `HUMAN_HANDOFF_ADMISSION_ENABLED`: sin él, queda solo el log (`chatwoot_agent_turn_failed_handoff_unavailable`). `chatwoot_history_not_configured` no deriva.
+  - La readmisión del monitor de trabadas con el `failed` guardado también deriva, sin volver a correr al agente y con la misma clave de derivación.
+- **El divisor de respuestas manda menos globos** (#362, E-180, M8.m4). Sin flag, en toda instancia con el divisor prendido (ATT1, Johanna y Maribel).
+  - Una respuesta de menos de 160 caracteres sale en un globo, sin consultar al modelo (`reason: "short_reply"`).
+  - Una larga sale en 3 globos como mucho (antes, 4). Los manifiestos ya persistidos se repiten tal cual, aunque tengan 4 partes.
+- **Una baja en cualquier mensaje del lote gana al atajo de «Quiero mi 10 %»** (#363, E-179, LAN-128). Sin flag.
+  - Antes, si la persona tocaba «No más mensajes» y enseguida «Quiero mi 10 %», el lote lo encabezaba el botón, Z se adelantaba y la baja no se registraba (ATT1, conversación 536, 28/10).
+  - Ahora la baja se busca en todos los mensajes de la persona del lote; si hay una, el atajo no corre y el camino de siempre la registra. Si Chatwoot falla al leer, el trabajo queda para reintentar (`chatwoot_batch_opt_out_scan_unavailable`).
+  - No recupera la baja de la 536: es un paso aparte.
+
+### Qué hace quien actualiza
+
+- **Sin migraciones.** La cadena sigue en `20261028000400`, la de la 1.21.0.
+- **Las variables nuevas del bridge**, todas apagadas por defecto:
+  ```
+  FIRST_TOUCH_ACTIVE_CONVERSATION_GUARD_SECONDS=0     # #364; segundos, como mucho 86400
+  FIRST_TOUCH_REUSE_OPEN_CONVERSATION_ENABLED=false   # #364
+  PAYMENT_LINK_COUPON_RECOVERY_ONLY=false             # #365; solo tiene efecto con PAYMENT_LINK_COUPON_CODE
+  CHATWOOT_BUSINESS_AUTO_REPLY_GUARD_ENABLED=false    # #366
+  ```
+  Solo la del #366 está en `.env.example`; las otras tres las escribe el `generar.py` de cada instancia. Ausentes, son el valor de arriba.
+- **Los profiles no cambian** (el SOUL común sigue en `6847bb5839b0` y el del Automation Expert en `763171268062`), ni la imagen de Hermes. El conector de Slack y la revisión diaria no cambian de código.
+- **Maribel:** desde la 1.21.0, el bridge, el conector y la revisión, sin migración. En la misma subida prende las cuatro: `FIRST_TOUCH_ACTIVE_CONVERSATION_GUARD_SECONDS=7200`, `FIRST_TOUCH_REUSE_OPEN_CONVERSATION_ENABLED=true`, `PAYMENT_LINK_COUPON_RECOVERY_ONLY=true` y `CHATWOOT_BUSINESS_AUTO_REPLY_GUARD_ENABLED=true`, con el conocimiento que usa `coupon_applied` (va en el repo de la instancia).
+- **ATT1:** desde la 1.20.3, suma lo de la 1.20.4, la 1.20.5 y la 1.21.0 (sus cuatro migraciones y el profile del Automation Expert). De la 1.22.0, sin variables nuevas: le rigen las bajas en el lote (#363), los globos (#362) y el turno fallido (#361).
+- **Johanna:** nada que hacer. Si sube, le rigen los globos (#362) y, con la admisión de derivaciones prendida, el turno fallido (#361).
+
 ## [1.21.0] - 2026-10-29
 
 Una versión menor sobre la 1.20.5, con ocho PR. Tres son los primeros de A′, el sí a un cambio de flujo desde una página del bridge: el botón «Revisar y aprobar» en el DM del Automation Expert (#352), la base de la página (#354) y la página que muestra la propuesta, todavía sin aprobar (#355). Dos son del motor nativo: las respuestas rápidas con la categoría según el permiso (#353) y el carrito abandonado de un toque (#356). Uno suma ofertas a una instancia que ya corre sin versión nueva (#357). Y dos cambian reglas: el motor se prende sin el carrito de varios toques y la pausa al comprar se saltea solo para quien tomó el flujo nativo (#358), y una compra con nuestro link cuenta como recuperada aunque el caso esté cerrado (#359).
