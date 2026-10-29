@@ -1,0 +1,297 @@
+{
+  "_fixture": {
+    "captured_at": "2026-10-29T15:40:00Z",
+    "sanitized": "Lista blanca de claves: todo string fuera de ella se reemplaza. name, phone_number, email, source_id del contacto, wamid de cada mensaje y de la plantilla, pubsub_token, avatar, thumbnail y additional_attributes. content y processed_message_content son el texto de los botones de la plantilla (no es texto de la persona; se verifico solo el largo). Los ids de cuenta, inbox, conversacion, contacto y mensajes son los reales.",
+    "shape": "Dos entrantes de texto de la misma conversacion, 11,7 s de diferencia, ambos respuesta rapida a la misma plantilla (content_attributes.in_reply_to = 4579, el mensaje de la plantilla, y in_reply_to_external_id). content es el texto del boton.",
+    "source": "Conversacion 536 del inbox 11 (WhatsApp Cloud, cuenta 2, ATT1), en produccion: los dos webhooks message_created que el bridge guardo en /app/data/captures (mensajes 4610 y 4611). Leidos en solo lectura y saneados dentro del contenedor (E-179).",
+    "why": "LAN-128: la persona toco el boton «No más mensajes» de la plantilla y 12 s despues «Quiero mi 10 %». El debounce los junto en un lote encabezado por el 4611, el atajo de la renovacion adelanto Z y la baja no se registro."
+  },
+  "webhooks": {
+    "4610": {
+      "account": {
+        "id": 2,
+        "name": "ATT1"
+      },
+      "additional_attributes": {},
+      "content": "No más mensajes",
+      "content_attributes": {
+        "in_reply_to": 4579,
+        "in_reply_to_external_id": "wamid.SANEADO-PLANTILLA-536"
+      },
+      "content_type": "text",
+      "conversation": {
+        "additional_attributes": {},
+        "agent_last_seen_at": 0,
+        "can_reply": true,
+        "channel": "Channel::Whatsapp",
+        "contact_inbox": {
+          "contact_id": 750,
+          "created_at": "2026-10-27T00:50:52.339Z",
+          "hmac_verified": false,
+          "id": 788,
+          "inbox_id": 11,
+          "pubsub_token": "<saneado>",
+          "source_id": "5210000000536",
+          "updated_at": "2026-10-27T00:50:52.339Z"
+        },
+        "contact_last_seen_at": 0,
+        "created_at": 1793062252,
+        "custom_attributes": {},
+        "first_reply_created_at": null,
+        "id": 536,
+        "inbox_id": 11,
+        "labels": [],
+        "last_activity_at": 1793163439,
+        "messages": [
+          {
+            "account_id": 2,
+            "additional_attributes": {},
+            "content": "No más mensajes",
+            "content_attributes": {
+              "in_reply_to": 4579,
+              "in_reply_to_external_id": "wamid.SANEADO-PLANTILLA-536"
+            },
+            "content_type": "text",
+            "conversation": {
+              "assignee_id": null,
+              "contact_inbox": {
+                "source_id": "5210000000536"
+              },
+              "last_activity_at": 1793163439,
+              "unread_count": 1
+            },
+            "conversation_id": 536,
+            "created_at": 1793163439,
+            "external_source_ids": {},
+            "id": 4610,
+            "inbox_id": 11,
+            "message_type": 0,
+            "private": false,
+            "processed_message_content": "No más mensajes",
+            "sender": {
+              "additional_attributes": {
+                "avatar_url_hash": "<saneado>",
+                "last_avatar_sync_at": "<saneado>"
+              },
+              "blocked": false,
+              "custom_attributes": {},
+              "email": "lead536@example.invalid",
+              "id": 750,
+              "identifier": null,
+              "name": "Lead 536",
+              "phone_number": "+5210000000536",
+              "thumbnail": "",
+              "type": "contact"
+            },
+            "sender_id": 750,
+            "sender_type": "Contact",
+            "sentiment": {},
+            "source_id": "wamid.SANEADO4610",
+            "status": "sent",
+            "updated_at": "2026-10-28T04:57:19.770Z"
+          }
+        ],
+        "meta": {
+          "assignee": null,
+          "assignee_type": null,
+          "hmac_verified": false,
+          "sender": {
+            "additional_attributes": {
+              "avatar_url_hash": "<saneado>",
+              "last_avatar_sync_at": "<saneado>"
+            },
+            "blocked": false,
+            "custom_attributes": {},
+            "email": "lead536@example.invalid",
+            "id": 750,
+            "identifier": null,
+            "name": "Lead 536",
+            "phone_number": "+5210000000536",
+            "thumbnail": "",
+            "type": "contact"
+          },
+          "team": null
+        },
+        "priority": null,
+        "snoozed_until": null,
+        "status": "open",
+        "timestamp": 1793163439,
+        "unread_count": 1,
+        "updated_at": 1793163439.820361,
+        "waiting_since": 1793163439
+      },
+      "created_at": "2026-10-28T04:57:19.770Z",
+      "event": "message_created",
+      "id": 4610,
+      "inbox": {
+        "id": 11,
+        "name": "WABA"
+      },
+      "message_type": "incoming",
+      "private": false,
+      "sender": {
+        "account": {
+          "id": 2,
+          "name": "ATT1"
+        },
+        "additional_attributes": {
+          "avatar_url_hash": "<saneado>",
+          "last_avatar_sync_at": "<saneado>"
+        },
+        "avatar": "",
+        "blocked": false,
+        "custom_attributes": {},
+        "email": "lead536@example.invalid",
+        "id": 750,
+        "identifier": null,
+        "name": "Lead 536",
+        "phone_number": "+5210000000536",
+        "thumbnail": ""
+      },
+      "source_id": "wamid.SANEADO4610"
+    },
+    "4611": {
+      "account": {
+        "id": 2,
+        "name": "ATT1"
+      },
+      "additional_attributes": {},
+      "content": "Quiero mi 10 %",
+      "content_attributes": {
+        "in_reply_to": 4579,
+        "in_reply_to_external_id": "wamid.SANEADO-PLANTILLA-536"
+      },
+      "content_type": "text",
+      "conversation": {
+        "additional_attributes": {},
+        "agent_last_seen_at": 0,
+        "can_reply": true,
+        "channel": "Channel::Whatsapp",
+        "contact_inbox": {
+          "contact_id": 750,
+          "created_at": "2026-10-27T00:50:52.339Z",
+          "hmac_verified": false,
+          "id": 788,
+          "inbox_id": 11,
+          "pubsub_token": "<saneado>",
+          "source_id": "5210000000536",
+          "updated_at": "2026-10-27T00:50:52.339Z"
+        },
+        "contact_last_seen_at": 0,
+        "created_at": 1793062252,
+        "custom_attributes": {},
+        "first_reply_created_at": null,
+        "id": 536,
+        "inbox_id": 11,
+        "labels": [],
+        "last_activity_at": 1793163451,
+        "messages": [
+          {
+            "account_id": 2,
+            "additional_attributes": {},
+            "content": "Quiero mi 10 %",
+            "content_attributes": {
+              "in_reply_to": 4579,
+              "in_reply_to_external_id": "wamid.SANEADO-PLANTILLA-536"
+            },
+            "content_type": "text",
+            "conversation": {
+              "assignee_id": null,
+              "contact_inbox": {
+                "source_id": "5210000000536"
+              },
+              "last_activity_at": 1793163451,
+              "unread_count": 2
+            },
+            "conversation_id": 536,
+            "created_at": 1793163451,
+            "external_source_ids": {},
+            "id": 4611,
+            "inbox_id": 11,
+            "message_type": 0,
+            "private": false,
+            "processed_message_content": "Quiero mi 10 %",
+            "sender": {
+              "additional_attributes": {
+                "avatar_url_hash": "<saneado>",
+                "last_avatar_sync_at": "<saneado>"
+              },
+              "blocked": false,
+              "custom_attributes": {},
+              "email": "lead536@example.invalid",
+              "id": 750,
+              "identifier": null,
+              "name": "Lead 536",
+              "phone_number": "+5210000000536",
+              "thumbnail": "",
+              "type": "contact"
+            },
+            "sender_id": 750,
+            "sender_type": "Contact",
+            "sentiment": {},
+            "source_id": "wamid.SANEADO4611",
+            "status": "sent",
+            "updated_at": "2026-10-28T04:57:31.508Z"
+          }
+        ],
+        "meta": {
+          "assignee": null,
+          "assignee_type": null,
+          "hmac_verified": false,
+          "sender": {
+            "additional_attributes": {
+              "avatar_url_hash": "<saneado>",
+              "last_avatar_sync_at": "<saneado>"
+            },
+            "blocked": false,
+            "custom_attributes": {},
+            "email": "lead536@example.invalid",
+            "id": 750,
+            "identifier": null,
+            "name": "Lead 536",
+            "phone_number": "+5210000000536",
+            "thumbnail": "",
+            "type": "contact"
+          },
+          "team": null
+        },
+        "priority": null,
+        "snoozed_until": null,
+        "status": "open",
+        "timestamp": 1793163451,
+        "unread_count": 2,
+        "updated_at": 1793163451.5198889,
+        "waiting_since": 1793163439
+      },
+      "created_at": "2026-10-28T04:57:31.508Z",
+      "event": "message_created",
+      "id": 4611,
+      "inbox": {
+        "id": 11,
+        "name": "WABA"
+      },
+      "message_type": "incoming",
+      "private": false,
+      "sender": {
+        "account": {
+          "id": 2,
+          "name": "ATT1"
+        },
+        "additional_attributes": {
+          "avatar_url_hash": "<saneado>",
+          "last_avatar_sync_at": "<saneado>"
+        },
+        "avatar": "",
+        "blocked": false,
+        "custom_attributes": {},
+        "email": "lead536@example.invalid",
+        "id": 750,
+        "identifier": null,
+        "name": "Lead 536",
+        "phone_number": "+5210000000536",
+        "thumbnail": ""
+      },
+      "source_id": "wamid.SANEADO4611"
+    }
+  }
+}

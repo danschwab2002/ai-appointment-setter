@@ -5751,6 +5751,57 @@ def create_app(
         )
         return outcome in {"advanced", "already_requested"}
 
+    async def batch_has_explicit_opt_out(
+        *,
+        payload: dict[str, object],
+        conversation_id: int,
+        batch_message_ids: tuple[int, ...],
+    ) -> bool:
+        """Whether any message of the batch, not only its leader, is an opt-out.
+
+        LAN-128 (ATT1, 28/10): «No más mensajes» and, 12 s later, «Quiero mi
+        10 %» were batched by the debounce. The leader is the last one, so the
+        renewal shortcut saw only «Quiero mi 10 %», brought Z forward and
+        returned before the canonical scan, and the opt-out was never recorded.
+        An opt-out is final and the 10 % is not: with one anywhere in the batch,
+        the shortcut does not run and the work takes the usual path, which
+        records it. A batch of one is decided by its own text, without reading
+        the history (the same as before).
+        """
+        if detect_explicit_opt_out([payload.get("content")]) is not None:
+            return True
+        leader_id = payload.get("id")
+        if not set(batch_message_ids) - {leader_id}:
+            return False
+        if control_client is None or settings.agent_bot_id is None:
+            # Without the history the batch cannot be read: the usual path
+            # decides (and without the history it does not reply either).
+            return True
+        try:
+            history = await control_client.get_conversation_messages(
+                conversation_id=conversation_id,
+                limit=max(200, len(set(batch_message_ids)) + 19),
+                required_message_ids=batch_message_ids,
+            )
+        except ChatwootHistoryScanLimitError as exc:
+            raise RuntimeError("chatwoot_history_scan_limit_exceeded") from exc
+        except (httpx.HTTPError, ChatwootProtocolError) as exc:
+            raise RetryableChatwootWorkError(
+                "chatwoot_batch_opt_out_scan_unavailable"
+            ) from exc
+        expected_refs = {str(message_id) for message_id in batch_message_ids}
+        texts = [
+            message["text"]
+            for message in _normalize_chatwoot_history(
+                history,
+                agent_bot_id=settings.agent_bot_id,
+                include_team_messages=settings.conversation_resume_enabled,
+            )
+            if message.get("_message_ref") in expected_refs
+            and message.get("actor") == "prospect"
+        ]
+        return detect_explicit_opt_out(texts) is not None
+
     async def _recent_payment_failure_context(
         wa_id: str | None,
     ) -> dict[str, object] | None:
@@ -6562,6 +6613,11 @@ def create_app(
                 settings.recovery_cart_followups_enabled
                 and whatsapp_inbound_equivalence
                 and is_cart_renewal_request(payload.get("content"))
+                and not await batch_has_explicit_opt_out(
+                    payload=payload,
+                    conversation_id=conversation_id,
+                    batch_message_ids=batch_message_ids,
+                )
                 and await request_cart_renewal(
                     payload=payload,
                     conversation_id=conversation_id,
