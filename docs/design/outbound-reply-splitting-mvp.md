@@ -41,7 +41,7 @@ Entrada:
 ```json
 {
   "reply": "texto validado del agente",
-  "max_parts": 4
+  "max_parts": 3
 }
 ```
 
@@ -57,7 +57,7 @@ Reglas:
 
 - objeto JSON directo o fence Markdown completo ya soportado por el parser estricto;
 - exactamente una clave `parts`;
-- entre 1 y 4 strings no vacíos;
+- entre 1 y 3 strings no vacíos (un manifiesto de 4 persistido antes del 29/10 sigue cargando);
 - ningún string puede superar el límite del canal;
 - al normalizar únicamente el espacio de frontera, la concatenación debe ser idéntica al reply original;
 - no puede agregar, eliminar, traducir, resumir, corregir ni reordenar palabras o puntuación;
@@ -69,7 +69,7 @@ Reglas:
 
 ## Decisiones aprobadas
 
-1. El resultado admite entre **1 y 4 partes**; una respuesta corta queda en una sola.
+1. El resultado admite entre **1 y 3 partes**; una respuesta de menos de **160 caracteres** queda en una sola y no se le pide nada al modelo (manifiesto `fallback` con `reason: "short_reply"`). Revisado el 29/10 (E-178, D4): con 1 a 4 partes, el modelo liviano partía en 3 globos respuestas de unos 75 caracteres. El cambio vale para todas las instancias, sin flag.
 2. El delay inicial es **2 segundos fijos** entre partes y será configurable por entorno.
 
 ## Fallback aprobado
@@ -153,7 +153,7 @@ código sin activarlo.
 ## Criterios de aceptación
 
 - una respuesta corta produce una parte y conserva el sender actual;
-- una respuesta larga válida produce 2–4 partes en orden;
+- una respuesta larga válida produce 2–3 partes en orden;
 - el texto normalizado completo coincide con la respuesta original;
 - cada parte tiene marker e idempotencia independiente;
 - replay después de parte 1 no duplica esa parte y continúa con la siguiente;
