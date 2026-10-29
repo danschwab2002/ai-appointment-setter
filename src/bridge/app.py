@@ -75,7 +75,7 @@ from bridge.purchase_agent_pause import (
 from bridge.product_label import ProductLabeler
 from bridge.product_routes import HotmartUnrouted, ProductRoute, ProductRoutes
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
-from bridge.payment_link_coupon import validate_payment_link_coupon_code
+from bridge.payment_link_coupon import coupon_applied_in_context, mark_payment_link_coupon, validate_payment_link_coupon_code
 from bridge.filtering import EventDecision, classify_chatwoot_event
 from bridge.agent_provenance import AgentTurn, CONTEXT_BUILDER_VERSION
 from bridge.hermes import AGENT_TURN_FAILED_REASON_CODE, HermesShadowProcessor, agent_turn_failure_to_hand_off, payment_link_product  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
@@ -353,7 +353,7 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "pilot_boundary_enabled",
     "chatwoot_cut_b_admission_enabled",
     "chatwoot_cut_b_agent_enabled",
-    "payment_link_enabled",
+    "payment_link_enabled", "payment_link_coupon_recovery_only",  # E-183: es del link, no del aliado
     "chatwoot_post_inbound_discount_planning_enabled",
     "chatwoot_scoped_inbound_senders_enabled",
     "chatwoot_stalled_monitor_enabled",
@@ -894,9 +894,9 @@ class Settings:
     # escrito en el mensaje, como siempre.
     payment_link_template_name: str | None = None
     payment_link_template_language: str | None = None
-    # El cupon fijo de la instancia en el link del agente (E-148): vacio, el
-    # link sale como siempre. Ver bridge/payment_link_coupon.py.
-    payment_link_coupon_code: str | None = None
+    # El cupon fijo del link del agente (E-148; vacio, sin cupon) y, con el flag, solo tras
+    payment_link_coupon_code: str | None = None  # un toque de recuperacion (E-183): payment_link_coupon.py
+    payment_link_coupon_recovery_only: bool = False
     chatwoot_post_inbound_discount_planning_enabled: bool = False
     commercial_ally_discount_policy_key: str | None = None
     commercial_ally_discount_policy_version: int | None = None
@@ -2126,9 +2126,9 @@ class Settings:
             payment_link_template_language=(
                 os.getenv("PAYMENT_LINK_TEMPLATE_LANGUAGE", "").strip() or None
             ),
-            payment_link_coupon_code=(
-                os.getenv("PAYMENT_LINK_COUPON_CODE", "").strip() or None
-            ),
+            payment_link_coupon_code=os.getenv("PAYMENT_LINK_COUPON_CODE", "").strip() or None,
+            payment_link_coupon_recovery_only=os.getenv(
+                "PAYMENT_LINK_COUPON_RECOVERY_ONLY", "false").strip().lower() == "true",
             chatwoot_post_inbound_discount_planning_enabled=(
                 os.getenv(
                     "CHATWOOT_POST_INBOUND_DISCOUNT_PLANNING_ENABLED", "false"
@@ -6041,6 +6041,25 @@ def create_app(
             )
         )
 
+    def agent_link_coupon_code(context: dict[str, object] | None) -> str | None:
+        """El cupon que lleva el link del agente (E-148 y, con el flag, E-183).
+
+        Con ``PAYMENT_LINK_COUPON_RECOVERY_ONLY`` el cupon va solo si la
+        conversacion tuvo un toque de recuperacion: lo que el turno ya le dijo
+        al agente (``coupon_applied``, que marca el barrido del historial
+        canonico). Si el turno no lo decidio, el link sale sin cupon: el
+        agente no pudo prometer un 10 % que no sabia.
+        """
+        code = settings.payment_link_coupon_code
+        if code is None or not settings.payment_link_coupon_recovery_only:
+            return code
+        applied = coupon_applied_in_context(context)
+        logger.info(
+            "payment_link_coupon recovery_touch=%s",
+            {True: "yes", False: "no", None: "undecided"}[applied],
+        )
+        return code if applied else None
+
     async def run_shadow_with_canonical_history(
         *,
         delivery_id: str,
@@ -6089,6 +6108,13 @@ def create_app(
             # Sin esto, la normalizacion saltea todo mensaje sin texto: un audio
             # desaparece del historial y el agente nunca sabe que existio.
             history = await audio_transcriber.enrich_history(history)
+        # E-183: con el flag, el agente sabe si el link que saldria trae el 10 %.
+        mark_payment_link_coupon(
+            context,
+            history,
+            coupon_code=settings.payment_link_coupon_code,
+            recovery_only=settings.payment_link_coupon_recovery_only,
+        )
         normalized = _normalize_chatwoot_history(
             history,
             agent_bot_id=settings.agent_bot_id,
@@ -7322,6 +7348,7 @@ def create_app(
             assert settings.chatwoot_account_id is not None
             assert settings.chatwoot_inbox_id is not None
             assert control_client is not None
+            link_coupon_code = agent_link_coupon_code(context)
             try:
                 delivery = await deliver_checkout_issuance_v2(
                     # Con manifiesto, la reserva busca la intencion por las
@@ -7348,7 +7375,7 @@ def create_app(
                     # plantilla. Si no se puede usar, sale escrito.
                     link_template_name=settings.payment_link_template_name,
                     link_template_language=settings.payment_link_template_language,
-                    link_coupon_code=settings.payment_link_coupon_code,
+                    link_coupon_code=link_coupon_code,
                     part_delay_seconds=settings.reply_part_delay_seconds,
                     part_sleep=reply_part_sleep,
                 )

@@ -88,3 +88,89 @@ def payment_link_with_coupon(checkout_url_final: str, coupon_code: str | None) -
         + "="
         + quote(coupon_code, safe="")
     )
+
+
+# --- Solo en la recuperacion (E-183, M8.c, decision de Dan del 2026-10-29) ---
+#
+# «Que el 10 % sea solamente para la recuperacion»: con
+# ``PAYMENT_LINK_COUPON_RECOVERY_ONLY=true``, el cupon fijo va en el link del
+# agente solo si la conversacion tuvo un toque nuestro de recuperacion. A quien
+# llega por su cuenta con la compra decidida (Maribel, conversacion 6 del
+# 29/10), el link sale a precio completo. Con el flag apagado, todo como antes.
+#
+# Un toque de recuperacion es un mensaje nuestro (saliente, no una nota
+# privada) con alguna de estas marcas en ``content_attributes``, que escribe
+# ``chatwoot.py`` y lee igual ``daily_feedback_export.py``:
+#
+# * ``recovery_first_touch_hash``: el primer contacto (formulario, carrito,
+#   pago rechazado);
+# * ``recovery_followup_hash``: el seguimiento del caso;
+# * ``conversation_followup_command_key``: el seguimiento con cupon de las
+#   24 h, que ya le ofrecio el cupon a la persona.
+#
+# Sin limite de tiempo (D1 de E-178). Las marcas en un entrante no cuentan.
+RECOVERY_TOUCH_MARKERS = (
+    "recovery_first_touch_hash",
+    "recovery_followup_hash",
+    "conversation_followup_command_key",
+)
+# 1 = outgoing y 3 = template en la API de Chatwoot; los webhooks lo mandan
+# como texto.
+_OUR_MESSAGE_TYPES = {1, 3, "outgoing", "template"}
+
+
+def conversation_had_recovery_touch(history: object) -> bool:
+    """Si en el historial crudo de Chatwoot hay un toque nuestro de recuperacion."""
+
+    if not isinstance(history, list):
+        return False
+    for message in history:
+        if not isinstance(message, dict):
+            continue
+        message_type = message.get("message_type")
+        if isinstance(message_type, bool) or message_type not in _OUR_MESSAGE_TYPES:
+            continue
+        if message.get("private") is True:
+            continue
+        attributes = message.get("content_attributes")
+        if isinstance(attributes, dict) and any(
+            marker in attributes for marker in RECOVERY_TOUCH_MARKERS
+        ):
+            return True
+    return False
+
+
+def mark_payment_link_coupon(
+    context: dict[str, object],
+    history: object,
+    *,
+    coupon_code: str | None,
+    recovery_only: bool,
+) -> None:
+    """Le dice al agente si el link que va a salir trae el cupon.
+
+    Solo con el flag y con el link del agente prendido
+    (``payment_link_action`` en el contexto): ``coupon_applied`` es true o
+    false. Con el flag apagado el contexto no cambia.
+    """
+
+    if not recovery_only:
+        return
+    action = context.get("payment_link_action")
+    if not isinstance(action, dict):
+        return
+    action["coupon_applied"] = coupon_code is not None and (
+        conversation_had_recovery_touch(history)
+    )
+
+
+def coupon_applied_in_context(context: object) -> bool | None:
+    """Lo que ya se decidio en el turno, o None si no se decidio."""
+
+    if not isinstance(context, dict):
+        return None
+    action = context.get("payment_link_action")
+    if not isinstance(action, dict):
+        return None
+    applied = action.get("coupon_applied")
+    return applied if isinstance(applied, bool) else None
