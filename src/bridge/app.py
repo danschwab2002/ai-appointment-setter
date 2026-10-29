@@ -40,6 +40,11 @@ from bridge.audio_transcription import (
     AudioTranscriptionError,
     needs_audio_transcription,
 )
+from bridge.business_auto_reply import (
+    batch_is_business_auto_reply,
+    has_business_auto_reply_shape,
+    is_button_reply,
+)
 from bridge.chatwoot import (
     ChatwootClient,
     ChatwootHistoryScanLimitError,
@@ -338,6 +343,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # E-107: la baja se confirma con una linea. El texto tiene un default del
     # producto y cada instancia puede cambiarlo (OPT_OUT_CONFIRMATION_TEXT).
     "opt_out_confirmation_enabled",
+    # M8.m1 (E-184): el entrante que es la respuesta automatica de un negocio
+    # a nuestra plantilla no le llega al agente. La regla es del producto; por
+    # instancia, solo prenderlo.
+    "chatwoot_business_auto_reply_guard_enabled",
     "human_handoff_projection_enabled",
     "human_handoff_admission_enabled",
     # F-034: el aviso corto al derivar. El texto es fijo y del producto; lo
@@ -634,6 +643,10 @@ class Settings:
     chatwoot_agent_bot_access_token: str | None = None
     chatwoot_pause_macro_id: int | None = None
     chatwoot_human_pause_enabled: bool = False
+    # M8.m1 (E-184): con el flag, un entrante que llega a un minuto de nuestra
+    # plantilla con la forma de una respuesta automatica (business_auto_reply)
+    # no le llega al agente. Apagado, todo igual que antes.
+    chatwoot_business_auto_reply_guard_enabled: bool = False
     chatwoot_opt_out_macro_id: int | None = None
     chatwoot_resume_macro_id: int | None = None
     # flow-engine-v2 (E-065): el macro que solo suma la etiqueta cliente, para
@@ -997,6 +1010,12 @@ class Settings:
         )
         chatwoot_human_pause_enabled = (
             os.getenv("CHATWOOT_HUMAN_PAUSE_ENABLED", "false").lower() == "true"
+        )
+        chatwoot_business_auto_reply_guard_enabled = (
+            os.getenv(
+                "CHATWOOT_BUSINESS_AUTO_REPLY_GUARD_ENABLED", "false"
+            ).lower()
+            == "true"
         )
         reply_splitter_enabled = (
             os.getenv("CHATWOOT_REPLY_SPLITTER_ENABLED", "false").lower()
@@ -1725,6 +1744,9 @@ class Settings:
             chatwoot_agent_bot_access_token=agent_bot_access_token,
             chatwoot_pause_macro_id=int(os.environ["CHATWOOT_PAUSE_MACRO_ID"]),
             chatwoot_human_pause_enabled=chatwoot_human_pause_enabled,
+            chatwoot_business_auto_reply_guard_enabled=(
+                chatwoot_business_auto_reply_guard_enabled
+            ),
             chatwoot_opt_out_macro_id=chatwoot_opt_out_macro_id,
             chatwoot_resume_macro_id=chatwoot_resume_macro_id,
             chatwoot_client_label_macro_id=chatwoot_client_label_macro_id,
@@ -5851,6 +5873,51 @@ def create_app(
         ]
         return detect_explicit_opt_out(texts) is not None
 
+    async def batch_is_a_business_auto_reply(
+        *,
+        payload: dict[str, object],
+        conversation_id: int,
+        batch_message_ids: tuple[int, ...],
+    ) -> bool:
+        """Whether the batch is a business's automatic reply to our template.
+
+        M8.m1 (Maribel, conversation 4, 27/10): 7 s after the first touch came
+        «Gracias por comunicarte con …», the person's WhatsApp Business auto
+        reply, and the agent answered it with three messages. The rule lives in
+        business_auto_reply: not a button, within a minute of our last template
+        and with the shape of an auto reply, for every message of the batch.
+
+        The leader's own text is the cheap gate: without the shape, or as a
+        button, the history is not read and nothing changes. With it, the
+        history is read once (it has the template and each message's time).
+        """
+        if is_button_reply(payload) or not has_business_auto_reply_shape(
+            payload.get("content")
+        ):
+            return False
+        if control_client is None:
+            # Without the history there is no template to measure against: the
+            # usual path decides.
+            return False
+        wanted_ids = set(batch_message_ids)
+        leader_id = payload.get("id")
+        if isinstance(leader_id, int) and not isinstance(leader_id, bool):
+            wanted_ids.add(leader_id)
+        required_ids = tuple(sorted(wanted_ids))
+        try:
+            history = await control_client.get_conversation_messages(
+                conversation_id=conversation_id,
+                limit=max(20, len(required_ids) + 19),
+                required_message_ids=required_ids,
+            )
+        except ChatwootHistoryScanLimitError as exc:
+            raise RuntimeError("chatwoot_history_scan_limit_exceeded") from exc
+        except (httpx.HTTPError, ChatwootProtocolError) as exc:
+            raise RetryableChatwootWorkError(
+                "chatwoot_business_auto_reply_scan_unavailable"
+            ) from exc
+        return batch_is_business_auto_reply(history, required_ids)
+
     async def _recent_payment_failure_context(
         wa_id: str | None,
     ) -> dict[str, object] | None:
@@ -6654,6 +6721,30 @@ def create_app(
             if reply_status not in {"sent", "duplicate"}:
                 raise RuntimeError("invalid_chatwoot_reset_reply_result")
             return
+        if settings.chatwoot_business_auto_reply_guard_enabled:
+            # M8.m1: the business's automatic reply to our template is not the
+            # person. Before the admission, the shortcuts and the agent, so the
+            # message changes nothing; the person's next message goes as usual.
+            auto_reply_conversation = payload.get("conversation")
+            auto_reply_conversation_id = (
+                auto_reply_conversation.get("id")
+                if isinstance(auto_reply_conversation, dict)
+                else None
+            )
+            if (
+                isinstance(auto_reply_conversation_id, int)
+                and not isinstance(auto_reply_conversation_id, bool)
+                and await batch_is_a_business_auto_reply(
+                    payload=payload,
+                    conversation_id=auto_reply_conversation_id,
+                    batch_message_ids=batch_message_ids,
+                )
+            ):
+                logger.info(
+                    "chatwoot_inbound_business_auto_reply_ignored conversation=%s",
+                    auto_reply_conversation_id,
+                )
+                return
         admission = None
         if settings.chatwoot_cut_b_admission_enabled:
             assert shared_supabase is not None
