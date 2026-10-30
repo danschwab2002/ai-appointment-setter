@@ -1,0 +1,22 @@
+{
+  "_capture": {
+    "origen": "validate_flow_engine_native_legacy_double_case.mjs: la cadena entera de migraciones (PGlite), el mundo de ATT1 con el carrito nativo de un toque y el planificador del piloto del legado",
+    "encargo": "E-204",
+    "regenerar": "cd tests/sql/followup_engine && node validate_flow_engine_native_legacy_double_case.mjs --emit"
+  },
+  "admission": {
+    "outcome": "motor_no_arranca",
+    "reason": "caso_del_legado_en_curso",
+    "created": null
+  },
+  "legacy_same_offer": {
+    "code": "55000",
+    "message": "pilot_case_binding_conflict",
+    "details": null
+  },
+  "legacy_over_native": {
+    "code": "55000",
+    "message": "pilot_scope_rejected",
+    "details": "flujo_nativo_en_curso"
+  }
+}

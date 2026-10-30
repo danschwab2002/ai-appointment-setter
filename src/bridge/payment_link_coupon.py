@@ -32,6 +32,8 @@ from __future__ import annotations
 import re
 from urllib.parse import parse_qsl, quote, urlsplit
 
+from bridge.chatwoot import FLOW_ENGINE_PURCHASE_WELCOME_MARKER
+
 
 HOTMART_CHECKOUT_PREFIX = "https://pay.hotmart.com/"
 # Lo mismo que acepta el seguimiento (``COUPON_CODE_RE``) mas el ``+`` de
@@ -109,6 +111,12 @@ def payment_link_with_coupon(checkout_url_final: str, coupon_code: str | None) -
 #   24 h, que ya le ofrecio el cupon a la persona.
 #
 # Sin limite de tiempo (D1 de E-178). Las marcas en un entrante no cuentan.
+#
+# La bienvenida de un flujo nativo tras la compra (``entra.permiso: compra``)
+# tambien lleva ``recovery_first_touch_hash`` porque sale como un primer toque,
+# pero no es recuperacion: ``send_first_message`` le suma
+# ``flow_engine_purchase_welcome: true`` y ese mensaje no cuenta (E-204, hueco
+# 18). El carrito nativo (``formulario``) no la lleva y sigue contando.
 RECOVERY_TOUCH_MARKERS = (
     "recovery_first_touch_hash",
     "recovery_followup_hash",
@@ -133,6 +141,11 @@ def conversation_had_recovery_touch(history: object) -> bool:
         if message.get("private") is True:
             continue
         attributes = message.get("content_attributes")
+        if (
+            isinstance(attributes, dict)
+            and attributes.get(FLOW_ENGINE_PURCHASE_WELCOME_MARKER) is True
+        ):
+            continue
         if isinstance(attributes, dict) and any(
             marker in attributes for marker in RECOVERY_TOUCH_MARKERS
         ):

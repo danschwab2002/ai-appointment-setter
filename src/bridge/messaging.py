@@ -546,6 +546,7 @@ class MessageSender(Protocol):
         greeting_name: str | None = None,
         recipient: FirstTouchRecipient | None = None,
         template_params: dict[str, object] | None = None,
+        purchase_welcome: bool = False,
     ) -> FirstTouchResult: ...
 
     async def resolve_first_touch_recipient(
@@ -777,6 +778,7 @@ class ChatwootMessageSender:
         greeting_name: str | None = None,
         recipient: FirstTouchRecipient | None = None,
         template_params: dict[str, object] | None = None,
+        purchase_welcome: bool = False,
     ) -> FirstTouchResult:
         """Send the first template; ``greeting_name`` fills ``{{1}}`` when given.
 
@@ -794,6 +796,11 @@ class ChatwootMessageSender:
         for a template outside the manifest (A1 of the cart with the personal
         coupon, with its checkout button): they go to Chatwoot as given, so
         what the final gate hashed is what Meta sends.
+
+        ``purchase_welcome`` (E-204): el primer toque de un flujo nativo con
+        ``entra.permiso: compra``. Llega a ``send_first_message`` y marca el
+        mensaje para que no cuente como toque de recuperacion (el cupon del
+        link del agente). Apagado no cambia nada de lo que sale.
         """
         normalized = normalize_phone(phone)
         if normalized is None:
@@ -928,10 +935,14 @@ class ChatwootMessageSender:
                     contact_id=contact_id,
                     source_id=source_id,
                 )
+            welcome_kwargs: dict[str, object] = (
+                {"purchase_welcome": True} if purchase_welcome is True else {}
+            )
             result = await self._chatwoot.send_first_message(
                 conversation_id=conversation_id,
                 content=content,
                 delivery_id=delivery_id,
+                **welcome_kwargs,
                 template_params=(
                     template_params
                     if template_params is not None

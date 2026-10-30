@@ -48,11 +48,13 @@ def test_it_is_one_transaction_and_comes_before_the_native_cart() -> None:
     # que no tocan lo de esta.
     # Despues, sumar ofertas a un scope publicado (20261028000300, E-163).
     # Despues, la compra con nuestro link cuenta siempre (20261028000400, E-169).
-    assert names[-1] == "20261028000400_purchase_by_our_link_counts_v1.sql"
-    assert names[-2] == "20261028000300_pilot_scope_offer_append_v1.sql"
-    assert names[-3] == "20261028000200_flow_engine_native_cart_v1.sql"
-    assert names[-4] == MIGRATION.name
-    assert names[-5] == "20261026000200_flow_engine_native_offer_in_context_v1.sql"
+    # El doble caso del carrito (20261030000100, E-204): la admision nativa y el planificador del carrito.
+    assert names[-1] == "20261030000100_flow_engine_native_legacy_double_case_v1.sql"
+    assert names[-2] == "20261028000400_purchase_by_our_link_counts_v1.sql"
+    assert names[-3] == "20261028000300_pilot_scope_offer_append_v1.sql"
+    assert names[-4] == "20261028000200_flow_engine_native_cart_v1.sql"
+    assert names[-5] == MIGRATION.name
+    assert names[-6] == "20261026000200_flow_engine_native_offer_in_context_v1.sql"
     # Correrla dos veces aborta, y necesita el almacen y la cohorte del operador.
     assert "flow_change_slack_approver_already_applied" in sql
     assert "flow_change_store_missing" in sql
@@ -66,6 +68,7 @@ def test_the_validator_is_in_the_npm_chain() -> None:
         " && node validate_flow_engine_native_cart.mjs --check"
         " && node validate_pilot_scope_offer_append.mjs"
         " && node validate_purchase_by_our_link_counts.mjs"
+        " && node validate_flow_engine_native_legacy_double_case.mjs --check"
     )
 
 

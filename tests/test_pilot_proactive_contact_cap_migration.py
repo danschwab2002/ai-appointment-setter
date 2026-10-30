@@ -120,6 +120,7 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261028000200",
         "20261028000300",
         "20261028000400",
+        "20261030000100",
     ]
 
     sql = _sql()

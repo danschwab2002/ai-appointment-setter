@@ -1560,19 +1560,41 @@ def test_pilot_scope_offer_append_fingerprint_is_before_the_link_purchase() -> N
         assert marker in compact_fingerprint, marker
 
 
-def test_purchase_by_our_link_counts_fingerprint_is_last() -> None:
+def test_purchase_by_our_link_counts_fingerprint_is_before_the_double_case() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261028000400 (la compra con nuestro link cuenta siempre, E-169) es la ultima.
-    fingerprint = sql.split("'20261028000400'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261028000400 (la compra con nuestro link cuenta siempre, E-169) va justo antes
+    # de la del doble caso del carrito (20261030000100, E-204).
+    fingerprint = sql.split("'20261028000400'", 1)[1].split(
+        "    union all\n    select\n        '20261030000100'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261028000400_purchase_by_our_link_counts_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",2,'purchase_by_our_link_counts')")
+    assert compact_fingerprint.endswith(",2,'purchase_by_our_link_counts'")
     for marker in (
         "to_regprocedure('public._close_recovery_case_for_checkout_purchase_v1(uuid,uuid,timestamptz)')",
         "to_regprocedure('public.correlate_hotmart_checkout_issuance_v2(uuid,text,timestamptz)')",
         "position('purchase_by_our_link_counts'indefinition)>0",
         "position('won_after_close'indefinition)>0",
+        "notprosecdef",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_flow_engine_native_legacy_double_case_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261030000100 (el doble caso del carrito, E-204) es la ultima.
+    fingerprint = sql.split("'20261030000100'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261030000100_flow_engine_native_legacy_double_case_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'flow_engine_native_legacy_double_case')")
+    for marker in (
+        "to_regprocedure('public._flow_engine_admit_native_flow(public.flow_controls,public.webhook_events,"
+        "uuid,text,timestamptz,bigint,bigint,text)')",
+        "to_regprocedure('public.plan_cart_recovery(uuid,uuid,text,text,text,text,integer,timestamptz)')",
+        "position('flow_engine_native_legacy_double_case'indefinition)>0",
+        "position('caso_del_legado_en_curso'indefinition)>0",
+        "position('flujo_nativo_en_curso'indefinition)>0",
         "notprosecdef",
     ):
         assert marker in compact_fingerprint, marker

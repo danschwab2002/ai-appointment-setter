@@ -164,7 +164,11 @@ NATIVE_CART_REFUSED = "no_arranca"       # a native flow took the person and did
 NATIVE_CART_UNCLAIMED = "sin_reclamo"    # no native flow takes the person: the legacy plans as today
 NATIVE_CART_PENDING = "pendiente"        # the admission did not answer: the event stays received
 # Not taking the person: outside the cohort, or the flow went off or paused after the read.
-NATIVE_CART_UNCLAIMED_REASONS = frozenset({"fuera_de_cohorte", "flujo_apagado", "flujo_pausado"})
+# caso_del_legado_en_curso (E-204, 20261030000100): the person has an open legacy case of the
+# product (any offer); the cart is the legacy's, which does exactly what it does today.
+NATIVE_CART_UNCLAIMED_REASONS = frozenset(
+    {"fuera_de_cohorte", "flujo_apagado", "flujo_pausado", "caso_del_legado_en_curso"}
+)
 
 
 @dataclass(frozen=True)

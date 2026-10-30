@@ -5969,6 +5969,30 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'purchase_by_our_link_counts'
+    union all
+    select
+        '20261030000100',
+        '20261030000100_flow_engine_native_legacy_double_case_v1.sql',
+        -- El doble caso del carrito (E-204): la admision nativa no abre caso
+        -- sobre un caso del legado abierto ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_admit_native_flow(public.flow_controls,public.webhook_events,uuid,text,timestamptz,bigint,bigint,text)')
+              and position('flow_engine_native_legacy_double_case' in definition) > 0
+              and position('caso_del_legado_en_curso' in definition) > 0
+        )::int
+        -- ... y el planificador del legado ve el caso de un carrito nativo.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.plan_cart_recovery(uuid,uuid,text,text,text,text,integer,timestamptz)')
+              and position('flow_engine_native_legacy_double_case' in definition) > 0
+              and position('flujo_nativo_en_curso' in definition) > 0
+              and not prosecdef
+        )::int,
+        2,
+        'flow_engine_native_legacy_double_case'
 )
 select
     version,
