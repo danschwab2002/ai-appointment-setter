@@ -301,7 +301,7 @@ def test_proposing_a_wait_in_the_cart_saves_the_normalized_draft_with_the_role_k
     assert response.status_code == 201, response.text
     body = response.json()
     # 1.7.0: el item nuevo (el PR 4 del hito 4); la version que contesta el bridge la fija esta prueba.
-    assert (body["contract"], body["contract_version"]) == ("flow-change-cycle-v1", "1.8.0")
+    assert (body["contract"], body["contract_version"]) == ("flow-change-cycle-v1", "1.9.0")
     assert body["instance"] == {"tenant_ref": "lancemos", "ally_ref": "att1"}
     assert body["data"]["status"] == "borrador" and body["data"]["revision"] == 1
     [read, save] = emulator.requests

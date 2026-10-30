@@ -18,7 +18,14 @@ dos bordes se emulan con ``httpx.MockTransport``:
   ``https://slack.com/team_id``. La captura queda para el E2E del paso 6 (regla 2).
 
 La propuesta que se muestra es la del puente del bridge de la conversacion de
-prueba (tests/fixtures/flow_change_new_flow/ae_bienvenida_20261024.json).
+prueba (tests/fixtures/flow_change_new_flow/ae_bienvenida_20261024.json). El
+almacen es el de ATT1 leido en solo lectura el 2026-10-22
+(tests/fixtures/flow_change/att1_read_flow_store_v1_20261022.json), y el
+catalogo de plantillas, el de la bandeja 11 de ATT1 del 2026-10-21: con ellos
+corre de verdad la revalidacion al publicar (A′ PR 3b,
+tests/test_flow_approval_writes.py). Las escrituras del emulador siguen las
+reglas de las funciones de 20261016000100 y 20261028000100 que importan a la
+pagina; lo que la base hace de verdad lo prueba PGlite.
 """
 
 from __future__ import annotations
@@ -44,6 +51,11 @@ from bridge.instance_manifest import InstanceManifest
 FIXTURES = Path(__file__).parent / "fixtures"
 ATT1 = FIXTURES / "instances" / "att1"
 BRIDGE = json.loads((FIXTURES / "flow_change_new_flow/ae_bienvenida_20261024.json").read_text())
+ATT1_STORE = json.loads((FIXTURES / "flow_change" / "att1_read_flow_store_v1_20261022.json").read_text())["response"]
+CATALOG = json.loads((FIXTURES / "flow_change_operator/chatwoot_db_message_templates_inbox_11_20261021.json")
+                     .read_text())
+INSTANCE = {"tenant_ref": "lancemos", "ally_ref": "att1"}
+WELCOME_ID = "0000000b-0000-4000-8000-0000000a7701"
 ORIGIN = "https://setter-att1.example.test"
 TEAM = "T0LANCEMOS01"
 DAN = "U0DANSCHWAB1"
@@ -83,9 +95,26 @@ class PostgrestEmulator:
             "requested_by_ref": "U0123456789", "validation": {"preview": preview, "result": BRIDGE["result"]},
             "fingerprint": "f" * 64, "validated_at": "2026-10-28T02:00:00Z", "expires_at": "2026-10-29T02:00:00Z",
         }
+        self.proposal["draft_base"] = {}
         self.others = [{"proposal_id": RIVAL, "status": "validada", "validated_at": "2026-10-28T01:00:00Z",
                         "expires_at": "2026-10-29T01:00:00Z", "requested_by_kind": "automation_expert",
                         "flows": [{"producto": "att1", "flujo": "bienvenida", "tipo": "nuevo"}]}]
+        # El almacen de ATT1 del 22/10: el carrito prendido (generacion 2), los otros dos apagados.
+        self.flows: list[dict] = copy.deepcopy(ATT1_STORE["flows"])
+        # Lo que contestan las escrituras cuando la prueba quiere otra cosa ({"ok": false, ...}).
+        self.approve_result: dict | None = None
+        self.publish_result: dict | None = None
+        self.cohort_result: dict | None = None
+        self.cohort_members = 2
+        self.writes: list[tuple[str, str]] = []
+
+    def add_welcome_in_cohort(self) -> None:
+        """La bienvenida ya publicada en la cohorte (un flujo nativo), como la deja publicar el nuevo."""
+        definition = copy.deepcopy(BRIDGE["items"][0]["definicion"])
+        definition.update(version=1, estado="publicada")
+        self.flows.append({"flow_id": WELCOME_ID, "product_ref": "att1", "flow_key": "bienvenida", "state": "cohorte",
+                           "active_version": 1, "generation": 1, "native": True, "changed_by_kind": "slack",
+                           "versions": {"1": definition}})
 
     @staticmethod
     def _raise(code: str, message: str, status: int = 400) -> httpx.Response:
@@ -102,7 +131,11 @@ class PostgrestEmulator:
         name = request.url.path.rsplit("/", 1)[1]
         body = json.loads(request.content)
         self.calls.append((name, body))
-        assert body["p_instance"] == {"tenant_ref": "lancemos", "ally_ref": "att1"}
+        if name == "approver_publish_flow_change_v1":
+            # La zona de la instancia viaja en p_instance (operator_publish_flow_change_v1).
+            assert body["p_instance"] == {**INSTANCE, "time_zone": "America/Mexico_City"}
+        else:
+            assert body["p_instance"] == INSTANCE
         if name == "begin_flow_approval_oidc_v1":
             self.states[body["p_state_hash"]] = {"nonce_hash": body["p_nonce_hash"],
                                                  "return_path": body["p_return_path"], "consumed": False}
@@ -141,10 +174,79 @@ class PostgrestEmulator:
                 {**self.others[0], "proposal_id": PROPOSAL}, self.others[0]]
             return httpx.Response(200, json={"proposals": rows})
         if name == "approver_read_flow_store_v1":
-            return httpx.Response(200, json={"flows": [
-                {"product_ref": "att1", "flow_key": "carrito", "state": "prendido", "active_version": 7},
-                {"product_ref": "att1", "flow_key": "bienvenida", "state": "cohorte", "active_version": 1}]})
-        raise AssertionError(f"la pagina no deberia llamar a {name} en el PR 3a")
+            return httpx.Response(200, json={"database_at": ATT1_STORE["database_at"], "products": ["att1"],
+                                             "flows": copy.deepcopy(self.flows)})
+        return self._write(name, body, session["user"])
+
+    def _write(self, name: str, body: dict, user: str) -> httpx.Response:
+        """Las escrituras del aprobador, con el actor de la sesion (lo pone la base, nunca el pedido)."""
+        proposal = self.proposal
+        if name in ("approver_approve_flow_change_v1", "approver_publish_flow_change_v1"):
+            if body["p_proposal_id"] != PROPOSAL:
+                return self._raise("P0002", "flow_change_not_found", 500)
+            if body["p_fingerprint"] != proposal["fingerprint"]:
+                return self._raise("22023", "flow_change_fingerprint_mismatch")
+        if name == "approver_approve_flow_change_v1":
+            if self.approve_result is not None:
+                return httpx.Response(200, json=self.approve_result)
+            if proposal["status"] == "aprobada":
+                return httpx.Response(200, json={"ok": True, "replayed": True})
+            if proposal["status"] != "validada":
+                return httpx.Response(200, json={"ok": False, "reason_code": "flow_change_not_validated"})
+            proposal.update(status="aprobada", effective_status="aprobada", approved_by_kind="slack",
+                            approved_by_ref=user)
+            self.writes.append((name, user))
+            return httpx.Response(200, json={"ok": True, "status": "aprobada"})
+        if name == "approver_publish_flow_change_v1":
+            if proposal["status"] == "publicada":
+                return httpx.Response(200, json={"ok": True, "replayed": True})
+            if self.publish_result is not None:
+                return httpx.Response(200, json=self.publish_result)
+            if proposal["status"] != "aprobada":
+                return httpx.Response(200, json={"ok": False, "reason_code": "flow_change_not_approved"})
+            revalidation = body["p_revalidation"]
+            # Lo que _flow_change_publish exige a la revalidacion (20261016000100).
+            if not (sorted(revalidation) == ["catalog_sha256", "fingerprint", "result", "validated_at", "validator"]
+                    and revalidation["fingerprint"] == proposal["fingerprint"]
+                    and revalidation["validator"]["phase"] == "publish"
+                    and revalidation["validator"]["actor"] == proposal["requested_by_kind"]
+                    and revalidation["result"]["blocks"] == []
+                    and re.fullmatch(r"[0-9a-f]{64}", revalidation["catalog_sha256"])):
+                return httpx.Response(200, json={"ok": False, "reason_code": "flow_change_revalidation_blocked"})
+            proposal.update(status="publicada", effective_status="publicada")
+            self.writes.append((name, user))
+            return httpx.Response(200, json={"ok": True, "status": "publicada"})
+        if name == "approver_pause_flow_v1":
+            flow = next((flow for flow in self.flows if (flow["product_ref"], flow["flow_key"])
+                         == (body["p_product_ref"], body["p_flow_key"])), None)
+            if flow is None:
+                return self._raise("P0002", "flow_not_found", 500)
+            if flow["generation"] != body["p_expected_generation"]:
+                return httpx.Response(200, json={"ok": False, "reason_code": "flow_control_generation_mismatch",
+                                                 "generation": flow["generation"]})
+            if flow["state"] == "pausado":
+                return httpx.Response(200, json={"ok": True, "changed": False, "generation": flow["generation"]})
+            if flow["state"] == "apagado":
+                return httpx.Response(200, json={"ok": False, "reason_code": "flow_pause_requires_on"})
+            flow.update(state="pausado", generation=flow["generation"] + 1)
+            self.writes.append((name, user))
+            return httpx.Response(200, json={"ok": True, "changed": True, "generation": flow["generation"]})
+        if name == "approver_discard_flow_change_v1":
+            if body["p_proposal_id"] != PROPOSAL:
+                return self._raise("P0002", "flow_change_not_found", 500)
+            if proposal["status"] in ("publicada", "vencida"):
+                return httpx.Response(200, json={"ok": False, "reason_code": "flow_change_final"})
+            proposal.update(status="descartada", effective_status="descartada", close_reason=body["p_reason"])
+            self.writes.append((name, user))
+            return httpx.Response(200, json={"ok": True})
+        if name == "approver_flow_cohort_v1":
+            if self.cohort_result is not None:
+                return httpx.Response(200, json=self.cohort_result)
+            self.cohort_members += 1
+            self.writes.append((name, user))
+            return httpx.Response(200, json={"ok": True, "action": "agregar", "changed": True,
+                                             "members": self.cohort_members, "max_members": 5})
+        raise AssertionError(f"la pagina llamo a una funcion que no conoce: {name}")
 
 
 class SlackEmulator:
@@ -190,7 +292,45 @@ class _Clock:
         self.now = 1_761_616_800.0  # 2025-10-28T02:00:00Z
 
 
-def _client(db: PostgrestEmulator | None = None,
+class FakeChatwoot:
+    """El catalogo de la bandeja 11 de ATT1 (capturado el 2026-10-21)."""
+
+    def __init__(self, *, failure: Exception | None = None) -> None:
+        self.failure = failure
+        self.inboxes: list[int] = []
+
+    async def get_inbox(self, *, inbox_id: int) -> dict:
+        self.inboxes.append(inbox_id)
+        if self.failure is not None:
+            raise self.failure
+        return {"id": inbox_id, "channel_type": "Channel::Whatsapp",
+                "message_templates": copy.deepcopy(CATALOG["message_templates"])}
+
+
+class FakeProducer:
+    """El productor del conector de Slack: guarda los avisos que admite (o falla, si se le pide)."""
+
+    def __init__(self, *, failure: Exception | None = None) -> None:
+        self.failure = failure
+        self.commands: list = []
+
+    async def admit(self, command: object) -> object:
+        if self.failure is not None:
+            raise self.failure
+        self.commands.append(command)
+        return object()
+
+
+class _SlackRuntime:
+    def __init__(self, producer: FakeProducer) -> None:
+        self.producer = producer
+
+    async def aclose(self) -> None:
+        return None
+
+
+def _client(db: PostgrestEmulator | None = None, *, chatwoot: FakeChatwoot | None = None,
+            producer: FakeProducer | None = None,
             **overrides: object) -> tuple[TestClient, PostgrestEmulator, SlackEmulator, _Clock]:
     db = db or PostgrestEmulator()
     slack = SlackEmulator()
@@ -200,6 +340,8 @@ def _client(db: PostgrestEmulator | None = None,
     oidc = flow_approval.SlackIdTokenClient(client_id=CLIENT_ID, client_secret=CLIENT_SECRET,
                                             transport=httpx.MockTransport(slack.handler), clock=lambda: clock.now)
     app = create_app(_settings(**overrides), supabase_client=_NoSupabase(),  # type: ignore[arg-type]
+                     chatwoot_client=chatwoot or FakeChatwoot(),  # type: ignore[arg-type]
+                     slack_runtime=_SlackRuntime(producer) if producer is not None else None,  # type: ignore[arg-type]
                      flow_approval_store=store, flow_approval_oidc=oidc)
     return TestClient(app, base_url=ORIGIN), db, slack, clock
 
@@ -384,7 +526,7 @@ def test_without_a_session_the_proposal_asks_to_sign_in_with_slack() -> None:
     assert not any(name.startswith("approver_") for name, _ in db.calls)
 
 
-def test_the_proposal_shows_its_preview_the_other_open_one_and_does_not_offer_to_approve() -> None:
+def test_the_proposal_shows_its_preview_the_other_open_one_and_the_buttons_of_its_state() -> None:
     client, db, slack, clock = _client()
     _sign_in(client, slack, clock)
     db.proposal["validation"]["preview"]["para_que"] = "<script>alert(1)</script> bienvenida"
@@ -403,10 +545,12 @@ def test_the_proposal_shows_its_preview_the_other_open_one_and_does_not_offer_to
     # El aviso de la otra propuesta abierta del mismo flujo.
     assert "Hay otra propuesta abierta de este flujo" in text
     assert "la otra va a tener que validarse de nuevo" in text
-    # Esta version no escribe: ningun formulario fuera del de salir.
+    # Validada, con simulacion: aprobar y publicar, y descartar (A′ PR 3b). Mirar no escribe nada.
     forms = re.findall(r'<form[^>]*action="([^"]+)"', text)
-    assert forms == ["/flow-approval/logout"]
-    assert re.findall(r"<button[^>]*>([^<]*)</button>", text) == ["Salir"]
+    assert forms == ["/flow-approval/logout", f"/flow-approval/p/{PROPOSAL}/publish",
+                     f"/flow-approval/p/{PROPOSAL}/discard"]
+    assert re.findall(r"<button[^>]*>([^<]*)</button>", text) == ["Salir", "Aprobar y publicar", "Descartar"]
+    assert f'name="fingerprint" value="{"f" * 64}"' in text
     # Cada pedido valida la sesion en la base, y nunca llama a una funcion que escribe.
     names = [name for name, _ in db.calls]
     assert names.count("validate_flow_approval_session_v1") == 1
@@ -464,11 +608,17 @@ def test_taking_someone_off_the_list_cuts_access_on_the_next_request() -> None:
 
 
 def test_the_list_shows_the_flows_and_the_proposals_waiting() -> None:
-    client, _, slack, clock = _client()
+    db = PostgrestEmulator()
+    db.add_welcome_in_cohort()
+    client, _, slack, clock = _client(db)
     _sign_in(client, slack, clock, proposal=None)
     text = client.get("/flow-approval/").text
     assert "att1/carrito" in text and "att1/bienvenida" in text and "cohorte" in text
     assert f'href="/flow-approval/p/{PROPOSAL}"' in text
+    # Pausar lo que llega a alguien (el carrito prendido y la bienvenida en cohorte); la cohorte, solo
+    # en la bienvenida. Lo apagado no se pausa.
+    assert re.findall(r"<button[^>]*>([^<]*)</button>", text) == [
+        "Salir", "Pausar att1/carrito", "Pausar att1/bienvenida", "Sumar a la cohorte"]
 
 
 # ----------------------------------------------------------------- salir

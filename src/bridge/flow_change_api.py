@@ -76,7 +76,8 @@ logger = logging.getLogger(__name__)
 
 CONTRACT = "flow-change-cycle-v1"
 # 1.7.0 (el PR 4 del hito 4): el item nuevo, que crea un flujo nativo y lo publica en cohorte.
-CONTRACT_VERSION = "1.8.0"
+# 1.9.0 (A′ PR 3b): el si se da en la pagina de aprobacion del bridge (flow_approval.py).
+CONTRACT_VERSION = "1.9.0"
 PREFIX = "/internal/automation-expert/v1"
 DB_ROLE = "automation_expert_change"
 MAX_BODY_BYTES = 256 * 1024
