@@ -99,7 +99,10 @@ const results = {};
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-if (position !== names.length - 1) fail(`${MIGRATION} tiene que ser la ultima`, names.slice(position + 1));
+// Despues va solo la lista de las propuestas del AE (E-208): una lectura nueva.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261030000300_flow_change_list_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de la lista de las propuestas`, names.slice(position + 1));
+}
 if (maribel.name !== 'maribel_retomar_proceso_01' || maribel.category !== 'MARKETING') fail('el fixture no es la plantilla de Maribel');
 if (REFUSALS.length !== 3 || REFUSALS[1].persona !== REFUSALS[2].persona
     || REFUSALS.some((event) => event.payload.event !== 'PURCHASE_CANCELED' || !event.payload.data.purchase.payment.refusal_reason)) {

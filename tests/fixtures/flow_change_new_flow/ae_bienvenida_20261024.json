@@ -212,6 +212,24 @@
       {
         "code": "audience_change_not_computed"
       }
+    ],
+    "mensajes": [
+      {
+        "producto": "att1",
+        "flujo": "bienvenida",
+        "ruta": "/pasos/0",
+        "plantilla": "att1_pago_efectivo_confirmado_01",
+        "idioma": "es_MX",
+        "encontrada": true,
+        "categoria": "UTILITY",
+        "estado": "APPROVED",
+        "como_lo_ve": {
+          "encabezado": null,
+          "cuerpo": "Hola, [nombre]. Se confirmó tu pago de [producto].\n\nTu acceso te llega al correo con el que compraste, desde Hotmart. Si en unas horas no lo ves, respóndeme aquí y te ayudo.",
+          "pie": null,
+          "botones": []
+        }
+      }
     ]
   }
 }

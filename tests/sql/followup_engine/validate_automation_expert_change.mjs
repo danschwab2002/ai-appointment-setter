@@ -130,9 +130,11 @@ const executable = (await db.query(`select p.proname || '(' || oidvectortypes(p.
    and has_function_privilege('automation_expert_change', p.oid, 'execute') order by 1`)).rows.map((r) => r.sig);
 // Mas las dos lecturas del motor de flujos (20261021000200,
 // docs/contracts/flow-engine-v1.md, secciones 1 y 2) y la de la simulacion de
-// un flujo nuevo (20261024000600, flow-engine-v2 seccion 14).
+// un flujo nuevo (20261024000600, flow-engine-v2 seccion 14), y la lista de las
+// propuestas (20261030000300, E-208, flow-change-cycle-v1 1.10.0).
 require(JSON.stringify(executable) === JSON.stringify([
   'get_flow_change_proposal_v1(jsonb, uuid)',
+  'list_flow_changes_v1(jsonb, boolean, integer)',
   'read_flow_engine_history_v1(jsonb, text, timestamp with time zone)',
   'read_flow_engine_native_trigger_counts_v1(jsonb, text, text, timestamp with time zone)',
   'read_flow_engine_v1(jsonb, text)',

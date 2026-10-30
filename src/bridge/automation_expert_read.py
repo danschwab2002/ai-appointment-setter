@@ -30,8 +30,18 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 CONTRACT = "automation-expert-read-v1"
-CONTRACT_VERSION = "1.2.0"
+# 1.3.0 (E-208, M16 P5 y P8): la ficha del legado, quien ejecuta cada flujo de
+# negocio (business_flows) y las rutas, divergencias y rechazos del motor v1.
+CONTRACT_VERSION = "1.3.0"
+# Las claves del legado que la lectura proyecta desde read_automation_expert_flows_v1.
+# Un flujo nativo nunca usa una (D1 del mapa M16): la lectura de los nativos las
+# rechaza, y desde E-207 la base no las deja publicar (flow_key_reserved_for_legacy,
+# que se ata a esta tupla).
 FLOW_KEYS = ("precheckout", "carrito", "pago_fallido", "reactivacion", "descuento")
+_PROJECTED_KEYS = FLOW_KEYS
+# 1.3.0: con la ficha, que apply_executors suma desde su propio scope. Es tambien un
+# legacy_kind de flow_engine_routes.
+LEGACY_FLOW_KEYS = (*FLOW_KEYS, "ficha")
 HISTORY_DEFAULT_LIMIT = 50
 HISTORY_MAX_LIMIT = 100
 MAX_CANDIDATES = 5
@@ -352,6 +362,11 @@ class FlowSettings:
     resume_enabled: bool
     precheckout_test_phone_set: bool
     allowed_jid_set: bool
+    # 1.3.0: la ficha (C1 y sus recordatorios) y el scope propio del pago
+    # rechazado, para saber quien ejecuta cada flujo de negocio.
+    payment_slip_enabled: bool = False
+    payment_slip_scope: ScopeRef | None = None
+    payment_failure_own_scope: ScopeRef | None = None
 
 
 @dataclass(frozen=True)
@@ -616,6 +631,7 @@ _FLOW_NAMES = {
     "pago_fallido": "Pago fallido",
     "descuento": "Seguimiento con cupón",
     "reactivacion": "Reactivación de quien quedó esperando",
+    "ficha": "Ficha de pago sin pagar (OXXO y parecidos)",
 }
 _RUNTIME_STATE = {"armed": "on", "paused": "paused", "inactive": "off", "closed": "off"}
 _SCHEMA_REF = "docs/contracts/flow-definition-v1.md «Los siete flujos de validación»"
@@ -706,7 +722,7 @@ def build_flows(
     zone = settings.time_zone
     flows: list[dict[str, object]] = []
 
-    for flow_key in FLOW_KEYS:
+    for flow_key in _PROJECTED_KEYS:
         provenance: dict[str, dict[str, str]] = {
             "/definition/version": {"from": "code", "ref": _SCHEMA_REF},
             "/definition/estado": {"from": "code", "ref": _SCHEMA_REF},
@@ -878,7 +894,7 @@ def build_flows(
     states = {flow["flow_key"]: flow["status"]["state"] for flow in flows}  # type: ignore[index]
     for flow in flows:
         flow["priority"]["le_ganan"] = [  # type: ignore[index]
-            other for other in FLOW_KEYS
+            other for other in _PROJECTED_KEYS
             if flow["flow_key"] in _PRIORITY[other]["le_gana_a"] and states[other] != "off"
         ]
 
@@ -1707,6 +1723,419 @@ def attach_sales(flows: Sequence[dict[str, object]], raw: object) -> list[dict[s
     return gaps
 
 
+# ---------------------------------------------------------------------------
+# Quien ejecuta cada flujo de negocio (1.3.0, M16 P5 y P8).
+# ---------------------------------------------------------------------------
+
+# Los flujos de negocio, en el orden en que se muestran. compra no tiene legado:
+# hoy solo lo hace un flujo nativo (la bienvenida).
+BUSINESS_FLOWS = (
+    ("precheckout", "Primer contacto tras el formulario"),
+    ("carrito", "Carrito abandonado"),
+    ("pago_fallido", "Pago rechazado"),
+    ("ficha", "Ficha de pago sin pagar"),
+    ("descuento", "Seguimiento con cupón"),
+    ("reactivacion", "Reactivación de quien quedó esperando"),
+    ("compra", "Después de la compra"),
+)
+# El disparador de un flujo nativo dice que flujo de negocio hace
+# (flow_definition.EVENTS): la clave del nativo es propia (D1) y no lo dice.
+_BUSINESS_BY_EVENT = {
+    "carrito": "carrito", "pago_fallido": "pago_fallido", "ficha_impresa": "ficha",
+    "ficha_vencida": "ficha", "intencion": "precheckout", "compra": "compra",
+}
+_SILENCE_BUSINESS = {"agente": "descuento", "persona": "reactivacion"}
+_STATE_WORDS = {
+    "on": "prendido", "off": "apagado", "paused": "pausado", "not_configured": "sin configurar",
+    "cohort": "en cohorte",
+}
+_ENGINE_EXECUTORS = frozenset({"legado", "motor"})
+_ENGINE_FLOW_STATES = frozenset({"apagado", "prendido", "pausado", "cohorte"})
+_DIVERGENCE_KINDS = frozenset({"admision_al_legado", "politica_compilada", "producto", "ruta", "transitorio"})
+_REJECTION_PHASES = frozenset({"admision", "despacho"})
+_TIMESTAMP_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]{8,15}Z$")
+# El motivo de una divergencia o un rechazo, con la regla de la base (flow_engine_divergences y
+# flow_engine_start_rejections, 20261021000200; _FLOW_ENGINE_REASON del lector). Siete digitos
+# seguidos se tapan en vez de rechazar la fila (code_ok es mas estricto que la base: E-213).
+_ENGINE_REASON_RE = re.compile(r"^[a-z0-9_:]{1,80}$")
+_SEVEN_OR_MORE_DIGITS_RE = re.compile(r"[0-9]{7,}")
+# Las dos lecturas del motor v1 piden de a 50 (el tope de la base).
+ENGINE_READ_LIMIT = 50
+# Los flujos de negocio con la guarda del doble caso en los dos sentidos: el carrito (M1a,
+# 20261030000100) y el pago rechazado (E-207, 20261030000200). Con un nativo prendido, el nativo
+# toma cada disparo y el legado manda solo los que el nativo no arranca: no hay mensaje doble.
+DOUBLE_CASE_GUARDED = frozenset({"carrito", "pago_fallido"})
+
+EXECUTOR_GAPS = {
+    "legacy_scope_not_read": (
+        "si el scope propio de este flujo del legado está prendido",
+        "la lectura del estado de su scope no contestó"),
+    "engine_v1_not_read": (
+        "qué flujos del legado tienen ruta del motor v1, y sus divergencias y rechazos",
+        "la lectura del motor v1 no contestó (una base sin sus migraciones, o un error)"),
+    "legacy_scope_runtime_only": (
+        "los topes, el horario y la gracia del scope propio de este flujo",
+        "de su scope se lee solo el estado; la definición muestra el resto como null"),
+    "payment_slip_reminders_anchored_to_due_date": (
+        "a qué hora exacta sale cada recordatorio de la ficha",
+        "salen el día antes y el día del vencimiento de cada ficha, y el esquema no tiene una espera "
+        "relativa al vencimiento: van en reminders y no en los pasos"),
+    "payment_slip_observed_not_read": (
+        "cuántas fichas entraron y cuántos mensajes salieron en la semana",
+        "la lectura de lo observado no cuenta la ficha todavía"),
+    "legacy_payment_slip_key_taken": (
+        "cómo está la ficha del legado",
+        "un flujo nativo se llama ficha, como la del legado, y la lectura no muestra dos flujos con la misma "
+        "clave; los nativos van con claves propias (ficha_oxxo)"),
+    "engine_v1_truncated": (
+        "si hay divergencias o rechazos del motor v1 más nuevos que los que se muestran",
+        "la lectura trae a lo sumo 50, de la más vieja a la más nueva, y vinieron 50"),
+    "engine_rejections_alertable_only": (
+        "los rechazos del motor v1 que no alertan",
+        "la lectura trae solo los rechazos que alertan (MOT-002), de toda la historia"),
+}
+for _code, _text in EXECUTOR_GAPS.items():
+    GAP_DESCRIPTIONS.setdefault(_code, _text)
+
+
+def business_of(definition: object) -> str | None:
+    """El flujo de negocio que hace una definicion nativa, por su disparador."""
+    if not isinstance(definition, Mapping):
+        return None
+    trigger = definition.get("dispara")
+    if not isinstance(trigger, Mapping):
+        return None
+    event = trigger.get("evento")
+    if isinstance(event, str):
+        return _BUSINESS_BY_EVENT.get(event)
+    silence = trigger.get("silencio")
+    if isinstance(silence, Mapping):
+        return _SILENCE_BUSINESS.get(str(silence.get("lo_ultimo")))
+    return None
+
+
+def _scope_status(read: Mapping[str, object] | None) -> dict[str, object]:
+    """El status de un flujo del legado desde get_*_pilot_runtime_status."""
+    if not isinstance(read, Mapping) or read.get("configured") is not True:
+        reason = read.get("reason_code") if isinstance(read, Mapping) else None
+        return {"state": "not_configured", "detail": reason if code_ok(reason) else None, "since": None}
+    runtime = read.get("runtime_state")
+    state = _RUNTIME_STATE.get(runtime) if isinstance(runtime, str) else None
+    return {"state": state or "off", "detail": runtime if code_ok(runtime) else None, "since": None}
+
+
+def _own_usage(scope: ScopeRef) -> dict[str, object]:
+    return {"pool": scope.key, "local_date": None, "starts_today": None, "daily_cap": None,
+            "starts_total": None, "total_cap": None}
+
+
+def _payment_slip_flow(settings: FlowSettings, scope_read: object) -> tuple[dict[str, object], list[dict[str, object]]]:
+    """La ficha del legado (C1 y sus recordatorios), en la forma de data.flows[]."""
+    gaps = [_gap("payment_slip_observed_not_read", "flow:ficha"),
+            _gap("legacy_scope_runtime_only", "flow:ficha")]
+    scope = settings.payment_slip_scope
+    switch_on = bool(settings.manifest_flows.get("ficha")) and settings.payment_slip_enabled
+    provenance: dict[str, dict[str, str]] = {
+        "/definition/version": {"from": "code", "ref": _SCHEMA_REF},
+        "/definition/estado": {"from": "code", "ref": _SCHEMA_REF},
+        "/status": {"from": "env", "ref": "[flujos].ficha y PORTABLE_HOTMART_PAYMENT_SLIP_ENABLED"},
+    }
+    version = None
+    if scope is not None:
+        version = {"scope": f"{scope.key} v{scope.version}"}
+        provenance["/version"] = {"from": "env", "ref": "LANCEMOS_PILOT_PAYMENT_SLIP_SCOPE_KEY y _VERSION"}
+    if not switch_on:
+        status: dict[str, object] = {"state": "off", "detail": "flag_off", "since": None}
+    elif scope_read == "not_read":
+        status = {"state": "not_configured", "detail": None, "since": None}
+        gaps.append(_gap("legacy_scope_not_read", "flow:ficha"))
+    else:
+        status = _scope_status(scope_read if isinstance(scope_read, Mapping) else None)
+        provenance["/status"] = {"from": "database", "ref": "get_portable_payment_slip_pilot_runtime_status"}
+    steps: list[dict[str, object]] = []
+    first = _template_step(settings.templates.get("ficha"))
+    if first is not None:
+        steps.append({**first, "boton": {"link": "ficha"}})
+        provenance["/definition/pasos"] = {"from": "manifest", "ref": "[plantillas].ficha"}
+    reminders = []
+    for slot, when in (("ficha_vence_manana", "el día antes del vencimiento"),
+                       ("ficha_vence_hoy", "el día del vencimiento")):
+        step = _template_step(settings.templates.get(slot))
+        if step is not None:
+            reminders.append({"slot": slot, **step, "cuando": when})
+            provenance[f"/reminders/{slot}"] = {"from": "manifest", "ref": f"[plantillas].{slot}"}
+    if reminders:
+        gaps.append(_gap("payment_slip_reminders_anchored_to_due_date", "flow:ficha"))
+    flow = {
+        "flow_key": "ficha",
+        "version": version,
+        "status": status,
+        "priority": {"le_gana_a": [], "no_arranca_mientras": [], "le_ganan": [], "derived": ["le_ganan"]},
+        "usage": _own_usage(scope) if scope is not None else None,
+        "observed": {"window_days": 7},
+        "source": "projection",
+        "definition": {
+            "esquema": "setter-flujo/v1", "flujo": "ficha", "nombre": _FLOW_NAMES["ficha"], "version": 1,
+            "estado": "publicada",
+            "dispara": {"evento": "ficha_impresa"},
+            "entra": {"permiso": "formulario"},
+            "pasos": steps,
+            "termina": {"si": ["compra"], "vence": None},
+            "horario": None,
+            "topes": {"bolsa": scope.key if scope is not None else None, "por_dia": None, "total": None,
+                      "repeticion": {"una_por": "persona_y_oferta", "otra_despues_de": "0m"}},
+            "prioridad": {"le_gana_a": [], "no_arranca_mientras": []},
+        },
+        "reminders": reminders,
+        "provenance": provenance,
+    }
+    return flow, gaps
+
+
+def _own_payment_failure_scope(flow: dict[str, object], settings: FlowSettings,
+                               scope_read: object) -> list[dict[str, object]]:
+    """El pago rechazado con su scope propio: su estado sale de ese scope, no del de la recuperacion."""
+    scope = settings.payment_failure_own_scope
+    if scope is None:
+        return []
+    gaps = [_gap("legacy_scope_runtime_only", "flow:pago_fallido")]
+    flow["version"] = {"scope": f"{scope.key} v{scope.version}"}
+    provenance = dict(flow.get("provenance") or {})  # type: ignore[arg-type]
+    provenance["/version"] = {"from": "env", "ref": "LANCEMOS_PILOT_PAYMENT_FAILURE_SCOPE_KEY y _VERSION"}
+    status = flow.get("status")
+    if isinstance(status, Mapping) and status.get("state") != "off":
+        if scope_read == "not_read":
+            flow["status"] = {"state": "not_configured", "detail": None, "since": None}
+            gaps.append(_gap("legacy_scope_not_read", "flow:pago_fallido"))
+        else:
+            flow["status"] = _scope_status(scope_read if isinstance(scope_read, Mapping) else None)
+            provenance["/status"] = {"from": "database", "ref": "get_portable_payment_failure_pilot_runtime_status"}
+    flow["usage"] = _own_usage(scope)
+    definition = flow.get("definition")
+    if isinstance(definition, Mapping):
+        definition = dict(definition)
+        definition["topes"] = {**dict(definition.get("topes") or {}), "bolsa": scope.key, "por_dia": None,
+                               "total": None}
+        definition["horario"] = None
+        definition["termina"] = {**dict(definition.get("termina") or {}), "vence": None}
+        flow["definition"] = definition
+        provenance.pop("/definition/horario", None)
+        provenance.pop("/definition/termina/vence", None)
+        provenance["/definition/topes"] = {"from": "env", "ref": "LANCEMOS_PILOT_PAYMENT_FAILURE_SCOPE_KEY"}
+    flow["provenance"] = provenance
+    return gaps
+
+
+def _stamp(value: object) -> object:
+    return value if isinstance(value, str) and _TIMESTAMP_RE.match(value) else None
+
+
+def _engine_reason(value: object) -> str | None:
+    if not isinstance(value, str) or _ENGINE_REASON_RE.match(value) is None:
+        return None
+    return _SEVEN_OR_MORE_DIGITS_RE.sub("<numero>", value)
+
+
+def _engine_rows(engine: Mapping[str, object]) -> tuple[list[dict[str, object]], list[dict[str, object]],
+                                                         list[dict[str, object]]]:
+    routes, divergences, rejections = [], [], []
+    for row in engine.get("routes") or []:  # type: ignore[union-attr]
+        if not isinstance(row, Mapping) or row.get("executor") not in _ENGINE_EXECUTORS \
+                or row.get("flow_state") not in _ENGINE_FLOW_STATES:
+            raise InvalidReadEvidence("invalid_engine_route")
+        kind = row.get("legacy_kind")
+        if kind is not None and kind not in LEGACY_FLOW_KEYS:
+            raise InvalidReadEvidence("invalid_engine_route")
+        routes.append({name: row.get(name) for name in ("product_ref", "flow_key", "executor", "legacy_kind",
+                                                         "legacy_scope_key", "flow_state")})
+    for row in engine.get("divergences") or []:  # type: ignore[union-attr]
+        if not isinstance(row, Mapping) or row.get("kind") not in _DIVERGENCE_KINDS \
+                or _engine_reason(row.get("reason")) is None or _int(row.get("count")) is None:
+            raise InvalidReadEvidence("invalid_engine_divergence")
+        divergences.append({
+            "product_ref": row.get("product_ref"), "flow_key": row.get("flow_key"), "kind": row["kind"],
+            "reason": _engine_reason(row["reason"]), "version": _int(row.get("version")), "count": row["count"],
+            "first_at": _stamp(row.get("first_at")), "last_at": _stamp(row.get("last_at"))})
+    for row in engine.get("rejections") or []:  # type: ignore[union-attr]
+        if not isinstance(row, Mapping) or row.get("phase") not in _REJECTION_PHASES \
+                or _engine_reason(row.get("reason")) is None or _int(row.get("count")) is None:
+            raise InvalidReadEvidence("invalid_engine_rejection")
+        rejections.append({
+            "product_ref": row.get("product_ref"), "flow_key": row.get("flow_key"), "phase": row["phase"],
+            "reason": _engine_reason(row["reason"]), "version": _int(row.get("version")), "count": row["count"],
+            "first_at": _stamp(row.get("first_at")), "last_at": _stamp(row.get("last_at"))})
+    return routes, divergences, rejections
+
+
+def _business_summary(name: str, legacy: Mapping[str, object] | None,
+                      natives: Sequence[Mapping[str, object]], executor: str, *, guarded: bool) -> str:
+    parts: list[str] = []
+    both = executor in ("legado_y_nativo", "legado_y_nativo_en_cohorte")
+    if legacy is not None:
+        state = str(legacy.get("state"))
+        scope = legacy.get("scope")
+        by = f" por el scope {scope}" if scope else ""
+        who = "el legado (lo corre el motor v1)" if legacy.get("route_executor") == "motor" else "el legado"
+        if state == "on" and both and guarded:
+            # La guarda del doble caso (M1a y E-207): el nativo toma cada disparo que arranca.
+            rest = "los que no son de su cohorte, y " if executor == "legado_y_nativo_en_cohorte" else ""
+            parts.append(f"{who} sigue armado{by}, pero manda solo {rest}los disparos que el nativo no arranca "
+                         "(por ejemplo, con un caso del legado en curso)")
+        elif state == "on" and legacy.get("route_executor") == "motor":
+            parts.append(f"el legado lo corre el motor v1{by}")
+        elif state == "on":
+            parts.append(f"el legado sigue mandando{by}")
+        else:
+            parts.append(f"el legado está {_STATE_WORDS.get(state, state)}{by}: no manda")
+    for native in natives:
+        state = str(native.get("state"))
+        line = f"el nativo {native.get('flow_key')} está {_STATE_WORDS.get(state, state)}"
+        if state == "cohort":
+            line += " (le escribe solo a su cohorte de prueba)"
+        if guarded and both and state in ("on", "cohort"):
+            line += " y toma cada disparo que arranca: no sale un mensaje doble"
+        parts.append(line)
+    if not parts:
+        return f"{name}: no hay ningún flujo que lo haga."
+    text = "; ".join(parts)
+    if executor == "legado_y_nativo" and not guarded:
+        text += ". Los dos le escriben a todos: puede salir un mensaje doble"
+    return f"{name}: {text}."
+
+
+def build_business_flows(flows: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+    """Por flujo de negocio, quien lo ejecuta hoy: el legado (y por que scope), los nativos, o nadie."""
+    legacy_by_key = {str(flow["flow_key"]): flow for flow in flows if not flow.get("native")}
+    natives: dict[str, list[dict[str, object]]] = {}
+    for flow in flows:
+        if not flow.get("native"):
+            continue
+        business = business_of(flow.get("definition"))
+        if business is None:
+            continue
+        status = flow.get("status") if isinstance(flow.get("status"), Mapping) else {}
+        version = flow.get("version") if isinstance(flow.get("version"), Mapping) else {}
+        cohort = flow.get("cohort") if isinstance(flow.get("cohort"), Mapping) else {}
+        natives.setdefault(business, []).append({
+            "flow_key": flow["flow_key"], "product_ref": flow.get("product_ref"),
+            "state": status.get("state"),  # type: ignore[union-attr]
+            "version": version.get("definition"),  # type: ignore[union-attr]
+            "cohort_members": cohort.get("members"),  # type: ignore[union-attr]
+        })
+    result = []
+    for business, name in BUSINESS_FLOWS:
+        legacy_flow = legacy_by_key.get(business)
+        legacy: dict[str, object] | None = None
+        if legacy_flow is not None:
+            status = legacy_flow.get("status") if isinstance(legacy_flow.get("status"), Mapping) else {}
+            version = legacy_flow.get("version") if isinstance(legacy_flow.get("version"), Mapping) else {}
+            engine = legacy_flow.get("engine_v1") if isinstance(legacy_flow.get("engine_v1"), Mapping) else {}
+            routes = [route for route in (engine.get("routes") or [])  # type: ignore[union-attr]
+                      if isinstance(route, Mapping)]
+            legacy = {
+                "flow_key": business,
+                "state": status.get("state"),  # type: ignore[union-attr]
+                "detail": status.get("detail"),  # type: ignore[union-attr]
+                "scope": version.get("scope"),  # type: ignore[union-attr]
+                # Con varias rutas (un producto cada una): su ejecutor si es el mismo, o "mixto".
+                "route_executor": (routes[0].get("executor") if len({r.get("executor") for r in routes}) == 1
+                                   else "mixto") if routes else None,
+                "sends": status.get("state") == "on",  # type: ignore[union-attr]
+            }
+        own = natives.get(business, [])
+        if legacy is None and not own:
+            continue
+        legacy_sends = bool(legacy and legacy["sends"])
+        by_motor = bool(legacy and legacy.get("route_executor") == "motor")
+        native_on = any(native["state"] == "on" for native in own)
+        native_cohort = any(native["state"] == "cohort" for native in own)
+        if legacy_sends and native_on:
+            executor = "legado_y_nativo"
+        elif legacy_sends and native_cohort:
+            executor = "legado_y_nativo_en_cohorte"
+        elif legacy_sends:
+            executor = "motor_v1" if by_motor else "legado"
+        elif native_on:
+            executor = "nativo"
+        elif native_cohort:
+            executor = "nativo_en_cohorte"
+        else:
+            executor = "nadie"
+        guarded = business in DOUBLE_CASE_GUARDED
+        result.append({
+            "business": business, "name": name, "executor": executor,
+            "double_case_guard": guarded,
+            "legacy": legacy, "native": own,
+            "summary": _business_summary(name, legacy, own, executor, guarded=guarded),
+        })
+    return result
+
+
+def apply_executors(
+    data: Mapping[str, object], *, settings: FlowSettings, scope_reads: Mapping[str, object],
+    engine: Mapping[str, object] | None,
+) -> tuple[dict[str, object], list[dict[str, object]]]:
+    """Suma la ficha del legado, el scope propio del pago, el motor v1 y business_flows (1.3.0).
+
+    ``scope_reads`` trae, por flujo con scope propio (``ficha``, ``pago_fallido``),
+    lo que contesto su ``get_*_pilot_runtime_status`` como mapeo, ``None`` si el
+    bridge no lo tiene configurado, o ``"not_read"`` si no contesto. ``engine``
+    son las tres lecturas del motor v1 (rutas, divergencias, rechazos que
+    alertan), o ``None`` si no contestaron. Devuelve los datos y los huecos.
+    """
+    gaps: list[dict[str, object]] = []
+    flows = [dict(flow) for flow in data.get("flows") or []]  # type: ignore[union-attr]
+    legacy_flows = {str(flow["flow_key"]): flow for flow in flows if not flow.get("native")}
+    if "pago_fallido" in legacy_flows:
+        gaps += _own_payment_failure_scope(legacy_flows["pago_fallido"], settings,
+                                           scope_reads.get("pago_fallido"))
+    if "ficha" in settings.manifest_flows and any(flow.get("native") and flow["flow_key"] == "ficha"
+                                                   for flow in flows):
+        # La clave de la ficha del legado la tomo un flujo nativo (D1 lo prohibe; la base de E-207
+        # reserva solo FLOW_KEYS): no se muestran dos flujos con la misma clave.
+        gaps.append(_gap("legacy_payment_slip_key_taken", "flow:ficha"))
+    elif "ficha" in settings.manifest_flows:
+        ficha, ficha_gaps = _payment_slip_flow(settings, scope_reads.get("ficha"))
+        gaps += ficha_gaps
+        position = next((index for index, flow in enumerate(flows) if flow.get("native")), len(flows))
+        flows.insert(position, ficha)
+        legacy_flows["ficha"] = ficha
+    if engine is None:
+        gaps.append(_gap("engine_v1_not_read", "instance"))
+    else:
+        try:
+            routes, divergences, rejections = _engine_rows(engine)
+        except InvalidReadEvidence:
+            # Una fila fuera del contrato no tumba /flows: queda el hueco, y el resto sale igual.
+            routes, divergences, rejections = [], [], []
+            gaps.append(_gap("engine_v1_not_read", "instance"))
+        if any(len(engine.get(key) or []) >= ENGINE_READ_LIMIT  # type: ignore[arg-type]
+               for key in ("divergences", "rejections")):
+            gaps.append(_gap("engine_v1_truncated", "instance"))
+        for route in routes:
+            kind = route.get("legacy_kind")
+            flow = legacy_flows.get(str(kind)) if kind is not None else None
+            if flow is None:
+                continue
+            pair = (route["flow_key"], route["product_ref"])
+            entry = flow.setdefault("engine_v1", {"routes": [], "divergences": [], "start_rejections": []})
+            entry["routes"].append({name: route[name] for name in (  # type: ignore[index]
+                "product_ref", "flow_key", "executor", "legacy_scope_key", "flow_state")})
+            entry["divergences"] += [  # type: ignore[index]
+                row for row in divergences if (row["flow_key"], row["product_ref"]) == pair]
+            entry["start_rejections"] += [  # type: ignore[index]
+                row for row in rejections if (row["flow_key"], row["product_ref"]) == pair]
+            provenance = dict(flow.get("provenance") or {})  # type: ignore[arg-type]
+            provenance["/engine_v1"] = {
+                "from": "database",
+                "ref": "read_flow_engine_routes_v1, read_flow_engine_divergences_v1 y "
+                       "read_flow_engine_start_rejections_v1"}
+            flow["provenance"] = provenance
+            gaps.append(_gap("engine_rejections_alertable_only", f"flow:{kind}"))
+    out = {**data, "flows": flows, "business_flows": build_business_flows(flows)}
+    return out, _dedupe(gaps)
+
+
 def _coupon_upcoming(number: int, opens: datetime, closes: datetime, decision: str,
                      zone: ZoneInfo, *, reason_code: str | None = None) -> dict[str, object]:
     return {
@@ -1818,4 +2247,19 @@ def flow_settings_from(
         resume_enabled=bool(settings.conversation_resume_enabled),
         precheckout_test_phone_set=settings.precheckout_test_phone_e164 is not None,
         allowed_jid_set=settings.allowed_jid is not None,
+        payment_slip_enabled=bool(settings.portable_hotmart_payment_slip_enabled),
+        payment_slip_scope=(
+            ScopeRef(settings.pilot_payment_slip_scope_key, settings.pilot_payment_slip_scope_version)
+            if settings.pilot_payment_slip_scope_key and settings.pilot_payment_slip_scope_version
+            else None
+        ),
+        # La misma condicion con que el bridge arma el scope propio del pago
+        # (app.py, payment_failure_pilot_boundary): con el, el pago se planifica
+        # contra su scope y no contra el de la recuperacion.
+        payment_failure_own_scope=(
+            ScopeRef(settings.pilot_payment_failure_scope_key, settings.pilot_payment_failure_scope_version)
+            if (settings.payment_failure_variants_enabled or settings.payment_failure_own_policy_enabled)
+            and settings.pilot_payment_failure_scope_key and settings.pilot_payment_failure_scope_version
+            else None
+        ),
     )

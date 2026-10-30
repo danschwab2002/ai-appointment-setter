@@ -1,4 +1,4 @@
-"""Las cuatro herramientas de cambio del Automation Expert (flow-change-cycle-v1).
+"""Las herramientas de cambio del Automation Expert (flow-change-cycle-v1).
 
 Copia el cliente del plugin de lectura (automation-expert-read/tools.py), con
 su propia clave (AUTOMATION_EXPERT_CHANGE_API_TOKEN, distinta de la de
@@ -13,6 +13,10 @@ declarado: el bridge no lo puede verificar.
 
 Ninguna herramienta aprueba ni publica, y no hay pausa: pausar es del comando
 del operador mientras la base no pueda verificar a quien lo pide.
+
+Desde el ciclo 1.10.0 (M16 P6 y P7) suma dos lecturas: el catalogo de
+plantillas de la bandeja (``list_templates``) y las propuestas de la instancia
+con su estado (``list_flow_changes``).
 
 Con el canal del link prendido (ciclo 1.9.0), una validacion que deja la
 propuesta ``validada`` postea el boton «Revisar y aprobar» en el mismo DM
@@ -48,6 +52,8 @@ _BRIDGE_ERRORS = frozenset({
     "invalid_proposal_id",
     "identifier_not_allowed",
     "flow_change_items_invalid",
+    # La lista de propuestas (ciclo 1.10.0): un estado o un limite que no van.
+    "invalid_query",
     "flow_change_draft_blocked",
     "flow_not_found",
     "flow_change_not_found",
@@ -285,6 +291,25 @@ def _maybe_post_approval_button(proposal_id: str, out: dict[str, object]) -> Non
     button = approval_button.post_after_validation(proposal_id, setting=_profile_setting, session=_session)
     if button is not None:
         data["approval_button"] = button
+
+
+LIST_STATES = ("abiertas", "todas")
+
+
+def list_flow_changes(params: dict[str, object], **kwargs: object) -> str:
+    """Las propuestas de la instancia, de la mas nueva a la mas vieja, con su estado. Solo lee."""
+    del kwargs
+    estado = params.get("estado", "abiertas")
+    limit = params.get("limit", 20)
+    if estado not in LIST_STATES or type(limit) is not int or not 1 <= limit <= 50:
+        return _dumps({"error": "invalid_query"})
+    return _dumps(_request("GET", f"{PREFIX}/flow-changes?estado={estado}&limit={limit}"))
+
+
+def list_templates(params: dict[str, object], **kwargs: object) -> str:
+    """El catalogo de plantillas de la bandeja, con el texto de cada una. Solo lee."""
+    del params, kwargs
+    return _dumps(_request("GET", f"{PREFIX}/templates"))
 
 
 def get_flow_change(params: dict[str, object], **kwargs: object) -> str:

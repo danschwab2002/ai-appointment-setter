@@ -6035,6 +6035,31 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         4,
         'flow_engine_native_payment_failure'
+    union all
+    select
+        '20261030000300',
+        '20261030000300_flow_change_list_v1.sql',
+        -- La lista de las propuestas del AE (E-208): una lectura security
+        -- definer y stable, ni de la API ni de service_role ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.list_flow_changes_v1(jsonb,boolean,integer)')
+              and prosecdef
+              and provolatile = 's'
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- ... que tambien ejecuta el rol del agente.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.list_flow_changes_v1(jsonb,boolean,integer)')
+              and coalesce(proacl::text, '') like '%automation_expert_change=X%'
+        )::int,
+        2,
+        'flow_change_list'
 )
 select
     version,

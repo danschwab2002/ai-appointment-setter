@@ -15,7 +15,7 @@ import time
 import unicodedata
 import uuid
 from contextlib import asynccontextmanager, nullcontext
-from dataclasses import dataclass, fields as dataclass_fields
+from dataclasses import asdict as dataclass_asdict, dataclass, fields as dataclass_fields
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import MappingProxyType
@@ -145,6 +145,7 @@ from bridge.automation_expert_read import (
     LookupRejected,
     ResponseTooLarge,
     ScopeRef,
+    apply_executors,
     attach_sales,
     build_flows,
     build_history,
@@ -8449,6 +8450,45 @@ def create_app(
                     detail="automation_expert_busy",
                 )
 
+        async def automation_expert_scope_read(
+            boundary: PilotBoundaryConfig | None, method: str
+        ) -> object:
+            """El estado del scope propio de un flujo del legado, None sin scope, o "not_read"."""
+            if boundary is None:
+                return None
+            try:
+                status_row = await getattr(expert_reader, method)(pilot_boundary=boundary)
+            except Exception as exc:  # noqa: BLE001 - el log lleva solo el tipo
+                logger.warning(
+                    "automation_expert_native_read_failed route=scope error_type=%s",
+                    type(exc).__name__,
+                )
+                return "not_read"
+            return dataclass_asdict(status_row)
+
+        async def automation_expert_engine_v1_read() -> dict[str, object] | None:
+            """Las rutas, divergencias y rechazos del motor v1, o None si no contestan."""
+            instance = expert_instance.to_rpc()
+            try:
+                routes = await expert_reader.read_flow_engine_routes(instance)
+                divergences = await expert_reader.read_flow_engine_divergences(
+                    instance, only_unnotified=False, limit=50
+                )
+                rejections = await expert_reader.read_flow_engine_start_rejections(
+                    instance, only_unnotified=False, limit=50
+                )
+            except Exception as exc:  # noqa: BLE001 - el log lleva solo el tipo
+                logger.warning(
+                    "automation_expert_native_read_failed route=engine_v1 error_type=%s",
+                    type(exc).__name__,
+                )
+                return None
+            return {
+                "routes": [dataclass_asdict(row) for row in routes],
+                "divergences": [dataclass_asdict(row) for row in divergences.divergences],
+                "rejections": [dataclass_asdict(row) for row in rejections.rejections],
+            }
+
         async def automation_expert_flows_body(
             flow_key: str | None,
         ) -> dict[str, object]:
@@ -8475,6 +8515,26 @@ def create_app(
                 )
                 gaps = [*gaps, automation_expert_gap("native_flows_not_read", "instance")]
             data = {**data, "flows": [*data["flows"], *native_flows]}  # type: ignore[misc]
+            # 1.3.0 (M16 P5 y P8): quien ejecuta cada flujo de negocio. La
+            # ficha y el pago rechazado con scope propio se leen de su scope;
+            # las rutas, divergencias y rechazos del motor v1, de sus tres
+            # lecturas. Lo que no contesta queda como hueco.
+            data, executor_gaps = apply_executors(
+                data,
+                settings=expert_flow_settings,
+                scope_reads={
+                    "ficha": await automation_expert_scope_read(
+                        payment_slip_pilot_boundary,
+                        "get_portable_payment_slip_pilot_runtime_status",
+                    ),
+                    "pago_fallido": await automation_expert_scope_read(
+                        payment_failure_pilot_boundary,
+                        "get_portable_payment_failure_pilot_runtime_status",
+                    ),
+                },
+                engine=await automation_expert_engine_v1_read(),
+            )
+            gaps = [*gaps, *executor_gaps]
             try:
                 gaps = [*gaps, *attach_sales(
                     data["flows"],  # type: ignore[arg-type]
@@ -8497,7 +8557,15 @@ def create_app(
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND, detail="flow_not_found"
                     )
-                data = {**data, "flows": flows}
+                data = {
+                    **data,
+                    "flows": flows,
+                    "business_flows": [
+                        entry for entry in data.get("business_flows") or []  # type: ignore[union-attr]
+                        if (entry.get("legacy") or {}).get("flow_key") == flow_key
+                        or any(native.get("flow_key") == flow_key for native in entry.get("native") or [])
+                    ],
+                }
                 gaps = [
                     gap for gap in gaps
                     if gap["scope"] in ("instance", f"flow:{flow_key}")

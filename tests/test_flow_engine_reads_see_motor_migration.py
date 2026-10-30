@@ -102,6 +102,8 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
         "20261030000100_flow_engine_native_legacy_double_case_v1.sql",
         # El pago rechazado nativo (20261030000200, E-207): el disparador pago_fallido del motor nativo.
         "20261030000200_flow_engine_native_payment_failure_v1.sql",
+        # La lista de las propuestas del AE (20261030000300, E-208): una lectura nueva.
+        "20261030000300_flow_change_list_v1.sql",
     ]
     native = (MIGRATIONS / "20261024000200_flow_engine_native_v1.sql").read_text(encoding="utf-8")
     assert "read_automation_expert_flows_v1" not in native

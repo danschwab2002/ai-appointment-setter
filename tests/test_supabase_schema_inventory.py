@@ -1602,14 +1602,15 @@ def test_flow_engine_native_legacy_double_case_fingerprint_is_before_the_payment
         assert marker in compact_fingerprint, marker
 
 
-def test_flow_engine_native_payment_failure_fingerprint_is_last() -> None:
+def test_flow_engine_native_payment_failure_fingerprint_is_before_the_list() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261030000200 (el pago rechazado nativo, E-207) es la ultima.
-    fingerprint = sql.split("'20261030000200'", 1)[1].split("select\n    version,", 1)[0]
+    fingerprint = sql.split("'20261030000200'", 1)[1].split(
+        "    union all\n    select\n        '20261030000300'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261030000200_flow_engine_native_payment_failure_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",4,'flow_engine_native_payment_failure')")
+    assert compact_fingerprint.endswith(",4,'flow_engine_native_payment_failure'")
     for marker in (
         "to_regprocedure('public._flow_engine_native_payment_failure_audience(uuid,uuid,text,text,text)')",
         "to_regprocedure('public._flow_engine_admit_native_flow(public.flow_controls,public.webhook_events,"
@@ -1621,5 +1622,23 @@ def test_flow_engine_native_payment_failure_fingerprint_is_last() -> None:
         "to_regprocedure('public._flow_change_new_flow_blocker(text,text,jsonb)')",
         "position('flow_key_reserved_for_legacy'indefinition)>0",
         "notprosecdef",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_flow_change_list_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261030000300 (la lista de las propuestas del AE, E-208) es la ultima.
+    fingerprint = sql.split("'20261030000300'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261030000300_flow_change_list_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'flow_change_list')")
+    for marker in (
+        "to_regprocedure('public.list_flow_changes_v1(jsonb,boolean,integer)')",
+        "prosecdef",
+        "provolatile='s'",
+        "nothas_function_privilege('service_role',oid,'EXECUTE')",
+        "like'%automation_expert_change=X%'",
     ):
         assert marker in compact_fingerprint, marker

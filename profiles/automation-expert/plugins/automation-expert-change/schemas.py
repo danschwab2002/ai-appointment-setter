@@ -1,4 +1,4 @@
-"""Los esquemas de las cuatro herramientas de cambio del Automation Expert (flow-change-cycle-v1)."""
+"""Los esquemas de las herramientas de cambio del Automation Expert (flow-change-cycle-v1)."""
 
 _FLOW_ID = {"type": "string", "format": "uuid"}
 
@@ -82,6 +82,41 @@ VALIDATE_FLOW_CHANGE = {
         "required": ["proposal_id", "revision"],
         "additionalProperties": False,
     },
+}
+
+LIST_FLOW_CHANGES = {
+    "name": "list_flow_changes",
+    "description": (
+        "Lista las propuestas de cambio de flujo de la instancia, de la más nueva a la más vieja: su "
+        "proposal_id, su estado (borrador, validada, aprobada, publicada, descartada o vencida; "
+        "effective_status dice vencida si pasaron las 24 horas), qué flujos toca, para qué era (solo "
+        "en las tuyas), las fechas y el último evento. Con estado: abiertas (el default) trae solo las "
+        "que siguen vivas, y open dice cuántas abiertas tenés de las 10 que podés tener. Usala para "
+        "retomar una propuesta de otra charla: con su proposal_id, get_flow_change la trae entera. "
+        "Solo lee."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "estado": {"type": "string", "enum": ["abiertas", "todas"],
+                       "description": "abiertas (default): borradores y validadas o aprobadas sin vencer; todas: también las cerradas."},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Cuántas, de 1 a 50 (default 20)."},
+        },
+        "additionalProperties": False,
+    },
+}
+
+LIST_TEMPLATES = {
+    "name": "list_templates",
+    "description": (
+        "Lista el catálogo de plantillas de WhatsApp de la bandeja, el mismo que mira la validación: "
+        "nombre, idioma, estado (solo una APPROVED se puede usar), categoría (UTILITY o MARKETING), "
+        "cuántos marcadores tiene el cuerpo ({{1}}, {{2}}…: uno por variable del paso, en su orden), "
+        "el texto del encabezado, del cuerpo y del pie, y los botones (link_cambia: el link lleva un "
+        "{{1}} y cambia por persona). Primero las aprobadas. Usala antes de elegir la plantilla de un "
+        "paso y para escribir sus variables. Solo lee."
+    ),
+    "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
 }
 
 GET_FLOW_CHANGE = {

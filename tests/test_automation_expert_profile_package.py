@@ -86,7 +86,7 @@ def test_the_distribution_copies_the_plugin_and_names_its_variables() -> None:
     change = yaml.safe_load((PROFILE / "plugins" / "automation-expert-change" / "plugin.yaml").read_text(encoding="utf-8"))
     assert change["name"] == "automation-expert-change"
     assert change["provides_tools"] == ["get_flow_definitions", "propose_flow_change", "validate_flow_change",
-                                        "get_flow_change"]
+                                        "get_flow_change", "list_flow_changes", "list_templates"]
 
 
 def test_the_soul_never_asks_for_a_phone_or_a_mail() -> None:

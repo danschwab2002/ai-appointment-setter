@@ -77,7 +77,7 @@ const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.end
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Despues va solo el pago rechazado nativo (E-207), que toca las mismas dos funciones por reemplazo contado.
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261030000200_flow_engine_native_payment_failure_v1.sql'])) {
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261030000200_flow_engine_native_payment_failure_v1.sql', '20261030000300_flow_change_list_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la del pago rechazado nativo`, names.slice(position + 1));
 }
 
