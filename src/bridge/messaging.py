@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable, Protocol
 
+from bridge.approved_templates import TemplateHeaderMedia
 from bridge.chatwoot import ChatwootClient, ChatwootProtocolError
 from bridge.hotmart import normalize_phone
 from bridge.payment_slip import PAYMENT_SLIP_TEMPLATE_PARAMETERS
@@ -162,6 +163,13 @@ class WhatsAppTemplateConfig:
 
     ``payment_slip_steps`` are the templates of the reminders that follow C1,
     one per step key. A step without its template does not go out.
+
+    ``header_media`` pairs a template name with the image or video of its
+    HEADER (``TemplateHeaderMedia``), for the templates approved with a media
+    header. Meta fixes the format of the header per template, so the media
+    goes by name: ``params`` puts it in ``processed_params.header`` for that
+    template whatever the trigger, and the direct dispatcher hands it to
+    ``parse_approved_template``. Empty (the default), nothing changes.
     """
 
     first_touch_name: str
@@ -179,8 +187,22 @@ class WhatsAppTemplateConfig:
     payment_slip_body_parameters: tuple[str, ...] | None = None
     payment_slip_category: str | None = None
     payment_slip_steps: tuple[PaymentSlipStepTemplate, ...] = ()
+    header_media: tuple[tuple[str, TemplateHeaderMedia], ...] = ()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.header_media, tuple) or not all(
+            isinstance(item, tuple)
+            and len(item) == 2
+            and isinstance(item[0], str)
+            and item[0].strip() == item[0]
+            and item[0]
+            and isinstance(item[1], TemplateHeaderMedia)
+            for item in self.header_media
+        ):
+            raise ValueError("invalid_template_header_media")
+        media_names = [name for name, _ in self.header_media]
+        if len(set(media_names)) != len(media_names):
+            raise ValueError("duplicate_template_header_media")
         if not isinstance(self.payment_slip_steps, tuple) or not all(
             isinstance(step, PaymentSlipStepTemplate) for step in self.payment_slip_steps
         ):
@@ -240,6 +262,13 @@ class WhatsAppTemplateConfig:
                 raise ValueError("payment_slip_category_without_template")
             if self.payment_slip_category not in {"MARKETING", "UTILITY"}:
                 raise ValueError("invalid_payment_slip_category")
+
+    def header_media_for(self, template_name: str | None) -> TemplateHeaderMedia | None:
+        """The media of the HEADER of ``template_name``, or ``None``."""
+        for name, media in self.header_media:
+            if name == template_name:
+                return media
+        return None
 
     def payment_slip_step(self, step_key: str) -> PaymentSlipStepTemplate | None:
         """The template of the slip reminder ``step_key``, or ``None``."""
@@ -388,6 +417,10 @@ class WhatsAppTemplateConfig:
             and self.first_touch_parameter == "buyer_name_and_product"
         ):
             body = {"1": buyer_name or "", "2": product_name or ""}
+        processed: dict[str, object] = {"body": body}
+        media = self.header_media_for(name)
+        if media is not None:
+            processed["header"] = media.processed_header()
         return {
             "name": name,
             "category": (
@@ -396,7 +429,7 @@ class WhatsAppTemplateConfig:
                 else self.category_for(trigger_kind=trigger_kind)
             ),
             "language": self.language,
-            "processed_params": {"body": body},
+            "processed_params": processed,
         }
 
 
