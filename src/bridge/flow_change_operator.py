@@ -194,7 +194,7 @@ def validate_proposal(payload: object, *, environ: Mapping[str, str]) -> dict[st
             simulacion = build_simulation(data.get("engine"), data.get("history"), items,
                                           time_zone=instance.time_zone, store=data.get("store"))
         preview = build_preview(items, world, purpose=purpose, warnings=result_json["warnings"],
-                                simulacion=simulacion)
+                                simulacion=simulacion, catalog=catalog)
     except ValueError as error:
         raise OperatorInputError(str(error)) from error
     return {

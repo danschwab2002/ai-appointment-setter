@@ -4,12 +4,16 @@ LIST_FLOWS = {
     "name": "list_flows",
     "description": (
         "Lista los flujos de la instancia (primer contacto, carrito, pago fallido, "
-        "reactivación y cupón, más los flujos nativos del motor, como la bienvenida, con "
-        "native: true, su estado (cohort = solo la cohorte de prueba) y su cohorte) con su "
-        "versión, si están prendidos, sus topes, lo que pasó en los últimos 7 días y, para "
-        "los flujos del motor, sus ventas (`sales`: compras después de un envío aceptado, "
-        "con la regla en `sales.rule`), más lo que corre en código y los eventos que no "
-        "disparan nada. Con flow_key devuelve uno solo. Solo lee."
+        "ficha de pago, reactivación y cupón, más los flujos nativos del motor, como la "
+        "bienvenida, con native: true, su estado (cohort = solo la cohorte de prueba) y su "
+        "cohorte) con su versión, si están prendidos, sus topes, lo que pasó en los últimos "
+        "7 días y, para los flujos del motor, sus ventas (`sales`: compras después de un "
+        "envío aceptado, con la regla en `sales.rule`), más lo que corre en código y los "
+        "eventos que no disparan nada. `business_flows` dice, por flujo de negocio, quién lo "
+        "ejecuta hoy (`executor`: legado, nativo, nativo_en_cohorte, los dos, motor_v1 o "
+        "nadie), por qué scope sigue el legado y qué nativos lo hacen, con un `summary` para "
+        "contarlo. Un flujo del legado con ruta del motor v1 trae `engine_v1`: su ruta, sus "
+        "divergencias y sus rechazos. Con flow_key devuelve uno solo. Solo lee."
     ),
     "parameters": {
         "type": "object",
@@ -17,7 +21,7 @@ LIST_FLOWS = {
             "flow_key": {
                 "type": "string",
                 "pattern": "^[a-z][a-z0-9_]{1,39}$",
-                "description": "La clave de un flujo (precheckout, carrito, pago_fallido, reactivacion, descuento o la de un flujo nativo), para pedir solo ese.",
+                "description": "La clave de un flujo (precheckout, carrito, pago_fallido, ficha, reactivacion, descuento o la de un flujo nativo), para pedir solo ese.",
             }
         },
         "additionalProperties": False,

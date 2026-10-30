@@ -1,12 +1,14 @@
 name: automation-expert-change
-version: "0.2.0"
-description: Proponer y validar un cambio de flujo (flow-change-cycle-v1), y dejar el link para aprobarlo en la pagina del bridge. Nunca aprueba ni publica.
+version: "0.3.0"
+description: Proponer y validar un cambio de flujo (flow-change-cycle-v1), dejar el link para aprobarlo en la pagina del bridge, y leer el catalogo de plantillas y las propuestas con su estado. Nunca aprueba ni publica.
 author: ai-appointment-setter
 provides_tools:
   - get_flow_definitions
   - propose_flow_change
   - validate_flow_change
   - get_flow_change
+  - list_flow_changes
+  - list_templates
 provides_hooks:
   - pre_tool_call
 requires_env:

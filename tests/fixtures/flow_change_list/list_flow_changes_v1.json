@@ -1,0 +1,256 @@
+{
+  "_capture": {
+    "source": "tests/sql/followup_engine/validate_flow_change_list.mjs --emit-fixture",
+    "migration": "20261030000300_flow_change_list_v1.sql",
+    "note": "la salida real de list_flow_changes_v1 sobre la cadena de migraciones en PGlite, datos sinteticos; uuid y horas normalizados"
+  },
+  "open": {
+    "open": 2,
+    "proposals": [
+      {
+        "flows": [
+          {
+            "tipo": "nuevo",
+            "flujo": "borrador_vivo",
+            "producto": "att1"
+          }
+        ],
+        "status": "borrador",
+        "purpose": "el borrador que sigue abierto",
+        "revision": 1,
+        "closed_at": null,
+        "created_at": "2026-10-30T12:00:00.000000+00:00",
+        "expires_at": null,
+        "last_event": {
+          "actor_kind": "automation_expert",
+          "created_at": "2026-10-30T12:00:00.000000+00:00",
+          "event_type": "flow_change_draft_saved",
+          "reason_code": "flow_change_draft_saved"
+        },
+        "updated_at": "2026-10-30T12:00:00.000000+00:00",
+        "approved_at": null,
+        "proposal_id": "00000000-0000-4000-8000-000000000001",
+        "published_at": null,
+        "validated_at": null,
+        "closed_by_kind": null,
+        "approved_by_kind": null,
+        "effective_status": "borrador",
+        "requested_by_kind": "automation_expert"
+      },
+      {
+        "flows": [
+          {
+            "tipo": "nuevo",
+            "flujo": "bienvenida",
+            "producto": "att1"
+          }
+        ],
+        "status": "validada",
+        "purpose": "una bienvenida despues de la compra, con la etiqueta de clienta",
+        "revision": 1,
+        "closed_at": null,
+        "created_at": "2026-10-30T12:00:00.000000+00:00",
+        "expires_at": "2026-10-30T12:00:00.000000+00:00",
+        "last_event": {
+          "actor_kind": "automation_expert",
+          "created_at": "2026-10-30T12:00:00.000000+00:00",
+          "event_type": "flow_change_validated",
+          "reason_code": "flow_change_validated"
+        },
+        "updated_at": "2026-10-30T12:00:00.000000+00:00",
+        "approved_at": null,
+        "proposal_id": "00000000-0000-4000-8000-000000000002",
+        "published_at": null,
+        "validated_at": "2026-10-30T12:00:00.000000+00:00",
+        "closed_by_kind": null,
+        "approved_by_kind": null,
+        "effective_status": "validada",
+        "requested_by_kind": "automation_expert"
+      }
+    ],
+    "open_limit": 10,
+    "database_at": "2026-10-30T12:00:00.000000+00:00"
+  },
+  "all": {
+    "open": 2,
+    "proposals": [
+      {
+        "flows": [
+          {
+            "tipo": "nuevo",
+            "flujo": "borrador_vivo",
+            "producto": "att1"
+          }
+        ],
+        "status": "borrador",
+        "purpose": "el borrador que sigue abierto",
+        "revision": 1,
+        "closed_at": null,
+        "created_at": "2026-10-30T12:00:00.000000+00:00",
+        "expires_at": null,
+        "last_event": {
+          "actor_kind": "automation_expert",
+          "created_at": "2026-10-30T12:00:00.000000+00:00",
+          "event_type": "flow_change_draft_saved",
+          "reason_code": "flow_change_draft_saved"
+        },
+        "updated_at": "2026-10-30T12:00:00.000000+00:00",
+        "approved_at": null,
+        "proposal_id": "00000000-0000-4000-8000-000000000001",
+        "published_at": null,
+        "validated_at": null,
+        "closed_by_kind": null,
+        "approved_by_kind": null,
+        "effective_status": "borrador",
+        "requested_by_kind": "automation_expert"
+      },
+      {
+        "flows": [
+          {
+            "tipo": "nuevo",
+            "flujo": "bienvenida",
+            "producto": "att1"
+          }
+        ],
+        "status": "validada",
+        "purpose": "una bienvenida despues de la compra, con la etiqueta de clienta",
+        "revision": 1,
+        "closed_at": null,
+        "created_at": "2026-10-30T12:00:00.000000+00:00",
+        "expires_at": "2026-10-30T12:00:00.000000+00:00",
+        "last_event": {
+          "actor_kind": "automation_expert",
+          "created_at": "2026-10-30T12:00:00.000000+00:00",
+          "event_type": "flow_change_validated",
+          "reason_code": "flow_change_validated"
+        },
+        "updated_at": "2026-10-30T12:00:00.000000+00:00",
+        "approved_at": null,
+        "proposal_id": "00000000-0000-4000-8000-000000000002",
+        "published_at": null,
+        "validated_at": "2026-10-30T12:00:00.000000+00:00",
+        "closed_by_kind": null,
+        "approved_by_kind": null,
+        "effective_status": "validada",
+        "requested_by_kind": "automation_expert"
+      },
+      {
+        "flows": [
+          {
+            "tipo": "nuevo",
+            "flujo": "descartada",
+            "producto": "att1"
+          }
+        ],
+        "status": "descartada",
+        "purpose": "la que se descarta",
+        "revision": 1,
+        "closed_at": "2026-10-30T12:00:00.000000+00:00",
+        "created_at": "2026-10-30T12:00:00.000000+00:00",
+        "expires_at": null,
+        "last_event": {
+          "actor_kind": "operador",
+          "created_at": "2026-10-30T12:00:00.000000+00:00",
+          "event_type": "flow_change_discarded",
+          "reason_code": "flow_change_discarded"
+        },
+        "updated_at": "2026-10-30T12:00:00.000000+00:00",
+        "approved_at": null,
+        "proposal_id": "00000000-0000-4000-8000-000000000003",
+        "published_at": null,
+        "validated_at": null,
+        "closed_by_kind": "operador",
+        "approved_by_kind": null,
+        "effective_status": "descartada",
+        "requested_by_kind": "automation_expert"
+      },
+      {
+        "flows": [
+          {
+            "tipo": "nuevo",
+            "flujo": "vencida",
+            "producto": "att1"
+          }
+        ],
+        "status": "validada",
+        "purpose": "la que se vence",
+        "revision": 1,
+        "closed_at": null,
+        "created_at": "2026-10-30T12:00:00.000000+00:00",
+        "expires_at": "2026-10-30T12:00:00.000000+00:00",
+        "last_event": {
+          "actor_kind": "automation_expert",
+          "created_at": "2026-10-30T12:00:00.000000+00:00",
+          "event_type": "flow_change_validated",
+          "reason_code": "flow_change_validated"
+        },
+        "updated_at": "2026-10-30T12:00:00.000000+00:00",
+        "approved_at": null,
+        "proposal_id": "00000000-0000-4000-8000-000000000004",
+        "published_at": null,
+        "validated_at": "2026-10-30T12:00:00.000000+00:00",
+        "closed_by_kind": null,
+        "approved_by_kind": null,
+        "effective_status": "vencida",
+        "requested_by_kind": "automation_expert"
+      },
+      {
+        "flows": [
+          {
+            "tipo": "version",
+            "flujo": "carrito",
+            "producto": "att1"
+          },
+          {
+            "tipo": "prender",
+            "flujo": "carrito",
+            "producto": "att1"
+          },
+          {
+            "tipo": "version",
+            "flujo": "pago_fallido",
+            "producto": "att1"
+          },
+          {
+            "tipo": "prender",
+            "flujo": "pago_fallido",
+            "producto": "att1"
+          },
+          {
+            "tipo": "version",
+            "flujo": "carrito",
+            "producto": "att9"
+          },
+          {
+            "tipo": "prender",
+            "flujo": "carrito",
+            "producto": "att9"
+          }
+        ],
+        "status": "publicada",
+        "purpose": null,
+        "revision": 1,
+        "closed_at": null,
+        "created_at": "2026-10-30T12:00:00.000000+00:00",
+        "expires_at": "2026-10-30T12:00:00.000000+00:00",
+        "last_event": {
+          "actor_kind": "operador",
+          "created_at": "2026-10-30T12:00:00.000000+00:00",
+          "event_type": "flow_change_published",
+          "reason_code": "flow_change_published"
+        },
+        "updated_at": "2026-10-30T12:00:00.000000+00:00",
+        "approved_at": "2026-10-30T12:00:00.000000+00:00",
+        "proposal_id": "00000000-0000-4000-8000-000000000005",
+        "published_at": "2026-10-30T12:00:00.000000+00:00",
+        "validated_at": "2026-10-30T12:00:00.000000+00:00",
+        "closed_by_kind": null,
+        "approved_by_kind": "operador",
+        "effective_status": "publicada",
+        "requested_by_kind": "operador"
+      }
+    ],
+    "open_limit": 10,
+    "database_at": "2026-10-30T12:00:00.000000+00:00"
+  }
+}

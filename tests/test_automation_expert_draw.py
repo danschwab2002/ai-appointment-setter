@@ -169,3 +169,29 @@ def test_the_plugin_registers_draw_flow_in_the_same_toolset() -> None:
     ))
     assert ("draw_flow", "automation_expert_read") in tools
     assert {toolset for _, toolset in tools} == {"automation_expert_read"}
+
+
+def test_the_payment_slip_of_the_legacy_draws_with_its_ficha_trigger() -> None:
+    """1.3.0 (E-208): la ficha del legado entra a /flows; el dibujo la arma sin errores."""
+    import bridge.automation_expert_read as reader
+
+    payload = _capture()
+    settings = reader.FlowSettings(
+        manifest_flows={"ficha": True}, templates={
+            "ficha": ("att1_ficha_efectivo_01", "es_MX", ("nombre", "tienda", "producto", "vencimiento"))},
+        time_zone="America/Mexico_City", precheckout_enabled=False, pilot_enabled=True, recovery_enabled=True,
+        payment_failure_enabled=True, coupon_enabled=False, coupon_template=None, coupon_code=None,
+        coupon_product_name=None, coupon_min_age_seconds=86_400, coupon_max_age_seconds=259_200,
+        coupon_send_hours=None, coupon_test_phone_set=False, reactivation_enabled=False, reactivation_template=None,
+        reactivation_min_age_seconds=86_400, reactivation_max_age_seconds=2_592_000, stalled_monitor_enabled=False,
+        resume_enabled=False, precheckout_test_phone_set=False, allowed_jid_set=False, payment_slip_enabled=True,
+        payment_slip_scope=reader.ScopeRef("att1-ficha", 1))
+    data, gaps = reader.apply_executors(payload["data"], settings=settings,
+                                        scope_reads={"ficha": {"configured": True, "runtime_state": "armed"}},
+                                        engine=None)
+    payload = {**payload, "data": data, "gaps": [*payload.get("gaps", []), *gaps]}
+    html, avisos, errores = DIBUJO.armar_dibujo(payload, "ficha")
+    assert errores == [] and html is not None, errores
+    flujos = {flujo["id"]: flujo for flujo in _datos(html)["flujos"]}
+    assert "ficha" in flujos
+    assert "Hoy está prendido" in flujos["ficha"]["resumen"]

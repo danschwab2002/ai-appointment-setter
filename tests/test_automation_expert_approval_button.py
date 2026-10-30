@@ -254,7 +254,8 @@ def test_the_plugin_acks_the_url_button_click_and_adds_no_tool(world: SimpleName
         register_hook=lambda name, callback: None,
         register_slack_action_handler=lambda action_id, callback: actions.append((action_id, callback)),
     ))
-    assert tools == ["get_flow_definitions", "propose_flow_change", "validate_flow_change", "get_flow_change"]
+    assert tools == ["get_flow_definitions", "propose_flow_change", "validate_flow_change", "get_flow_change",
+                     "list_flow_changes", "list_templates"]
     [(action_id, callback)] = actions
     assert action_id == "flow_approval_open"
     acked: list[bool] = []

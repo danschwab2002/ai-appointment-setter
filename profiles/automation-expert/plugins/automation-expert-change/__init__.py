@@ -6,16 +6,26 @@ sus herramientas.
 """
 
 from .approval_button import ACTION_ID, ack_only
-from .schemas import GET_FLOW_CHANGE, GET_FLOW_DEFINITIONS, PROPOSE_FLOW_CHANGE, VALIDATE_FLOW_CHANGE
+from .schemas import (
+    GET_FLOW_CHANGE,
+    GET_FLOW_DEFINITIONS,
+    LIST_FLOW_CHANGES,
+    LIST_TEMPLATES,
+    PROPOSE_FLOW_CHANGE,
+    VALIDATE_FLOW_CHANGE,
+)
 from .tools import (
     PROFILE_NAME,
     get_flow_change,
     get_flow_definitions,
+    list_flow_changes,
+    list_templates,
     propose_flow_change,
     validate_flow_change,
 )
 
-_TOOLS = frozenset({"get_flow_definitions", "propose_flow_change", "validate_flow_change", "get_flow_change"})
+_TOOLS = frozenset({"get_flow_definitions", "propose_flow_change", "validate_flow_change", "get_flow_change",
+                    "list_flow_changes", "list_templates"})
 
 
 def make_profile_guard(profile_name):
@@ -38,6 +48,8 @@ def register(ctx):
         ("propose_flow_change", PROPOSE_FLOW_CHANGE, propose_flow_change),
         ("validate_flow_change", VALIDATE_FLOW_CHANGE, validate_flow_change),
         ("get_flow_change", GET_FLOW_CHANGE, get_flow_change),
+        ("list_flow_changes", LIST_FLOW_CHANGES, list_flow_changes),
+        ("list_templates", LIST_TEMPLATES, list_templates),
     ):
         ctx.register_tool(name=name, toolset="automation_expert_change", schema=schema, handler=handler)
     ctx.register_hook("pre_tool_call", make_profile_guard(getattr(ctx, "profile_name", None)))

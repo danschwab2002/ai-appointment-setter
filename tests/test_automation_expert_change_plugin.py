@@ -24,7 +24,9 @@ TOKEN = "c" * 40
 PROPOSAL = "5d0c2b9e-1f3a-4b6c-8d7e-9f0a1b2c3d4e"
 FLOW = "00000001-0000-4000-8000-0000000a7701"
 PREFIX = "/internal/automation-expert/v1"
-TOOLS = ["get_flow_definitions", "propose_flow_change", "validate_flow_change", "get_flow_change"]
+TOOLS = ["get_flow_definitions", "propose_flow_change", "validate_flow_change", "get_flow_change",
+         # Ciclo 1.10.0 (E-208): las dos lecturas del catalogo y de las propuestas.
+         "list_flow_changes", "list_templates"]
 
 
 def _load_plugin() -> ModuleType:
@@ -43,7 +45,7 @@ def _tools() -> ModuleType:
     return sys.modules[_load_plugin().__name__ + ".tools"]
 
 
-def test_the_plugin_registers_its_four_tools_in_its_toolset_and_guards_the_profile() -> None:
+def test_the_plugin_registers_its_tools_in_its_toolset_and_guards_the_profile() -> None:
     plugin = _load_plugin()
     tools: list[tuple[str, str]] = []
     hooks: dict[str, Any] = {}
@@ -220,3 +222,33 @@ def test_errors_map_to_closed_codes(bridge: type[_Bridge], monkeypatch: pytest.M
     seen = len(bridge.seen)
     assert json.loads(tools.get_flow_definitions({})) == {"error": "automation_expert_change_api_token_invalid"}
     assert len(bridge.seen) == seen
+
+
+# ------------------------------------------------------------------- ciclo 1.10.0 (E-208, M16 P6 y P7)
+
+
+def test_list_flow_changes_asks_open_ones_by_default_and_validates_before_the_network(
+        bridge: type[_Bridge]) -> None:
+    bridge.routes[f"GET {PREFIX}/flow-changes?estado=abiertas&limit=20"] = (
+        200, _envelope({"estado": "abiertas", "proposals": [{"proposal_id": PROPOSAL}], "open": 1}))
+    bridge.routes[f"GET {PREFIX}/flow-changes?estado=todas&limit=50"] = (
+        200, _envelope({"estado": "todas", "proposals": []}))
+    tools = _tools()
+    assert json.loads(tools.list_flow_changes({}))["data"]["proposals"] == [{"proposal_id": PROPOSAL}]
+    assert json.loads(tools.list_flow_changes({"estado": "todas", "limit": 50}))["data"]["estado"] == "todas"
+    assert bridge.seen[0]["authorization"] == f"Bearer {TOKEN}" and bridge.seen[0]["method"] == "GET"
+    seen = len(bridge.seen)
+    for params in ({"estado": "cerradas"}, {"limit": 0}, {"limit": 51}, {"limit": "5"}, {"limit": True}):
+        assert json.loads(tools.list_flow_changes(params)) == {"error": "invalid_query"}
+    assert len(bridge.seen) == seen
+    bridge.routes[f"GET {PREFIX}/flow-changes?estado=abiertas&limit=20"] = (422, {"detail": "invalid_query"})
+    assert json.loads(tools.list_flow_changes({})) == {"error": "invalid_query"}
+
+
+def test_list_templates_reads_the_catalog_route(bridge: type[_Bridge]) -> None:
+    bridge.routes[f"GET {PREFIX}/templates"] = (200, _envelope({"templates": [{"nombre": "x"}], "total": 1}))
+    result = json.loads(_tools().list_templates({}))
+    assert result["data"]["templates"] == [{"nombre": "x"}]
+    assert bridge.seen[0]["path"] == f"{PREFIX}/templates"
+    bridge.routes[f"GET {PREFIX}/templates"] = (503, {"detail": "template_catalog_unavailable"})
+    assert json.loads(_tools().list_templates({})) == {"error": "template_catalog_unavailable"}

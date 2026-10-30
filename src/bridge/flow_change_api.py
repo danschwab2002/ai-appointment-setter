@@ -14,6 +14,13 @@ Diseno: el almacen, §10.1.
 * ``GET /internal/automation-expert/v1/flow-store``: los flujos del almacen con
   su ``flow_id`` y su definicion activa, que es de donde el agente copia lo que
   cambia (la lectura de la 1a no los trae mientras siga leyendo la proyeccion).
+* ``GET /internal/automation-expert/v1/flow-changes`` (1.10.0, M16 P7): las
+  propuestas de la instancia y en que estado estan, con
+  ``list_flow_changes_v1`` (20261030000300). ``?estado=abiertas`` (el default)
+  o ``todas``, ``&limit=`` de 1 a 50.
+* ``GET /internal/automation-expert/v1/templates`` (1.10.0, M16 P6): el
+  catalogo de plantillas de la bandeja, el mismo que mira la validacion
+  (``GET /inboxes/<id>`` de Chatwoot), con el texto de cada parte.
 
 La pausa del agente no existe todavia: la base no puede verificar quien la
 pide (V2#5). Pausar es del comando del operador.
@@ -48,6 +55,7 @@ from fastapi import FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
 from .flow_change_operator import OperatorInputError, validate_proposal, world_from_store
+from .flow_change_preview import template_view
 from .flow_definition import (
     InstanceView,
     ProposalItemsInvalid,
@@ -77,13 +85,20 @@ logger = logging.getLogger(__name__)
 CONTRACT = "flow-change-cycle-v1"
 # 1.7.0 (el PR 4 del hito 4): el item nuevo, que crea un flujo nativo y lo publica en cohorte.
 # 1.9.0 (A′ PR 3b): el si se da en la pagina de aprobacion del bridge (flow_approval.py).
-CONTRACT_VERSION = "1.9.0"
+# 1.10.0 (E-208, M16 P6, P7 y P9): el catalogo, la lista de propuestas y el mensaje en la vista previa.
+CONTRACT_VERSION = "1.10.0"
 PREFIX = "/internal/automation-expert/v1"
 DB_ROLE = "automation_expert_change"
 MAX_BODY_BYTES = 256 * 1024
 MAX_STORE_BYTES = 4 * 1024 * 1024
 # read_flow_engine_v1 pagina de a 50 flujos; mas de 500 en una instancia no es de la v1.
 ENGINE_PAGES_MAX = 10
+# La lista de propuestas (1.10.0): de a lo sumo 50, como la pagina de aprobacion.
+LIST_DEFAULT_LIMIT = 20
+LIST_MAX_LIMIT = 50
+LIST_STATES = {"abiertas": True, "todas": False}
+# El catalogo que se lista: una bandeja con mas plantillas que esto se corta y se dice.
+TEMPLATES_MAX = 100
 # La historia de los ultimos 8 dias (la vista previa simula 7 y el de mas es la siembra), con un margen
 # para que un reloj del bridge atrasado no pida mas de lo que la funcion acepta.
 HISTORY_WINDOW = timedelta(days=8) - timedelta(minutes=5)
@@ -187,6 +202,11 @@ class FlowChangeStore:
 
     async def get_proposal(self, instance: Mapping[str, str], proposal_id: str) -> dict[str, Any]:
         return await self._rpc("get_flow_change_proposal_v1", {"p_instance": instance, "p_proposal_id": proposal_id})
+
+    async def list_proposals(self, instance: Mapping[str, str], *, only_open: bool, limit: int) -> dict[str, Any]:
+        """``list_flow_changes_v1`` (20261030000300): las propuestas, de la mas nueva a la mas vieja."""
+        return await self._rpc("list_flow_changes_v1", {"p_instance": instance, "p_only_open": only_open,
+                                                        "p_limit": limit})
 
     async def read_engine(self, instance: Mapping[str, str]) -> dict[str, Any]:
         """``read_flow_engine_v1`` entero: las paginas de 50 flujos, juntas (hasta ENGINE_PAGES_MAX)."""
@@ -431,14 +451,15 @@ def _proposal_id(value: str) -> str:
 def register_flow_change_routes(app: FastAPI, *, token: str, store: FlowChangeStore, chatwoot: Any,
                                 tenant_ref: str, ally_ref: str, time_zone: str | None, inbox_id: int,
                                 git_sha: str | None = None) -> None:
-    """Las tres rutas, detras del flag (lo mira quien llama: con el flag apagado no existen)."""
+    """Las rutas, detras del flag (lo mira quien llama: con el flag apagado no existen)."""
     context = _Context(instance={"tenant_ref": tenant_ref, "ally_ref": ally_ref}, time_zone=time_zone,
                        inbox_id=inbox_id, git_sha=git_sha or os.getenv("GIT_SHA", "") or "unknown")
     slots = asyncio.Semaphore(2)
 
     @app.exception_handler(EntryRefused)
     async def entry_refused(request: Request, error: EntryRefused) -> JSONResponse:
-        route = "validate" if request.url.path.endswith("/validate") else "propose"
+        route = "validate" if request.url.path.endswith("/validate") else (
+            "list" if request.method == "GET" else "propose")
         logger.info("automation_expert_change route=%s status=422 code=%s reason=%s", route, error.code,
                     json.dumps(error.reason, sort_keys=True, separators=(",", ":")))
         return JSONResponse(status_code=422, content={"detail": error.code, "reason": error.reason})
@@ -646,6 +667,48 @@ def register_flow_change_routes(app: FastAPI, *, token: str, store: FlowChangeSt
             "warnings": [_finding(w) for w in out["result"]["warnings"]],
             "preview": out["preview"],
         })
+
+    @app.get(f"{PREFIX}/flow-changes")
+    async def list_changes(estado: str = "abiertas", limit: str = str(LIST_DEFAULT_LIMIT),
+                           authorization: str | None = Header(default=None)) -> Any:
+        """Las propuestas de la instancia y en que estado estan (M16 P7). Solo lee."""
+        authenticate(authorization)
+        if estado not in LIST_STATES:
+            raise EntryRefused("invalid_query", {"field": "estado", "problem": "abiertas_or_todas"})
+        if not (limit.isascii() and limit.isdigit()) or not 1 <= int(limit) <= LIST_MAX_LIMIT:
+            raise EntryRefused("invalid_query", {"field": "limit", "problem": "between_1_and_50"})
+        busy()
+        async with slots:
+            try:
+                listed = await store.list_proposals(context.instance, only_open=LIST_STATES[estado],
+                                                    limit=int(limit))
+            except (StoreUnavailable, StoreRejected) as error:
+                raise failure(error, "list") from None
+        proposals = listed.get("proposals")
+        if not isinstance(proposals, list):
+            raise failure(StoreUnavailable(), "list")
+        logger.info("automation_expert_change route=list status=200 estado=%s proposals=%s", estado,
+                    len(proposals))
+        return envelope({"estado": estado, "proposals": proposals, "open": listed.get("open"),
+                         "open_limit": listed.get("open_limit"), "database_at": listed.get("database_at")})
+
+    @app.get(f"{PREFIX}/templates")
+    async def list_templates(authorization: str | None = Header(default=None)) -> Any:
+        """El catalogo de plantillas de la bandeja, el mismo que mira la validacion (M16 P6). Solo lee."""
+        authenticate(authorization)
+        busy()
+        async with slots:
+            try:
+                inbox = await chatwoot.get_inbox(inbox_id=context.inbox_id)
+                catalog = TemplateCatalog.from_inbox_payload({"message_templates": inbox["message_templates"]})
+            except Exception:  # noqa: BLE001 - un Chatwoot caido no deja listar, y se dice
+                logger.info("automation_expert_change route=templates status=503 code=template_catalog_unavailable")
+                raise HTTPException(status_code=503, detail="template_catalog_unavailable") from None
+        views = sorted((template_view(template) for template in catalog.templates),
+                       key=lambda view: (not view["aprobada"], str(view["nombre"]), str(view["idioma"])))
+        logger.info("automation_expert_change route=templates status=200 templates=%s", len(views))
+        return envelope({"templates": views[:TEMPLATES_MAX], "total": len(views),
+                         "truncated": len(views) > TEMPLATES_MAX, "catalog_sha256": catalog.catalog_sha256})
 
     @app.get(f"{PREFIX}/flow-changes/{{proposal_id}}")
     async def read_change(proposal_id: str, authorization: str | None = Header(default=None)) -> Any:
