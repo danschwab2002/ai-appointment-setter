@@ -57,6 +57,69 @@ _BUTTON_SUFFIX_INVALID_RE = re.compile(r"\s")
 # checkout of the cart and the payment slip of OXXO both have it.
 _URL_BUTTON_RE = re.compile(r"https://[^\s{}#]+\{\{1\}\}")
 
+# The media a HEADER of an approved template can carry, by the ``media_type``
+# Chatwoot 4.13 reads in ``processed_params.header`` and the ``format`` Meta
+# gives the component in the catalog. Chatwoot turns ``{media_url,
+# media_type}`` into ``{type: "image", image: {link: url}}`` (or ``video``)
+# without touching its own storage (``Whatsapp::TemplateProcessorService`` and
+# ``PopulateTemplateParametersService#build_media_parameter``, tag v4.13.0):
+# Meta downloads that link, so it must be public. A document header or a
+# location is not supported here.
+HEADER_MEDIA_FORMATS = {"image": "IMAGE", "video": "VIDEO"}
+# Chatwoot 4.13 cuts every parameter at 1000 characters (``sanitize_parameter``,
+# which also drops ``<``, ``>``, ``"`` and ``'``) and then rewrites the URL with
+# ``Addressable::URI.parse(url).normalize`` (addressable 2.8.7 in its
+# Gemfile.lock): the host to lower case, ``:443`` out, an empty path to ``/``,
+# the dot segments out, every ``%XX`` re-encoded, and what RFC 3986 does not
+# allow percent-encoded. Instead of copying that normalizer, the bridge only
+# accepts a narrow shape that it leaves exactly as it is (E-196, checked with
+# addressable 2.8.7): ``https://``, a lower case host without port or user,
+# one or more path segments of ``A-Z a-z 0-9 . _ ~ -`` (never ``.`` or ``..``
+# alone), an optional query of ``key=value`` pairs of those same characters
+# joined by ``&``, no ``%``, no fragment, and up to 1000 characters. The URL of
+# the media library (``GET /medios/<clave>``) fits it.
+_HEADER_MEDIA_URL_MAX_CHARS = 1000
+_URL_CHARS = r"[A-Za-z0-9._~-]"
+_HEADER_MEDIA_URL_RE = re.compile(
+    r"https://"
+    r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+"
+    rf"(?:/(?!\.\.?(?:[/?]|\Z)){_URL_CHARS}+)+"
+    rf"(?:\?{_URL_CHARS}+={_URL_CHARS}*(?:&{_URL_CHARS}+={_URL_CHARS}*)*)?"
+)
+
+
+@dataclass(frozen=True)
+class TemplateHeaderMedia:
+    """The image or video the send puts in the HEADER of one approved template.
+
+    ``media_type`` is ``image`` or ``video``; ``url`` is the public https link
+    Meta downloads on each send. It is declared by whoever configures the
+    template, never by the agent, and the parser only accepts it for a
+    template whose HEADER has that same format.
+    """
+
+    media_type: str
+    url: str
+
+    def __post_init__(self) -> None:
+        if self.media_type not in HEADER_MEDIA_FORMATS:
+            raise ValueError("template_header_media_type_invalid")
+        if (
+            not isinstance(self.url, str)
+            or len(self.url) > _HEADER_MEDIA_URL_MAX_CHARS
+            or _HEADER_MEDIA_URL_RE.fullmatch(self.url) is None
+        ):
+            raise ValueError("template_header_media_url_invalid")
+
+    @property
+    def header_format(self) -> str:
+        """The ``format`` of the HEADER component in the catalog of Meta."""
+        return HEADER_MEDIA_FORMATS[self.media_type]
+
+    def processed_header(self) -> dict[str, str]:
+        """``processed_params.header`` for Chatwoot 4.13."""
+        return {"media_url": self.url, "media_type": self.media_type}
+
 
 def is_static_url(url: object) -> bool:
     """A fixed https URL of a URL button: no ``{{n}}``, so the send fills nothing."""
@@ -90,6 +153,9 @@ class ApprovedTemplate:
     has_checkout_button: bool = False
     # The approved URL of that button, ``None`` without one.
     button_url: str | None = None
+    # The image or video of the HEADER, when the template has a media header
+    # and the caller declared it. ``processed_params`` then carries it.
+    header_media: TemplateHeaderMedia | None = None
 
     def processed_params(
         self,
@@ -105,6 +171,8 @@ class ApprovedTemplate:
         """
         self.render(values)
         params: dict[str, object] = {"body": dict(values)}
+        if self.header_media is not None:
+            params["header"] = self.header_media.processed_header()
         if self.has_checkout_button:
             if (
                 not isinstance(button_suffix, str)
@@ -152,6 +220,7 @@ def parse_approved_template(
     expected_category: str | Collection[str],
     parameter_count: int,
     checkout_button: bool = False,
+    header_media: TemplateHeaderMedia | None = None,
     url_button: str | None = None,
     parameterless_buttons_only: bool = False,
 ) -> ApprovedTemplate:
@@ -189,6 +258,14 @@ def parse_approved_template(
     is not there, or it is not APPROVED. ``approved_template_mismatch``: it is
     there but does not match what the runtime would send (language, category,
     placeholders, a component that needs parameters the bridge does not send).
+
+    ``header_media``: the image or video the send puts in the HEADER. With it,
+    the template must have exactly that media HEADER (``IMAGE`` for an image,
+    ``VIDEO`` for a video): another format is ``header_media_mismatch`` and no
+    media HEADER at all is ``header_media_missing``, so a declared media never
+    goes to a template that has no place for it. Without it, a media HEADER
+    stays ``component_requires_parameters``, as before: Meta refuses the send
+    of a media header without its media.
     """
     if not isinstance(template_name, str) or not template_name.strip():
         raise ValueError("approved_template_name_missing")
@@ -214,6 +291,8 @@ def parse_approved_template(
         if url_button is not None and url_button != CHECKOUT_BUTTON_URL:
             raise ValueError("approved_template_url_button_conflict")
         url_button = CHECKOUT_BUTTON_URL
+    if header_media is not None and not isinstance(header_media, TemplateHeaderMedia):
+        raise ValueError("approved_template_header_media_invalid")
     if not isinstance(inbox_payload, dict):
         raise ApprovedTemplateError(REASON_UNAVAILABLE, "invalid_inbox_payload")
     templates = inbox_payload.get("message_templates")
@@ -270,6 +349,7 @@ def parse_approved_template(
         raise ApprovedTemplateError(REASON_MISMATCH, "unexpected_placeholders")
 
     has_checkout_button = False
+    has_header_media = False
     for component in components:
         kind = component.get("type")
         if kind == "BODY":
@@ -301,6 +381,15 @@ def parse_approved_template(
             if not all(button.get("type") == "QUICK_REPLY" for button in quick_replies):
                 raise ApprovedTemplateError(REASON_MISMATCH, "unsupported_button")
             continue
+        if kind == "HEADER" and component.get("format") in HEADER_MEDIA_FORMATS.values():
+            if header_media is None:
+                raise ApprovedTemplateError(
+                    REASON_MISMATCH, "component_requires_parameters"
+                )
+            if has_header_media or component.get("format") != header_media.header_format:
+                raise ApprovedTemplateError(REASON_MISMATCH, "header_media_mismatch")
+            has_header_media = True
+            continue
         if kind in _STATIC_COMPONENTS:
             text = component.get("text")
             if (kind == "HEADER" and component.get("format", "TEXT") != "TEXT") or (
@@ -314,6 +403,8 @@ def parse_approved_template(
 
     if url_button is not None and not has_checkout_button:
         raise ApprovedTemplateError(REASON_MISMATCH, "checkout_button_missing")
+    if header_media is not None and not has_header_media:
+        raise ApprovedTemplateError(REASON_MISMATCH, "header_media_missing")
 
     return ApprovedTemplate(
         name=wanted,
@@ -323,4 +414,5 @@ def parse_approved_template(
         parameter_count=parameter_count,
         has_checkout_button=has_checkout_button,
         button_url=url_button if has_checkout_button else None,
+        header_media=header_media,
     )

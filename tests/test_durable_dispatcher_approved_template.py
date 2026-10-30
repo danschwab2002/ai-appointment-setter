@@ -42,6 +42,7 @@ import httpx
 import pytest
 
 from bridge.app import Settings, create_app
+from bridge.approved_templates import TemplateHeaderMedia
 from bridge.chatwoot import ChatwootClient
 from bridge.instance_manifest import InstanceManifest, Template
 from bridge.lead_first_name import FirstNameInference, lead_name_key
@@ -2021,3 +2022,121 @@ def test_the_real_supabase_client_uses_the_first_contact_rpcs_for_its_anchor(
     assert operations[-1] == "record_and_finalize_followup_acceptance"
     [message] = chatwoot.posts("/conversations/200/messages")
     assert message["template_params"]["name"] == FORM_TEMPLATE
+
+
+# ------------------------------------------------- the media header (E-160)
+#
+# No hay en ningun catalogo capturado una plantilla con encabezado de imagen o
+# de video en tests/fixtures (los inboxes 9 y 11 solo tienen encabezados de texto, medido el
+# 2026-10-28 sobre tests/fixtures). El componente se agrega a la plantilla
+# capturada con la forma que documenta Meta para el catalogo («Template
+# components», HEADER con ``format`` IMAGE o VIDEO y ``example.header_handle``)
+# y que el parser lee: solo ``type`` y ``format``. El envio sale como lo arma
+# Chatwoot 4.13 (``Whatsapp::TemplateProcessorService``, tag v4.13.0):
+# ``processed_params.header = {media_url, media_type}``.
+
+_BONO_URL = "https://bridge.example.test/medios/bono.png"
+
+
+def _with_media_header(name: str, media_format: str) -> list[dict[str, Any]]:
+    return _mutated(
+        name,
+        lambda template: template["components"].insert(0, {
+            "type": "HEADER",
+            "format": media_format,
+            "example": {"header_handle": ["https://scontent.whatsapp.net/example"]},
+        }),
+    )
+
+
+def _template_with_media(media_type: str = "image") -> WhatsAppTemplateConfig:
+    return replace(
+        TEMPLATE,
+        header_media=((CART_TEMPLATE, TemplateHeaderMedia(media_type, _BONO_URL)),),
+    )
+
+
+@pytest.mark.parametrize(("media_type", "media_format"), [("image", "IMAGE"), ("video", "VIDEO")])
+def test_a_template_with_a_media_header_goes_out_with_its_declared_media(
+    tmp_path: Path, media_type: str, media_format: str
+) -> None:
+    authority = _Authority(offer_code="2uafw5bg")
+    chatwoot = _Chatwoot(_with_media_header(CART_TEMPLATE, media_format))
+
+    _run(_dispatcher(
+        authority, chatwoot, tmp_path, template=_template_with_media(media_type)
+    ))
+
+    expected = _expected(
+        CART_TEMPLATE, first="Edith García Pérez", product="Alimenta tu Tiroides"
+    )
+    [message] = chatwoot.posts("/conversations/200/messages")
+    assert message["content"] == expected
+    assert message["template_params"]["processed_params"] == {
+        "body": {"1": "Edith García Pérez", "2": "Alimenta tu Tiroides"},
+        "header": {"media_url": _BONO_URL, "media_type": media_type},
+    }
+    assert authority.events[-1] == "accepted"
+
+
+def test_a_media_header_without_its_declared_media_is_not_sent(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    authority = _Authority(offer_code="2uafw5bg")
+    chatwoot = _Chatwoot(_with_media_header(CART_TEMPLATE, "IMAGE"))
+
+    with caplog.at_level(logging.WARNING):
+        _run(_dispatcher(authority, chatwoot, tmp_path))
+
+    # Lo de antes de E-160, igual: Meta rechaza un encabezado de medio sin su medio.
+    assert authority.events == ["reevaluate", "reserve"]
+    assert authority.finalizations[-1]["reason_code"] == "approved_template_mismatch"
+    assert "detail=component_requires_parameters" in caplog.text
+    assert [method for method, _, _ in chatwoot.requests] == ["GET"]
+
+
+@pytest.mark.parametrize(
+    ("catalog", "media_type", "detail"),
+    [
+        pytest.param(
+            None, "image", "header_media_missing",
+            id="declared media, template without media header",
+        ),
+        pytest.param(
+            "IMAGE", "video", "header_media_mismatch",
+            id="video declared, image header approved",
+        ),
+    ],
+)
+def test_a_declared_media_that_does_not_match_the_header_is_not_sent(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    catalog: str | None,
+    media_type: str,
+    detail: str,
+) -> None:
+    authority = _Authority(offer_code="2uafw5bg")
+    chatwoot = _Chatwoot(
+        None if catalog is None else _with_media_header(CART_TEMPLATE, catalog)
+    )
+
+    with caplog.at_level(logging.WARNING):
+        _run(_dispatcher(
+            authority, chatwoot, tmp_path, template=_template_with_media(media_type)
+        ))
+
+    assert authority.events == ["reevaluate", "reserve"]
+    assert authority.finalizations[-1]["reason_code"] == "approved_template_mismatch"
+    assert f"detail={detail}" in caplog.text
+    assert [method for method, _, _ in chatwoot.requests] == ["GET"]
+
+
+def test_a_media_declared_for_one_template_does_not_reach_another(tmp_path: Path) -> None:
+    authority = _Authority(offer_code="2uafw5bg", anchor_type="payment_failure")
+    chatwoot = _Chatwoot()
+
+    _run(_dispatcher(authority, chatwoot, tmp_path, template=_template_with_media()))
+
+    [message] = chatwoot.posts("/conversations/200/messages")
+    assert message["template_params"]["name"] == PAYMENT_FAILURE_TEMPLATE
+    assert "header" not in message["template_params"]["processed_params"]
