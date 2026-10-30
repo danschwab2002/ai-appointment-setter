@@ -98,6 +98,8 @@ def test_it_is_one_transaction_and_comes_before_the_flow_engine_routes() -> None
         "20261030000200_flow_engine_native_payment_failure_v1.sql",
         # La lista de las propuestas del AE (20261030000300, E-208): una lectura nueva.
         "20261030000300_flow_change_list_v1.sql",
+        # Los frenos de la compra ven nuestro link (20261030000400, E-215): la tercera fuente.
+        "20261030000400_portable_purchase_stops_see_our_link_v1.sql",
     ]
 
 

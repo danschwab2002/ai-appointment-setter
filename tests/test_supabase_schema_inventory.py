@@ -1626,19 +1626,40 @@ def test_flow_engine_native_payment_failure_fingerprint_is_before_the_list() -> 
         assert marker in compact_fingerprint, marker
 
 
-def test_flow_change_list_fingerprint_is_last() -> None:
+def test_flow_change_list_fingerprint_is_before_the_link_stops() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261030000300 (la lista de las propuestas del AE, E-208) es la ultima.
-    fingerprint = sql.split("'20261030000300'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261030000300 (la lista de las propuestas del AE, E-208), antes de la de E-215.
+    fingerprint = sql.split("'20261030000300'", 1)[1].split(
+        "    union all\n    select\n        '20261030000400'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261030000300_flow_change_list_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",2,'flow_change_list')")
+    assert compact_fingerprint.endswith(",2,'flow_change_list'")
     for marker in (
         "to_regprocedure('public.list_flow_changes_v1(jsonb,boolean,integer)')",
         "prosecdef",
         "provolatile='s'",
         "nothas_function_privilege('service_role',oid,'EXECUTE')",
         "like'%automation_expert_change=X%'",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_portable_purchase_stops_see_our_link_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261030000400 (los frenos de la compra ven nuestro link, E-215) es la ultima.
+    fingerprint = sql.split("'20261030000400'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261030000400_portable_purchase_stops_see_our_link_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",3,'portable_purchase_stops_see_our_link')")
+    for marker in (
+        "to_regprocedure('public._portable_checkout_link_purchase_exists(text,text,uuid,text,text)')",
+        "to_regprocedure('public._portable_precheckout_stop_reason(uuid,uuid)')",
+        "to_regprocedure('public._portable_case_purchase_stop_reason(uuid)')",
+        "position('portable_checkout_link_purchase_stop'indefinition)>0",
+        "position('purchase_matched'indefinition)>0",
+        "notprosecdef",
+        "provolatile='s'",
     ):
         assert marker in compact_fingerprint, marker

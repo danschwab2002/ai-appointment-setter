@@ -69,6 +69,13 @@
 //      telefono, hace que reevaluate_followup_action
 //      cancele el caso (cancelled, no won) con purchase_detected_any_offer,
 //      sin intento; la compra de otra persona no lo frena.
+//  14. la compra con nuestro link, en los dos frenos portables
+//      (20261030000400, E-215): quien compro con el link y vuelve a llenar el
+//      formulario no recibe el primer contacto (purchase_by_identity), y el
+//      carrito de quien pago el link de otro (el comprador de Hotmart, sin
+//      cruce con la intencion de la emision) se cancela antes del toque
+//      (purchase_detected_any_offer); el link reservado sin compra (el del
+//      primer contacto y el del segundo producto) y otra persona no frenan.
 //
 // Datos:
 //   - Binding, ofertas, landings, producto, Chatwoot y consentimiento salen de
@@ -1144,7 +1151,7 @@ const enrollFirstContact = async (lead) => {
     select * from public.set_lancemos_pilot_cohort_member($1,$2,$3,$4,'active','operator-test','controlled-test')
   `, [FC_SCOPE, FC_SCOPE_VERSION, lead.contact, generation])).rows, `${lead.label} enrollment`);
   if (member.member_status !== 'active') {
-    throw new Error(`${lead.label} was not enrolled in the first contact scope`);
+    throw new Error(`${lead.label} was not enrolled in the first contact scope: ${JSON.stringify(member)}`);
   }
 };
 const expectFirstContactPlan = (label, lead, plan) => {
@@ -1907,16 +1914,19 @@ const linkIssuance = one((await db.query(`
   select sck_value from public.checkout_link_issuances where id = $1
 `, [linkBuyer.issuanceId])).rows, 'link purchase issuance');
 const linkPurchaseId = `att1-chain-link-purchase-${linkBuyer.lead.email}`;
+// La hora de Hotmart, dos horas antes: el caso 14 vuelve a ver a esta persona
+// despues de su compra (la guarda de la compra conocida antes del plan,
+// 20260808000200, frena solo una compra de los 5 minutos previos).
 const linkPurchasePayload = {
   id: linkPurchaseId,
-  creation_date: Date.now(),
+  creation_date: at(-120).getTime(),
   event: 'PURCHASE_APPROVED',
   version: '2.0.0',
   data: {
     product: { id: ATT1.productId, ucode: 'ATT1-CHAIN-UCODE' },
     buyer: { email: linkBuyer.lead.email, checkout_phone: `+${linkBuyer.lead.whatsapp}` },
     purchase: {
-      approved_date: Date.now(),
+      approved_date: at(-120).getTime(),
       status: 'APPROVED',
       transaction: 'HPATT1CHAINLINK1',
       offer: { code: linkBuyer.lead.offer.offer_code },
@@ -2230,6 +2240,204 @@ if (!anyOfferGrant.service || anyOfferGrant.anon || anyOfferGrant.authenticated)
   throw new Error(`the any offer stop has the wrong grants: ${JSON.stringify(anyOfferGrant)}`);
 }
 
+// ---------------------------------------------------------------------------
+// 14. La compra con nuestro link, en los dos frenos portables (20261030000400,
+//     E-215). La compra del caso 11 entro por la emision: no dejo la
+//     correlacion portable (linkPortableRows === 0) y no gano ningun caso. Es
+//     lo que midio E-212 en Maribel (conversaciones 4 y 20): sin esta
+//     migracion, ninguno de los dos frenos la ve.
+// ---------------------------------------------------------------------------
+// La compra por la emision, como la manda el bridge, con la hora de Hotmart
+// dos horas antes: quien vuelve despues de comprar. (Una compra dentro de los 5
+// minutos previos al plan la frena otra guarda, la de la compra conocida
+// antes del plan, 20260808000200, que no es la que falta.)
+const buyWithOurLink = async (reserved, buyer, transaction) => {
+  const sck = one((await db.query(`
+    select sck_value from public.checkout_link_issuances where id = $1
+  `, [reserved.issuanceId])).rows, `${transaction} issuance`).sck_value;
+  const id = `att1-chain-link-purchase-${transaction}`;
+  const result = await asServiceTry(`
+    select * from public.admit_and_correlate_hotmart_checkout_issuance_v2(
+      $1, $2::jsonb, $3, clock_timestamp()
+    )
+  `, [id, JSON.stringify({
+    id,
+    creation_date: at(-120).getTime(),
+    event: 'PURCHASE_APPROVED',
+    version: '2.0.0',
+    data: {
+      product: { id: ATT1.productId, ucode: 'ATT1-CHAIN-UCODE' },
+      buyer: { email: buyer.email, checkout_phone: `+${buyer.phone}` },
+      purchase: {
+        approved_date: at(-120).getTime(),
+        status: 'APPROVED',
+        transaction,
+        offer: { code: reserved.lead.offer.offer_code },
+        origin: { sck },
+      },
+    },
+  }), sck]);
+  const portableRows = result.ok ? one((await db.query(`
+    select count(*)::integer as count from public.portable_hotmart_purchase_correlations
+    where webhook_event_id = $1
+  `, [result.rows[0].webhook_event_id])).rows, `${transaction} portable correlation`).count : null;
+  if (!result.ok || result.rows[0].correlation_outcome !== 'matched' || portableRows !== 0) {
+    throw new Error(`${transaction}: the purchase with our link was not matched by the issuance alone: ${JSON.stringify({ result: result.ok ? result.rows[0] : `${result.code} ${result.message}`, portableRows })}`);
+  }
+  return result.rows[0];
+};
+
+// 14a. Quien compro con el link en el caso 11 vuelve a llenar el formulario:
+//      el formulario solo reusa intenciones esperando, asi que nace otra. Sin
+//      la tercera fuente, intent_purchased mira la intencion nueva,
+//      purchase_by_identity la correlacion portable, y el primer contacto se
+//      planifica.
+const refill = linkBuyer.lead;
+// La cohorte del primer contacto tiene cupo 2: sale quien ya compro en 9.5.
+{
+  const { generation } = one((await db.query(`
+    select generation from public.pilot_runtime_controls where scope_key = $1
+  `, [FC_SCOPE])).rows, 'first contact generation');
+  const removed = one((await db.query(`
+    select * from public.set_lancemos_pilot_cohort_member($1,$2,$3,$4,'removed','operator-test','controlled-test')
+  `, [FC_SCOPE, FC_SCOPE_VERSION, fcBuyer.contact, generation])).rows, 'first contact buyer removal');
+  if (removed.member_status !== 'removed') {
+    throw new Error(`the first contact buyer did not leave the cohort: ${JSON.stringify(removed)}`);
+  }
+}
+await enrollFirstContact(refill);
+const refillPlan = await submitFirstContact(refill, FC_DUE);
+const refillIntent = await intentOf(refillPlan.intent);
+if (refillPlan.intent === linkBuyer.intent
+    || refillIntent.lifecycle_state !== 'waiting_for_purchase'
+    || (await intentOf(linkBuyer.intent)).lifecycle_state !== 'purchased'
+    || refillPlan.result !== 'not_planned:purchase_by_identity'
+    || refillPlan.recovery_case_id !== null) {
+  throw new Error(`the buyer with our link who fills the form again gets the first contact: ${JSON.stringify({ result: refillPlan.result, newIntent: refillPlan.intent !== linkBuyer.intent, state: refillIntent.lifecycle_state })}`);
+}
+
+// 14b. Pago el link de otro: el link es el del carrito en 549 (caso 10) y el
+//      comprador que informa Hotmart es otra persona, con otro mail y otro
+//      telefono. Despues esa persona llena el formulario y abandona un
+//      carrito: la intencion purchased es la del dueno del link (no cruza) y
+//      la compra no tiene correlacion portable ni caso ganado. El freno lo
+//      tiene que ver por el comprador del evento.
+const payerLink = reservedLinks['carrito-549'];
+const payer = person('pago-el-link-de-otro');
+await buyWithOurLink(payerLink, payer, 'HPATT1CHAINLINK3');
+const payerPlan = await planAnyOfferCart(payer, offers[1]);
+const payerRun = await reevaluateAnyOffer(payer, payerPlan);
+if (payerRun.decision.decision !== 'cancel'
+    || payerRun.decision.reason_code !== 'purchase_detected_any_offer'
+    || payerRun.state.case_status !== 'cancelled'
+    || payerRun.state.purchase_event_id !== null
+    || payerRun.state.action_status !== 'cancelled'
+    || payerRun.state.terminal_reason !== 'purchase_detected_any_offer'
+    || payerRun.state.attempts !== 0) {
+  throw new Error(`the cart of who paid our link did not stop before the touch: ${JSON.stringify(payerRun)}`);
+}
+
+// 14c. La tercera fuente sola, con sus controles. La ejecuta solo el duenio
+//      (la llaman los dos frenos); ningun rol de la API.
+const linkPurchaseSeenIn = async (tenant, funnel, contact, email, phone,
+  fn = '_portable_checkout_link_purchase_exists') => one((await db.query(`
+  select public.${fn}($1,$2,$3,$4,$5) as seen
+`, [tenant, funnel, contact, email, phone])).rows, 'link purchase stop').seen;
+const linkPurchaseSeen = (funnel, contact, email, phone) => linkPurchaseSeenIn(
+  ATT1.tenant, funnel, contact, email, phone);
+// D2, aislada: el duenio del link de 549, que pago otra persona (14b), sin
+// ningun dato suyo que cruce al comprador ni a la intencion (se le sacan los
+// contact_points dentro de una transaccion que se deshace). Lo frena solo la
+// rama del contacto de la emision: la misma funcion sin esa rama da false.
+// D2 es una decision abierta de Dan: si cambia, cambia esta asercion.
+const ownerOfLinkPaidByOther = {};
+await db.exec('begin');
+try {
+  await db.query('delete from public.contact_points where contact_id = $1', [payerLink.lead.contact]);
+  const definition = one((await db.query(`
+    select pg_get_functiondef(
+      'public._portable_checkout_link_purchase_exists(text,text,uuid,text,text)'::regprocedure
+    ) as definition
+  `)).rows, 'link purchase stop definition').definition;
+  const branch = '              issuance.contact_id = p_contact_id\n              or ';
+  if (definition.split(branch).length !== 2) {
+    throw new Error('the contact branch of the link purchase stop is not where the mutation expects it');
+  }
+  await db.exec(definition
+    .replace('public._portable_checkout_link_purchase_exists(', 'public._link_purchase_without_contact_branch(')
+    .replace(branch, '              '));
+  ownerOfLinkPaidByOther.with_the_branch = await linkPurchaseSeenIn(ATT1.tenant, ATT1.funnel,
+    payerLink.lead.contact, null, null);
+  ownerOfLinkPaidByOther.without_the_branch = await linkPurchaseSeenIn(ATT1.tenant, ATT1.funnel,
+    payerLink.lead.contact, null, null, '_link_purchase_without_contact_branch');
+} finally {
+  await db.exec('rollback');
+}
+if (ownerOfLinkPaidByOther.with_the_branch !== true
+    || ownerOfLinkPaidByOther.without_the_branch !== false) {
+  throw new Error(`D2: the owner of a link paid by another person: ${JSON.stringify(ownerOfLinkPaidByOther)}`);
+}
+const linkStop = {
+  buyer_by_contact: await linkPurchaseSeen(ATT1.funnel, linkBuyer.lead.contact, null, null),
+  buyer_by_email: await linkPurchaseSeen(ATT1.funnel, null, linkBuyer.lead.email, null),
+  buyer_by_form_phone: await linkPurchaseSeen(ATT1.funnel, null, null, linkBuyer.lead.formPhone),
+  payer_by_phone: await linkPurchaseSeen(ATT1.funnel, null, null, payer.phone),
+  // El filtro por funnel: el comprador del caso 11, en el funnel del segundo
+  // producto (donde su link quedo reservado y nadie lo compro).
+  buyer_in_another_funnel: await linkPurchaseSeen(SECOND_PRODUCT.funnel,
+    linkBuyer.lead.contact, linkBuyer.lead.email, linkBuyer.lead.whatsapp),
+  // El filtro por tenant: el mismo comprador y el mismo funnel, en otro tenant.
+  buyer_in_another_tenant: await linkPurchaseSeenIn('otra-aliada', ATT1.funnel,
+    linkBuyer.lead.contact, linkBuyer.lead.email, linkBuyer.lead.whatsapp),
+  // D2: el duenio del link que pago otra persona, con sus datos.
+  owner_of_link_paid_by_other: await linkPurchaseSeen(ATT1.funnel, payerLink.lead.contact,
+    payerLink.lead.email, payerLink.lead.whatsapp),
+  // Quien pidio el link en el primer contacto (caso 10) y no compro.
+  link_without_purchase: await linkPurchaseSeen(ATT1.funnel, asker.lead.contact,
+    asker.lead.email, asker.lead.whatsapp),
+  another_person: await linkPurchaseSeen(ATT1.funnel, null, 'nadie@example.test', '12025550999'),
+};
+const expectedLinkStop = {
+  buyer_by_contact: true,
+  buyer_by_email: true,
+  buyer_by_form_phone: true,
+  payer_by_phone: true,
+  buyer_in_another_funnel: false,
+  buyer_in_another_tenant: false,
+  owner_of_link_paid_by_other: true,
+  link_without_purchase: false,
+  another_person: false,
+};
+const linkStopGrant = one((await db.query(`
+  select has_function_privilege('service_role', $1, 'execute') as service,
+         has_function_privilege('anon', $1, 'execute') as anon,
+         has_function_privilege('authenticated', $1, 'execute') as authenticated
+`, ['public._portable_checkout_link_purchase_exists(text,text,uuid,text,text)'])).rows,
+'link purchase stop grant');
+// El indice parcial de las emisiones compradas (E-217, H2).
+const linkStopIndex = one((await db.query(`
+  select count(*)::integer as count from pg_indexes
+  where schemaname = 'public' and tablename = 'checkout_link_issuances'
+    and indexname = 'checkout_link_issuances_purchase_matched_idx'
+    and indexdef like '%(purchase_intent_id) WHERE (status = ''purchase_matched''::text)'
+`)).rows, 'link purchase stop index').count;
+if (linkStopIndex !== 1) throw new Error(`the purchase_matched partial index is missing: ${linkStopIndex}`);
+// Correrla dos veces aborta con 55000 sin cambiar nada.
+const linkStopMigration = readFileSync(join(root,
+  'supabase/migrations/20261030000400_portable_purchase_stops_see_our_link_v1.sql'), 'utf8');
+let linkStopTwice = 'applied twice';
+try {
+  await db.exec(linkStopMigration);
+} catch (caught) {
+  linkStopTwice = `${caught.code} ${caught.message}`;
+  await db.exec('rollback');
+}
+if (linkStopTwice !== '55000 portable_checkout_link_purchase_stop_already_applied'
+    || JSON.stringify(linkStop) !== JSON.stringify(expectedLinkStop)
+    || linkStopGrant.service || linkStopGrant.anon || linkStopGrant.authenticated) {
+  throw new Error(`the link purchase stop: ${JSON.stringify({ linkStop, linkStopGrant, linkStopTwice })}`);
+}
+
 console.log(JSON.stringify({
   att1_portable_chain: 'OK',
   empty_cohort: 'pilot_scope_rejected:pilot_contact_not_in_cohort',
@@ -2275,5 +2483,12 @@ console.log(JSON.stringify({
   },
   link_for_funnel: funnelLinks,
   purchase_of_another_offer: anyOffer,
+  purchase_with_our_link_stops: {
+    form_again: refillPlan.result,
+    cart_of_who_paid_the_link: `${payerRun.decision.decision}:${payerRun.decision.reason_code}:${payerRun.state.case_status}`,
+    third_source: linkStop,
+    owner_of_link_paid_by_other_isolated: ownerOfLinkPaidByOther,
+    applied_twice: linkStopTwice,
+  },
 }));
 await db.close();

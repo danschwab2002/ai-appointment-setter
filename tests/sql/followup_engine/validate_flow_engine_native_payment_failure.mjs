@@ -99,8 +99,8 @@ const results = {};
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-// Despues va solo la lista de las propuestas del AE (E-208): una lectura nueva.
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261030000300_flow_change_list_v1.sql'])) {
+// Despues van la lista de las propuestas del AE (E-208), una lectura nueva, y los frenos de la compra con nuestro link (E-215).
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261030000300_flow_change_list_v1.sql', '20261030000400_portable_purchase_stops_see_our_link_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de la lista de las propuestas`, names.slice(position + 1));
 }
 if (maribel.name !== 'maribel_retomar_proceso_01' || maribel.category !== 'MARKETING') fail('el fixture no es la plantilla de Maribel');
