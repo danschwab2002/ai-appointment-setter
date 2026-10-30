@@ -34,6 +34,11 @@
 //      carrito del legado de esa persona planifica igual que antes; y tres
 //      recorridos del legado (un carrito, el segundo de la misma oferta, la
 //      repeticion del mismo evento) dan lo mismo con las dos definiciones;
+//   3b. ATT1 como factura hoy, con el carrito por la ruta motor (E-206): sus
+//      casos son flujo:<id> sin flow_engine_trigger, y un segundo carrito de la
+//      misma persona (misma oferta y otra) da lo mismo con las dos
+//      definiciones; si (b) mirara cualquier caso flujo:% que no sea compra,
+//      el de otra oferta caeria en flujo_nativo_en_curso (rojo verificado);
 //   4. el primer contacto del legado lo corta el caso nativo (C5):
 //      _portable_precheckout_stop_reason, el freno que usa su reevaluacion, da
 //      superseded_by_provider_event; con la clasificacion de la intencion
@@ -451,6 +456,38 @@ let carla = null;
   const rejected = await startNew(reserved);
   if (rejected.outcome !== 'rechazado' || rejected.reason !== 'baja') fail('la baja de Chatwoot en el arranque', rejected);
   results.baja = { contacto: cut.decision.reason_code, chatwoot: rejected.reason };
+}
+
+// ---------------------------------------------------------------------------
+// 3b. ATT1 como corre hoy: el carrito por la ruta motor (E-206). Sus casos son
+//     policy_key flujo:<id> sin flow_engine_trigger en el context: (b) no los
+//     toma por un carrito nativo. Un segundo carrito de la misma persona, de la
+//     misma oferta y de otra, da lo mismo con las dos definiciones.
+// ---------------------------------------------------------------------------
+{
+  const { FLOWS, SCOPE, createRoute, route, admit } = world;
+  const created = await createRoute(A.funnel, 'carrito', 'carrito', SCOPE);
+  if (!created.ok) fail('E-206: crear la ruta del carrito', created);
+  const toMotor = await route(A.funnel, 'carrito', FLOWS.carrito, 'motor');
+  if (!toMotor.ok || toMotor.route.executor !== 'motor') fail('E-206: el carrito a motor', toMotor);
+  const lead = await cartFor('att1-ruta-motor');
+  const first = await admit(lead);
+  if (first.outcome !== 'motor_arranco' || first.created !== true) fail('E-206: A1 por el motor', first);
+  const kase = one(await sql(`select policy_key, context ? 'flow_engine_trigger' as has_trigger, offer_code
+    from public.recovery_cases where id = $1`, [first.recovery_case_id]), 'E-206 caso');
+  if (!kase.policy_key.startsWith('flujo:') || kase.has_trigger) fail('E-206: el caso del motor', kase);
+  const shape = (row) => ({ outcome: row.outcome, reason: row.reason, created: row.created,
+    same_case: row.recovery_case_id === first.recovery_case_id });
+  const second = {};
+  for (const [label, offer] of [['misma', lead.offer], ['otra', otherOffer]]) {
+    lead.offer = offer;
+    await cartFor(lead);
+    const before = await withPrevious([ADMIT_NATIVE, PLAN_BASE], async () => shape(await admit(lead)));
+    const after = shape(await admit(lead));
+    if (JSON.stringify(before) !== JSON.stringify(after)) fail(`E-206: segundo carrito (${label} oferta) por el motor`, { before, after });
+    second[label] = after;
+  }
+  results.att1_ruta_motor = { primero: first.outcome, segundo: second };
 }
 
 // ---------------------------------------------------------------------------
