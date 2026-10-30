@@ -12,6 +12,49 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.23.0] - 2026-10-30
+
+Una versión menor sobre la 1.22.0, con cuatro PR. Tres son funcionalidad nueva, apagada por defecto: el envío de una plantilla con encabezado de imagen o de video (#368), la pausa al comprar después de la bienvenida de un flujo nativo (#370) y el sí a un cambio de flujo desde la página de aprobación del bridge (#371, A′ PR 3b). Uno cambia el manifiesto de la app de Slack del Automation Expert, que deja de registrar slash commands (#369).
+
+Sin migraciones, sin campos nuevos en el manifiesto y sin cambios en los profiles. Una variable nueva en el bridge, apagada por defecto (`PURCHASE_AGENT_PAUSE_AFTER_NATIVE_WELCOME_ENABLED`); el #371 va detrás de `FLOW_APPROVAL_ENABLED`, que ya estaba desde la 1.21.0. Es menor y no mayor porque ninguna instancia tiene que cambiar nada para actualizar: lo nuevo viene apagado o vacío, y el manifiesto de Slack solo cuenta para la próxima app que se cree.
+
+Nada cambia sin variable en una instancia que suba. Solo cambia el Python del bridge, más el manifiesto de la app del Automation Expert y los contratos.
+
+### Agregado
+
+- **El envío de una plantilla aprobada con encabezado de imagen o de video** (#368, E-191, M4, PR 1 de E-160; contrato `approved-template-direct-dispatch-v1`, «Encabezado de imagen o de video»). Vacío por defecto: nadie lo declara todavía, así que en ATT1, Johanna y Maribel todo sale igual.
+  - `WhatsAppTemplateConfig.header_media` declara el medio por plantilla (`TemplateHeaderMedia`, `image` o `video`, con su URL). El parser lo acepta solo si la plantilla tiene exactamente un `HEADER` de ese formato (si no, `header_media_mismatch` o `header_media_missing`) y lo manda en `processed_params.header` (`media_url`, `media_type`), la forma de Chatwoot 4.13. Sin el medio, un `HEADER` de imagen o video sigue cerrando con `component_requires_parameters`.
+  - La URL tiene una forma estrecha que Chatwoot le pasa a Meta sin cambiar un carácter: `https://`, host en minúscula sin usuario ni puerto, segmentos de `A-Z a-z 0-9 . _ ~ -`, consulta opcional `clave=valor`, sin `%` ni fragmento, hasta 1000 caracteres.
+  - Lo pasa solo el camino genérico del modo directo. Los envíos que arman sus propios parámetros (A1 con cupón, B1, los seguimientos del carrito, la ficha, el descuento) y el paso nativo todavía no: con un medio declarado para una de sus plantillas, la rechazan antes de cualquier pedido. La biblioteca de medios que lo carga desde el manifiesto es el PR 2.
+- **La pausa al comprar, después de la bienvenida de un flujo nativo** (#370, E-190; contratos `purchase-agent-pause-v1` y `flow-engine-v2` 2.9.0, sección 21). `PURCHASE_AGENT_PAUSE_AFTER_NATIVE_WELCOME_ENABLED`, apagado por defecto: apagado, quien recibe la bienvenida sigue atendido por el agente, como desde la 1.21.0 (#358).
+  - Prendido, el despachador pausa la conversación apenas Chatwoot acepta el envío de una acción nativa con `permiso: compra` (después de su paso `etiquetar`), con la misma etiqueta `automation_paused`, el mismo team y la misma nota que al comprar. No pausa el carrito nativo (`permiso: formulario`) ni un contexto sin `entry_permission`, y nunca levanta.
+  - En todo cierre definitivo del paso de la compra también pausa: la conversación del envío si se entregó sin aceptación confirmada, y las del comprador (buscadas como al comprar) si se rechazó, quedó sin resultado claro o cerró antes del pedido. Un fallo que todavía se reintenta no pausa.
+  - Un error transitorio se reintenta dos veces (2 s y 5 s); si sigue, queda una nota privada que pide poner `automation_paused` a mano (`[supportmagician-compra-pausa-pendiente:<action_id>]`). Logs: `purchase_agent_paused_after_welcome`, `…_failed`, `…_pending` y `…_skipped`.
+  - El flag exige `PURCHASE_AGENT_PAUSE_ENABLED`, `FLOW_ENGINE_ENABLED` y `DURABLE_DISPATCHER_ENABLED`: sin ellos el bridge no arranca. Está en `PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES`, en `.env.example` y en `compose.yaml`.
+- **El sí a un cambio de flujo desde la página de aprobación** (#371, E-192, A′ PR 3b; contrato `flow-change-cycle-v1` 1.9.0, «Lo que fija la página que aprueba»). Detrás de `FLOW_APPROVAL_ENABLED`, apagado por defecto. Sin migración: usa los envoltorios del rol `flow_change_approver` de la `20261028000100` (#354).
+  - Cuatro rutas POST, con el `Origin` de la página, el token de CSRF de la sesión y redirección después: aprobar y publicar (`/flow-approval/p/{id}/publish`), descartar con un motivo de una línea (`…/discard`), pausar con la generación que mostró la página (`/flow-approval/pause`) y sumar un teléfono a la cohorte de un flujo nativo (`/flow-approval/cohort`).
+  - Publicar hace lo que el comando del operador: relee la propuesta y exige su huella, lee el catálogo de plantillas de la bandeja, revalida en fase `publish` con el mismo validador, aprueba, revalida si pasaron 8 minutos y publica. Quién aprueba lo pone la base desde la sesión de «Sign in with Slack»; ningún pedido lleva un ID de Slack.
+  - Lo que llega a todos (pasar a todos, cambiar un flujo prendido, apagar, cancelar lo que espera) pide una segunda pantalla; un `nuevo` o algo en cohorte va con un clic. Un clic repetido no publica dos veces. El teléfono de la cohorte no se loguea ni vuelve en la página.
+  - Avisa en el canal de alertas al publicar o pausar, por el productor del conector de Slack (`OPS-005` y `OPS-003`). Si no sale, no se deshace nada y la página lo dice.
+  - Con el flag prendido, el bridge no arranca sin el cliente de control de Chatwoot. El bridge contesta el contrato `1.9.0` (antes `1.8.0`); el plugin del Automation Expert mira solo la versión mayor.
+
+### Cambiado
+
+- **La app de Slack del Automation Expert ya no registra slash commands** (#369, E-193, M9). `deploy/slack-app-manifest-automation-expert-v1.json` sale sin `features.slash_commands` y sin el scope `commands`. Slack le da cada comando a la última app instalada en todo el espacio de trabajo, y al instalar la de Maribel en el Slack de Lancemos le sacó `/model` a otro agente de Hermes. Los comandos del profile se escriben en el DM con `!` (`!new`, `!stop`, `!status`; `!model` y `!restart` para quienes administran). Una app ya instalada no cambia: cuenta para la próxima que se cree desde el manifiesto (runbook `automation-expert-slack-app-runbook.md`, «Sin slash commands»).
+
+### Qué hace quien actualiza
+
+- **Sin migraciones.** La cadena sigue en `20261028000400`, la de la 1.21.0.
+- **La variable nueva del bridge**, apagada por defecto:
+  ```
+  PURCHASE_AGENT_PAUSE_AFTER_NATIVE_WELCOME_ENABLED=false   # #370; exige PURCHASE_AGENT_PAUSE_ENABLED, FLOW_ENGINE_ENABLED y DURABLE_DISPATCHER_ENABLED
+  ```
+  Está en `.env.example` y en `compose.yaml`. Ausente, es `false`. El #371 no suma variables: usa las `FLOW_APPROVAL_*` de la 1.21.0, y con `FLOW_APPROVAL_ENABLED=true` exige además el cliente de control de Chatwoot (`CHATWOOT_CONTROL_API_ACCESS_TOKEN` y `CHATWOOT_PAUSE_MACRO_ID`, de donde sale el catálogo). El #368 no tiene variable: se declara por código.
+- **Los profiles no cambian** (el SOUL común sigue en `6847bb5839b0` y el del Automation Expert en `763171268062`), ni la imagen de Hermes. El conector de Slack y la revisión diaria no cambian de código. `/ready` no cambia salvo la versión.
+- **Maribel:** desde la 1.22.0, el bridge, el conector y la revisión, sin migración ni variables. Prender la pausa después de la bienvenida es un paso aparte, junto con el flujo nativo de la compra (Maribel #27). Su app de Slack ya no tiene los comandos (se borraron a mano el 28/10).
+- **ATT1:** desde la 1.22.0, lo mismo, sin variables nuevas. Ninguno de los cuatro le cambia nada con lo que tiene prendido.
+- **Johanna:** nada que hacer.
+
 ## [1.22.0] - 2026-10-29
 
 Una versión menor sobre la 1.21.0, con seis PR, casi todos salidos de las conversaciones reales de Maribel del 27 y el 28/10. Tres son arreglos que rigen solos: un turno del agente que falla ya no deja a la persona sin respuesta (#361), el divisor manda menos globos (#362) y una baja en cualquier mensaje del lote gana al atajo de «Quiero mi 10 %» (#363). Tres son funcionalidad nueva, apagada por defecto: el primer toque no pisa una conversación viva (#364), el cupón del link del agente va solo en la recuperación (#365) y el agente no le contesta a la respuesta automática del WhatsApp Business de la persona (#366).
