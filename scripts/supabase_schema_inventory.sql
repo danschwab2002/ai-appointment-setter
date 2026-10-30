@@ -6060,6 +6060,42 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'flow_change_list'
+    union all
+    select
+        '20261030000400',
+        '20261030000400_portable_purchase_stops_see_our_link_v1.sql',
+        -- Los frenos de la compra ven nuestro link (E-215): la tercera fuente,
+        -- stable, security invoker, de nadie de la API ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._portable_checkout_link_purchase_exists(text,text,uuid,text,text)')
+              and position('purchase_matched' in definition) > 0
+              and not prosecdef
+              and provolatile = 's'
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- ... el freno del primer contacto la mira ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._portable_precheckout_stop_reason(uuid,uuid)')
+              and position('portable_checkout_link_purchase_stop' in definition) > 0
+              and position('_portable_checkout_link_purchase_exists' in definition) > 0
+        )::int
+        -- ... y el freno del caso tambien.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._portable_case_purchase_stop_reason(uuid)')
+              and position('portable_checkout_link_purchase_stop' in definition) > 0
+              and position('_portable_checkout_link_purchase_exists' in definition) > 0
+              and prosecdef
+        )::int,
+        3,
+        'portable_purchase_stops_see_our_link'
 )
 select
     version,

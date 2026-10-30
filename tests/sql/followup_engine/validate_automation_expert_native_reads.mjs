@@ -106,7 +106,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026102500020
   // El pago rechazado nativo (E-207): el disparador pago_fallido, por reemplazo contado.
   '20261030000200_flow_engine_native_payment_failure_v1.sql',
   // La lista de las propuestas del AE (E-208): una lectura nueva, sin tocar ninguna funcion.
-  '20261030000300_flow_change_list_v1.sql'])) {
+  '20261030000300_flow_change_list_v1.sql',
+  // Los frenos de la compra ven nuestro link (E-215): reemplazos contados en los dos frenos portables.
+  '20261030000400_portable_purchase_stops_see_our_link_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la del btrim del nombre del producto`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(

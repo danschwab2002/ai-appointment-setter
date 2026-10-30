@@ -63,8 +63,9 @@ await shapeDb.exec(`
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`${MIGRATION} no esta en la cadena`);
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify([])) {
-  fail(`${MIGRATION} es la ultima de la cadena`, names.slice(position + 1));
+// Despues va solo la de los frenos de la compra con nuestro link (E-215), que no toca esta lectura.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261030000400_portable_purchase_stops_see_our_link_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de E-215`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(
   /create extension if not exists pgcrypto;/gi, '-- pgcrypto is built into PGlite'));
