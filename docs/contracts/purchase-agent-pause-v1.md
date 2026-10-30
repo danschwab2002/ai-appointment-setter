@@ -56,9 +56,59 @@ inválidos: `22023 invalid_purchase_agent_pause_read`.
   y la vuelta de la cola que obtiene respuesta pausa si ningún flujo arrancó.
   Hasta la 1.20.5, un flujo nativo en `cohorte` o `prendido` salteaba la pausa
   para todos los compradores del producto (`reason=native_flow_on`).
+  Con `PURCHASE_AGENT_PAUSE_AFTER_NATIVE_WELCOME_ENABLED` (abajo), ese
+  comprador se pausa igual, después de la bienvenida.
 - No pausa compras de un producto que no es de la instancia
   (`reason=other_product`) ni compras sin mail ni teléfono.
 - No quita etiquetas de Chatwoot (la del carrito de GHL no existe acá).
+
+## La pausa después de la bienvenida nativa (E-190)
+
+Con un flujo nativo de la compra `prendido`, el flujo toma a todo comprador, y
+sin esto ninguno quedaba pausado: el agente le seguía contestando como a un
+prospecto (Maribel #27). Con `PURCHASE_AGENT_PAUSE_AFTER_NATIVE_WELCOME_ENABLED=true`
+(apagado por defecto), el despachador, apenas Chatwoot acepta el envío de un
+paso nativo cuya versión fijada entra con `permiso: compra`, y después del paso
+`etiquetar`:
+
+- pausa **la conversación a la que fue la bienvenida** (la que la persona
+  contesta), con la misma etiqueta, el mismo team y la misma nota que al
+  comprar. No lee la base: la conversación es la del envío;
+- el marcador de la nota lleva el id de la acción (una nota por envío) y tiene
+  el mismo prefijo, así que la reanudación por silencio la respeta igual;
+- deja `purchase_agent_paused_after_welcome action_id=… conversation=…` o, si
+  falla, `purchase_agent_pause_after_welcome_failed` (nunca frena: el envío ya
+  salió). Un paso de un flujo del carrito (`permiso: formulario`) o de una base
+  sin `entry_permission` (anterior a `20261028000200`) no se pausa
+  (`purchase_agent_pause_after_welcome_skipped`).
+
+Un flujo nativo tiene un solo envío por camino y ninguna espera después
+(`flow-engine-v2`, sección 9): la pausa no frena ningún paso del flujo.
+
+Desde la revisión E-196, la pausa corre en **todo cierre definitivo** del paso
+de la compra, no solo en el aceptado:
+
+- entregado sin aceptación confirmada (`acceptance_finalization_failed`): la
+  conversación del envío, sin la cola `etiquetar`;
+- rechazado por el remitente, sin resultado claro (`delivery_unknown`) o
+  cerrado antes del pedido (`permanent_failed`/`expired`, sin más reintentos):
+  las conversaciones del comprador, buscadas como al comprar con el teléfono y
+  el mail del contexto de la acción. Un fallo que todavía se reintenta no pausa.
+  Sin el flujo nativo, ese comprador se habría pausado igual al comprar.
+
+Un error de red, un 5xx o una asignación sin confirmar
+(`purchase_pause_assignment_not_confirmed`) se reintentan dos veces (2 s y
+5 s). Si sigue fallando, o el error no es transitorio, queda una nota privada en
+la conversación que le pide al equipo poner `automation_paused` a mano, con el
+marcador `[supportmagician-compra-pausa-pendiente:<action_id>]` (otro prefijo:
+la reanudación no la toma por una pausa puesta), y el log
+`purchase_agent_pause_after_welcome_pending`. Con otro team ya asignado, la
+etiqueta queda puesta y se escribe la nota de la compra igual.
+
+Deuda de E-100, sin tocar: `pause_buyer` (la pausa al comprar) no reintenta y,
+con otro team asignado, deja la etiqueta sin la nota, así que la reanudación por
+silencio puede levantarla. Exige `PURCHASE_AGENT_PAUSE_ENABLED`, `FLOW_ENGINE_ENABLED` y
+`DURABLE_DISPATCHER_ENABLED`; sin ellos, el bridge no arranca con el flag.
 
 ## Cómo vuelve al agente
 
