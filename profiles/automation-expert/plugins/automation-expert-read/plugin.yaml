@@ -1,5 +1,5 @@
 name: automation-expert-read
-version: "0.1.0"
+version: "0.2.0"
 description: Lectura de los flujos, su dibujo, la historia de un lead y la biblioteca de plataformas (automation-expert-read-v1). Solo lee.
 author: ai-appointment-setter
 provides_tools:
