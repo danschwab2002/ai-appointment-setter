@@ -107,6 +107,8 @@ def test_it_is_one_transaction_and_comes_before_the_bridge_reads() -> None:
         # El doble caso del carrito (20261030000100, E-204): la admision nativa y el planificador
         # del carrito.
         "20261030000100_flow_engine_native_legacy_double_case_v1.sql",
+        # El pago rechazado nativo (20261030000200, E-207): el disparador pago_fallido del motor nativo.
+        "20261030000200_flow_engine_native_payment_failure_v1.sql",
     ]
     later = (MIGRATIONS / names[position + 1]).read_text(encoding="utf-8")
     assert "create or replace" not in later.lower()

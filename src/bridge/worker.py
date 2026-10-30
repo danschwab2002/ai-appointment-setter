@@ -109,7 +109,7 @@ from bridge.native_flows import (
     NATIVE_ANCHOR,
     NATIVE_NEEDS_DIRECT_TEMPLATE,
     NATIVE_NEEDS_ENGINE,
-    NATIVE_CART_TRIGGER,
+    NATIVE_CART_TRIGGER, NATIVE_PAYMENT_FAILURE_TRIGGER,
     NATIVE_PURCHASE_PERMISSION,
     NATIVE_PURCHASE_RETRY, NATIVE_PURCHASE_STARTED, NATIVE_PURCHASE_TRIGGER,
     NATIVE_QUEUE_PAGE,
@@ -117,7 +117,7 @@ from bridge.native_flows import (
     NATIVE_STEP_VARIABLES,
     admit_native_purchase,
     apply_native_tail, cart_product_ref, native_step_categories,
-    purchase_product_ref,
+    payment_failure_product_ref, purchase_product_ref,
 )
 from bridge.product_label import ProductLabeler
 from bridge.purchase_agent_pause import PurchaseAgentPause
@@ -3745,6 +3745,28 @@ class ResolutionWorker:
             return None
         return product_ref
 
+    def _native_payment_failure_product(self, payload: dict[str, Any]) -> str | None:
+        """The product of a payment failure with a native payment-failure flow on or in its cohort (E-207).
+
+        None without the engine flag, without the portable runtime, or without
+        such a flow: the payment failure goes exactly as today, without any new
+        call (ATT1 with its B1/B2 variants, Maribel with its own scope).
+        """
+        if self._flow_engine is None or self._commercial_ally_config is None:
+            return None
+        if not self._flow_engine.native_flows.any_on():
+            return None
+        product_ref = payment_failure_product_ref(
+            payload,
+            commercial_ally_config=self._commercial_ally_config,
+            product_routes=self._product_routes,
+        )
+        if product_ref is None or not self._flow_engine.native_flows.wants(
+            product_ref, NATIVE_PAYMENT_FAILURE_TRIGGER
+        ):
+            return None
+        return product_ref
+
     async def _admit_native_purchase(
         self, event_id: str, payload: dict[str, Any], product_ref: str
     ) -> str:
@@ -4028,14 +4050,22 @@ class ResolutionWorker:
             if self._commercial_ally_config is not None:
                 resolver_kwargs["commercial_ally_config"] = self._commercial_ally_config
             if self._flow_engine is not None and event_type == EVENT_CART_ABANDONMENT:
-                # Solo el carrito: el pago rechazado y la ficha nunca pasan
-                # por la admision del motor.
+                # El carrito: el motor v1 y, con su flujo nativo, la admision
+                # nativa. La ficha nunca pasa por la admision del motor.
                 resolver_kwargs["flow_engine"] = self._flow_engine
                 # flow-engine-v2 2.7.0 (E-161): con un flujo nativo del carrito
                 # de ese producto, el carrito va primero a la admision nativa.
                 native_cart_product = self._native_cart_product(payload)
                 if native_cart_product is not None:
                     resolver_kwargs["native_cart_product_ref"] = native_cart_product
+            elif self._flow_engine is not None and event_type == EVENT_PURCHASE_CANCELED:
+                # flow-engine-v2 2.11.0 (E-207): con un flujo nativo del pago
+                # rechazado de ese producto, el rechazo va primero a la admision
+                # nativa. Sin ese flujo, la llamada de hoy (sin el motor).
+                native_failure_product = self._native_payment_failure_product(payload)
+                if native_failure_product is not None:
+                    resolver_kwargs["flow_engine"] = self._flow_engine
+                    resolver_kwargs["native_payment_failure_product_ref"] = native_failure_product
             report = await resolve_event(
                 webhook_event_id=event_id,
                 payload=payload,

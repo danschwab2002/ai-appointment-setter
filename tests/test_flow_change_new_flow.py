@@ -218,10 +218,10 @@ def test_the_agent_cannot_create_a_flow_on_the_legacy(image: None) -> None:
     emulator = PostgrestEmulator()
     emulator.new_flow_counts = dict(COUNTS)
     client, _ = _client(emulator)
-    # Un flujo nuevo del pago rechazado no es nativo: el motor nativo de esta version no lo ejecuta (la
-    # compra y, desde E-161, el carrito si).
-    cart_like = _new_item(_welcome(dispara={"evento": "pago_fallido"}, entra={"permiso": "formulario"},
-                                   pasos=[{"plantilla": CONFIRMED}]), flujo="pago_nuevo")
+    # Un flujo nuevo de la ficha no es nativo: el motor nativo de esta version no lo ejecuta (la
+    # compra, desde E-161 el carrito y desde E-207 el pago rechazado si).
+    cart_like = _new_item(_welcome(dispara={"evento": "ficha_impresa"}, entra={"permiso": "formulario"},
+                                   pasos=[{"plantilla": CONFIRMED}]), flujo="ficha_nueva")
     saved = _propose(client, [cart_like])
     assert saved.status_code == 201, saved.text
     validated = _validate(client, saved.json()["data"]["proposal_id"]).json()["data"]

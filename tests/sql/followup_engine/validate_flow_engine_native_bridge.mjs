@@ -116,7 +116,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026102400060
   // La compra con nuestro link cuenta siempre (E-169): el helper del cierre por el link y el correlador.
   '20261028000400_purchase_by_our_link_counts_v1.sql',
   // El doble caso del carrito (E-204): la admision nativa y el planificador del carrito, por reemplazo contado.
-  '20261030000100_flow_engine_native_legacy_double_case_v1.sql'])) {
+  '20261030000100_flow_engine_native_legacy_double_case_v1.sql',
+  // El pago rechazado nativo (E-207): el disparador pago_fallido, por reemplazo contado.
+  '20261030000200_flow_engine_native_payment_failure_v1.sql'])) {
   fail(`despues de ${MIGRATION} van solo la del AE que crea flujos y la de sus lecturas nativas`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(

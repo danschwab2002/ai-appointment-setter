@@ -5993,6 +5993,48 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'flow_engine_native_legacy_double_case'
+    union all
+    select
+        '20261030000200',
+        '20261030000200_flow_engine_native_payment_failure_v1.sql',
+        -- El pago rechazado nativo (E-207): el permiso con la intencion del
+        -- rechazo, de nadie de la API ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_payment_failure_audience(uuid,uuid,text,text,text)')
+              and position('payment_failure_refusal_kind' in definition) > 0
+              and not prosecdef
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- ... la admision nativa con el doble caso y el ultimo rechazo ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_admit_native_flow(public.flow_controls,public.webhook_events,uuid,text,timestamptz,bigint,bigint,text)')
+              and position('flow_engine_native_payment_failure_double_case' in definition) > 0
+              and position('flow_engine_native_payment_failure_last_refusal' in definition) > 0
+        )::int
+        -- ... y el planificador del pago rechazado del legado ve el caso nativo.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.plan_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamptz)')
+              and position('flow_engine_native_payment_failure_legacy' in definition) > 0
+              and position('flujo_nativo_en_curso' in definition) > 0
+              and not prosecdef
+        )::int
+        -- ... y un item nuevo no publica con la clave de un flujo del legado (D1).
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_change_new_flow_blocker(text,text,jsonb)')
+              and position('flow_key_reserved_for_legacy' in definition) > 0
+        )::int,
+        4,
+        'flow_engine_native_payment_failure'
 )
 select
     version,
