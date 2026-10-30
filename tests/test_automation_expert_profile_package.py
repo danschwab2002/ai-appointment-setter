@@ -10,6 +10,7 @@ from __future__ import annotations
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import json
+import re
 from pathlib import Path
 import sys
 import threading
@@ -93,6 +94,112 @@ def test_the_soul_never_asks_for_a_phone_or_a_mail() -> None:
     soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
     assert "Nunca pidas un teléfono ni un mail" in soul
     assert "No aprobás, no publicás y no pausás" in soul
+
+
+def test_the_soul_fits_without_being_cut_by_hermes() -> None:
+    # Hermes corta por el medio, sin avisar, todo SOUL que pase de su tope (`_truncate_content` en
+    # `agent/prompt_builder.py`): el piso es 20.000 caracteres, el mismo que mide el comercial
+    # (test_agente_comercial_profile.py). El medio de este SOUL es el corte del legado al motor.
+    # Medido el 2026-10-30 (E-214, P11 de M16, con la revisión E-216): 16.436 caracteres.
+    soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8").strip()
+    assert len(soul) <= 20_000, len(soul)
+
+
+def test_the_soul_names_every_tool_of_its_plugins() -> None:
+    # Una herramienta que el SOUL no nombra no se usa: pasó con list_templates (E-213, hallazgo 7),
+    # cuando el SOUL todavía decía que el agente no veía el catálogo.
+    soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
+    for plugin in ("automation-expert-read", "automation-expert-change"):
+        provided = yaml.safe_load((PROFILE / "plugins" / plugin / "plugin.yaml").read_text(encoding="utf-8"))
+        for tool in provided["provides_tools"]:
+            if tool == "draw_flow":
+                continue  # lo describe su propio esquema: devuelve el MEDIA que se copia tal cual
+            assert f"`{tool}`" in soul, tool
+    assert "No ves el catálogo" not in soul
+    for name in ("business_flows", "double_case_guard", "mensajes", "approval_button", "engine_v1"):
+        assert f"`{name}" in soul, name
+
+
+def test_the_soul_publishes_and_pauses_by_the_approval_page() -> None:
+    # P11 de M16: el sí y la pausa se dan en la página de aprobación (ciclo 1.9.0). El operador queda
+    # solo como el camino sin botón y para el scope del legado.
+    soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
+    assert "con el comando del operador" not in soul
+    section = soul.split("## Quién aprueba, publica y pausa", 1)[1].split("\n## ", 1)[0]
+    assert "página de aprobación" in section and "Pausar no es una propuesta" in section
+    assert "`not_posted`" in section and "el sí lo da el operador" in section
+
+
+def test_the_soul_knows_what_the_native_engine_runs_today() -> None:
+    from bridge.automation_expert_read import FLOW_KEYS
+    from bridge.flow_engine import ENGINE_CAPABILITIES_NATIVE, NATIVE_PERMISSION_BY_TRIGGER
+
+    soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
+    section = soul.split("## Crear un flujo", 1)[1].split("\n## ", 1)[0]
+    # Cada disparador del motor nativo, con su permiso, y nada que el motor no corra.
+    for trigger in ENGINE_CAPABILITIES_NATIVE.triggers:
+        assert f"{{evento: {trigger}}}" in section, trigger
+        assert f"permiso: {NATIVE_PERMISSION_BY_TRIGGER[trigger]}" in section, trigger
+    assert ENGINE_CAPABILITIES_NATIVE.max_sends_per_path == 1 and "un solo mensaje" in section
+    for missing in ("el primer contacto", "el seguimiento a 24 h", "la ficha de pago"):
+        assert missing in section.split("**Todavía no hace**", 1)[1], missing
+    # D1: las claves del legado no se usan. Las que el SOUL dice que frena la validación son exactamente
+    # FLOW_KEYS (E-216, hallazgo 6: `ficha` no está reservada y no se promete).
+    line = section.split("**la clave es propia:**", 1)[1].split("\n", 1)[0]
+    legacy = line.split("Nunca la de un flujo del legado (", 1)[1].split(")", 1)[0]
+    listed = re.findall(r"`([a-z_]+)`", legacy)
+    count = {"cinco": 5}[line.split("las ", 1)[1].split(" primeras", 1)[0]]
+    assert tuple(listed[:count]) == FLOW_KEYS
+    assert "`flow_key_reserved_for_legacy`" in line
+
+
+def test_the_soul_cuts_a_legacy_flow_in_the_order_of_the_map() -> None:
+    # §4 del mapa M16: cohorte, comparar, prender, 24 h a todos y pausar el scope del legado, nunca
+    # cerrarlo. El doble caso: con la guarda no sale doble; sin ella, sí puede.
+    soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
+    section = soul.split("## Pasar un flujo del legado al motor", 1)[1].split("\n## ", 1)[0]
+    steps = ["**Leé el del legado**", "**Armá el nativo", "**La cohorte.**", "**Compará:**", "**`prender`:**",
+             "**24 horas a todos.**", "**Después**"]
+    positions = [section.index(step) for step in steps]
+    assert positions == sorted(positions)
+    assert "**Nunca se cierra:**" in section and "Vos no pausás el legado" in section
+    assert "`bolsa` nueva" in section and "no_arranca_mientras" in section
+    reads = soul.split("## Qué leés", 1)[1].split("\n## ", 1)[0]
+    assert "no sale un mensaje doble" in reads and "puede salir un mensaje doble" in reads
+
+
+def test_the_replacement_of_a_native_flow_follows_an_order_the_validator_accepts() -> None:
+    """E-216, hallazgo 1: dos nativos del mismo evento no conviven (same_event_native_flows).
+
+    El orden que el SOUL le da al AE para reemplazar un nativo: pausar el viejo, un `nuevo` solo en su
+    propuesta, y una propuesta que prende el nuevo y apaga el viejo. El orden de antes (el `nuevo` al lado
+    del viejo prendido) lo frena el validador ya en el borrador.
+    """
+    from test_flow_same_event_native import (
+        BLOCK, SECOND_ID, WELCOME_ID, _apagar, _codes, _native, _prender)
+    from test_flow_validator import check, native_catalog, new_item, welcome, world
+
+    soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
+    text = soul.split("eso hoy se hace reemplazándolo", 1)[1].split("\n", 1)[0]
+    steps = ["`same_event_native_flows`", "pausa el viejo", "un `nuevo` con otra clave",
+             "prende el nuevo y apaga el viejo"]
+    positions = [text.index(step) for step in steps]
+    assert positions == sorted(positions)
+
+    def new_blocks(old_state: str) -> set[str]:
+        result = check([new_item(welcome(), "bienvenida_ae")], actor="automation_expert",
+                       in_world=world(_native("bienvenida", WELCOME_ID, old_state)), catalog=native_catalog(),
+                       draft_base={}, phase="draft")
+        return {f.code for f in result.blocks}
+
+    # El orden de antes: el `nuevo` al lado del viejo prendido no se puede ni guardar.
+    assert BLOCK in new_blocks("prendido")
+    # 1. el viejo pausado; 2. el `nuevo`, solo en su propuesta: no compite.
+    assert BLOCK not in new_blocks("pausado")
+    # 3. comparado en la cohorte: prender el nuevo y apagar el viejo, en una propuesta.
+    flows = [_native("bienvenida", WELCOME_ID, "pausado"), _native("bienvenida_ae", SECOND_ID, "cohorte")]
+    blocks, _ = _codes([_prender("bienvenida_ae", SECOND_ID), _apagar("bienvenida", WELCOME_ID)], flows)
+    assert BLOCK not in blocks
 
 
 def test_the_registered_tools_and_hooks() -> None:
