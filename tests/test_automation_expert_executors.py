@@ -243,6 +243,45 @@ def test_the_payment_failure_with_its_own_scope_reports_that_scope_and_not_the_r
     assert flow["version"]["scope"] == "att1-recuperacion v5"
 
 
+def _raw_with_recovery_grace(seconds: int) -> dict[str, object]:
+    """Los flujos de ATT1 con la gracia de la politica de la recuperacion cambiada (el fixture trae otra)."""
+    raw = copy.deepcopy(FLOWS_RAW)
+    recovery = next(s for s in raw["scopes"] if s.get("scope_key") == "att1-recuperacion")
+    for policy in raw["policies"]:
+        if policy.get("policy_key") == recovery.get("policy_key") and policy.get("version") == recovery.get("policy_version"):
+            policy["grace_period_seconds"] = seconds
+    return raw
+
+
+def test_the_legacy_payment_failure_does_not_claim_a_repetition_or_a_wait_it_does_not_know() -> None:
+    """E-216, hallazgo 2: el AE copia los valores del legado al armar el nativo (P11 de M16).
+
+    Antes, el pago rechazado salia con la repeticion del carrito (persona_y_oferta, 0m) y sin la espera de su
+    politica. El legado junta los rechazos de una persona y un producto con 72 h (E-207), y espera la gracia.
+    """
+    settings = _settings()
+    data, gaps = reader.build_flows(_raw_with_recovery_grace(900), instance=INSTANCE, settings=settings)
+    flows = {f["flow_key"]: f for f in data["flows"]}  # type: ignore[union-attr]
+    payment = flows["pago_fallido"]["definition"]
+    assert payment["topes"]["repeticion"] is None
+    assert ("legacy_payment_failure_repeat_not_in_schema", "flow:pago_fallido") in {
+        (g["code"], g["scope"]) for g in gaps}
+    assert {"esperar": "15m"} in payment["pasos"]
+    # El carrito no cambia: su repeticion es la del codigo, y su gracia no es un paso.
+    cart = flows["carrito"]["definition"]
+    assert cart["topes"]["repeticion"] == {"una_por": "persona_y_oferta", "otra_despues_de": "0m"}
+    assert not any("esperar" in step for step in cart["pasos"])
+    # Con scope propio, la gracia de la recuperacion no es la del pago: la espera no se muestra, y el hueco lo dice.
+    own = _settings(payment_failure_own_scope=reader.ScopeRef("att1-pago-rechazado", 2))
+    built, _ = reader.build_flows(_raw_with_recovery_grace(900), instance=INSTANCE, settings=own)
+    data, gaps = reader.apply_executors(built, settings=own, scope_reads={"pago_fallido": ARMED}, engine=_engine())
+    flow = next(f for f in data["flows"] if f["flow_key"] == "pago_fallido")  # type: ignore[union-attr]
+    assert not any("esperar" in step for step in flow["definition"]["pasos"])
+    assert flow["definition"]["topes"]["repeticion"] is None
+    runtime_only = next(g for g in gaps if g["code"] == "legacy_scope_runtime_only")
+    assert "espera" in runtime_only["what"]
+
+
 # ------------------------------------------------------------------- P8: el motor v1
 
 

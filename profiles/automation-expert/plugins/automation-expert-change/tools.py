@@ -11,8 +11,10 @@ la persona sale del contexto de la sesión de Hermes
 0.21.0, leído el 2026-10-21), y solo en Slack. La base lo guarda como
 declarado: el bridge no lo puede verificar.
 
-Ninguna herramienta aprueba ni publica, y no hay pausa: pausar es del comando
-del operador mientras la base no pueda verificar a quien lo pide.
+Ninguna herramienta aprueba ni publica, y no hay pausa: la base no puede
+verificar a quien la pide desde el agente. Aprobar, publicar y pausar lo hace
+un aprobador en la pagina de aprobacion del bridge (ciclo 1.9.0), con su ID de
+Slack verificado, o el comando del operador.
 
 Desde el ciclo 1.10.0 (M16 P6 y P7) suma dos lecturas: el catalogo de
 plantillas de la bandeja (``list_templates``) y las propuestas de la instancia

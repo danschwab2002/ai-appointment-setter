@@ -25,8 +25,9 @@ PROPOSE_FLOW_CHANGE = {
         "cuándo sale cada mensaje antes y después, en horas desde el primero; comparalos con lo "
         "pedido. Si hay bloqueos, no guarda y los devuelve para corregirlos; si el pedido no cierra, "
         "reason dice qué campo, qué ítem y qué claves faltan o sobran. No aprueba ni publica: eso lo "
-        "hace un aprobador con el comando del operador. Para rehacer un borrador, mandá su "
-        "proposal_id y su revision."
+        "hace un aprobador desde la página de aprobación, a la que lleva el botón que deja la "
+        "validación (sin el botón, el operador). Para rehacer un borrador, mandá su proposal_id y su "
+        "revision."
     ),
     "parameters": {
         "type": "object",

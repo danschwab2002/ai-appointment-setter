@@ -784,7 +784,10 @@ def build_flows(
             slot = flow_key
             template = settings.templates.get(slot)
             steps: list[dict[str, object]] = []
-            if flow_key == "precheckout" and policy is not None:
+            # La gracia de la politica es la espera antes del mensaje: en el primer contacto y en el pago
+            # rechazado (``p_failed_at + v_policy.grace_period``, 20261019000200). El carrito la difiere por
+            # la reevaluacion, no por un paso.
+            if flow_key in ("precheckout", "pago_fallido") and policy is not None:
                 wait = _duration(policy.get("grace_period_seconds"), "m")
                 if wait and wait != "0m":
                     steps.append({"esperar": wait})
@@ -803,8 +806,12 @@ def build_flows(
                     "bolsa": scope.get("scope_key") if bound else None,
                     "por_dia": _int(scope.get("max_outbound_request_starts_per_day")) if bound else None,
                     "total": _int(scope.get("max_outbound_request_starts_total")) if bound else None,
+                    # El pago rechazado del legado junta los rechazos de una persona y un producto en un caso, y
+                    # suma al caso uno de las 72 h siguientes a un caso cerrado (20261019000200): el esquema no lo
+                    # expresa, asi que va en null con su hueco (E-216, hallazgo 2).
                     "repeticion": (
                         {"una_por": "persona", "otra_despues_de": "24h"} if flow_key == "precheckout"
+                        else None if flow_key == "pago_fallido"
                         else {"una_por": "persona_y_oferta", "otra_despues_de": "0m"}),
                 },
                 "prioridad": _PRIORITY[flow_key],
@@ -814,7 +821,10 @@ def build_flows(
                 provenance["/definition/termina/vence"] = {"from": "database", "ref": f"followup_policy_versions {version['policy']}"}
             if bound:
                 provenance["/definition/topes"] = {"from": "database", "ref": f"pilot_scope_versions {version['scope']}"}
-            provenance["/definition/topes/repeticion"] = {"from": "code", "ref": _SCHEMA_REF}
+            if flow_key == "pago_fallido":
+                gaps.append(_gap("legacy_payment_failure_repeat_not_in_schema", "flow:pago_fallido"))
+            else:
+                provenance["/definition/topes/repeticion"] = {"from": "code", "ref": _SCHEMA_REF}
         elif flow_key == "descuento":
             switch_on = manifest_on and settings.coupon_enabled
             status = {"state": "on" if switch_on else "off",
@@ -1774,8 +1784,13 @@ EXECUTOR_GAPS = {
         "qué flujos del legado tienen ruta del motor v1, y sus divergencias y rechazos",
         "la lectura del motor v1 no contestó (una base sin sus migraciones, o un error)"),
     "legacy_scope_runtime_only": (
-        "los topes, el horario y la gracia del scope propio de este flujo",
-        "de su scope se lee solo el estado; la definición muestra el resto como null"),
+        "los topes, el horario, el vencimiento y la espera antes del mensaje del scope propio de este flujo",
+        "de su scope se lee solo el estado: la definición muestra los topes, el horario y el vencimiento "
+        "como null, y la espera no está en los pasos"),
+    "legacy_payment_failure_repeat_not_in_schema": (
+        "cada cuánto el pago rechazado del legado le vuelve a escribir a la misma persona",
+        "junta los rechazos de una persona y un producto en un solo caso, y suma uno de las 72 h "
+        "siguientes a un caso cerrado: el esquema no lo expresa, así que la repetición va en null"),
     "payment_slip_reminders_anchored_to_due_date": (
         "a qué hora exacta sale cada recordatorio de la ficha",
         "salen el día antes y el día del vencimiento de cada ficha, y el esquema no tiene una espera "
@@ -1918,6 +1933,9 @@ def _own_payment_failure_scope(flow: dict[str, object], settings: FlowSettings,
                                "total": None}
         definition["horario"] = None
         definition["termina"] = {**dict(definition.get("termina") or {}), "vence": None}
+        # La espera venia de la politica de la recuperacion, que no es la de este scope (E-216, hallazgo 2).
+        definition["pasos"] = [step for step in list(definition.get("pasos") or [])
+                               if not (isinstance(step, Mapping) and "esperar" in step)]
         flow["definition"] = definition
         provenance.pop("/definition/horario", None)
         provenance.pop("/definition/termina/vence", None)
