@@ -29,6 +29,13 @@ from bridge.reply_splitter import reply_batch_hash, reply_part_hash
 # reason codes del contrato de salida del agente.
 _AGENT_DECISION_MARKER_RE = re.compile(r"[a-z][a-z0-9_]{0,63}")
 
+# La marca del primer toque de un flujo nativo con ``entra.permiso: compra``
+# (la bienvenida tras la compra, E-204). Va junto a
+# ``recovery_first_touch_hash``, que se queda: el primer toque se sigue
+# reconociendo como nuestro, pero ``payment_link_coupon`` no lo cuenta como
+# toque de recuperacion (a quien compro no le corresponde el 10 %).
+FLOW_ENGINE_PURCHASE_WELCOME_MARKER = "flow_engine_purchase_welcome"
+
 # Los estados de una conversacion en Chatwoot 4.13 (enum ``status``).
 _CONVERSATION_STATUSES = frozenset({"open", "resolved", "pending", "snoozed"})
 
@@ -2562,12 +2569,20 @@ class ChatwootClient:
         content: str,
         delivery_id: str,
         template_params: dict[str, object] | None = None,
+        purchase_welcome: bool = False,
     ) -> dict[str, object]:
         """Send the first outbound message to a conversation via AgentBot.
 
         Unlike ``send_agent_bot_reply``, this does not require a trigger
         message — it initiates the conversation.
+
+        ``purchase_welcome`` (E-204): la bienvenida de un flujo nativo con
+        ``entra.permiso: compra``. Suma ``flow_engine_purchase_welcome: true``
+        a ``content_attributes``, junto a ``recovery_first_touch_hash``. La
+        validacion de la respuesta sigue siendo la del hash.
         """
+        if not isinstance(purchase_welcome, bool):
+            raise ValueError("invalid purchase_welcome")
         if (
             self._agent_bot_access_token is None
             or self._agent_bot_id is None
@@ -2588,6 +2603,7 @@ class ChatwootClient:
             "content_type": "text",
             "content_attributes": {
                 "recovery_first_touch_hash": reply_hash,
+                **({FLOW_ENGINE_PURCHASE_WELCOME_MARKER: True} if purchase_welcome else {}),
             },
         }
         if template_params is not None:

@@ -97,6 +97,9 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
         # La compra con nuestro link cuenta siempre (20261028000400, E-169):
         # el helper del cierre por el link y el correlador.
         "20261028000400_purchase_by_our_link_counts_v1.sql",
+        # El doble caso del carrito (20261030000100, E-204): la admision nativa y el planificador
+        # del carrito.
+        "20261030000100_flow_engine_native_legacy_double_case_v1.sql",
     ]
     native = (MIGRATIONS / "20261024000200_flow_engine_native_v1.sql").read_text(encoding="utf-8")
     assert "read_automation_expert_flows_v1" not in native

@@ -2861,6 +2861,16 @@ class DurableDispatcher:
                                         first_touch_kwargs["template_params"] = (
                                             direct_template_params
                                         )
+                                    # E-204: the welcome of a native purchase
+                                    # flow is marked so the agent's payment
+                                    # link does not count it as recovery.
+                                    if (
+                                        action.anchor_type == NATIVE_ANCHOR
+                                        and engine_step is not None
+                                        and engine_step.entry_permission
+                                        == NATIVE_PURCHASE_PERMISSION
+                                    ):
+                                        first_touch_kwargs["purchase_welcome"] = True
                                     result = await self._sender.send_first_touch(
                                         **first_touch_kwargs
                                     )

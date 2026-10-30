@@ -100,6 +100,9 @@ def test_it_is_one_transaction_and_comes_before_the_motor() -> None:
         # La compra con nuestro link cuenta siempre (20261028000400, E-169):
         # el helper del cierre por el link y el correlador.
         "20261028000400_purchase_by_our_link_counts_v1.sql",
+        # El doble caso del carrito (20261030000100, E-204): la admision nativa y el planificador
+        # del carrito.
+        "20261030000100_flow_engine_native_legacy_double_case_v1.sql",
     ]
     for later in names[position + 1:]:
         if later != reads:
