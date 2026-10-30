@@ -110,6 +110,7 @@ from bridge.native_flows import (
     NATIVE_NEEDS_DIRECT_TEMPLATE,
     NATIVE_NEEDS_ENGINE,
     NATIVE_CART_TRIGGER,
+    NATIVE_PURCHASE_PERMISSION,
     NATIVE_PURCHASE_RETRY, NATIVE_PURCHASE_STARTED, NATIVE_PURCHASE_TRIGGER,
     NATIVE_QUEUE_PAGE,
     NATIVE_STEP_CONTEXT_UNAVAILABLE,
@@ -862,6 +863,7 @@ class DurableDispatcher:
         payment_failure_followup: PaymentFailureFollowupConfig | None = None,
         flow_engine_enabled: bool = False,
         native_client_labeler: ProductLabeler | None = None,
+        purchase_pause_after_native_welcome: PurchaseAgentPause | None = None,
     ) -> None:
         if payment_failure_followup is not None and (
             not approved_template_direct or payment_failure_variants is None
@@ -992,6 +994,11 @@ class DurableDispatcher:
         # flow-engine-v2 (E-065): la etiqueta cliente del paso etiquetar, por
         # un macro que solo la suma. Sin macro configurado, solo la nota.
         self._native_client_labeler = native_client_labeler
+        # E-190: con PURCHASE_AGENT_PAUSE_AFTER_NATIVE_WELCOME_ENABLED, la pausa al
+        # comprar va despues de la bienvenida nativa (el worker la saltea para
+        # quien tomo el flujo). Sin el flag, None: ninguna llamada nueva.
+        self._purchase_pause_after_native_welcome = purchase_pause_after_native_welcome
+        self._native_purchase_buyers: dict[str, tuple[str | None, str | None]] = {}
         self._payment_slip = payment_slip
         self._payment_failure_variants = payment_failure_variants
         self._payment_failure_followup = payment_failure_followup
@@ -1106,6 +1113,9 @@ class DurableDispatcher:
             "expired",
         }:
             raise SupabaseError("followup_pre_request_finalization_mismatch")
+        if finalized.status in {"permanent_failed", "expired"}:
+            # E-196 (I-2): el paso de la compra cerro sin envio: la pausa igual.
+            await self._pause_after_native_step(action)
 
     async def _authorize_recovery_issuance(
         self,
@@ -2204,6 +2214,7 @@ class DurableDispatcher:
         """Claim and re-evaluate; return execute candidates without side effects."""
         actions = await self.claim_due(now=now)
         decisions: list[ReevaluationDecision] = []
+        self._native_purchase_buyers.clear()
         for action in actions:
             evidence = await self._load_chatwoot_evidence(action=action, now=now)
             # The anchor picks the reevaluation: the first contact after the
@@ -2303,6 +2314,9 @@ class DurableDispatcher:
                         )
                         if self._approved_template_direct:
                             engine_step = await self._flow_engine_step(action)
+                            self._remember_native_purchase_buyer(
+                                action, engine_step, execution_context
+                            )
                             composition = (
                                 await self._compose_approved_template_proposal(
                                     action=action,
@@ -2976,6 +2990,9 @@ class DurableDispatcher:
                                     raise SupabaseError(
                                         "followup_rejection_finalization_mismatch"
                                     )
+                                await self._pause_after_native_step(
+                                    action, engine_step=engine_step
+                                )
                             elif not valid_sent:
                                 deadline = (
                                     datetime.fromisoformat(final_now)
@@ -3004,6 +3021,11 @@ class DurableDispatcher:
                                     raise SupabaseError(
                                         "followup_unknown_finalization_mismatch"
                                     )
+                                # E-196 (I-2): sin saber si salio, la pausa busca al
+                                # comprador como al comprar.
+                                await self._pause_after_native_step(
+                                    action, engine_step=engine_step
+                                )
                             else:
                                 try:
                                     finalized = (
@@ -3075,6 +3097,14 @@ class DurableDispatcher:
                                             "followup_unknown_finalization_mismatch"
                                         )
                                     native_accepted = False
+                                    # E-196 (I-2): el remitente ya la entrego a
+                                    # esa conversacion; la pausa no espera a la
+                                    # reconciliacion.
+                                    await self._pause_after_native_step(
+                                        action,
+                                        engine_step=engine_step,
+                                        conversation_id=result.conversation_id,
+                                    )
                                 if native_accepted:
                                     # flow-engine-v2: etiquetar despues de la
                                     # plantilla. Falla blanda: el envio ya
@@ -3089,6 +3119,11 @@ class DurableDispatcher:
                                         labeler=self._native_client_labeler,
                                         notes=self._chatwoot,
                                     )
+                                    await self._pause_after_native_step(
+                                        action,
+                                        engine_step=engine_step,
+                                        conversation_id=result.conversation_id,
+                                    )
                     else:
                         raise SupabaseError("invalid_followup_message_proposal")
             decisions.append(decision)
@@ -3099,6 +3134,78 @@ class DurableDispatcher:
                 decision.reason_code,
             )
         return decisions
+
+    def _remember_native_purchase_buyer(
+        self,
+        action: ScheduledAction,
+        engine_step: FlowEngineStepContext | None,
+        execution_context: FollowupExecutionContext,
+    ) -> None:
+        """E-196 (I-2): who to pause if the purchase step closes without a send."""
+        if (
+            self._purchase_pause_after_native_welcome is None
+            or action.anchor_type != NATIVE_ANCHOR
+            or engine_step is None
+            or engine_step.entry_permission != NATIVE_PURCHASE_PERMISSION
+        ):
+            return
+        self._native_purchase_buyers[action.action_id] = (
+            execution_context.buyer_email,
+            execution_context.buyer_phone,
+        )
+
+    async def _pause_after_native_step(
+        self,
+        action: ScheduledAction,
+        *,
+        engine_step: FlowEngineStepContext | None = None,
+        conversation_id: int | None = None,
+    ) -> None:
+        """E-190: when a native purchase step closes for good, pause the buyer.
+
+        Only with ``PURCHASE_AGENT_PAUSE_AFTER_NATIVE_WELCOME_ENABLED`` and only
+        for a step whose pinned version enters with ``permiso: compra`` (a
+        native flow fired by the purchase; flow-engine-v2: one send per path,
+        nothing after it, so the pause blocks no step).
+
+        - Accepted, or delivered without a confirmed acceptance: the
+          conversation the welcome went to (D2).
+        - Rejected by the sender, inconclusive, or closed before the request
+          (``permanent_failed``/``expired``): the buyer's conversations, read
+          as at purchase (E-196 I-2, D7). The buyer would be paused anyway
+          without the native flow (E-100).
+
+        A cart flow (``permiso: formulario``), a base without
+        ``entry_permission`` or a step whose context was never read is left as
+        it is. Never raises.
+        """
+        pause = self._purchase_pause_after_native_welcome
+        if pause is None or action.anchor_type != NATIVE_ANCHOR:
+            return
+        buyer = self._native_purchase_buyers.pop(action.action_id, None)
+        if engine_step is not None and engine_step.entry_permission != NATIVE_PURCHASE_PERMISSION:
+            logger.info(
+                "purchase_agent_pause_after_welcome_skipped action_id=%s reason=%s",
+                action.action_id,
+                "permission_unknown"
+                if engine_step.entry_permission is None
+                else "not_a_purchase_flow",
+            )
+            return
+        if buyer is None and (engine_step is None or conversation_id is None):
+            logger.info(
+                "purchase_agent_pause_after_welcome_skipped action_id=%s reason=context_unknown",
+                action.action_id,
+            )
+            return
+        email, phone = buyer if buyer is not None else (None, None)
+        await pause.pause_after_native_welcome(
+            action_id=action.action_id,
+            purchased_at=action.anchor_observed_at,
+            conversation_id=conversation_id,
+            buyer_email=None if conversation_id is not None else email,
+            buyer_phone=None if conversation_id is not None else phone,
+        )
 
 
 class HotmartAbandonmentTimerWorker:

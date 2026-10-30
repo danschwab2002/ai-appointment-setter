@@ -1,0 +1,50 @@
+{
+ "_capture": {
+  "origen": "Chatwoot de produccion (servicio infra_chatwoot-db, base infra), tabla channel_whatsapp del inbox 13 (Maribel WhatsApp, cuenta 3), columna message_templates, tal como la sincronizo Chatwoot desde Meta. Lectura con default_transaction_read_only=on por psql dentro del contenedor (E-190).",
+  "captured_at": "2026-10-30T03:05:00Z",
+  "message_templates_last_updated": "2026-10-30T00:25:11.173421",
+  "total_en_el_catalogo": 3,
+  "anonimizado": "No hace falta: es la definicion de una plantilla, sin datos de personas. Se guarda la entrada tal cual.",
+  "lo_que_prueba": "maribel_bienvenida_01 (UTILITY, es_MX, APPROVED): encabezado de texto fijo, un cuerpo con un solo {{1}} (el producto) y un boton URL fijo, la misma forma que att1_bienvenida_01: el motor nativo la puede mandar con permiso compra."
+ },
+ "message_templates": [
+  {
+   "id": "1471327205063522",
+   "name": "maribel_bienvenida_01",
+   "status": "APPROVED",
+   "category": "UTILITY",
+   "language": "es_MX",
+   "components": [
+    {
+     "text": "Notificación",
+     "type": "HEADER",
+     "format": "TEXT"
+    },
+    {
+     "text": "Tu inscripción en {{1}} ha sido confirmada.\n\nTe escribimos del equipo de El Protocolo.\n\nAccesos: se enviarán al correo con el que compraste, en unos minutos. Revisa también tu carpeta de spam.\n\nPara completar tu formulario, ingresa aquí:",
+     "type": "BODY",
+     "example": {
+      "body_text": [
+       [
+        "El Protocolo Biohacking +"
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "url": "https://forms.gle/1ESdBdR2fLYd5Eqt7",
+       "text": "Completar mi formulario",
+       "type": "URL"
+      }
+     ]
+    }
+   ],
+   "parameter_format": "POSITIONAL",
+   "disable_ios_autofill": false,
+   "is_primary_device_delivery_only": false
+  }
+ ]
+}

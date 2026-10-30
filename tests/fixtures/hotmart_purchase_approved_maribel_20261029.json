@@ -1,0 +1,112 @@
+{
+ "_capture": {
+  "origen": "Base de Maribel (contenedor maribel_db, base postgres), public.webhook_events, el PURCHASE_APPROVED mas reciente del producto 8443991 con la oferta u8ikyx78, tarjeta y sin order bump. Leido con default_transaction_read_only=on (E-190).",
+  "received_at": "2026-10-29T05:24:12Z",
+  "captured_at": "2026-10-30T03:00:00Z",
+  "anonimizado": "En el servidor, antes de salir: el id del evento, todo el comprador (nombre, mail, telefono, documento, ucode) salvo el pais, el mail de soporte, el productor, la transaccion, la IP, el sck/xcod y los afiliados pasan a marcadores <...>. Quedan el producto, la oferta, el precio, el tipo de pago y las fechas.",
+  "por_que": "E-190: la compra real de Maribel que dispara la bienvenida nativa. El bridge necesita mail o telefono para la pausa al comprar; el test los pone con valores de prueba."
+ },
+ "payload": {
+  "id": "<ID_DEL_EVENTO>",
+  "data": {
+   "buyer": {
+    "name": "<COMPRADOR_NAME>",
+    "email": "<COMPRADOR_EMAIL>",
+    "ucode": "<COMPRADOR_UCODE>",
+    "address": {
+     "country": "Mexico",
+     "country_iso": "MX"
+    },
+    "document": "<COMPRADOR_DOCUMENT>",
+    "last_name": "<COMPRADOR_LAST_NAME>",
+    "first_name": "<COMPRADOR_FIRST_NAME>",
+    "document_type": "<COMPRADOR_DOCUMENT_TYPE>",
+    "checkout_phone": "<COMPRADOR_CHECKOUT_PHONE>"
+   },
+   "product": {
+    "id": 8443991,
+    "name": "El Protocolo Biohacking +",
+    "ucode": "cbf31dd0-0a92-447c-b756-3c370517d679",
+    "support_email": "<MAIL_DE_SOPORTE>",
+    "warranty_date": "2026-11-13T00:00:00Z",
+    "has_co_production": true,
+    "product_format_id": 8,
+    "is_physical_product": false
+   },
+   "producer": {
+    "name": "<PRODUCTOR_NAME>",
+    "document": "<PRODUCTOR_DOCUMENT>",
+    "legal_nature": "Pessoa Jurídica"
+   },
+   "purchase": {
+    "offer": {
+     "code": "u8ikyx78",
+     "name": "VSL | PAUTA | A | 1397MXN",
+     "description": "El Protocolo Biohacking +"
+    },
+    "price": {
+     "value": 1204.31,
+     "currency_value": "MXN"
+    },
+    "origin": {
+     "sck": "<ORIGEN_SCK>",
+     "xcod": "<ORIGEN_XCOD>"
+    },
+    "status": "APPROVED",
+    "payment": {
+     "type": "CREDIT_CARD",
+     "installments_number": 1
+    },
+    "buyer_ip": "<BUYER_IP>",
+    "is_funnel": true,
+    "full_price": {
+     "value": 1397,
+     "currency_value": "MXN"
+    },
+    "invoice_by": "HOTMART",
+    "order_bump": {
+     "is_order_bump": false
+    },
+    "order_date": 1793251437000,
+    "transaction": "<TRANSACTION>",
+    "approved_date": 1793251439000,
+    "business_model": "A",
+    "checkout_country": {
+     "iso": "MX",
+     "name": "Mexico"
+    },
+    "original_offer_price": {
+     "value": 1204.31,
+     "currency_value": "MXN"
+    },
+    "subscription_anticipation_purchase": false
+   },
+   "affiliates": [
+    {
+     "name": "<AFILIADO_NAME>",
+     "affiliate_code": "<AFILIADO_AFFILIATE_CODE>"
+    }
+   ],
+   "commissions": [
+    {
+     "value": 4.84,
+     "source": "MARKETPLACE",
+     "currency_value": "USD"
+    },
+    {
+     "value": 35.45,
+     "source": "PRODUCER",
+     "currency_value": "USD",
+     "currency_conversion": {
+      "conversion_rate": 1,
+      "converted_value": 35.45,
+      "converted_to_currency": "USD"
+     }
+    }
+   ]
+  },
+  "event": "PURCHASE_APPROVED",
+  "version": "2.0.0",
+  "creation_date": 1793251450732
+ }
+}

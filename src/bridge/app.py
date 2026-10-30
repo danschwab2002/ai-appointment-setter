@@ -359,6 +359,8 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # de derivacion del manifiesto. El comportamiento es del producto; por
     # instancia, solo prenderlo.
     "purchase_agent_pause_enabled",
+    # E-190: la misma pausa, despues de la bienvenida nativa.
+    "purchase_agent_pause_after_native_welcome_enabled",
     "pilot_boundary_enabled",
     "chatwoot_cut_b_admission_enabled",
     "chatwoot_cut_b_agent_enabled",
@@ -866,6 +868,11 @@ class Settings:
     # asignada al team y con una nota privada. Apagado, la compra hace lo de
     # hoy (corta los toques) y el agente le sigue contestando.
     purchase_agent_pause_enabled: bool = False
+    # E-190: con un flujo nativo de la compra, el worker no pausa a quien el flujo
+    # tomo (la bienvenida va a la misma conversacion). Con este flag, el
+    # despachador lo pausa apenas Chatwoot acepta la bienvenida. Apagado, quien
+    # recibe la bienvenida sigue atendido por el agente (E-165).
+    purchase_agent_pause_after_native_welcome_enabled: bool = False
     handoff_projection_policy_key: str | None = None
     handoff_projection_policy_version: int | None = None
     human_handoff_projection_worker_id: str | None = None
@@ -1613,6 +1620,12 @@ class Settings:
         purchase_agent_pause_enabled = (
             os.getenv("PURCHASE_AGENT_PAUSE_ENABLED", "false").lower() == "true"
         )
+        purchase_agent_pause_after_native_welcome_enabled = (
+            os.getenv(
+                "PURCHASE_AGENT_PAUSE_AFTER_NATIVE_WELCOME_ENABLED", "false"
+            ).lower()
+            == "true"
+        )
         handoff_projection_policy_key = (
             os.getenv("HANDOFF_PROJECTION_POLICY_KEY", "").strip() or None
         )
@@ -2044,6 +2057,9 @@ class Settings:
             handoff_notice_enabled=handoff_notice_enabled,
             handoff_link_note_enabled=handoff_link_note_enabled,
             purchase_agent_pause_enabled=purchase_agent_pause_enabled,
+            purchase_agent_pause_after_native_welcome_enabled=(
+                purchase_agent_pause_after_native_welcome_enabled
+            ),
             handoff_projection_policy_key=handoff_projection_policy_key,
             handoff_projection_policy_version=handoff_projection_policy_version,
             human_handoff_projection_worker_id=(
@@ -5015,6 +5031,19 @@ def create_app(
             "PURCHASE_AGENT_PAUSE_ENABLED requires the instance manifest, "
             "RESOLUTION_WORKER_ENABLED and HOTMART_PURCHASE_WORKER_ENABLED"
         )
+    if settings.purchase_agent_pause_after_native_welcome_enabled and not (
+        settings.purchase_agent_pause_enabled
+        and settings.flow_engine_enabled
+        and settings.dispatcher_enabled
+    ):
+        # E-190: es la pausa al comprar, corrida por el despachador despues
+        # del envio nativo: sin la pausa, el motor o el despachador no hay
+        # nada que mover.
+        raise ValueError(
+            "PURCHASE_AGENT_PAUSE_AFTER_NATIVE_WELCOME_ENABLED requires "
+            "PURCHASE_AGENT_PAUSE_ENABLED, FLOW_ENGINE_ENABLED and "
+            "DURABLE_DISPATCHER_ENABLED"
+        )
     if settings.human_handoff_admission_enabled:
         inbound_handoff_enabled = (
             settings.chatwoot_cut_b_admission_enabled
@@ -5451,6 +5480,11 @@ def create_app(
         durable_dispatcher = DurableDispatcher(
             flow_engine_enabled=settings.flow_engine_enabled,
             native_client_labeler=native_client_labeler,
+            purchase_pause_after_native_welcome=(
+                purchase_agent_pause
+                if settings.purchase_agent_pause_after_native_welcome_enabled
+                else None
+            ),
             supabase=shared_supabase,
             worker_id=settings.dispatcher_worker_id,
             poll_interval_seconds=settings.dispatcher_poll_interval_seconds,
