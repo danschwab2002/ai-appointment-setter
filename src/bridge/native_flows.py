@@ -12,6 +12,8 @@ que el bridge le pone:
 - **El carrito va a la admision nativa antes que al legado**
   (``admit_native_cart``, flow-engine-v2 2.7.0): lo llama el resolver con el
   contacto ya resuelto; si un flujo nativo lo toma, el legado no planifica.
+  **El pago rechazado, igual** (flow-engine-v2 2.11.0, E-207): la misma llamada
+  con ``trigger=NATIVE_PAYMENT_FAILURE_TRIGGER``.
 - **El paso ``etiquetar: cliente``** (``apply_native_tail``), despues de que la
   plantilla del paso quedo aceptada: la etiqueta ``cliente`` por un macro que
   solo la suma (el patron de ``ProductLabeler``) y una nota privada con el
@@ -52,6 +54,9 @@ NATIVE_ANCHOR = "flow_engine_event"
 NATIVE_PURCHASE_TRIGGER = "compra"
 # El carrito abandonado (E-161, flow-engine-v2 2.7.0): entra con permiso formulario.
 NATIVE_CART_TRIGGER = "carrito"
+# El pago rechazado (E-207, flow-engine-v2 2.11.0): entra con permiso formulario, como el carrito.
+NATIVE_PAYMENT_FAILURE_TRIGGER = "pago_fallido"
+NATIVE_EVENT_TRIGGERS = frozenset({NATIVE_CART_TRIGGER, NATIVE_PAYMENT_FAILURE_TRIGGER})
 # Una accion nativa solo sale con la plantilla del paso, en el modo directo y
 # con el motor prendido: nunca por Hermes ni con la plantilla del manifiesto.
 NATIVE_NEEDS_DIRECT_TEMPLATE = "flow_engine_native_needs_direct_template"
@@ -158,16 +163,43 @@ def cart_product_ref(
     return commercial_ally_config.funnel_ref
 
 
+def payment_failure_product_ref(
+    payload: Mapping[str, object],
+    *,
+    commercial_ally_config: CommercialAllyConfig | None,
+    product_routes: ProductRoutes | None,
+) -> str | None:
+    """The product of the instance a payment failure belongs to, by Hotmart id (E-207).
+
+    A ``PURCHASE_CANCELED`` carries the product where the cart does
+    (``data.product.id``): the same reading as ``cart_product_ref``.
+    """
+    return cart_product_ref(
+        payload, commercial_ally_config=commercial_ally_config, product_routes=product_routes
+    )
+
+
 # What a native cart admission leaves to the resolver (E-161, flow-engine-v2 2.7.0).
 NATIVE_CART_STARTED = "arranco"          # a native run owns the event: no legacy planner
 NATIVE_CART_REFUSED = "no_arranca"       # a native flow took the person and did not start: no legacy
 NATIVE_CART_UNCLAIMED = "sin_reclamo"    # no native flow takes the person: the legacy plans as today
 NATIVE_CART_PENDING = "pendiente"        # the admission did not answer: the event stays received
+# A payment failure that a native run of the person already in course takes (E-207): the base moved the
+# first send to the grace of this refusal and recorded it in the case, as the legacy does. The event ends
+# processed, not failed, as with the legacy (one message, that of the last refusal).
+NATIVE_PAYMENT_FAILURE_ABSORBED = "sumado"
+# ya_en_curso (a run in course) and ya_disparado (a run that ended within otra_despues_de: in Maribel, the
+# 72 h of the legacy): the base records the refusal in that case, without a message.
+NATIVE_PAYMENT_FAILURE_ABSORBED_REASONS = frozenset({"ya_en_curso", "ya_disparado"})
 # Not taking the person: outside the cohort, or the flow went off or paused after the read.
 # caso_del_legado_en_curso (E-204, 20261030000100): the person has an open legacy case of the
-# product (any offer); the cart is the legacy's, which does exactly what it does today.
+# product (any offer); the cart is the legacy's, which does exactly what it does today. The same
+# reason with the payment failure (E-207, 20261030000200): a legacy payment-failure case the legacy
+# planner would take (open, or closed within 72 h), any offer.
+# no_es_un_rechazo (E-207): a cancelled pending payment that is not a refusal goes back to the
+# legacy too, which does with it what it does today.
 NATIVE_CART_UNCLAIMED_REASONS = frozenset(
-    {"fuera_de_cohorte", "flujo_apagado", "flujo_pausado", "caso_del_legado_en_curso"}
+    {"fuera_de_cohorte", "flujo_apagado", "flujo_pausado", "caso_del_legado_en_curso", "no_es_un_rechazo"}
 )
 
 
@@ -190,8 +222,12 @@ async def admit_native_cart(
     chatwoot_account_id: int,
     chatwoot_inbox_id: int,
     destination: str,
+    trigger: str = NATIVE_CART_TRIGGER,
 ) -> NativeCartAdmission:
     """Admit a cart to the native cart flows of its product, before the legacy planner.
+
+    With ``trigger=NATIVE_PAYMENT_FAILURE_TRIGGER`` (E-207) the event is a payment
+    failure and the same outcomes apply to the native payment-failure flows.
 
     One event opens one case (``recovery_cases.abandonment_event_id`` is
     unique), so the native admission goes first and the legacy only plans what
@@ -202,9 +238,14 @@ async def admit_native_cart(
     A call that did not answer is ``pendiente`` (the event stays received and
     the batch tries again) up to the third consecutive failure; the fourth call
     still asks (a lost answer may have left the case created), and if it fails
-    too, the legacy plans. A deterministic rejection goes to the legacy. Never
-    raises.
+    too, the legacy plans. A deterministic rejection goes to the legacy. With
+    the payment failure, ``ya_en_curso`` and ``ya_disparado`` are ``sumado``:
+    the base added the refusal to the person's run and the event ends
+    processed. Never raises for a trigger of ``NATIVE_EVENT_TRIGGERS``; any
+    other trigger is a programming error (``ValueError``).
     """
+    if trigger not in NATIVE_EVENT_TRIGGERS:
+        raise ValueError(f"native event trigger not supported: {trigger}")
     failures = runtime.native_admission_failures
     # Desde el cuarto intento seguido sin respuesta se le pregunta igual (una respuesta perdida
     # pudo dejar el caso creado, y la repeticion lo devuelve), pero si vuelve a fallar planifica
@@ -212,7 +253,7 @@ async def admit_native_cart(
     forced = failures.should_force_legacy(webhook_event_id)
     flow_event: dict[str, object] = {
         "fuente": "hotmart",
-        "tipo": NATIVE_CART_TRIGGER,
+        "tipo": trigger,
         "evento_id": webhook_event_id,
         "producto_ref": product_ref,
         "oferta": offer_code
@@ -257,6 +298,10 @@ async def admit_native_cart(
     for row in rows:
         if row.outcome == "motor_arranco" and row.recovery_case_id is not None:
             return NativeCartAdmission(NATIVE_CART_STARTED, recovery_case_id=row.recovery_case_id)
+    if trigger == NATIVE_PAYMENT_FAILURE_TRIGGER:
+        for row in rows:
+            if row.outcome == "motor_no_arranca" and row.reason in NATIVE_PAYMENT_FAILURE_ABSORBED_REASONS:
+                return NativeCartAdmission(NATIVE_PAYMENT_FAILURE_ABSORBED, reason=row.reason)
     for row in rows:
         if row.outcome == "motor_no_arranca" and row.reason not in NATIVE_CART_UNCLAIMED_REASONS:
             return NativeCartAdmission(NATIVE_CART_REFUSED, reason=row.reason)

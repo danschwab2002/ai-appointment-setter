@@ -75,7 +75,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026102800030
   // La compra con nuestro link cuenta siempre (E-169): no toca lo de esta.
   '20261028000400_purchase_by_our_link_counts_v1.sql',
   // El doble caso del carrito (E-204): la admision nativa y el planificador del carrito, por reemplazo contado.
-  '20261030000100_flow_engine_native_legacy_double_case_v1.sql'])) {
+  '20261030000100_flow_engine_native_legacy_double_case_v1.sql',
+  // El pago rechazado nativo (E-207): el disparador pago_fallido, por reemplazo contado.
+  '20261030000200_flow_engine_native_payment_failure_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de sumar ofertas`, names.slice(position + 1));
 }
 if (maribel.name !== 'maribel_retomar_proceso_01' || maribel.category !== 'MARKETING') {
@@ -411,7 +413,8 @@ results.compra = { reevaluacion: cut.decision.decision, motivo: cut.decision.rea
       public._flow_engine_native_unsupported($6::jsonb) as f`,
   [JSON.stringify({ ...CART, entra: { permiso: 'compra' } }),
     JSON.stringify({ ...CART, dispara: { evento: 'compra' } }),
-    JSON.stringify({ ...CART, dispara: { evento: 'pago_fallido' } }),
+    // El pago rechazado es nativo desde 20261030000200 (E-207): la ficha todavia no.
+    JSON.stringify({ ...CART, dispara: { evento: 'ficha_impresa' } }),
     // El carrito de tres toques del legado (A1, A2 y Z): el nativo manda uno solo.
     JSON.stringify(world.cartDefinition(A.funnel)),
     JSON.stringify({ ...CART, pasos: [{ conversar: 'agente' }] }),
@@ -441,7 +444,7 @@ results.compra = { reevaluacion: cut.decision.decision, motivo: cut.decision.rea
   }
   let error = null;
   try {
-    await rpc('read_flow_engine_native_trigger_counts_v1', INSTANCE, A.funnel, 'pago_fallido', since);
+    await rpc('read_flow_engine_native_trigger_counts_v1', INSTANCE, A.funnel, 'ficha_impresa', since);
   } catch (caught) {
     error = caught;
   }

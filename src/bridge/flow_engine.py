@@ -260,7 +260,8 @@ def not_supported(definition: Mapping[str, Any], capabilities: EngineCapabilitie
 
 # El motor nativo de flow-engine-v2 (§9, el PR 2 en 20261024000200): ejecuta un flujo que nace en el
 # motor, sin legado, disparado por la compra o, desde 20261028000200 (E-161, §19), por el carrito
-# abandonado. Un solo envio (las formas de pasos ``nativo:compra`` y ``nativo:carrito``), con las
+# abandonado y, desde 20261030000200 (E-207, §23), por el pago rechazado. Un solo envio (las formas de
+# pasos ``nativo:compra``, ``nativo:carrito`` y ``nativo:pago_fallido``), con las
 # variables que declara el paso de entre ``nombre`` y ``producto`` (E-115, 20261026000100), sin boton
 # declarado, y el paso ``etiquetar`` (lo ejecuta el bridge, PR 3; la regla 5 lo deja solo con la
 # compra). La salida ``compra`` (la del carrito: la compra corta el caso antes del envio, el freno de la
@@ -268,7 +269,7 @@ def not_supported(definition: Mapping[str, Any], capabilities: EngineCapabilitie
 # (los mira la regla 13 contra el catalogo, flow-engine-v2 2.6.0). ``buttons`` vacio es el ``boton`` que
 # declara el paso, no los botones de la plantilla.
 ENGINE_CAPABILITIES_NATIVE = EngineCapabilities(
-    triggers=frozenset({"compra", "carrito"}),
+    triggers=frozenset({"compra", "carrito", "pago_fallido"}),
     step_types=frozenset({"esperar", "plantilla", "etiquetar"}),
     max_sends_per_path=1,
     waits_between_sends=False,
@@ -279,8 +280,11 @@ ENGINE_CAPABILITIES_NATIVE = EngineCapabilities(
 )
 # El permiso con el que entra cada disparador nativo (``_flow_engine_native_unsupported``, 20261028000200):
 # la compra con ``compra`` (la regla 17: una sola plantilla de utilidad) y el carrito con ``formulario``
-# (la intencion con consentimiento que la admision portable correlaciono con ese carrito).
-NATIVE_PERMISSION_BY_TRIGGER: Mapping[str, str] = MappingProxyType({"compra": "compra", "carrito": "formulario"})
+# (la intencion con consentimiento que la admision portable correlaciono con ese carrito), y el pago
+# rechazado tambien con ``formulario`` (20261030000200, E-207: la intencion con la que la admision portable
+# correlaciono ese rechazo, como el pago rechazado del legado con ``consented_intent``).
+NATIVE_PERMISSION_BY_TRIGGER: Mapping[str, str] = MappingProxyType(
+    {"compra": "compra", "carrito": "formulario", "pago_fallido": "formulario"})
 # Las variables que el bridge sabe llenar en un paso nativo de la compra
 # (``_flow_engine_native_steps('nativo:compra')``, ``variables_de``): el paso manda las que declara, en
 # su orden, al menos una y ninguna repetida; otra lista es ``variables_differ`` (20261026000100).

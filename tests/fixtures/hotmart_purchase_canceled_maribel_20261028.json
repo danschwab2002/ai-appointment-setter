@@ -1,0 +1,283 @@
+{
+  "_capture": {
+    "origen": "Base de Maribel (servicio maribel_db del stack maribel, autohospedada), public.webhook_events con event_type = 'PURCHASE_CANCELED' y su fila de commercial_ally_payment_failure_details con correlation_outcome = 'resolved': los 3 rechazos correlacionados que tenia la base, tal como los guardo el bridge. Lectura de solo lectura por psql dentro del contenedor (default_transaction_read_only=on), el 2026-10-30 ~15:10Z (E-207).",
+    "captured_at": "2026-10-30T15:10:00Z",
+    "anonimizado": "Armado adentro de la base por lista blanca de campos, con un chequeo que abortaba si la salida contenia alguno de los 28 valores reales mirados (id del evento, external_event_id, todo data.buyer, el telefono sin sus dos primeros digitos, transaccion, IP, valores de origin, productor y email de soporte): 0 fugas. Cada persona lleva el mismo numero en todos sus eventos (campo 'persona'). El telefono conserva los 2 primeros digitos y el largo. Lo demas es tal cual llego: event, version, el producto, la oferta, los precios, data.purchase.payment (type, refusal_reason), status y checkout_country. Las comisiones quedan solo con valor, origen y moneda. Despues de la revision E-211 (2026-10-30): creation_date y order_date corridos por un desplazamiento constante que no esta en el repo (se conserva la diferencia de 23,462 s entre los dos rechazos de la persona 2, que es lo que usa el test), sin la hora de recepcion, y con installments_number = 1 y order_bump = false en los tres: con eso no se encuentran las transacciones en el panel de Hotmart. Los precios son los de la oferta, iguales para todos los compradores.",
+    "lo_que_prueba": "Los 3 rechazos de tarjeta de Maribel correlacionados con una intencion: uno de saldo insuficiente (persona 1) y dos de la misma persona con 24 segundos de diferencia (persona 2, 28/10, 'Transação negada pelo banco emissor'): el caso de dos rechazos seguidos, donde el legado manda un solo mensaje, a la gracia del ultimo. Los otros 4 cancelados de la base (MERCADO_PAGO 2, BANK_TRANSFER 2) no traen refusal_reason, no se correlacionaron y no son rechazos (payment_failure_refusal_kind = not_a_refusal): no estan aca."
+  },
+  "eventos": [
+    {
+      "payload": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "data": {
+          "buyer": {
+            "name": "Persona Prueba 1",
+            "email": "persona.prueba1@example.com",
+            "ucode": "00000000-0000-4000-9000-000000000001",
+            "address": {
+              "country": "Mexico",
+              "country_iso": "MX"
+            },
+            "document": "00000000",
+            "last_name": "Prueba 1",
+            "first_name": "Persona",
+            "checkout_phone": "520000000001"
+          },
+          "product": {
+            "id": 8443991,
+            "name": "El Protocolo Biohacking +",
+            "support_email": "soporte@example.com",
+            "has_co_production": true,
+            "product_format_id": 8,
+            "is_physical_product": false
+          },
+          "producer": {
+            "name": "Productora Prueba",
+            "document": "00000000",
+            "legal_nature": "Pessoa Jurídica"
+          },
+          "purchase": {
+            "offer": {
+              "code": "u8ikyx78"
+            },
+            "price": {
+              "value": 1204.31,
+              "currency_value": "MXN"
+            },
+            "origin": {
+              "sck": "fixture",
+              "xcod": "fixture"
+            },
+            "status": "CANCELED",
+            "payment": {
+              "type": "CREDIT_CARD",
+              "refusal_reason": "Saldo insuficiente.",
+              "installments_number": 1
+            },
+            "buyer_ip": "192.0.2.1",
+            "is_funnel": true,
+            "full_price": {
+              "value": 1481.37,
+              "currency_value": "MXN"
+            },
+            "invoice_by": "HOTMART",
+            "order_bump": {
+              "is_order_bump": false
+            },
+            "order_date": 1792847843629,
+            "transaction": "HP000000000001",
+            "business_model": "A",
+            "checkout_country": {
+              "iso": "MX",
+              "name": "Mexico"
+            },
+            "original_offer_price": {
+              "value": 1204.31,
+              "currency_value": "MXN"
+            },
+            "subscription_anticipation_purchase": false
+          },
+          "affiliates": [],
+          "commissions": [
+            {
+              "value": 4.84,
+              "source": "MARKETPLACE",
+              "currency_value": "USD"
+            },
+            {
+              "value": 35.45,
+              "source": "PRODUCER",
+              "currency_value": "USD"
+            }
+          ]
+        },
+        "event": "PURCHASE_CANCELED",
+        "version": "2.0.0",
+        "creation_date": 1792847859054
+      },
+      "persona": 1
+    },
+    {
+      "payload": {
+        "id": "00000000-0000-4000-8000-000000000002",
+        "data": {
+          "buyer": {
+            "name": "Persona Prueba 2",
+            "email": "persona.prueba2@example.com",
+            "ucode": "00000000-0000-4000-9000-000000000002",
+            "address": {
+              "country": "Mexico",
+              "country_iso": "MX"
+            },
+            "document": "00000000",
+            "last_name": "Prueba 2",
+            "first_name": "Persona",
+            "checkout_phone": "520000000002"
+          },
+          "product": {
+            "id": 8443991,
+            "name": "El Protocolo Biohacking +",
+            "support_email": "soporte@example.com",
+            "has_co_production": true,
+            "product_format_id": 8,
+            "is_physical_product": false
+          },
+          "producer": {
+            "name": "Productora Prueba",
+            "document": "00000000",
+            "legal_nature": "Pessoa Jurídica"
+          },
+          "purchase": {
+            "offer": {
+              "code": "u8ikyx78"
+            },
+            "price": {
+              "value": 1204.31,
+              "currency_value": "MXN"
+            },
+            "origin": {
+              "sck": "fixture",
+              "xcod": "fixture"
+            },
+            "status": "CANCELED",
+            "payment": {
+              "type": "CREDIT_CARD",
+              "refusal_reason": "Transação negada pelo banco emissor",
+              "installments_number": 1
+            },
+            "buyer_ip": "192.0.2.1",
+            "is_funnel": true,
+            "full_price": {
+              "value": 1397,
+              "currency_value": "MXN"
+            },
+            "invoice_by": "HOTMART",
+            "order_bump": {
+              "is_order_bump": false
+            },
+            "order_date": 1792877759629,
+            "transaction": "HP000000000002",
+            "business_model": "A",
+            "checkout_country": {
+              "iso": "MX",
+              "name": "Mexico"
+            },
+            "original_offer_price": {
+              "value": 1204.31,
+              "currency_value": "MXN"
+            },
+            "subscription_anticipation_purchase": false
+          },
+          "affiliates": [],
+          "commissions": [
+            {
+              "value": 4.84,
+              "source": "MARKETPLACE",
+              "currency_value": "USD"
+            },
+            {
+              "value": 35.45,
+              "source": "PRODUCER",
+              "currency_value": "USD"
+            }
+          ]
+        },
+        "event": "PURCHASE_CANCELED",
+        "version": "2.0.0",
+        "creation_date": 1792877775332
+      },
+      "persona": 2
+    },
+    {
+      "payload": {
+        "id": "00000000-0000-4000-8000-000000000003",
+        "data": {
+          "buyer": {
+            "name": "Persona Prueba 2",
+            "email": "persona.prueba2@example.com",
+            "ucode": "00000000-0000-4000-9000-000000000002",
+            "address": {
+              "country": "Mexico",
+              "country_iso": "MX"
+            },
+            "document": "00000000",
+            "last_name": "Prueba 2",
+            "first_name": "Persona",
+            "checkout_phone": "520000000002"
+          },
+          "product": {
+            "id": 8443991,
+            "name": "El Protocolo Biohacking +",
+            "support_email": "soporte@example.com",
+            "has_co_production": true,
+            "product_format_id": 8,
+            "is_physical_product": false
+          },
+          "producer": {
+            "name": "Productora Prueba",
+            "document": "00000000",
+            "legal_nature": "Pessoa Jurídica"
+          },
+          "purchase": {
+            "offer": {
+              "code": "u8ikyx78"
+            },
+            "price": {
+              "value": 1204.31,
+              "currency_value": "MXN"
+            },
+            "origin": {
+              "sck": "fixture",
+              "xcod": "fixture"
+            },
+            "status": "CANCELED",
+            "payment": {
+              "type": "CREDIT_CARD",
+              "refusal_reason": "Transação negada pelo banco emissor",
+              "installments_number": 1
+            },
+            "buyer_ip": "192.0.2.1",
+            "is_funnel": true,
+            "full_price": {
+              "value": 1397,
+              "currency_value": "MXN"
+            },
+            "invoice_by": "HOTMART",
+            "order_bump": {
+              "is_order_bump": false
+            },
+            "order_date": 1792877784629,
+            "transaction": "HP000000000003",
+            "business_model": "A",
+            "checkout_country": {
+              "iso": "MX",
+              "name": "Mexico"
+            },
+            "original_offer_price": {
+              "value": 1204.31,
+              "currency_value": "MXN"
+            },
+            "subscription_anticipation_purchase": false
+          },
+          "affiliates": [],
+          "commissions": [
+            {
+              "value": 4.84,
+              "source": "MARKETPLACE",
+              "currency_value": "USD"
+            },
+            {
+              "value": 35.45,
+              "source": "PRODUCER",
+              "currency_value": "USD"
+            }
+          ]
+        },
+        "event": "PURCHASE_CANCELED",
+        "version": "2.0.0",
+        "creation_date": 1792877798794
+      },
+      "persona": 2
+    }
+  ]
+}

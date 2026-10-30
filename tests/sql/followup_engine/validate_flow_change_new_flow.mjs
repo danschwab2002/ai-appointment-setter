@@ -117,7 +117,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026102500010
   // La compra con nuestro link cuenta siempre (E-169): el helper del cierre por el link y el correlador.
   '20261028000400_purchase_by_our_link_counts_v1.sql',
   // El doble caso del carrito (E-204): la admision nativa y el planificador del carrito, por reemplazo contado.
-  '20261030000100_flow_engine_native_legacy_double_case_v1.sql'])) {
+  '20261030000100_flow_engine_native_legacy_double_case_v1.sql',
+  // El pago rechazado nativo (E-207): el disparador pago_fallido, por reemplazo contado.
+  '20261030000200_flow_engine_native_payment_failure_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de las lecturas nativas del AE`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(
@@ -509,9 +511,10 @@ const outcomeFor = (rows) => one(rows.filter((row) => row.flow_id === WELCOME.fl
          !== JSON.stringify(['contract', 'events', 'people', 'product_ref', 'since', 'trigger', 'until'])) {
     fail('el conteo de la simulacion', counts);
   }
-  // El carrito cuenta desde 20261028000200 (E-161); el pago rechazado sigue sin disparador nativo.
+  // El carrito cuenta desde 20261028000200 (E-161) y el pago rechazado desde 20261030000200 (E-207); la ficha
+  // sigue sin disparador nativo.
   const otherTrigger = await errorOf(() => sql(`select public.read_flow_engine_native_trigger_counts_v1($1::jsonb, $2,
-    'pago_fallido', now() - interval '1 day')`, [JSON.stringify(INSTANCE), A.funnel]));
+    'ficha_impresa', now() - interval '1 day')`, [JSON.stringify(INSTANCE), A.funnel]));
   const tooWide = await errorOf(() => sql(`select public.read_flow_engine_native_trigger_counts_v1($1::jsonb, $2,
     'compra', now() - interval '9 days')`, [JSON.stringify(INSTANCE), A.funnel]));
   if (otherTrigger?.message !== 'flow_engine_native_trigger_invalid' || tooWide?.message !== 'flow_engine_history_window_too_wide') {

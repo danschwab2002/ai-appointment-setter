@@ -1,0 +1,47 @@
+{
+  "_capture": {
+    "origen": "validate_flow_engine_native_payment_failure.mjs: la cadena entera de migraciones (PGlite), el formulario y los rechazos capturados de Maribel por las admisiones portables",
+    "encargo": "E-207",
+    "regenerar": "cd tests/sql/followup_engine && node validate_flow_engine_native_payment_failure.mjs --emit"
+  },
+  "admission": {
+    "outcome": "motor_arranco",
+    "reason": null,
+    "created": true
+  },
+  "no_permission": {
+    "outcome": "motor_no_arranca",
+    "reason": "no_entra:permiso",
+    "created": null
+  },
+  "not_a_refusal": {
+    "outcome": "motor_no_arranca",
+    "reason": "no_es_un_rechazo",
+    "created": null
+  },
+  "second_refusal": {
+    "outcome": "motor_no_arranca",
+    "reason": "ya_en_curso",
+    "created": null
+  },
+  "after_sent": {
+    "outcome": "motor_no_arranca",
+    "reason": "ya_disparado",
+    "created": null
+  },
+  "over_legacy": {
+    "outcome": "motor_no_arranca",
+    "reason": "caso_del_legado_en_curso",
+    "created": null
+  },
+  "cart_blocked": {
+    "outcome": "motor_no_arranca",
+    "reason": "no_arranca_mientras:pago_rechazado",
+    "created": null
+  },
+  "legacy_over_native": {
+    "code": "55000",
+    "message": "pilot_scope_rejected",
+    "details": "flujo_nativo_en_curso"
+  }
+}

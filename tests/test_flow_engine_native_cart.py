@@ -94,13 +94,14 @@ def test_the_fixture_is_the_real_chain_with_the_maribel_template() -> None:
 def test_the_native_engine_runs_the_one_touch_cart() -> None:
     assert native_not_supported(CART) == ()
     assert "carrito" in ENGINE_CAPABILITIES_NATIVE.triggers and ENGINE_CAPABILITIES_NATIVE.exits == {"compra"}
-    assert dict(NATIVE_PERMISSION_BY_TRIGGER) == {"compra": "compra", "carrito": "formulario"}
+    assert dict(NATIVE_PERMISSION_BY_TRIGGER) == {"compra": "compra", "carrito": "formulario", "pago_fallido": "formulario"}
 
 
 @pytest.mark.parametrize(("change", "code"), [
     ({"entra": {"permiso": "compra"}}, "motor_nativo:permiso"),
     ({"dispara": {"evento": "compra"}}, "motor_nativo:permiso"),
-    ({"dispara": {"evento": "pago_fallido"}}, "motor_nativo:disparador"),
+    # El pago rechazado es nativo desde E-207 (20261030000200): la ficha todavia no.
+    ({"dispara": {"evento": "ficha_impresa"}}, "motor_nativo:disparador"),
     ({"dispara": {"evento": "carrito", "otra": 1}}, "motor_nativo:disparador"),
     ({"pasos": [{"plantilla": NAME}, {"esperar": "1h"}, {"plantilla": NAME}]}, "engine_not_supported:demasiados_envios"),
     ({"termina": {"si": ["compra", "contesta"], "vence": "1d"}}, "engine_not_supported:salida_contesta"),

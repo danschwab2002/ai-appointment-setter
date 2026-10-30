@@ -93,6 +93,9 @@ from .flow_engine import (
     native_not_supported,
 )
 from .flow_policy import PolicyCompileError, compile_policy
+# Las claves de los flujos del legado (E-207, D1 del mapa de M16): la lectura del AE descarta todos los
+# nativos si uno usa una (automation_expert_read.build_native_flows). Esa lectura no importa nada del bridge.
+from .automation_expert_read import FLOW_KEYS as LEGACY_FLOW_KEYS
 
 __all__ = [
     "ACTORS", "BLOCK_CODES", "CATALOG", "CHECKOUT_BUTTON_URL", "PHASES", "RULES_VERSION",
@@ -384,6 +387,14 @@ FLOW_ALREADY_REGISTERED = _spec(
     "Ya hay un flujo con esa clave en ese producto.",
     alternative="Elegir otra clave, o cambiar el flujo que ya existe con una versión nueva.",
 )
+# E-207 (D1 del mapa de M16): un flujo nativo no usa la clave de un flujo del legado. La base lo frena
+# igual al publicar (_flow_change_new_flow_blocker, 20261030000200).
+FLOW_KEY_RESERVED_FOR_LEGACY = _spec(
+    "flow_key_reserved_for_legacy", None, KIND_CYCLE,
+    "Esa clave es de un flujo del legado (precheckout, carrito, pago_fallido, reactivacion o descuento): "
+    "un flujo nativo con esa clave deja al Automation Expert sin ver ningún flujo nativo.",
+    alternative="Elegir una clave nativa propia, por ejemplo carrito_nativo o pago_rechazado.",
+)
 # Ciclo 1.8.0: volver a la cohorte.
 PRENDER_A_COHORT_NEEDS_PAUSED_NATIVE = _spec(
     "prender_a_cohorte_needs_paused_native", None, KIND_CYCLE,
@@ -409,18 +420,22 @@ ETIQUETAR_NOT_AFTER_TEMPLATE = _spec(
 )
 # La regla 14 de un flujo nativo (flow-engine-v2 §9): lo que la base no abre ni admite.
 _NATIVE_LIMIT = ("Un flujo nativo, en esta versión del motor: lo dispara la compra (permiso: compra, plantilla "
-                 "de utilidad) o el carrito (permiso: formulario, termina con la compra); manda una sola "
+                 "de utilidad), el carrito o el pago rechazado (permiso: formulario, termina con la compra); "
+                 "manda una sola "
                  "plantilla con variables de entre nombre y producto, sin botón declarado, y repite por persona")
 ENGINE_NOT_SUPPORTED_NATIVE_TRIGGER = _spec(
     NATIVE_UNSUPPORTED_TRIGGER, 14, KIND_NOT_YET,
-    "El motor nativo de esta versión solo arranca con la compra o con el carrito.", limit=_NATIVE_LIMIT,
-    alternative="Disparar con dispara: {evento: compra} o {evento: carrito}. Otro evento es de un flujo del legado.",
+    "El motor nativo de esta versión solo arranca con la compra, con el carrito o con el pago rechazado.",
+    limit=_NATIVE_LIMIT,
+    alternative=("Disparar con dispara: {evento: compra}, {evento: carrito} o {evento: pago_fallido}. Otro evento "
+                 "es de un flujo del legado."),
 )
 ENGINE_NOT_SUPPORTED_NATIVE_PERMISSION = _spec(
     NATIVE_UNSUPPORTED_PERMISSION, 14, KIND_NOT_YET,
     "El motor nativo de esta versión entra con permiso: compra si lo dispara la compra, y con permiso: "
-    "formulario si lo dispara el carrito.", limit=_NATIVE_LIMIT,
-    alternative="Con la compra, permiso: compra y el OK del cliente; con el carrito, permiso: formulario.",
+    "formulario si lo dispara el carrito o el pago rechazado.", limit=_NATIVE_LIMIT,
+    alternative=("Con la compra, permiso: compra y el OK del cliente; con el carrito o el pago rechazado, "
+                 "permiso: formulario."),
 )
 ENGINE_NOT_SUPPORTED_NATIVE_REPEAT = _spec(
     NATIVE_UNSUPPORTED_REPEAT, 14, KIND_NOT_YET,
@@ -560,7 +575,8 @@ _VALIDATOR_CODES: tuple[CodeSpec, ...] = (
     ENGINE_NOT_SUPPORTED_FIXED_COUPON, ENGINE_NOT_SUPPORTED_VARIABLES_DIFFER,
     ENGINE_NOT_SUPPORTED_WAIT_BETWEEN_SENDS, ENGINE_NOT_SUPPORTED_WAIT_AFTER_SEND,
     PURCHASE_PERMISSION_REQUIRES_SINGLE_UTILITY_SEND, FLOW_CREATION_NOT_ENABLED,
-    FLOW_ALREADY_REGISTERED, NEW_FLOW_MUST_START_IN_COHORT, PRENDER_A_COHORT_NEEDS_PAUSED_NATIVE,
+    FLOW_ALREADY_REGISTERED, FLOW_KEY_RESERVED_FOR_LEGACY, NEW_FLOW_MUST_START_IN_COHORT,
+    PRENDER_A_COHORT_NEEDS_PAUSED_NATIVE,
     ETIQUETAR_REQUIRES_PURCHASE_TRIGGER,
     ETIQUETAR_NOT_AFTER_TEMPLATE, ENGINE_NOT_SUPPORTED_NATIVE_TRIGGER, ENGINE_NOT_SUPPORTED_NATIVE_PERMISSION,
     ENGINE_NOT_SUPPORTED_NATIVE_REPEAT, ENGINE_NOT_SUPPORTED_NATIVE_PRIORITY, ENGINE_NOT_SUPPORTED_NATIVE_SHAPE,
@@ -930,6 +946,8 @@ class _Run:
         self.warnings: list[Finding] = []
         # Los items nuevos cuya clave ya existe en su producto (flow_already_registered).
         self.taken: set[int] = set()
+        # Los items nuevos con la clave de un flujo del legado (flow_key_reserved_for_legacy, E-207).
+        self.reserved: set[int] = set()
         self.flows = [self._resolve(index, item) for index, item in enumerate(items)]
         self.normalized: list[ProposalItem] = []
         self.subjects: list[_Subject] = []
@@ -943,6 +961,8 @@ class _Run:
             # que sale de su clave y no esta en la foto. Si la clave ya existe, es un bloqueo.
             if self.world.find(item.producto, item.flujo) is not None:
                 self.taken.add(index)
+            if item.flujo in LEGACY_FLOW_KEYS:
+                self.reserved.add(index)
             return WorldFlow(
                 flow_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"setter-flujo-nuevo:{item.producto}/{item.flujo}")),
                 product_ref=item.producto, flow_key=item.flujo, native=True)
@@ -965,6 +985,8 @@ class _Run:
                     self.blocks.append(NEW_FLOW_MUST_START_IN_COHORT.at(finding_path((index, "prender"))))
                 if index in self.taken:
                     self.blocks.append(FLOW_ALREADY_REGISTERED.at(finding_path((index, "flujo"))))
+                if index in self.reserved:
+                    self.blocks.append(FLOW_KEY_RESERVED_FOR_LEGACY.at(finding_path((index, "flujo"))))
             if item.tipo == "prender":
                 self._switch_on(index, item, flow)
             elif item.tipo == "apagar":

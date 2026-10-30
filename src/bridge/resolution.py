@@ -45,6 +45,8 @@ FLOW_ENGINE_CART_KIND = "carrito"
 # What an engine admission that did not answer leaves: the event is not
 # marked, it stays received and the batch tries again.
 FLOW_ENGINE_ADMISSION_PENDING = "flow_engine_admission_unavailable"
+# E-207: un rechazo que el recorrido nativo en curso sumo; el evento ya quedo processed.
+FLOW_ENGINE_PAYMENT_FAILURE_ABSORBED = "flow_engine_payment_failure_absorbed"
 
 
 logger = logging.getLogger(__name__)
@@ -213,6 +215,7 @@ async def resolve_event(
     event_type: str | None = None,
     flow_engine: FlowEngineRuntime | None = None,
     native_cart_product_ref: str | None = None,
+    native_payment_failure_product_ref: str | None = None,
 ) -> SituationReport:
     """Resolve identity for one webhook event and return a situation report.
 
@@ -229,7 +232,8 @@ async def resolve_event(
     ``native_cart_product_ref`` (E-161, flow-engine-v2 2.7.0): the product of a
     cart with a native cart flow on or in its cohort. Only then the cart goes
     first to the native admission, and the legacy (or the engine of the cart)
-    plans only what no native flow takes. None is exactly today's path.
+    plans only what no native flow takes. None is exactly today's path. Same
+    with ``native_payment_failure_product_ref`` and a payment failure (E-207).
     """
     if event_type == EVENT_PURCHASE_CANCELED:
         buyer = (
@@ -447,16 +451,27 @@ async def resolve_event(
             # evento abre un solo caso: si el nativo lo toma, el legado no
             # planifica. Sin ese flujo, ninguna llamada nueva.
             native_cart = None
+            # flow-engine-v2 2.11.0 (E-207): el pago rechazado, igual, con su
+            # flujo nativo del producto prendido o en cohorte.
+            native_product_ref: str | None = None
+            native_trigger: str | None = None
+            if buyer.event_type == EVENT_CART_ABANDONMENT:
+                native_product_ref = native_cart_product_ref
+                native_trigger = "carrito"
+            elif buyer.event_type == EVENT_PURCHASE_CANCELED:
+                native_product_ref = native_payment_failure_product_ref
+                native_trigger = "pago_fallido"
             if (
                 flow_engine is not None
-                and native_cart_product_ref is not None
-                and buyer.event_type == EVENT_CART_ABANDONMENT
+                and native_product_ref is not None
+                and native_trigger is not None
                 and portable_identity_allowed
                 and external_user_id is not None
                 and chatwoot_account_id is not None
                 and chatwoot_inbox_id is not None
             ):
                 from bridge.native_flows import (
+                    NATIVE_PAYMENT_FAILURE_ABSORBED,
                     NATIVE_CART_PENDING,
                     NATIVE_CART_REFUSED,
                     NATIVE_CART_STARTED,
@@ -467,16 +482,24 @@ async def resolve_event(
                     supabase,
                     runtime=flow_engine,
                     webhook_event_id=webhook_event_id,
-                    product_ref=native_cart_product_ref,
+                    product_ref=native_product_ref,
                     contact_id=contact_id,
                     offer_code=buyer.offer_code,
                     moment=abandoned_at,
                     chatwoot_account_id=chatwoot_account_id,
                     chatwoot_inbox_id=chatwoot_inbox_id,
                     destination=external_user_id,
+                    trigger=native_trigger,
                 )
                 if native_cart.outcome == NATIVE_CART_PENDING:
                     raise ResolutionError(FLOW_ENGINE_ADMISSION_PENDING)
+                if native_cart.outcome == NATIVE_PAYMENT_FAILURE_ABSORBED:
+                    # E-207: el rechazo se sumo al recorrido nativo en curso (un
+                    # solo mensaje, el del ultimo rechazo), como lo suma el legado.
+                    await supabase.update_event_status(
+                        event_id=webhook_event_id, status="processed"
+                    )
+                    raise ResolutionError(FLOW_ENGINE_PAYMENT_FAILURE_ABSORBED)
                 if native_cart.outcome == NATIVE_CART_REFUSED:
                     error = f"flow_engine_no_start:{native_cart.reason}"
                     await supabase.update_event_status(

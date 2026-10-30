@@ -1580,14 +1580,16 @@ def test_purchase_by_our_link_counts_fingerprint_is_before_the_double_case() -> 
         assert marker in compact_fingerprint, marker
 
 
-def test_flow_engine_native_legacy_double_case_fingerprint_is_last() -> None:
+def test_flow_engine_native_legacy_double_case_fingerprint_is_before_the_payment_failure() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261030000100 (el doble caso del carrito, E-204) es la ultima.
-    fingerprint = sql.split("'20261030000100'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261030000100 (el doble caso del carrito, E-204) va justo antes de la del pago
+    # rechazado nativo (20261030000200, E-207).
+    fingerprint = sql.split("'20261030000100'", 1)[1].split(
+        "    union all\n    select\n        '20261030000200'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261030000100_flow_engine_native_legacy_double_case_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",2,'flow_engine_native_legacy_double_case')")
+    assert compact_fingerprint.endswith(",2,'flow_engine_native_legacy_double_case'")
     for marker in (
         "to_regprocedure('public._flow_engine_admit_native_flow(public.flow_controls,public.webhook_events,"
         "uuid,text,timestamptz,bigint,bigint,text)')",
@@ -1595,6 +1597,29 @@ def test_flow_engine_native_legacy_double_case_fingerprint_is_last() -> None:
         "position('flow_engine_native_legacy_double_case'indefinition)>0",
         "position('caso_del_legado_en_curso'indefinition)>0",
         "position('flujo_nativo_en_curso'indefinition)>0",
+        "notprosecdef",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_flow_engine_native_payment_failure_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261030000200 (el pago rechazado nativo, E-207) es la ultima.
+    fingerprint = sql.split("'20261030000200'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261030000200_flow_engine_native_payment_failure_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",4,'flow_engine_native_payment_failure')")
+    for marker in (
+        "to_regprocedure('public._flow_engine_native_payment_failure_audience(uuid,uuid,text,text,text)')",
+        "to_regprocedure('public._flow_engine_admit_native_flow(public.flow_controls,public.webhook_events,"
+        "uuid,text,timestamptz,bigint,bigint,text)')",
+        "to_regprocedure('public.plan_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamptz)')",
+        "position('flow_engine_native_payment_failure_double_case'indefinition)>0",
+        "position('flow_engine_native_payment_failure_last_refusal'indefinition)>0",
+        "position('flow_engine_native_payment_failure_legacy'indefinition)>0",
+        "to_regprocedure('public._flow_change_new_flow_blocker(text,text,jsonb)')",
+        "position('flow_key_reserved_for_legacy'indefinition)>0",
         "notprosecdef",
     ):
         assert marker in compact_fingerprint, marker

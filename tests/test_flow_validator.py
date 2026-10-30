@@ -684,6 +684,11 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
     ),
     # El item nuevo (ciclo 1.7.0) y el motor nativo (flow-engine-v2 §9).
     "flow_already_registered": (lambda: run_new(key="activacion"), lambda: run_new()),
+    # E-207 (D1): la clave de un flujo del legado, aunque ese flujo no este registrado en el producto.
+    "flow_key_reserved_for_legacy": (lambda: run_new(welcome(), key="pago_fallido",
+                                                     in_world=world(keys=("carrito",))),
+                                     lambda: run_new(welcome(), key="pago_rechazado",
+                                                     in_world=world(keys=("carrito",)))),
     "new_flow_must_start_in_cohort": (lambda: run_new(prender="prendido"), lambda: run_new()),
     "etiquetar_requires_purchase_trigger": (
         lambda: run(with_(flow_def("carrito"), lambda d: d["pasos"].append({"etiquetar": "cliente"}))),
@@ -694,8 +699,9 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
         lambda: run_new(),
     ),
     "motor_nativo:disparador": (
-        # El pago rechazado: el motor nativo arranca con la compra y, desde E-161, con el carrito.
-        lambda: run_new(welcome(dispara={"evento": "pago_fallido"}, entra={"permiso": "formulario"},
+        # La ficha: el motor nativo arranca con la compra, desde E-161 con el carrito y desde E-207 con
+        # el pago rechazado.
+        lambda: run_new(welcome(dispara={"evento": "ficha_impresa"}, entra={"permiso": "formulario"},
                                 pasos=[copy.deepcopy(CONFIRMED_STEP)])),
         lambda: run_new(),
     ),
@@ -830,7 +836,7 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         "rollback_target_is_active", "state_transition_invalid", "flow_has_no_version",
         "en_curso_not_supported", "identifier_not_allowed", "client_purchase_ok_missing",
         "flow_already_registered", "new_flow_must_start_in_cohort", "prender_a_cohorte_needs_paused_native",
-        "same_event_native_flows",
+        "same_event_native_flows", "flow_key_reserved_for_legacy",
     }
     assert all(pairs == {(None, "advertencia")} for code, pairs in fv.CODE_RULES.items()
                if code in fv.WARNING_CODES)
