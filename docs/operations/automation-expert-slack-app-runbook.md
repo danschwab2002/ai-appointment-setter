@@ -37,7 +37,6 @@ Los scopes del bot, cada uno con lo que lo usa en `plugins/platforms/slack/adapt
 
 - `chat:write`: contestar y editar (`chat_postMessage`, `chat_update`, `chat_delete`,
   `chat_postEphemeral` y los streams de respuesta).
-- `commands`: los slash commands de abajo.
 - `files:write`: subir archivos con `files_upload_v2`. Lo usa el lienzo de `draw_flow` (el plugin
   devuelve un `MEDIA:` y Hermes lo adjunta); el CHANGELOG lo pide desde la v1.16.0 (#295).
 - `im:history`: recibir el evento `message.im` y leer el hilo del DM (`conversations_replies`).
@@ -59,13 +58,28 @@ Lo que el manifiesto de Hermes pide y este no, porque el profile no lo usa:
 - `reactions:read`: las reacciones como señal de entrada no se usan.
 - `assistant:write` y la vista de asistente (`assistant_view`): el DM queda plano, como con
   `hermes slack manifest --no-assistant`.
+- Los slash commands (`slash_commands`, de `slack_native_slashes()`) y el scope `commands` que los
+  habilita. Ver la sección que sigue.
 
-Los slash commands salen de `slack_native_slashes()` (`hermes_cli/commands.py:1496-1575`), con la
-descripción de `COMMAND_REGISTRY`: `/hermes` (el que Hermes reserva para todo lo demás), `/new` y
-`/stop`, que el profile deja a cualquiera (`user_allowed_commands`), y `/model` y `/restart`, que
-solo corren quienes administran (`administran` en el `hermes.toml` de la instancia). `/status` no va:
-choca con un comando propio de Slack, y se llega por `/hermes status`. En Socket Mode Slack ignora la
-`url` de cada comando; va el marcador de Hermes.
+## Sin slash commands
+
+El manifiesto no registra ningún slash command, a propósito. Slack le da cada comando a la última app
+que lo instaló en todo el espacio de trabajo, no a la del mensaje directo. El 28/10, al instalar la app
+de Maribel en el Slack de Lancemos, se quedó con el `/model` de otro agente de Hermes que ya vivía ahí;
+hubo que borrar a mano los cinco comandos de la app instalada (`/hermes`, `/new`, `/stop`, `/model` y
+`/restart`). Con este manifiesto, una instalación nueva no le saca nada a nadie.
+
+Ningún código del producto usaba esos comandos: el Automation Expert trabaja por mensaje directo y el
+botón de aprobación llega por la interactividad, que sigue prendida. Los comandos del profile se
+escriben en el mismo DM con `!` en vez de `/`: `!new`, `!stop` y `!status`, que el profile deja a
+cualquiera (`user_allowed_commands`), y `!model` y `!restart`, que solo corren quienes administran
+(`administran` en el `hermes.toml` de la instancia). El adaptador de Slack de Hermes pasa el `!` a `/`
+cuando la primera palabra es un comando conocido (`_rewrite_known_bang_command`,
+`plugins/platforms/slack/adapter.py:445-459`), y el mismo control de acceso de `gateway/run.py` decide
+quién lo corre. Un texto como «!buenísimo» pasa como mensaje normal.
+
+Una app ya instalada con los comandos se arregla en **Slash Commands** (borrar los cinco) y después
+**OAuth & Permissions** (sacar `commands`), y Slack pide reinstalar: se vuelve a correr el paso 4.
 
 La interactividad queda prendida, como en el manifiesto de Hermes: en Socket Mode los botones llegan
 por la misma conexión y no hace falta URL.
@@ -73,8 +87,8 @@ por la misma conexión y no hace falta URL.
 ## Cómo se prueba
 
 - `tests/test_automation_expert_slack_manifest.py`: el manifiesto pide exactamente esos scopes y ese
-  evento, Socket Mode prendido, ninguna URL de una instancia, los slash commands cubren los comandos
-  del profile y el nombre no nombra ninguna instancia.
+  evento, Socket Mode prendido, ninguna URL de una instancia, ningún slash command ni el scope
+  `commands`, y el nombre no nombra ninguna instancia.
 - En cada instalación, el día 0: crear la app desde el manifiesto, cargar los tokens con
   `cargar-automation-expert.py`, prender `AUTOMATION_EXPERT_READ_ENABLED` en el `bridge.env` (sin
   ese flag el bridge no crea las rutas y el plugin contesta error), instalar el profile con

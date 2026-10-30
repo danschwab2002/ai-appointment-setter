@@ -17,48 +17,12 @@
     "bot_user": {
       "display_name": "Automation Expert",
       "always_online": true
-    },
-    "slash_commands": [
-      {
-        "command": "/hermes",
-        "description": "Talk to Hermes or run a subcommand",
-        "should_escape": false,
-        "url": "https://hermes-agent.local/slack/commands",
-        "usage_hint": "[subcommand] [args]"
-      },
-      {
-        "command": "/new",
-        "description": "Start a new session (fresh session ID + history)",
-        "should_escape": false,
-        "url": "https://hermes-agent.local/slack/commands",
-        "usage_hint": "[name]"
-      },
-      {
-        "command": "/stop",
-        "description": "Kill all running background processes",
-        "should_escape": false,
-        "url": "https://hermes-agent.local/slack/commands"
-      },
-      {
-        "command": "/model",
-        "description": "Switch model (session-scoped; --global to persist)",
-        "should_escape": false,
-        "url": "https://hermes-agent.local/slack/commands",
-        "usage_hint": "[model] [--provider name] [--global|--session] [--refresh]"
-      },
-      {
-        "command": "/restart",
-        "description": "Gracefully restart the gateway after draining active runs",
-        "should_escape": false,
-        "url": "https://hermes-agent.local/slack/commands"
-      }
-    ]
+    }
   },
   "oauth_config": {
     "scopes": {
       "bot": [
         "chat:write",
-        "commands",
         "files:write",
         "im:history",
         "im:read",
