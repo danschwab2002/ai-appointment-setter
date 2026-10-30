@@ -8341,10 +8341,16 @@ def create_app(
 
     approval_config = flow_approval.check_settings(settings)
     if approval_config is not None:
-        # flow-change-cycle-v1 1.9.0 (A′ PR 3a): la pagina de aprobacion, que
-        # solo muestra. Con el flag apagado las rutas no existen y dan 404.
+        # flow-change-cycle-v1 1.9.0 (A′ PR 3a y 3b): la pagina de aprobacion,
+        # que muestra y, desde el 3b, aprueba y publica, descarta, pausa y carga
+        # la cohorte. Con el flag apagado las rutas no existen y dan 404.
         # Tiene su propio cliente de la base, con el JWT de su rol: nunca el
-        # de service_role ni el del Automation Expert.
+        # de service_role ni el del Automation Expert. Publicar revalida con el
+        # catalogo de la bandeja (el cliente de control de Chatwoot) y avisa
+        # por el productor del conector de Slack, si la instancia lo tiene.
+        if control_client is None:
+            raise ValueError("FLOW_APPROVAL_ENABLED requires the Chatwoot control client")
+        assert settings.instance_manifest is not None
         flow_approval.register_flow_approval_routes(
             app,
             config=approval_config,
@@ -8356,6 +8362,10 @@ def create_app(
                 client_id=approval_config.client_id,
                 client_secret=approval_config.client_secret,
             ),
+            chatwoot=control_client,
+            inbox_id=settings.instance_manifest.chatwoot_inbox_id,
+            time_zone=settings.instance_manifest.time_zone,
+            producer=slack_runtime.producer if slack_runtime is not None else None,
         )
 
     if settings.automation_expert_read_enabled:
