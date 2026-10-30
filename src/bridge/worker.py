@@ -1709,6 +1709,7 @@ class DurableDispatcher:
                 expected_language=template.language,
                 expected_category=template.category_for(trigger_kind=trigger_kind),
                 parameter_count=len(declared),
+                header_media=template.header_media_for(template_name),
             )
             message = approved.render(values)
         except ApprovedTemplateError as exc:
