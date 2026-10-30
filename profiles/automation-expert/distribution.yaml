@@ -8,7 +8,7 @@
 # estar (hermes_cli/profile_distribution.py:84-91 y :601-625). Las sesiones, la memoria y el .env
 # del profile no se tocan nunca.
 name: automation-expert
-version: 0.1.0
+version: 0.2.0
 description: "Automation Expert: lee y explica los flujos y la historia de un lead. Solo lee."
 author: ai-appointment-setter
 hermes_requires: ">=0.21.0"
