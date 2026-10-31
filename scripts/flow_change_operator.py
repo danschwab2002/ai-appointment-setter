@@ -479,7 +479,8 @@ ENGINE_PAGES_MAX = 10
 # La gemela de bridge.flow_change_simulation.native_flow_counts_request (E-241), sin importar el
 # bridge: este script corre con la libreria estandar. test_flow_change_native_simulation.py fija que
 # las dos contesten lo mismo.
-_NATIVE_ITEM_TYPES = frozenset({"prender", "version", "volver", "apagar"})
+# D6 (E-245): por ahora solo prender y apagar, como NATIVE_ITEM_TYPES del bridge.
+_NATIVE_ITEM_TYPES = frozenset({"prender", "apagar"})
 
 
 def _native_flow_counts_request(store: object, items: object) -> dict[str, Any] | None:

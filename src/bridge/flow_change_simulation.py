@@ -297,14 +297,19 @@ def build_new_flow_simulation(counts: Any, items: Sequence[ProposalItem], *,
         return {"status": "failed", "reason_code": SIMULATION_ERROR}
 
 
-# La simulacion de un cambio sobre un flujo nativo (E-241): prender, version, volver o apagar un
-# flujo que nacio en el motor. La historia del motor (read_flow_engine_history_v1) es la del
+# La simulacion de un cambio sobre un flujo nativo (E-241): prender o apagar (D6) un flujo que
+# nacio en el motor. La historia del motor (read_flow_engine_history_v1) es la del
 # carrito del legado y exige su ruta (flow_engine_history_cart_route_not_found en una instancia sin
 # ella, como Maribel); un flujo nativo no corre sobre esa historia. Se cuentan los disparos de su
 # evento con la misma lectura del nuevo.
 NATIVE_FLOW_MIXED = "simulation_native_flow_mixed"
 NATIVE_FLOW_COUNTS_INVALID = "simulation_native_flow_counts_invalid"
-NATIVE_ITEM_TYPES = frozenset({"prender", "version", "volver", "apagar"})
+# D6 (E-245, valor por defecto de la coordinadora hasta que decida Dan): por ahora solo prender y
+# apagar. Un conteo de disparos alcanza para pasar un flujo de la cohorte a todos o para apagarlo,
+# pero no muestra que cambia paso por paso: una version o un volver de un nativo sigue por la
+# historia (sin simulacion: lo publica el operador). Para ampliarlo, sumar el tipo aca y en la
+# gemela del script (_NATIVE_ITEM_TYPES); el evento de version y volver ya se calcula abajo.
+NATIVE_ITEM_TYPES = frozenset({"prender", "apagar"})
 
 
 def _event_of(definition: object) -> object:
@@ -317,8 +322,9 @@ def native_flow_counts_request(store: Any, items: Any) -> dict[str, Any] | None:
     ``store`` es la respuesta de ``read_flow_store_v1`` (o la del operador, con la misma forma) e
     ``items``, los de la propuesta tal cual estan guardados. Devuelve:
 
-    * ``None`` si algun item no es de un flujo nativo (o es un ``nuevo``): la simulacion sigue por
-      la historia del motor, como antes;
+    * ``None`` si algun item no es de un flujo nativo, o no es de un tipo de ``NATIVE_ITEM_TYPES``
+      (un ``nuevo``, y por D6 una ``version`` o un ``volver``): la simulacion sigue por la historia
+      del motor, como antes;
     * ``{"product_ref", "trigger"}`` si hay un solo item, de un flujo nativo: el evento es el de la
       definicion que va a quedar (la del item en una ``version``, la del destino en un ``volver``,
       la activa en un ``prender`` o un ``apagar``);
@@ -359,7 +365,7 @@ def native_flow_counts_request(store: Any, items: Any) -> dict[str, Any] | None:
 
 def build_native_flow_simulation(counts: Any, items: Sequence[ProposalItem], *,
                                  world: FlowWorld | None) -> dict[str, Any]:
-    """La simulacion de un ``prender``, ``version``, ``volver`` o ``apagar`` de un flujo nativo (E-241).
+    """La simulacion de un ``prender`` o un ``apagar`` de un flujo nativo (E-241, D6 de E-245).
 
     ``counts`` es la respuesta de ``read_flow_engine_native_trigger_counts_v1`` para el evento del
     flujo en la ventana de la vista previa (7 dias). El evento se vuelve a sacar aca de ``world`` y
@@ -395,9 +401,15 @@ def build_native_flow_simulation(counts: Any, items: Sequence[ProposalItem], *,
             raise _Failed(NATIVE_FLOW_COUNTS_INVALID)
         summary: dict[str, Any] = {
             "flujo": f"{item.producto}/{item.flujo}", "tipo": item.tipo, "estado_hoy": flow.state,
+            "queda_en": "apagado" if item.tipo == "apagar" else (item.a or "prendido"),
             "disparador": trigger, "desde": counts.get("since"), "hasta": counts.get("until"),
             "disparos": events, "personas": people,
         }
+        # Como el nuevo: el conteo es de todas las compras (o carritos) del producto, no de la cohorte.
+        if item.tipo == "apagar":
+            summary["dejarian_de_recibirlo"] = people
+        else:
+            summary["mensajes_si_fuera_para_todos"] = people
         own = f"{flow.product_ref}/{flow.flow_key}"
         sharing = [entry for entry in _sharing_the_event(world, item.producto, trigger) if entry["flujo"] != own]
         if sharing:

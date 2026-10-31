@@ -23,9 +23,10 @@ import io
 
 import httpx
 import pytest
-from test_flow_change_api_app import AUTH, PREFIX, PostgrestEmulator, _client
+from test_flow_change_api_app import AUTH, PREFIX, SLACK, PostgrestEmulator, _client, _proposed
 from test_flow_change_new_flow import _ENV, _new_item, _propose, _published_welcome, _validate
-from test_flow_change_operator_script import FakeDocker, FakeTerminal
+from test_flow_change_operator_script import PROPOSAL, FakeDocker, FakeTerminal, proposal
+from test_flow_change_operator_script import run as run_script
 from test_flow_change_operator_script import script as operator_script
 
 from bridge.flow_approval import _simulation_summary
@@ -89,9 +90,10 @@ def test_passing_a_native_flow_from_the_cohort_to_everyone_simulates_without_the
     # Antes: {"status": "failed", "reason_code": "flow_engine_unavailable"}, y la pagina no publicaba.
     assert simulation["status"] == "built", simulation
     assert {key: simulation["summary"][key] for key in
-            ("flujo", "tipo", "estado_hoy", "disparador", "disparos", "personas")} == {
-        "flujo": "att1/bienvenida", "tipo": "prender", "estado_hoy": "cohorte", "disparador": "compra",
-        "disparos": 59, "personas": 59}
+            ("flujo", "tipo", "estado_hoy", "queda_en", "disparador", "disparos", "personas",
+             "mensajes_si_fuera_para_todos")} == {
+        "flujo": "att1/bienvenida", "tipo": "prender", "estado_hoy": "cohorte", "queda_en": "prendido",
+        "disparador": "compra", "disparos": 59, "personas": 59, "mensajes_si_fuera_para_todos": 59}
     assert len(simulation["summary_sha256"]) == 64 and simulation["cambios"] == []
     assert "simulation_failed" not in [gap["code"] for gap in out["preview"]["huecos"]]
     functions = [function for function, _, _ in emulator.requests]
@@ -100,7 +102,9 @@ def test_passing_a_native_flow_from_the_cohort_to_everyone_simulates_without_the
                 if function == "read_flow_engine_native_trigger_counts_v1"]
     assert (counts["p_product_ref"], counts["p_trigger"]) == ("att1", "compra")
     # Lo que la pagina muestra con esa simulacion (y lo que la deja publicar: status built).
-    assert "<strong>59</strong>" in _simulation_summary(simulation)
+    page = _simulation_summary(simulation)
+    assert "Cambio: <strong>prender</strong> · hoy en prueba, solo la cohorte → queda prendido para todos" in page
+    assert "Si fuera para todos, en los últimos 7 días se habría disparado <strong>59</strong> veces" in page
 
 
 def test_without_the_counts_reading_a_native_change_still_says_why(image: None) -> None:
@@ -128,6 +132,68 @@ def test_the_legacy_cart_still_goes_through_the_history(image: None) -> None:
     assert "read_flow_engine_native_trigger_counts_v1" not in functions
 
 
+def test_a_version_of_a_native_flow_still_goes_through_the_history(image: None) -> None:
+    # D6 (E-245): solo prender y apagar cuentan disparos; una version de un nativo sigue como antes.
+    emulator = WithoutCartRoute()
+    emulator.new_flow_counts = dict(MARIBEL_COUNTS)
+    emulator.flows.append(_welcome_flow())
+    client, _ = _client(emulator)
+    definition = copy.deepcopy(_welcome_flow()["versions"]["1"])
+    for key in ("version", "estado"):
+        definition.pop(key, None)
+    item = {"producto": "att1", "flujo": "bienvenida", "flow_id": WELCOME_ID, "tipo": "version",
+            "definicion": definition, "en_curso": "seguir"}
+    saved = _propose(client, [item], {WELCOME_ID: {"active_version": 1}})
+    assert saved.status_code == 201, saved.text
+    out = _validate(client, saved.json()["data"]["proposal_id"]).json()["data"]
+    assert out["preview"]["simulacion"] == {"status": "failed", "reason_code": "flow_engine_unavailable"}
+    functions = [function for function, _, _ in emulator.requests]
+    assert "read_flow_engine_native_trigger_counts_v1" not in functions
+
+
+def test_the_replay_of_a_legacy_cart_version_does_not_change_next_to_a_native_flow(image: None) -> None:
+    # ATT1: una version del carrito, con un flujo nativo al lado y la lectura de conteos disponible,
+    # sigue simulando con el replay de la historia (built, con cambios), como en main.
+    client, emulator = _client()
+    emulator.new_flow_counts = dict(MARIBEL_COUNTS)
+    emulator.flows.append(_welcome_flow())
+    proposal_id = _proposed(client)
+    response = client.post(f"{PREFIX}/flow-changes/{proposal_id}/validate", headers=AUTH,
+                           json={"revision": 1, "requested_by": SLACK})
+    assert response.status_code == 200, response.text
+    simulation = response.json()["data"]["preview"]["simulacion"]
+    assert simulation["status"] == "built" and simulation["summary"]["cambios"] > 0
+    assert "tipo" not in simulation["summary"]
+    functions = [function for function, _, _ in emulator.requests]
+    assert "read_flow_engine_history_v1" in functions
+    assert "read_flow_engine_native_trigger_counts_v1" not in functions
+
+
+# ----------------------------------------------------------------- lo que dice la pagina
+
+
+def test_the_page_says_what_turning_a_native_flow_off_stops() -> None:
+    world = world_from_store({"flows": [_welcome_flow("prendido")]})
+    [item] = parse_items([{**PRENDER, "tipo": "apagar"}])
+    counts = {**MARIBEL_COUNTS, "product_ref": "att1", "trigger": "compra"}
+    simulation = build_native_flow_simulation(counts, [item], world=world)
+    assert simulation["status"] == "built"
+    assert simulation["summary"]["dejarian_de_recibirlo"] == 59
+    assert "mensajes_si_fuera_para_todos" not in simulation["summary"]
+    page = _simulation_summary(simulation, turns_off=True)
+    assert "Cambio: <strong>apagar</strong> · hoy prendido para todos → queda apagado" in page
+    assert "<strong>59</strong> personas dejarían de recibirlo" in page
+    assert "se habría disparado" not in page
+
+
+def test_the_page_keeps_the_text_of_the_other_simulations() -> None:
+    summary = {"flujo_nuevo": "att1/bienvenida", "disparador": "compra", "disparos": 2, "personas": 2,
+               "mensajes_si_fuera_para_todos": 2, "nace_en": "cohorte"}
+    page = _simulation_summary({"status": "built", "summary": summary, "summary_sha256": "0" * 64})
+    assert "<p>En los últimos 7 días se habría disparado <strong>2</strong> veces" in page
+    assert "Cambio:" not in page
+
+
 # ----------------------------------------------------------------- que lectura pide
 
 
@@ -146,11 +212,11 @@ CASES = [
     # (store, items, lo que se pide)
     (_store(NATIVE), [PRENDER], {"product_ref": "att1", "trigger": "compra"}),
     (_store(NATIVE), [{**PRENDER, "tipo": "apagar"}], {"product_ref": "att1", "trigger": "compra"}),
-    (_store(NATIVE), [{**PRENDER, "tipo": "volver", "version": 1, "en_curso": "seguir"}],
-     {"product_ref": "att1", "trigger": "carrito"}),
+    # D6 (E-245): una version o un volver de un nativo sigue por la historia, como antes.
+    (_store(NATIVE), [{**PRENDER, "tipo": "volver", "version": 1, "en_curso": "seguir"}], None),
     (_store(NATIVE), [{**PRENDER, "tipo": "version", "en_curso": "seguir",
-                       "definicion": {"dispara": {"evento": "pago_rechazado"}}}],
-     {"product_ref": "att1", "trigger": "pago_rechazado"}),
+                       "definicion": {"dispara": {"evento": "pago_fallido"}}}], None),
+    (_store(NATIVE), [{**PRENDER, "a": "cohorte"}], {"product_ref": "att1", "trigger": "compra"}),
     # En cohorte siempre es nativo, aunque el almacen viejo no traiga native.
     (_store({**NATIVE, "native": None}), [PRENDER], {"product_ref": "att1", "trigger": "compra"}),
     # Lo que sigue por la historia: un flujo del legado, o uno nativo mezclado con uno del legado.
@@ -239,3 +305,19 @@ def test_the_operator_counts_the_event_of_a_native_flow_without_the_history() ->
     cart = {"producto": "att1", "flujo": "carrito", "flow_id": CART_ID, "tipo": "apagar"}
     assert "engine" in ops.read_engine_inputs([cart], _store(NATIVE))
     assert any("read_flow_engine_history_v1" in stdin for argv, stdin in docker.calls)
+
+
+def test_validar_in_the_operator_passes_the_store_and_counts_the_native_event() -> None:
+    # I3 (E-245): por cmd_validar entero. Si Ops.validate no le pasa el almacen a read_engine_inputs,
+    # el comando vuelve a pedir la historia (en Maribel, flow_engine_unavailable) y esto falla.
+    docker = FakeDocker(engine=True, prop={**proposal("borrador", "operador"), "items": [PRENDER],
+                                           "draft_base": {WELCOME_ID: {"active_version": 2}}})
+    docker.flows = _store(NATIVE)["flows"]
+    code, out = run_script(["validar", PROPOSAL, "--quien", "dan"], docker)
+    assert code in (operator_script.EXIT_OK, operator_script.EXIT_BLOCKED), out
+    stdins = [stdin for argv, stdin in docker.calls]
+    assert any("read_flow_engine_native_trigger_counts_v1" in stdin and "trigger\tcompra" in stdin
+               for stdin in stdins)
+    assert not any("read_flow_engine_history_v1" in stdin or "read_flow_engine_v1(" in stdin for stdin in stdins)
+    [validator_input] = [stdin for argv, stdin in docker.calls if argv[:1] == ["run"]]
+    assert '"native_flow_counts"' in validator_input
