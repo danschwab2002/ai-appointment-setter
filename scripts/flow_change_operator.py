@@ -300,8 +300,12 @@ class Ops:
             raise Refused(f"el validador rechazo la entrada: {out.get('reason_code') if isinstance(out, dict) else '?'}")
         return result.returncode, out
 
-    def read_engine_inputs(self, items: object) -> dict[str, Any]:
-        """La lectura del motor y la historia del producto, o por que no se pudieron leer."""
+    def read_engine_inputs(self, items: object, store: object = None) -> dict[str, Any]:
+        """La lectura del motor y la historia del producto, o por que no se pudieron leer.
+
+        Un cambio sobre un flujo nativo (``store`` es el almacen de ``read_world``) no lee la
+        historia, que exige la ruta del carrito: cuenta los disparos del evento del flujo (E-241).
+        """
         products = {item.get("producto") for item in items if isinstance(item, Mapping)} \
             if isinstance(items, list) else set()
         if len(products) != 1:
@@ -320,6 +324,16 @@ class Ops:
             except Refused:
                 return {"simulation_unavailable": "flow_engine_unavailable"}
             return {"new_flow_counts": counts}
+        native = _native_flow_counts_request(store, items)
+        if native is not None:
+            if "simulation_unavailable" in native:
+                return native
+            try:
+                counts = self.sql_json(SQL_NEW_FLOW_COUNTS, {**args, "product": native["product_ref"],
+                                                             "trigger": native["trigger"]}, read_only=True)
+            except Refused:
+                return {"simulation_unavailable": "flow_engine_unavailable"}
+            return {"native_flow_counts": counts}
         try:
             engine: dict[str, Any] | None = None
             after = None
@@ -340,7 +354,7 @@ class Ops:
 
     def validate(self, proposal: Mapping[str, Any], world: Mapping[str, Any],
                  catalog: Mapping[str, Any] | None) -> dict[str, Any]:
-        payload = {**world, **self.read_engine_inputs(proposal["items"]), "catalog": catalog, "proposal": {
+        payload = {**world, **self.read_engine_inputs(proposal["items"], world.get("store")), "catalog": catalog, "proposal": {
             key: proposal[key] for key in ("id", "revision", "items", "draft_base", "purpose", "requested_by_kind")}}
         _, out = self.module("validar", payload)
         return out
@@ -461,6 +475,43 @@ SQL_HISTORY = f"""select public.read_flow_engine_history_v1({INSTANCE_SQL}, {_ar
 SQL_NEW_FLOW_COUNTS = f"""select public.read_flow_engine_native_trigger_counts_v1({INSTANCE_SQL},
     {_arg('product')}, {_arg('trigger')}, now() - interval '7 days')::text;"""
 ENGINE_PAGES_MAX = 10
+
+# La gemela de bridge.flow_change_simulation.native_flow_counts_request (E-241), sin importar el
+# bridge: este script corre con la libreria estandar. test_flow_change_native_simulation.py fija que
+# las dos contesten lo mismo.
+_NATIVE_ITEM_TYPES = frozenset({"prender", "version", "volver", "apagar"})
+
+
+def _native_flow_counts_request(store: object, items: object) -> dict[str, Any] | None:
+    """None si algun item no es de un flujo nativo; si no, el producto y el evento a contar, o el motivo."""
+    if not isinstance(items, list) or not items or not isinstance(store, Mapping) \
+            or not isinstance(store.get("flows"), list):
+        return None
+    flows = {flow.get("flow_id"): flow for flow in store["flows"] if isinstance(flow, Mapping)}
+    found = []
+    for item in items:
+        if not isinstance(item, Mapping) or item.get("tipo") not in _NATIVE_ITEM_TYPES:
+            return None
+        flow = flows.get(item.get("flow_id"))
+        if not isinstance(flow, Mapping) or not (flow.get("native") is True or flow.get("state") == "cohorte"):
+            return None
+        found.append((item, flow))
+    if len(found) != 1:
+        return {"simulation_unavailable": "simulation_native_flow_mixed"}
+    item, flow = found[0]
+    versions = flow.get("versions") if isinstance(flow.get("versions"), Mapping) else {}
+    if item["tipo"] == "version":
+        definition = item.get("definicion")
+    elif item["tipo"] == "volver":
+        definition = versions.get(str(item.get("version")))
+    else:
+        definition = versions.get(str(flow.get("active_version")))
+    trigger = ((definition.get("dispara") or {}).get("evento")) if isinstance(definition, Mapping) else None
+    product = item.get("producto")
+    if not isinstance(trigger, str) or not isinstance(product, str):
+        return {"simulation_unavailable": "simulation_native_flow_counts_invalid"}
+    return {"product_ref": product, "trigger": trigger}
+
 
 SQL_CATALOG = f"""select c.message_templates::jsonb::text
   from public.inboxes i join public.channel_whatsapp c on c.id = i.channel_id

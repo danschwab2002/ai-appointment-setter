@@ -56,6 +56,7 @@ from fastapi.responses import JSONResponse
 
 from .flow_change_operator import OperatorInputError, validate_proposal, world_from_store
 from .flow_change_preview import template_view
+from .flow_change_simulation import native_flow_counts_request
 from .flow_definition import (
     InstanceView,
     ProposalItemsInvalid,
@@ -239,12 +240,17 @@ class FlowChangeStore:
             "p_since": since.isoformat().replace("+00:00", "Z")})
 
 
-async def _simulation_inputs(store: FlowChangeStore, instance: Mapping[str, str], items: Any) -> dict[str, Any]:
+async def _simulation_inputs(store: FlowChangeStore, instance: Mapping[str, str], items: Any,
+                             snapshot: Any = None) -> dict[str, Any]:
     """La lectura del motor y la historia del producto de la propuesta, para la simulacion.
 
     Si no se pueden leer (por ejemplo, la base todavia no tiene la migracion del
     motor), la validacion sigue y la simulacion queda ``failed`` con
     ``flow_engine_unavailable``: la vista previa lo dice y aprobar registra ``failed``.
+
+    Un cambio sobre un flujo nativo (``snapshot`` es el almacen que ya se leyo)
+    no lee la historia, que exige la ruta del carrito: cuenta los disparos del
+    evento del flujo, como un ``nuevo`` (E-241).
     """
     products = {item.get("producto") for item in items if isinstance(item, Mapping)} if isinstance(items, list) \
         else set()
@@ -266,6 +272,17 @@ async def _simulation_inputs(store: FlowChangeStore, instance: Mapping[str, str]
             logger.info("automation_expert_change route=validate simulation=flow_engine_unavailable")
             return {"simulation_unavailable": "flow_engine_unavailable"}
         return {"new_flow_counts": counts}
+    native = native_flow_counts_request(snapshot, items)
+    if native is not None:
+        if "simulation_unavailable" in native:
+            return native
+        try:
+            counts = await store.read_new_flow_counts(instance, native["product_ref"], native["trigger"],
+                                                      datetime.now(UTC) - NEW_FLOW_WINDOW)
+        except (StoreUnavailable, StoreRejected):
+            logger.info("automation_expert_change route=validate simulation=flow_engine_unavailable native=1")
+            return {"simulation_unavailable": "flow_engine_unavailable"}
+        return {"native_flow_counts": counts}
     since = datetime.now(UTC) - HISTORY_WINDOW
     try:
         engine = await store.read_engine(instance)
@@ -627,7 +644,7 @@ def register_flow_change_routes(app: FastAPI, *, token: str, store: FlowChangeSt
                 raise HTTPException(status_code=503, detail="template_catalog_unavailable") from None
             if not isinstance(inbox, Mapping) or not isinstance(inbox.get("message_templates"), list):
                 raise HTTPException(status_code=503, detail="template_catalog_unavailable")
-            simulation_inputs = await _simulation_inputs(store, context.instance, proposal.get("items"))
+            simulation_inputs = await _simulation_inputs(store, context.instance, proposal.get("items"), snapshot)
             try:
                 view = _instance_view(context, snapshot)
                 out = validate_proposal({
