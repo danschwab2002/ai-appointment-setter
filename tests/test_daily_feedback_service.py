@@ -1902,3 +1902,13 @@ def test_review_labels_the_discount_followup_as_a_template() -> None:
     text = client.get(f"/review/{BATCH_REF}").text
 
     assert '<span class="kind-tag kind-tag--template">Plantilla · seguimiento con cupón</span>' in text
+
+
+def test_the_review_page_keeps_the_shared_chatwoot_theme() -> None:
+    """E-232: la pagina de aprobacion de flujos usa estos mismos tokens (bridge.review_theme)."""
+    from bridge.daily_feedback_service import _review_page_shell
+    from bridge.review_theme import REVIEW_BUTTONS_CSS, REVIEW_SHELL_CSS
+
+    page = _review_page_shell("Revisión diaria", "<p>x</p>", "Johanna")
+    assert REVIEW_SHELL_CSS in page and REVIEW_BUTTONS_CSS in page
+    assert page.index(":root{--cw-bg:#111214;") < page.index("main.app-frame{")

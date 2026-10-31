@@ -676,3 +676,26 @@ def test_the_id_token_check_is_strict_about_time() -> None:
     with pytest.raises(flow_approval.SlackOidcError, match="OIDC-AUDIENCE"):
         client.identity_from_claims({**claims, "aud": [CLIENT_ID, "otra"], "azp": "otra"})
     assert datetime.fromtimestamp(clock.now, tz=UTC).year == 2025
+
+
+def test_the_proposal_opens_with_a_business_summary_and_folds_the_technical_detail() -> None:
+    """E-232: lo primero que lee el duenio es el resumen de negocio; el diff campo por campo va plegado."""
+    client, _, slack, clock = _client()
+    _sign_in(client, slack, clock)
+    text = client.get(f"/flow-approval/p/{PROPOSAL}").text
+    # El titulo y el resumen: que flujo, que cambia, cuando arranca, a quien llega.
+    assert "<h1>Flujo nuevo: Bienvenida despues de la compra</h1>" in text
+    assert "cuando alguien compra" in text and "nace en la cohorte de prueba" in text
+    assert "pedida por el agente (Automation Expert)" in text
+    # El mensaje como lo ve la persona, con la plantilla traducida.
+    assert "Hola, [nombre]. Se confirmó tu pago de [producto]." in text
+    assert "aprobada por Meta" in text and "Le pone la etiqueta «cliente»" in text
+    assert "se habría disparado <strong>2</strong> veces, para <strong>2</strong> personas" in text
+    # El diff tecnico existe, pero dentro de un <details> cerrado, despues del resumen.
+    summary_at, details_at = text.index("Resumen"), text.index('<details class="tech">')
+    assert summary_at < details_at
+    assert '<details class="tech" open' not in text
+    assert text.index("<code>/dispara</code>") > details_at
+    # La estetica es la de la revision diaria: los mismos tokens y la misma barra.
+    from bridge.review_theme import REVIEW_SHELL_CSS
+    assert REVIEW_SHELL_CSS in text and 'class="app-shell"' in text
