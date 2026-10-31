@@ -12,6 +12,28 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.24.1] - 2026-10-31
+
+Un parche sobre la 1.24.0, con un solo PR: la página de aprobación de flujos (`/flow-approval/`) pasa a tener la estética de la revisión diaria, el estilo de Chatwoot (#379, E-232). Sin migraciones, sin variables nuevas y sin campos nuevos en el manifiesto. `/ready` no cambia salvo la versión. Solo cambia el Python: `flow_approval.py`, `daily_feedback_service.py` y `review_theme.py` (nuevo). Los profiles no cambian, ni la imagen de Hermes.
+
+**Qué hace quien actualiza:** pasar el bridge y la revisión diaria a las imágenes de esta versión. Nada más: ni migraciones, ni variables, ni profile.
+
+### Cambiado
+
+- **La página de aprobación de flujos con la estética de la revisión diaria** (#379, E-232).
+  - `src/bridge/review_theme.py` (nuevo) tiene los tokens de color, la barra de arriba y los botones de la revisión diaria, compartidos. La revisión diaria arma su página con ellos y sale byte por byte igual que antes (un test lo fija). Las dos imágenes (`setter-bridge` y `setter-daily-feedback`) copian `src` entero, así que el módulo viaja en las dos.
+  - Todas las pantallas de la página (entrar con Slack, la lista, la propuesta, el segundo paso, los resultados de publicar, descartar, pausar y la cohorte, y las de error) usan la misma cáscara: modo oscuro, barra con la sesión de Slack y «Salir», tarjetas y chips, usable en el teléfono.
+  - La propuesta arranca con un resumen de negocio: qué flujo (su nombre), qué cambia, a quién llega, cuándo arranca, en qué horario y cuándo termina; el recorrido como un chat (cada plantilla como la ve la persona, con las esperas y las etiquetas como eventos); el «para qué» marcado como texto sin verificar; la simulación en una frase, y cómo se vuelve atrás. El diff campo por campo, la simulación cruda, las advertencias y los huecos quedan plegados en «Detalle técnico». La decisión va en un panel al costado.
+  - «Entraste como» sigue mostrando el id de Slack: el bridge pide solo el scope `openid`, y mostrar el nombre es un cambio de OIDC que queda fuera.
+  - No cambia la lógica: rutas, permisos, CSRF, OIDC, los POST, la lista de aprobadores y los dos pasos para «a todos» quedan igual. Lo único del armado: la página de la propuesta recibe también los flujos del almacén (que ya leía) para nombrar un flujo.
+
+### Qué hace quien actualiza
+
+- **Sin migraciones**, sin variables nuevas en el bridge ni en el profile, y sin campos nuevos en el manifiesto. `/ready` no cambia salvo `instance_product_version`.
+- **Las tres imágenes salen del tag**, como siempre. El código del conector de Slack no cambia (no importa ningún módulo de los tres), pero su imagen lleva la versión nueva.
+- **ATT1 y Maribel:** desde la 1.24.0, el bridge, el conector y la revisión diaria a las imágenes de la 1.24.1. Sin paso de profile: el Automation Expert no cambia. La página se ve nueva apenas corre el bridge.
+- **Johanna:** nada que hacer. Si algún día sube, la revisión diaria sale igual.
+
 ## [1.24.0] - 2026-10-30
 
 Una versión menor sobre la 1.23.0, con cinco PR, todos del mapa M16 (el Automation Expert crea los flujos y corren por el motor nativo). Dos son del motor nativo: un carrito nunca abre un caso nativo y uno del legado para la misma persona y el mismo producto (#373, M1a), y el motor nativo arranca con el pago rechazado (#374, M1b). Dos son del Automation Expert: lee quién ejecuta cada flujo, el catálogo de plantillas y sus propuestas (#375), y su SOUL nuevo para pasar los flujos al motor nativo (#376). Y uno es un arreglo que rige solo: los frenos de la compra ven la compra hecha con nuestro link (#377).
