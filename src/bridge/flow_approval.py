@@ -84,6 +84,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from slack_correlation.catalog import NotificationCommand
 
 from .flow_change_operator import OperatorInputError, validate_proposal
+from .review_theme import REVIEW_BUTTONS_CSS, REVIEW_SHELL_CSS
 
 __all__ = [
     "DB_ROLE",
@@ -579,38 +580,112 @@ def _utc(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
+# La estetica es la de la revision diaria (bridge.review_theme, que copia Chatwoot): tokens, barra de
+# arriba y botones compartidos; lo de abajo es lo propio de esta pagina, con los mismos tokens.
+_PAGE_CSS = (
+    "main.app-frame{width:min(1080px,calc(100% - 40px));margin:0 auto;padding:28px 0 48px}"
+    "h1,h2,h3,p{margin-top:0}h1{font-size:24px;line-height:1.25;letter-spacing:-.025em;margin-bottom:6px}"
+    "h2{font-size:16px;line-height:1.35;letter-spacing:-.01em;margin-bottom:4px}"
+    "h3{font-size:12px;color:var(--cw-subtle);letter-spacing:.06em;text-transform:uppercase;margin:0 0 6px}"
+    ".meta,.muted{color:var(--cw-muted)}.meta{font-size:13px}a{color:#64a8f0}"
+    ".page-header{margin-bottom:20px}.page-header .meta{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;"
+    "margin:0}.id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--cw-subtle);"
+    "overflow-wrap:anywhere}\n"
+    ".layout{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(300px,.8fr);gap:16px;align-items:start}"
+    ".stack{display:grid;gap:16px;min-width:0}.panel{min-width:0;background:var(--cw-surface);"
+    "border:1px solid var(--cw-border-soft);border-radius:var(--cw-radius);overflow:hidden}"
+    ".panel-heading{padding:16px 18px;border-bottom:1px solid var(--cw-border-soft)}.panel-heading p{margin:0;"
+    "font-size:13px;color:var(--cw-muted)}.panel-body{padding:16px 18px}.panel-body>:last-child{margin-bottom:0}"
+    ".panel--side{position:sticky;top:80px}.panel-heading--split{border-top:1px solid var(--cw-border-soft)}\n"
+    ".summary-grid{display:grid;grid-template-columns:1fr 1fr;background:var(--cw-sidebar)}"
+    ".summary-item{padding:14px 18px;min-width:0;border-top:1px solid var(--cw-border-soft)}"
+    ".summary-item:nth-child(-n+2){border-top:0}.summary-item:nth-child(2n){border-left:1px solid var(--cw-border-soft)}"
+    ".summary-label{display:block;color:var(--cw-subtle);font-size:11px;font-weight:650;letter-spacing:.06em;"
+    "text-transform:uppercase;margin-bottom:5px}.summary-value{color:var(--cw-text);font-size:14px;overflow-wrap:anywhere}"
+    ".summary-value small{display:block;color:var(--cw-subtle);font-size:12px}\n"
+    ".chip{display:inline-block;border:1px solid var(--cw-border);border-radius:999px;padding:1px 9px;font-size:12px;"
+    "color:var(--cw-muted);white-space:nowrap}.chip--ok{border-color:#2f7a55;color:#9fe3c0}"
+    ".chip--warn{border-color:#8a5a1f;color:#f0c27b}.chip--info{border-color:#24548a;color:#9cc8f5}\n"
+    ".thread{padding:20px 18px;display:flex;flex-direction:column;gap:14px;background:var(--cw-bg)}"
+    ".message{align-self:flex-end;max-width:86%;min-width:0}.actor{color:var(--cw-subtle);font-size:11px;font-weight:600;"
+    "margin:0 3px 4px;text-align:right;overflow-wrap:anywhere}.bubble{padding:11px 14px;border-radius:var(--cw-radius);"
+    "border-bottom-right-radius:4px;background:var(--cw-indigo);color:#f3f3ff;white-space:pre-wrap;overflow-wrap:anywhere}"
+    ".bubble-head{font-weight:700;margin-bottom:6px}.bubble-foot{color:#c4c5ef;font-size:12px;margin-top:8px}"
+    ".bubble-button{display:block;margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.16);"
+    "text-align:center;color:#cfe3ff;font-size:13px;font-weight:600;white-space:normal}"
+    ".bubble--missing{background:var(--cw-surface-raised);border:1px dashed #4a4c58;color:var(--cw-muted)}"
+    ".event{align-self:center;color:var(--cw-muted);font-size:12px;text-align:center;padding:3px 12px;border-radius:999px;"
+    "background:#1a1b20;border:1px solid var(--cw-border-soft)}.branch{align-self:stretch;display:flex;"
+    "flex-direction:column;gap:12px;border-left:2px solid var(--cw-border);padding-left:12px}"
+    ".branch-label{color:var(--cw-subtle);font-size:11px;font-weight:650;letter-spacing:.06em;text-transform:uppercase}\n"
+    ".note{border:1px dashed #4a4c58;border-radius:var(--cw-radius-sm);padding:10px 12px;color:#d6d7dc;font-size:14px;"
+    "background:#1a1b20;white-space:pre-wrap;overflow-wrap:anywhere}"
+    ".notice{border:1px solid var(--cw-border);background:var(--cw-surface-raised);border-radius:var(--cw-radius-sm);"
+    "padding:12px 14px;font-size:14px;overflow-wrap:anywhere}.notice p:last-child,.notice ul:last-child{margin-bottom:0}"
+    ".notice--ok{border-color:#2f7a55;background:#14241c;color:#d5f3e3}"
+    ".notice--warn{border-color:#8a5a1f;background:#261f14;color:#f3dcb4}.notice ul{padding-left:18px}\n"
+    ".actions{display:grid;gap:16px;padding:18px}.actions form{display:grid;gap:8px;margin:0}"
+    ".actions .divider{border-top:1px solid var(--cw-border-soft)}label{font-size:13px;font-weight:600;display:grid;gap:6px}"
+    "input[type=text],input[type=tel]{width:100%;min-height:40px;padding:9px 12px;border:1px solid #353740;"
+    "border-radius:var(--cw-radius-sm);background:#121317;color:var(--cw-text);font:inherit;font-weight:400}"
+    "input[type=text]:focus,input[type=tel]:focus{border-color:var(--cw-accent);box-shadow:0 0 0 3px rgba(25,118,210,.2);"
+    "outline:0}ul.plain{margin:0;padding-left:18px;font-size:14px}ul.plain li{margin:3px 0;overflow-wrap:anywhere}\n"
+    "details.tech>summary{cursor:pointer;padding:14px 18px;color:var(--cw-muted);font-size:13px;font-weight:600}"
+    "details.tech[open]>summary{border-bottom:1px solid var(--cw-border-soft)}.tech-body{padding:16px 18px;display:grid;"
+    "gap:16px;min-width:0}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:12px}"
+    "td,th{border-top:1px solid var(--cw-border-soft);padding:6px 8px;text-align:left;vertical-align:top}"
+    "th{color:var(--cw-subtle);font-size:11px;font-weight:650;letter-spacing:.04em;text-transform:uppercase}"
+    "code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}"
+    "pre{white-space:pre-wrap;margin:0;overflow-wrap:anywhere;color:#d4d5db}\n"
+    ".who{display:flex;align-items:center;gap:10px;margin:0;min-width:0}.who-text{color:var(--cw-muted);font-size:12px;"
+    "overflow-wrap:anywhere}.who-text code{color:var(--cw-text);font-size:12px}.who button{min-height:32px;padding:6px 12px;"
+    "font-size:13px}\n"
+    ".row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px 16px;align-items:center;padding:14px 18px;"
+    "border-top:1px solid var(--cw-border-soft)}.row:first-child{border-top:0}.row-name{font-weight:650}"
+    ".row-sub{color:var(--cw-subtle);font-size:12px;overflow-wrap:anywhere}.row-forms{display:flex;flex-wrap:wrap;gap:8px;"
+    "justify-content:flex-end}.row-forms form{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin:0}"
+    "a.row{color:var(--cw-text);text-decoration:none}a.row:hover{background:var(--cw-hover)}"
+    ".empty{padding:16px 18px;color:var(--cw-muted);font-size:14px}\n"
+    ".auth{max-width:460px;margin:9vh auto 0}.confirm{max-width:560px}.auth .panel-body{display:grid;gap:14px}.auth .button{width:100%}\n"
+    "@media(max-width:880px){.layout{grid-template-columns:1fr}.panel--side{position:static}}"
+    "@media(max-width:620px){.topbar{height:58px;padding:0 16px}.brand-name,.secure-badge{display:none}"
+    "main.app-frame{width:min(100% - 24px,1080px);padding-top:18px}.summary-grid{grid-template-columns:1fr}"
+    ".summary-item:nth-child(2n){border-left:0}.summary-item:nth-child(2){border-top:1px solid var(--cw-border-soft)}"
+    ".row{grid-template-columns:1fr}.row-forms{justify-content:flex-start}.message{max-width:96%}"
+    ".thread{padding:16px 12px}}@media(max-width:420px){.who-text{display:none}}"
+)
+BRAND_NAME = "Recuperador"
+
+
 def _shell(title: str, body: str, *, user: str | None = None, csrf: str | None = None) -> str:
-    logout = ""
+    # Quien entro: el bridge pide solo el scope openid, asi que de la sesion sabe el id de Slack y no el
+    # nombre (los claims name/given_name vienen con el scope profile). Se muestra el id.
+    right = '<span class="secure-badge">Acceso con Slack</span>'
     if user is not None and csrf is not None:
-        logout = (f'<form method="post" action="{PREFIX}/logout" class="who"><span>Entraste como '
-                  f'<code>{_esc(user)}</code></span><input type="hidden" name="csrf_token" value="{_esc(csrf)}">'
-                  '<button type="submit">Salir</button></form>')
+        right = (f'<form method="post" action="{PREFIX}/logout" class="who"><span class="who-text">Entraste como '
+                 f'<code>{_esc(user)}</code></span><input type="hidden" name="csrf_token" value="{_esc(csrf)}">'
+                 '<button type="submit">Salir</button></form>')
     return f'''<!doctype html>
 <html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{_esc(title)}</title><style>
-:root{{color-scheme:light dark;--ink:#17221c;--muted:#5b6b62;--paper:#fbfaf6;--line:#d8ddd8;--accent:#176b4b;--warn:#8a5a1f;--soft:#eef4ef}}
-@media (prefers-color-scheme:dark){{:root{{--ink:#ecefed;--muted:#a3b0a8;--paper:#121614;--line:#2c3430;--accent:#4fbf8f;--warn:#e0b070;--soft:#1b221e}}}}
-*{{box-sizing:border-box}}body{{margin:0;background:var(--paper);color:var(--ink);font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.5}}
-main{{width:min(860px,calc(100% - 32px));margin:24px auto 64px}}h1{{font-size:1.6rem;margin:0 0 6px}}h2{{font-size:1.1rem;margin:24px 0 8px}}
-.muted{{color:var(--muted);font-size:.92rem}}.card{{border:1px solid var(--line);background:var(--soft);padding:14px 16px;margin:12px 0;overflow-wrap:anywhere}}
-.warn{{border-color:var(--warn)}}.unverified{{white-space:pre-wrap;border-left:3px solid var(--warn);padding:8px 12px;background:transparent}}
-table{{border-collapse:collapse;width:100%;font-size:.9rem}}td,th{{border-top:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}}
-code,pre{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85rem}}pre{{white-space:pre-wrap;margin:0}}
-.who{{display:flex;gap:12px;align-items:center;justify-content:flex-end;font-size:.9rem;margin-bottom:12px;flex-wrap:wrap}}
-button,.button{{min-height:40px;border:1px solid var(--ink);background:transparent;color:var(--ink);padding:8px 14px;font:600 .95rem inherit;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center}}
-.button.primary{{background:var(--accent);border-color:var(--accent);color:#fff}}
-@media(max-width:560px){{main{{margin-top:12px}}td,th{{padding:4px}}}}
-</style></head><body><main>{logout}{body}</main></body></html>'''
+<title>{_esc(title)} · Aprobación de flujos</title><style>
+{REVIEW_SHELL_CSS}{REVIEW_BUTTONS_CSS}
+{_PAGE_CSS}
+</style></head><body class="app-shell"><div class="topbar"><div class="brand"><div class="workspace-mark" aria-hidden="true"></div><span class="brand-name">{_esc(BRAND_NAME)}</span><span class="brand-divider" aria-hidden="true"></span><span class="brand-section">Aprobación de flujos</span></div>{right}</div><main class="app-frame">{body}</main></body></html>'''
 
 
 def _page(title: str, message: str, status: int) -> HTMLResponse:
-    return HTMLResponse(_shell(title, f"<h1>{_esc(title)}</h1><p>{_esc(message)}</p>"), status_code=status)
+    body = (f'<section class="auth panel"><div class="panel-heading"><h2>{_esc(title)}</h2></div>'
+            f'<div class="panel-body"><p>{_esc(message)}</p></div></section>')
+    return HTMLResponse(_shell(title, body), status_code=status)
 
 
 def _login(return_to: str | None) -> HTMLResponse:
     query = f"?{urlencode({'p': return_to})}" if return_to else ""
-    body = ("<h1>Aprobar cambios de flujos</h1><p>Para ver la propuesta, entrá con tu cuenta de Slack.</p>"
-            f'<p><a class="button primary" href="{PREFIX}/auth/slack/start{_esc(query)}">Entrar con Slack</a></p>')
+    body = ('<section class="auth panel"><div class="panel-heading"><h2>Aprobar cambios de flujos</h2>'
+            "<p>Acá ves lo que el agente propone cambiar en los mensajes automáticos y decidís si sale.</p></div>"
+            '<div class="panel-body"><p>Para ver la propuesta, entrá con tu cuenta de Slack.</p>'
+            f'<a class="button primary" href="{PREFIX}/auth/slack/start{_esc(query)}">Entrar con Slack</a>'
+            '<p class="meta">Solo entran las personas de la lista de aprobadores de esta instancia.</p></div></section>')
     return HTMLResponse(_shell("Entrar", body), status_code=401)
 
 
@@ -618,21 +693,188 @@ _STATUS = {
     "borrador": "borrador (todavía no validada)", "validada": "validada, esperando el sí", "aprobada": "aprobada, sin publicar",
     "publicada": "publicada", "descartada": "descartada", "vencida": "vencida",
 }
+_STATUS_CHIP = {"validada": "chip--info", "aprobada": "chip--warn", "publicada": "chip--ok", "vencida": "chip--warn"}
 _A_QUIEN = {"cohorte": "solo la cohorte de prueba", None: "lo que ya alcanza cada flujo"}
+
+# El resumen en lenguaje de negocio (E-232, D1). Lo tecnico queda abajo, plegado.
+_TIPO = {"nuevo": "Flujo nuevo", "version": "Cambio del flujo", "prender": "Prender el flujo",
+         "apagar": "Apagar el flujo", "volver": "Volver a una versión anterior"}
+_EVENTO = {
+    "carrito": "cuando alguien deja el carrito sin pagar",
+    "pago_fallido": "cuando a alguien le rechazan el pago",
+    "ficha_impresa": "cuando alguien genera una ficha para pagar en efectivo",
+    "ficha_vencida": "cuando una ficha de pago en efectivo vence sin pagarse",
+    "compra": "cuando alguien compra",
+    "intencion": "cuando alguien muestra intención de compra en la conversación",
+}
+_QUIEN_PIDE = {"automation_expert": "el agente (Automation Expert)", "operador": "el operador"}
+_CATEGORIA = {"UTILITY": "utilidad", "MARKETING": "marketing", "AUTHENTICATION": "autenticación"}
+_ESTADO_PLANTILLA = {"APPROVED": "aprobada por Meta", "PENDING": "esperando a Meta", "REJECTED": "rechazada por Meta",
+                     "PAUSED": "pausada por Meta", "DISABLED": "desactivada por Meta"}
+_ESTADO_FLUJO = {"prendido": "prendido, le llega a todos", "cohorte": "en prueba, solo la cohorte",
+                 "pausado": "pausado", "apagado": "apagado"}
+_ESTADO_CHIP = {"prendido": "chip--ok", "cohorte": "chip--info", "pausado": "chip--warn"}
+_UNIT = {"m": ("minuto", "minutos"), "h": ("hora", "horas"), "d": ("día", "días")}
+_DURATION = re.compile(r"^([0-9]{1,4})([mhd])$")
 
 
 def _json_text(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
+def _chip(text: object, kind: str | None = None) -> str:
+    return f'<span class="chip{" " + kind if kind else ""}">{_esc(text)}</span>'
+
+
+def _duration(value: object) -> str:
+    match = _DURATION.fullmatch(value) if isinstance(value, str) else None
+    if match is None:
+        return _esc(value)
+    count = int(match.group(1))
+    one, many = _UNIT[match.group(2)]
+    return f"{count} {one if count == 1 else many}"
+
+
+def _flow_name(producto: object, flujo: object) -> str:
+    return f"{producto}/{flujo}"
+
+
+def _definition_for(item: Mapping[str, Any], flows: list[Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    """La definicion que queda publicada con el item: la del item, la de la version a la que vuelve o la activa."""
+    if isinstance(item.get("definicion"), Mapping):
+        return item["definicion"]
+    flow = next((f for f in flows if f.get("product_ref") == item.get("producto")
+                 and f.get("flow_key") == item.get("flujo")), None)
+    versions = flow.get("versions") if isinstance(flow, Mapping) and isinstance(flow.get("versions"), Mapping) else {}
+    wanted = item.get("version") if item.get("tipo") == "volver" else (flow or {}).get("active_version")
+    found = versions.get(str(wanted)) if wanted is not None else None
+    return found if isinstance(found, Mapping) else None
+
+
+def _trigger_text(definition: Mapping[str, Any]) -> str:
+    trigger = definition.get("dispara")
+    if not isinstance(trigger, Mapping):
+        return "sin disparador"
+    if "silencio" in trigger:
+        return "cuando una conversación queda en silencio"
+    event = trigger.get("evento")
+    return _esc(_EVENTO.get(str(event), f"con el evento {event}"))
+
+
+def _schedule_text(definition: Mapping[str, Any]) -> str:
+    schedule = definition.get("horario")
+    if schedule == "siempre":
+        return "a cualquier hora"
+    if isinstance(schedule, Mapping):
+        return (f"de {_esc(schedule.get('desde'))} a {_esc(schedule.get('hasta'))}"
+                f"<small>hora de {_esc(schedule.get('zona'))}</small>")
+    return _esc(schedule) if schedule is not None else "—"
+
+
+def _end_text(definition: Mapping[str, Any]) -> str:
+    ends = definition.get("termina") if isinstance(definition.get("termina"), Mapping) else {}
+    parts = []
+    if ends.get("vence") is not None:
+        parts.append(f"a {_duration(ends.get('vence'))} de arrancar")
+    reasons = [str(reason) for reason in ends.get("si") or [] if isinstance(reason, str)]
+    if reasons:
+        parts.append("o antes si pasa: " + _esc(", ".join(reasons)))
+    return " ".join(parts) if parts else "—"
+
+
+def _message_bubble(message: Mapping[str, Any] | None, step: Mapping[str, Any]) -> str:
+    name = step.get("plantilla")
+    if isinstance(name, Mapping):
+        actor = f"Plantilla a crear: {_esc(name.get('a_crear'))}"
+    else:
+        actor = f"Plantilla {_esc(name)}"
+    if message is not None and isinstance(message.get("categoria"), str):
+        actor += (f" · {_esc(_CATEGORIA.get(message['categoria'], message['categoria']))}"
+                  f" · {_esc(_ESTADO_PLANTILLA.get(str(message.get('estado')), message.get('estado')))}")
+    seen = message.get("como_lo_ve") if isinstance(message, Mapping) else None
+    if not isinstance(seen, Mapping):
+        why = ("Todavía no existe en el catálogo de la bandeja." if isinstance(name, Mapping) or (
+            message is not None and message.get("encontrada") is False)
+               else "Esta propuesta no trae la vista previa del texto.")
+        return (f'<div class="message"><p class="actor">{actor}</p>'
+                f'<div class="bubble bubble--missing">{_esc(why)}</div></div>')
+    inner = ""
+    if seen.get("encabezado"):
+        inner += f'<div class="bubble-head">{_esc(seen.get("encabezado"))}</div>'
+    inner += _esc(seen.get("cuerpo") or "")
+    if seen.get("pie"):
+        inner += f'<div class="bubble-foot">{_esc(seen.get("pie"))}</div>'
+    for button in seen.get("botones") or []:
+        if isinstance(button, Mapping):
+            inner += f'<span class="bubble-button">{_esc(button.get("texto"))}</span>'
+    return f'<div class="message"><p class="actor">{actor}</p><div class="bubble">{inner}</div></div>'
+
+
+def _render_steps(steps: object, at: str, messages: Mapping[str, Mapping[str, Any]], depth: int = 0) -> str:
+    """El recorrido como en un chat: los mensajes como burbuja, y las esperas y etiquetas como eventos."""
+    if not isinstance(steps, list):
+        return ""
+    out = ""
+    for index, step in enumerate(steps):
+        if not isinstance(step, Mapping):
+            continue
+        path = f"{at}/{index}"
+        if "plantilla" in step:
+            out += _message_bubble(messages.get(path), step)
+        elif "esperar" in step:
+            out += f'<div class="event">Espera {_duration(step.get("esperar"))}</div>'
+        elif "etiquetar" in step:
+            out += f'<div class="event">Le pone la etiqueta «{_esc(step.get("etiquetar"))}»</div>'
+        elif "conversar" in step:
+            out += '<div class="event">Conversa el agente</div>'
+        elif "derivar" in step:
+            out += '<div class="event">Pasa la conversación a una persona del equipo</div>'
+        elif "condicion" in step and depth < 4:
+            out += '<div class="event">Según una condición (el detalle, en «Detalle técnico»)</div>'
+            for branch, label in (("entonces", "Si se cumple"), ("si_no", "Si no")):
+                inner = _render_steps(step.get(branch), f"{path}/{branch}", messages, depth + 1)
+                if inner:
+                    out += f'<div class="branch"><span class="branch-label">{label}</span>{inner}</div>'
+        else:
+            out += '<div class="event">Un paso más (el detalle, en «Detalle técnico»)</div>'
+    return out
+
+
+def _render_item_summary(item: Mapping[str, Any], change: Mapping[str, Any] | None,
+                         definition: Mapping[str, Any] | None, a_quien: str) -> str:
+    tipo = item.get("tipo")
+    what = _TIPO.get(str(tipo), str(tipo))
+    if tipo == "version" and change is not None and change.get("base_version") is not None:
+        what += f"<small>versión nueva sobre la {_esc(change.get('base_version'))}</small>"
+    elif tipo == "volver":
+        what += f"<small>vuelve a la versión {_esc(item.get('version'))}</small>"
+    elif tipo == "nuevo":
+        what += "<small>nace en la cohorte de prueba</small>"
+    state = change.get("estado") if change is not None and isinstance(change.get("estado"), Mapping) else None
+    name = definition.get("nombre") if definition is not None and definition.get("nombre") else None
+    cells = [("Qué flujo", (_esc(name) if name else _esc(_flow_name(item.get("producto"), item.get("flujo"))))
+              + f"<small>{_esc(_flow_name(item.get('producto'), item.get('flujo')))}</small>"),
+             ("Qué cambia", what)]
+    if state is not None:
+        cells.append(("Estado", f"{_esc(_ESTADO_FLUJO.get(str(state.get('antes')), state.get('antes')))} → "
+                                f"{_esc(_ESTADO_FLUJO.get(str(state.get('despues')), state.get('despues')))}"))
+    cells.append(("A quién llega", _esc(a_quien)))
+    if definition is not None:
+        cells += [("Cuándo arranca", _trigger_text(definition)), ("En qué horario", _schedule_text(definition)),
+                  ("Cuándo termina", _end_text(definition))]
+    return '<div class="summary-grid">' + "".join(
+        f'<div class="summary-item"><span class="summary-label">{label}</span><div class="summary-value">{value}</div>'
+        "</div>" for label, value in cells) + "</div>"
+
+
 def _render_change(change: Mapping[str, Any]) -> str:
-    head = (f"<p><strong>{_esc(change.get('producto'))}/{_esc(change.get('flujo'))}</strong> · "
-            f"{_esc(change.get('tipo'))}")
+    """El diff tecnico campo por campo de un item (va dentro de «Detalle técnico»)."""
+    head = (f"<h3>{_esc(change.get('producto'))}/{_esc(change.get('flujo'))} · {_esc(change.get('tipo'))}")
     if change.get("base_version") is not None:
         head += f" · sobre la versión {_esc(change.get('base_version'))}"
     if change.get("nace_en"):
         head += f" · nace en {_esc(change.get('nace_en'))}"
-    head += "</p>"
+    head += "</h3>"
     state = change.get("estado")
     if isinstance(state, Mapping):
         head += f"<p>Estado: {_esc(state.get('antes'))} → {_esc(state.get('despues'))}</p>"
@@ -644,64 +886,108 @@ def _render_change(change: Mapping[str, Any]) -> str:
             f"<tr><td><code>{_esc(row.get('ruta'))}</code></td><td><pre>{_esc(_json_text(row.get('antes')))}</pre></td>"
             f"<td><pre>{_esc(_json_text(row.get('despues')))}</pre></td></tr>"
             for row in rows if isinstance(row, Mapping))
-        head += f"<table><thead><tr><th>Campo</th><th>Antes</th><th>Después</th></tr></thead><tbody>{body}</tbody></table>"
+        head += ('<div class="table-wrap"><table><thead><tr><th>Campo</th><th>Antes</th><th>Después</th></tr></thead>'
+                 f"<tbody>{body}</tbody></table></div>")
     elif change.get("diff_count"):
         head += f"<p class=\"muted\">{_esc(change.get('diff_count'))} cambios, demasiado largos para mostrar.</p>"
-    return f'<div class="card">{head}</div>'
+    return f"<div>{head}</div>"
 
 
-def _render_simulation(simulation: object) -> str:
+def _simulation_summary(simulation: object) -> str:
     if not isinstance(simulation, Mapping):
         return ("<p>Sin simulación construida. La página no publica sin simulación: la publica el operador con "
                 "<code>--sin-simulacion</code>.</p>")
     if simulation.get("status") != "built":
         return (f"<p>La simulación no se pudo armar (<code>{_esc(simulation.get('reason_code'))}</code>). La página "
                 "no publica sin simulación: la publica el operador con <code>--sin-simulacion</code>.</p>")
+    summary = simulation.get("summary") if isinstance(simulation.get("summary"), Mapping) else {}
+    line = ""
+    fired, people = summary.get("disparos"), summary.get("personas")
+    if isinstance(fired, int) and isinstance(people, int):
+        line = (f"<p>En los últimos 7 días se habría disparado <strong>{_esc(fired)}</strong> "
+                f"{'vez' if fired == 1 else 'veces'}, para <strong>{_esc(people)}</strong> "
+                f"{'persona' if people == 1 else 'personas'}.</p>")
+    return (line + "<p class=\"meta\">Estimación con los eventos reales de los últimos 7 días: no sabe qué habría "
+            "contestado alguien a un mensaje que no salió.</p>")
+
+
+def _render_simulation(simulation: object) -> str:
+    """La simulacion tal cual, para el detalle tecnico."""
+    if not isinstance(simulation, Mapping) or simulation.get("status") != "built":
+        return ""
     summary = {key: value for key, value in simulation.items() if key not in ("status", "summary_sha256")}
-    return ("<p>Estimación con los eventos reales de los últimos 7 días: no sabe qué habría contestado alguien a "
-            f"un mensaje que no salió.</p><pre>{_esc(_json_text(summary))}</pre>")
+    return f"<div><h3>Simulación</h3><pre>{_esc(_json_text(summary))}</pre></div>"
 
 
 def _render_proposal(proposal: Mapping[str, Any], others: list[Mapping[str, Any]], *, actions: str = "",
-                     done: Mapping[str, str] | None = None) -> str:
+                     done: Mapping[str, str] | None = None, flows: list[Mapping[str, Any]] | None = None) -> str:
     status = proposal.get("effective_status") or proposal.get("status")
     validation = proposal.get("validation") if isinstance(proposal.get("validation"), Mapping) else {}
     preview = validation.get("preview") if isinstance(validation.get("preview"), Mapping) else {}
-    parts = [_render_done(done or {}),
-             f"<h1>Propuesta de cambio de flujos</h1><p class=\"muted\">{_esc(proposal.get('proposal_id'))} · "
-             f"pedida por {_esc(proposal.get('requested_by_kind'))} · {_esc(_STATUS.get(str(status), status))}</p>"]
+    items = [item for item in proposal.get("items") or [] if isinstance(item, Mapping)]
+    changes = [change for change in preview.get("cambios") or [] if isinstance(change, Mapping)]
+    flows = flows or []
+    messages = {}
+    for message in preview.get("mensajes") or []:
+        if isinstance(message, Mapping) and isinstance(message.get("ruta"), str):
+            messages[(message.get("producto"), message.get("flujo"), message["ruta"])] = message
+    a_quien = _A_QUIEN.get(preview.get("a_quien"), preview.get("a_quien"))
+    # El titulo: que flujo y que pasa, como lo diria el duenio.
+    titles = []
+    for item in items:
+        definition = _definition_for(item, flows)
+        name = (definition or {}).get("nombre") or _flow_name(item.get("producto"), item.get("flujo"))
+        titles.append(f"{_TIPO.get(str(item.get('tipo')), item.get('tipo'))}: {name}")
+    title = "; ".join(titles) if titles else "Propuesta de cambio de flujos"
+    header = (f'<header class="page-header"><p class="meta">Propuesta de cambio de flujos</p><h1>{_esc(title)}</h1>'
+              f'<p class="meta">{_chip(_STATUS.get(str(status), status), _STATUS_CHIP.get(str(status)))}'
+              f"<span>pedida por {_esc(_QUIEN_PIDE.get(str(proposal.get('requested_by_kind')), proposal.get('requested_by_kind')))}</span>"
+              f'<span class="id">{_esc(proposal.get("proposal_id"))}</span></p></header>')
+    main: list[str] = []
+    done_html = _render_done(done or {})
+    if done_html:
+        main.append(done_html)
     if others:
         listed = "".join(
             f"<li>{_esc(', '.join(f'{flow.get('producto')}/{flow.get('flujo')}' for flow in other.get('flows') or []))}"
             f" · {_esc(_STATUS.get(str(other.get('status')), other.get('status')))}"
             f" · validada {_esc(other.get('validated_at') or 'sin validar')}</li>"
             for other in others)
-        parts.append('<div class="card warn"><p><strong>Hay otra propuesta abierta de este flujo.</strong> Si '
-                     f"publicás esta, la otra va a tener que validarse de nuevo.</p><ul>{listed}</ul></div>")
+        main.append('<div class="notice notice--warn"><p><strong>Hay otra propuesta abierta de este flujo.</strong> Si '
+                    f"publicás esta, la otra va a tener que validarse de nuevo.</p><ul>{listed}</ul></div>")
     if status == "vencida":
-        parts.append('<div class="card warn"><p>Esta propuesta venció: pasaron 24 horas desde que el agente la '
-                     "validó. Para seguir, pedile al agente que la valide de nuevo y te deja otro botón.</p></div>")
+        main.append('<div class="notice notice--warn"><p>Esta propuesta venció: pasaron 24 horas desde que el agente '
+                    "la validó. Para seguir, pedile al agente que la valide de nuevo y te deja otro botón.</p></div>")
     purpose = preview.get("para_que", proposal.get("purpose"))
-    parts.append("<h2>Para qué</h2><p class=\"muted\">Texto de quien propuso, sin verificar.</p>"
-                 f'<div class="card unverified">{_esc(purpose)}</div>')
-    parts.append(f"<h2>A quién llega</h2><p>{_esc(_A_QUIEN.get(preview.get('a_quien'), preview.get('a_quien')))}</p>")
-    changes = preview.get("cambios")
-    parts.append("<h2>Qué cambia</h2>")
-    if isinstance(changes, list) and changes:
-        parts.extend(_render_change(change) for change in changes if isinstance(change, Mapping))
-    else:
-        parts.append("<p class=\"muted\">La propuesta no tiene vista previa guardada.</p>")
+    by_flow = {(change.get("producto"), change.get("flujo")): change for change in changes}
+    for item in items:
+        key = (item.get("producto"), item.get("flujo"))
+        definition = _definition_for(item, flows)
+        section = ('<section class="panel"><div class="panel-heading"><h2>Resumen</h2>'
+                   "<p>Qué flujo es, qué cambia y a quién le llega.</p></div>"
+                   + _render_item_summary(item, by_flow.get(key), definition, str(a_quien)))
+        if definition is not None and item.get("tipo") in ("nuevo", "version", "volver"):
+            own = {path: message for (producto, flujo, path), message in messages.items()
+                   if (producto, flujo) == key}
+            steps = _render_steps(definition.get("pasos"), "/pasos", own)
+            if steps:
+                section += ('<div class="panel-heading panel-heading--split"><h2>Lo que va a recibir la persona</h2>'
+                            "<p>Los mensajes como los ve en WhatsApp; entre corchetes, lo que se completa con sus "
+                            "datos.</p></div>"
+                            f'<div class="thread">{steps}</div>')
+        main.append(section + "</section>")
+    if not items:
+        main.append('<section class="panel"><div class="panel-body"><p class="muted">La propuesta no tiene vista '
+                    "previa guardada.</p></div></section>")
+    main.append('<section class="panel"><div class="panel-heading"><h2>Para qué</h2>'
+                "<p>Texto de quien propuso, sin verificar.</p></div>"
+                f'<div class="panel-body"><div class="note">{_esc(purpose)}</div></div></section>')
+    impact = ["<h3>Simulación</h3>" + _simulation_summary(preview.get("simulacion"))]
     in_flight = preview.get("en_curso")
-    if isinstance(in_flight, Mapping):
+    if isinstance(in_flight, Mapping) and in_flight.get("politica") is not None:
         count = in_flight.get("recorridos")
-        parts.append(f"<h2>Lo que está en curso</h2><p>Política: {_esc(in_flight.get('politica'))}"
-                     + (f" · {_esc(count)} recorridos" if count is not None else " · sin contar") + "</p>")
-    parts.append("<h2>Simulación</h2>" + _render_simulation(preview.get("simulacion")))
-    warnings = preview.get("advertencias")
-    if isinstance(warnings, list) and warnings:
-        parts.append("<h2>Advertencias</h2><ul>" + "".join(
-            f"<li><code>{_esc(warning.get('code'))}</code> {_esc(warning.get('path') or '')}</li>"
-            for warning in warnings if isinstance(warning, Mapping)) + "</ul>")
+        impact.append(f"<h3>Lo que está en curso</h3><p>Política: {_esc(in_flight.get('politica'))}"
+                      + (f" · {_esc(count)} recorridos" if count is not None else " · sin contar") + "</p>")
     back = preview.get("volver_atras")
     if isinstance(back, list) and back:
         lines = "".join(
@@ -709,11 +995,35 @@ def _render_proposal(proposal: Mapping[str, Any], others: list[Mapping[str, Any]
             + (f"vuelve a la versión {_esc(row.get('a_version'))}" if row.get("a_version") is not None
                else "es nuevo: se pausa o se apaga") + "</li>"
             for row in back if isinstance(row, Mapping))
-        parts.append("<h2>Cómo se vuelve atrás</h2><p>Se pide en el DM del agente («volvé a la versión "
-                     f"anterior») y llega con su propio botón.</p><ul>{lines}</ul>")
-    parts.append(actions)
-    parts.append(f'<p><a href="{PREFIX}/">Ver todos los flujos</a></p>')
-    return "".join(parts)
+        impact.append("<h3>Cómo se vuelve atrás</h3><p>Se pide en el DM del agente («volvé a la versión "
+                      f'anterior») y llega con su propio botón.</p><ul class="plain">{lines}</ul>')
+    warnings = [warning for warning in preview.get("advertencias") or [] if isinstance(warning, Mapping)]
+    if warnings:
+        impact.append(f"<h3>Advertencias</h3><p>El validador dejó {len(warnings)} "
+                      f"{'advertencia' if len(warnings) == 1 else 'advertencias'}: están en «Detalle técnico».</p>")
+    main.append('<section class="panel"><div class="panel-heading"><h2>Antes de decidir</h2></div>'
+                f'<div class="panel-body">{"".join(impact)}</div></section>')
+    tech = [f"<div><h3>La propuesta</h3><p><code>{_esc(proposal.get('proposal_id'))}</code> · pedida por "
+            f"{_esc(proposal.get('requested_by_kind'))} · estado <code>{_esc(status)}</code></p></div>"]
+    tech += [_render_change(change) for change in changes]
+    if not changes:
+        tech.append("<p class=\"muted\">La propuesta no tiene vista previa guardada.</p>")
+    tech.append(_render_simulation(preview.get("simulacion")))
+    if warnings:
+        tech.append("<div><h3>Advertencias</h3><ul class=\"plain\">" + "".join(
+            f"<li><code>{_esc(warning.get('code'))}</code> {_esc(warning.get('path') or '')}</li>"
+            for warning in warnings) + "</ul></div>")
+    gaps = [gap for gap in preview.get("huecos") or [] if isinstance(gap, Mapping)]
+    if gaps:
+        tech.append("<div><h3>Lo que la vista previa todavía no sabe</h3><ul class=\"plain\">" + "".join(
+            f"<li><code>{_esc(gap.get('code'))}</code></li>" for gap in gaps) + "</ul></div>")
+    main.append('<section class="panel"><details class="tech"><summary>Detalle técnico (campo por campo)</summary>'
+                f'<div class="tech-body">{"".join(tech)}</div></details></section>')
+    side = (f'<aside class="panel panel--side"><div class="panel-heading"><h2>Tu decisión</h2>'
+            "<p>Publicar hace que el cambio empiece a correr.</p></div>"
+            f'<div class="actions">{actions}<p class="meta"><a href="{PREFIX}/">Ver todos los flujos</a></p></div>'
+            "</aside>")
+    return f'{header}<div class="layout"><div class="stack">{"".join(main)}</div>{side}</div>'
 
 
 # -- los botones (A′ PR 3b) -------------------------------------------------------
@@ -773,7 +1083,7 @@ def _render_done(done: Mapping[str, str]) -> str:
     if notice:
         body += f" {_esc(notice)}"
     ok = code in ("publicada", "ya_publicada", "descartada", "pausado", "ya_pausado", "cohorte", "cohorte_ya_estaba")
-    return f'<div class="card{"" if ok else " warn"}" role="status"><p>{body}</p></div>'
+    return f'<div class="notice notice--{"ok" if ok else "warn"}" role="status"><p>{body}</p></div>'
 
 
 def _flow_forms(flow: Mapping[str, Any], csrf: str, return_to: str | None) -> str:
@@ -804,9 +1114,9 @@ def _render_actions(proposal: Mapping[str, Any], *, proposal_id: str, csrf: str,
     simulation = preview.get("simulacion")
     built = isinstance(simulation, Mapping) and simulation.get("status") == "built"
     fingerprint = proposal.get("fingerprint")
-    parts = ['<h2>El sí</h2>']
+    parts = []
     if status in ("validada", "aprobada") and not built:
-        parts.append('<div class="card"><p>Sin simulación construida, la página no publica: la publica el operador '
+        parts.append('<div class="notice"><p>Sin simulación construida, la página no publica: la publica el operador '
                      "con <code>--sin-simulacion</code>.</p></div>")
     elif (status in ("validada", "aprobada") and isinstance(fingerprint, str)
           and done.get("hecho") != "flow_change_stale_base"):
@@ -815,11 +1125,12 @@ def _render_actions(proposal: Mapping[str, Any], *, proposal_id: str, csrf: str,
                      f'{_hidden("csrf_token", csrf)}{_hidden("fingerprint", fingerprint)}'
                      f'<button type="submit" class="button primary">{label}</button></form>')
     elif status == "publicada":
-        parts.append('<p>Esta propuesta ya está publicada.</p>')
+        parts.append('<div class="notice notice--ok"><p>Esta propuesta ya está publicada.</p></div>')
     else:
-        parts.append(f"<p>Esta propuesta está {_esc(_STATUS.get(str(status), status))}: no se publica.</p>")
+        parts.append(f'<div class="notice"><p>Esta propuesta está {_esc(_STATUS.get(str(status), status))}: '
+                     "no se publica.</p></div>")
     if status in ("borrador", "validada", "aprobada"):
-        parts.append(f'<form method="post" action="{PREFIX}/p/{_esc(proposal_id)}/discard">'
+        parts.append(f'<div class="divider"></div><form method="post" action="{PREFIX}/p/{_esc(proposal_id)}/discard">'
                      f'{_hidden("csrf_token", csrf)}<label>Motivo para descartar (una línea) '
                      f'<input type="text" name="motivo" maxlength="{DISCARD_REASON_MAX}" autocomplete="off" required>'
                      '</label><button type="submit">Descartar</button></form>')
@@ -828,7 +1139,7 @@ def _render_actions(proposal: Mapping[str, Any], *, proposal_id: str, csrf: str,
     forms = "".join(_flow_forms(flow, csrf, proposal_id) for flow in flows
                     if isinstance(flow, Mapping) and (flow.get("product_ref"), flow.get("flow_key")) in touched)
     if forms:
-        parts.append(f"<h2>Los flujos de esta propuesta</h2>{forms}")
+        parts.append(f'<div class="divider"></div><h3>Los flujos de esta propuesta</h3>{forms}')
     return "".join(parts)
 
 
@@ -842,32 +1153,52 @@ def _render_second_step(proposal: Mapping[str, Any], *, proposal_id: str, csrf: 
                     for name, reason in reasons)
     warn = ""
     if others:
-        warn = ('<div class="card warn"><p>Hay otra propuesta abierta de este flujo. Si publicás esta, la otra va '
-                "a tener que validarse de nuevo.</p></div>")
-    return (f"<h1>Confirmá antes de publicar</h1>{warn}<div class=\"card warn\"><ul>{lines}</ul>"
+        warn = ('<div class="notice notice--warn"><p>Hay otra propuesta abierta de este flujo. Si publicás esta, la '
+                "otra va a tener que validarse de nuevo.</p></div>")
+    return ('<header class="page-header"><p class="meta">Segundo paso</p><h1>Confirmá antes de publicar</h1>'
+            '<p class="meta">Este cambio llega a más gente que la cohorte de prueba o corta algo en curso: por eso '
+            'se pide dos veces.</p></header><section class="confirm panel">'
+            f'<div class="actions">{warn}<div class="notice notice--warn"><ul>{lines}</ul>'
             f"<p>Lo que está en curso: {_esc(count) + ' recorridos' if count is not None else 'sin contar'}.</p></div>"
             f'<form method="post" action="{PREFIX}/p/{_esc(proposal_id)}/publish">{_hidden("csrf_token", csrf)}'
             f'{_hidden("fingerprint", proposal.get("fingerprint"))}{_hidden("confirmar", confirm)}'
             '<button type="submit" class="button primary">Sí, aprobar y publicar</button></form>'
-            f'<p><a href="{PREFIX}/p/{_esc(proposal_id)}">Volver sin publicar</a></p>')
+            f'<p class="meta"><a href="{PREFIX}/p/{_esc(proposal_id)}">Volver sin publicar</a></p></div></section>')
 
 
 def _render_index(store: Mapping[str, Any], open_rows: list[Mapping[str, Any]], *, csrf: str = "",
                   done: Mapping[str, str] | None = None) -> str:
-    flows = store.get("flows") if isinstance(store.get("flows"), list) else []
+    flows = [flow for flow in (store.get("flows") if isinstance(store.get("flows"), list) else [])
+             if isinstance(flow, Mapping)]
+
+    def name_of(flow: Mapping[str, Any]) -> str | None:
+        versions = flow.get("versions") if isinstance(flow.get("versions"), Mapping) else {}
+        active = versions.get(str(flow.get("active_version"))) if flow.get("active_version") is not None else None
+        return active.get("nombre") if isinstance(active, Mapping) and isinstance(active.get("nombre"), str) else None
+
     rows = "".join(
-        f"<tr><td>{_esc(flow.get('product_ref'))}/{_esc(flow.get('flow_key'))}</td><td>{_esc(flow.get('state'))}</td>"
-        f"<td>{_esc(flow.get('active_version') if flow.get('active_version') is not None else '—')}</td>"
-        f"<td>{_flow_forms(flow, csrf, None)}</td></tr>"
-        for flow in flows if isinstance(flow, Mapping))
+        f'<div class="row"><div><div class="row-name">{_esc(name_of(flow) or _flow_name(flow.get("product_ref"), flow.get("flow_key")))}'
+        f' {_chip(_ESTADO_FLUJO.get(str(flow.get("state")), flow.get("state")), _ESTADO_CHIP.get(str(flow.get("state"))))}</div>'
+        f'<div class="row-sub">{_esc(flow.get("product_ref"))}/{_esc(flow.get("flow_key"))} · versión '
+        f"{_esc(flow.get('active_version') if flow.get('active_version') is not None else '—')}</div></div>"
+        f'<div class="row-forms">{_flow_forms(flow, csrf, None)}</div></div>'
+        for flow in flows)
     proposals = "".join(
-        f'<li><a href="{PREFIX}/p/{_esc(row.get("proposal_id"))}">'
-        f"{_esc(', '.join(f'{flow.get('producto')}/{flow.get('flujo')}' for flow in row.get('flows') or []))}</a>"
-        f" · {_esc(_STATUS.get(str(row.get('status')), row.get('status')))} · vence {_esc(row.get('expires_at'))}</li>"
+        f'<a class="row" href="{PREFIX}/p/{_esc(row.get("proposal_id"))}"><div><div class="row-name">'
+        f"{_esc(', '.join(f'{flow.get('producto')}/{flow.get('flujo')}' for flow in row.get('flows') or []))}</div>"
+        f'<div class="row-sub">vence {_esc(row.get("expires_at"))}</div></div>'
+        f"<div>{_chip(_STATUS.get(str(row.get('status')), row.get('status')), _STATUS_CHIP.get(str(row.get('status'))))}"
+        "</div></a>"
         for row in open_rows if isinstance(row, Mapping))
-    return (_render_done(done or {}) + "<h1>Flujos de la instancia</h1><table><thead><tr><th>Flujo</th><th>Estado</th>"
-            f"<th>Versión</th><th></th></tr></thead><tbody>{rows}</tbody></table><h2>Propuestas esperando el sí</h2>"
-            + (f"<ul>{proposals}</ul>" if proposals else "<p class=\"muted\">Ninguna.</p>"))
+    return (_render_done(done or {})
+            + '<header class="page-header"><p class="meta">Aprobación de flujos</p><h1>Flujos de la instancia</h1>'
+            '<p class="meta">Los mensajes automáticos que manda el recuperador y lo que el agente propone cambiar.</p>'
+            '</header><div class="stack"><section class="panel"><div class="panel-heading">'
+            "<h2>Propuestas esperando el sí</h2><p>Abrí una para ver qué cambia y decidir.</p></div>"
+            + (proposals if proposals else '<p class="empty">Ninguna.</p>')
+            + '</section><section class="panel"><div class="panel-heading"><h2>Los flujos</h2>'
+            "<p>Pausar frena los recorridos nuevos; los que están en curso esperan sin mandar.</p></div>"
+            + (rows if rows else '<p class="empty">Esta instancia no tiene flujos.</p>') + "</section></div>")
 
 
 # ---------------------------------------------------------------------------
@@ -1049,8 +1380,8 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
         csrf = config.csrf_token(secret)
         done = _done_from_query(request, config, secret)
         actions = _render_actions(found, proposal_id=proposal_id, csrf=csrf, flows=_flows_of(snapshot), done=done)
-        return HTMLResponse(_shell("Propuesta", _render_proposal(found, rows, actions=actions, done=done), user=user,
-                                   csrf=csrf))
+        body = _render_proposal(found, rows, actions=actions, done=done, flows=_flows_of(snapshot))
+        return HTMLResponse(_shell("Propuesta", body, user=user, csrf=csrf))
 
     @app.get(PREFIX + "/auth/slack/start")
     async def slack_start(request: Request) -> Response:
