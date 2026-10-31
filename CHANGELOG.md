@@ -12,6 +12,28 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.24.2] - 2026-10-31
+
+Un parche sobre la 1.24.1, con un solo PR: tres arreglos de la página de aprobación de flujos (`/flow-approval/`) que salieron del ensayo real del 31/10 en Maribel (#381, E-235). Sin migraciones, sin variables nuevas y sin campos nuevos en el manifiesto. `/ready` no cambia salvo la versión. Solo cambia el Python de `flow_approval.py` (y el texto del contrato `flow-change-cycle-v1.md`). Los profiles no cambian, ni la imagen de Hermes.
+
+**Qué hace quien actualiza:** pasar el bridge a la imagen de esta versión (y el conector y la revisión diaria a las suyas, como siempre). Nada más: ni migraciones, ni variables, ni profile.
+
+### Corregido
+
+- **El conteo de la cohorte** (#381, E-235). Con un teléfono cargado la página decía «Quedan 1 de 5»: la base devuelve los cargados, no los lugares que quedan. Ahora dice «1 de 5 teléfonos cargados · quedan 4 lugares.», con singular y plural, y «no quedan lugares» con la cohorte llena.
+- **«Descartar» dice qué descarta** (#381, E-235). El botón pasa a «Descartar este pedido», con una línea que aclara que descarta el pedido y no el flujo (para frenar un flujo ya, «Pausar»), y el resultado dice que el flujo quedó como estaba. En una propuesta que solo apaga, el botón de publicar dice «Aprobar y apagar el flujo» (y «Sí, aprobar y apagar el flujo» en el segundo paso).
+
+### Cambiado
+
+- **Una propuesta que solo apaga se publica desde la página sin simulación** (#381, E-235). Si todos los ítems de la propuesta son `apagar`, la página la publica aunque la simulación guardada no esté `built` (en Maribel falla con `flow_engine_unavailable` mientras la ruta está en legado). Lo decide el bridge con los ítems de la propuesta releída, congelados por su huella, no con lo que manda el formulario. Un `apagar` mezclado con otro ítem, o un `nuevo`, una `version`, un `volver` o un `prender`, siguen sin publicarse sin simulación. El segundo paso, la revalidación y el aviso al canal de alertas no cambian. Enmienda la decisión 10 del contrato (27/10) solo para apagar, con el OK de Dan del 31/10; `CONTRACT_VERSION` sigue en `1.10.0`.
+
+### Qué hace quien actualiza
+
+- **Sin migraciones**, sin variables nuevas en el bridge ni en el profile, y sin campos nuevos en el manifiesto. `/ready` no cambia salvo `instance_product_version`.
+- **Las tres imágenes salen del tag**, como siempre. Solo el bridge cambia de código; la revisión diaria y el conector de Slack no importan `flow_approval`, pero sus imágenes llevan la versión nueva.
+- **Maribel:** desde la 1.24.1, el bridge, el conector y la revisión diaria a las imágenes de la 1.24.2. Sin paso de profile. **ATT1:** cuando suba, igual que desde la 1.24.1.
+- **Johanna:** nada que hacer.
+
 ## [1.24.1] - 2026-10-31
 
 Un parche sobre la 1.24.0, con un solo PR: la página de aprobación de flujos (`/flow-approval/`) pasa a tener la estética de la revisión diaria, el estilo de Chatwoot (#379, E-232). Sin migraciones, sin variables nuevas y sin campos nuevos en el manifiesto. `/ready` no cambia salvo la versión. Solo cambia el Python: `flow_approval.py`, `daily_feedback_service.py` y `review_theme.py` (nuevo). Los profiles no cambian, ni la imagen de Hermes.
