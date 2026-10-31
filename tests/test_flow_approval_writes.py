@@ -326,6 +326,79 @@ def test_without_a_built_simulation_the_page_does_not_publish() -> None:
     assert "Aprobar y publicar" not in _page(client)
 
 
+def _cart_off(db: PostgrestEmulator, *, failed_simulation: bool = True) -> None:
+    """La propuesta pasa a ser apagar el carrito de ATT1 (prendido), con la simulacion que fallo en Maribel."""
+    [cart] = [flow for flow in db.flows if flow["flow_key"] == "carrito"]
+    db.proposal.update(items=[{"producto": "att1", "flujo": "carrito", "flow_id": cart["flow_id"], "tipo": "apagar"}],
+                       draft_base={cart["flow_id"]: {"active_version": cart["active_version"]}},
+                       purpose="apagar el carrito")
+    if failed_simulation:
+        db.proposal["validation"]["preview"]["simulacion"] = {"status": "failed",
+                                                              "reason_code": "flow_engine_unavailable"}
+
+
+def test_turning_a_flow_off_publishes_without_a_simulation_in_two_steps() -> None:
+    # E-235, 3: el ensayo del 31/10 en Maribel. Apagar solo saca envios: no espera a la simulacion.
+    producer = FakeProducer()
+    client, db = _signed(producer=producer)
+    _cart_off(db)
+    page = _page(client)
+    assert "Aprobar y apagar el flujo" in page and "--sin-simulacion" not in page
+    assert "Apagar solo saca envíos" in page
+    fields = _publish_fields(page)
+    # Sigue pidiendo el segundo paso (apagar, decision 2 del 2026-10-27).
+    first = _post(client, f"/flow-approval/p/{PROPOSAL}/publish", fields)
+    assert first.status_code == 200 and "Confirmá antes de publicar" in first.text
+    assert "apaga el flujo" in first.text and "Sí, aprobar y apagar el flujo" in first.text
+    assert _writes(db) == []
+    done = _post(client, f"/flow-approval/p/{PROPOSAL}/publish", {**fields, "confirmar": _field(first.text, "confirmar")})
+    assert _done(done) == {"hecho": "publicada", "aviso": "enviado"}
+    assert [name for name, _ in db.writes] == ["approver_approve_flow_change_v1", "approver_publish_flow_change_v1"]
+
+
+@pytest.mark.parametrize("extra", [
+    {"producto": "att1", "flujo": "carrito", "tipo": "prender", "a": "cohorte"},
+    {"producto": "att1", "flujo": "carrito", "tipo": "volver", "version": 1, "en_curso": "seguir"},
+    "no es un item",
+])
+def test_turning_off_mixed_with_anything_else_still_needs_the_simulation(extra: object) -> None:
+    client, db = _signed()
+    _cart_off(db)
+    db.proposal["items"] = [*db.proposal["items"], extra]
+    # Sin boton en la pagina: el POST se arma a mano con la huella de la propuesta.
+    fields = {"csrf_token": _field(_page(client), "csrf_token"), "fingerprint": db.proposal["fingerprint"]}
+    assert _done(_post(client, f"/flow-approval/p/{PROPOSAL}/publish", fields)) == {"hecho": "simulation_not_built"}
+    assert _writes(db) == []
+    assert "Aprobar y apagar el flujo" not in _page(client)
+
+
+@pytest.mark.parametrize(("items", "expected"), [
+    ([{"tipo": "apagar"}], True),
+    ([{"tipo": "apagar"}, {"tipo": "apagar"}], True),
+    ([], False),
+    (None, False),
+    ([{"tipo": "prender"}], False),
+    ([{"tipo": "nuevo", "prender": "cohorte"}], False),
+    ([{"tipo": "apagar"}, {"tipo": "version"}], False),
+    (["apagar"], False),
+])
+def test_only_turns_off(items: object, expected: bool) -> None:
+    assert flow_approval.only_turns_off(items) is expected
+
+
+@pytest.mark.parametrize(("members", "maximum", "text"), [
+    (0, 5, "0 de 5 teléfonos cargados · quedan 5 lugares."),
+    (1, 5, "1 de 5 teléfonos cargados · quedan 4 lugares."),
+    (4, 5, "4 de 5 teléfonos cargados · queda 1 lugar."),
+    (5, 5, "5 de 5 teléfonos cargados · no quedan lugares."),
+    (1, 1, "1 de 1 teléfono cargado · no quedan lugares."),
+])
+def test_the_cohort_count_says_how_many_are_loaded_and_how_many_places_are_left(
+        members: int, maximum: int, text: str) -> None:
+    # E-235, 1: con un telefono cargado la pagina decia «Quedan 1 de 5».
+    assert flow_approval.cohort_count_text(members, maximum) == text
+
+
 def test_without_the_catalog_it_does_not_approve() -> None:
     client, db = _signed(chatwoot=FakeChatwoot(failure=RuntimeError("chatwoot caido")))
     response = _post(client, f"/flow-approval/p/{PROPOSAL}/publish", _publish_fields(_page(client)))
@@ -458,7 +531,7 @@ def test_the_cohort_phone_goes_to_the_base_and_nowhere_else(caplog: pytest.LogCa
     shown = _page(client, response.headers["location"])
     for text in (response.headers["location"], shown, caplog.text, repr(producer.commands)):
         assert PHONE not in text and "1234 5678" not in text and "12345678" not in text
-    assert "Quedan 3 de 5." in shown
+    assert "3 de 5 teléfonos cargados · quedan 2 lugares." in shown and "Quedan" not in shown
     # Lo que la base no acepta vuelve con su motivo; un telefono sin forma ni llega a la base.
     db.cohort_result = {"ok": False, "reason_code": "flow_cohort_full"}
     assert _done(_post(client, "/flow-approval/cohort", fields)) == {"hecho": "flow_cohort_full"}

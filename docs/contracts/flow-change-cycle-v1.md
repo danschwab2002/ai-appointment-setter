@@ -581,8 +581,8 @@ El patrón es el de la página de la revisión diaria (`daily-feedback-productio
 
 | Acción | Cuándo aparece | Qué hace |
 |---|---|---|
-| **Aprobar y publicar** | La propuesta está `validada` o `aprobada`, no venció, y su simulación guardada está `built` | Aprueba y publica en un solo POST (ver abajo). |
-| **Descartar** | La propuesta está en `borrador`, `validada` o `aprobada` | `_flow_change_discard` con el aprobador `slack`. Pide un motivo, de una línea. |
+| **Aprobar y publicar** | La propuesta está `validada` o `aprobada`, no venció, y su simulación guardada está `built`, o todos sus ítems son `apagar` (E-235) | Aprueba y publica en un solo POST (ver abajo). En una propuesta que solo apaga, el botón dice «Aprobar y apagar el flujo». |
+| **Descartar este pedido** | La propuesta está en `borrador`, `validada` o `aprobada` | `_flow_change_discard` con el aprobador `slack`. Pide un motivo, de una línea. Descarta la propuesta, no el flujo: la página lo dice al lado del botón («el flujo queda como está ahora, sin ningún cambio»), porque en el ensayo del 31/10 en Maribel un «Descartar» sobre una propuesta de apagar se leyó como apagar (E-235). |
 | **Pausar** | En cada flujo de la propuesta que esté `prendido` o en `cohorte` | `_flow_change_pause` con el aprobador `slack` y la generación que mostró la página. Es inmediato y no pasa por una propuesta. Con otra generación, la página se recarga y no pausa. |
 | **Sumar un teléfono a la cohorte** | En cada flujo nativo en `cohorte`, en la lista de flujos y en el resultado de publicar un flujo nuevo | Lo mismo que `cohorte … agregar` del comando del operador, con el aprobador `slack` (ver «Cargar la cohorte desde la página»). |
 | **Volver atrás** | Siempre, como explicación | La página dice a qué versión se volvería y que se pide en el DM: «volvé a la versión anterior». Es una propuesta más (§6), que el agente arma y valida, y que llega con su propio botón. La página no arma propuestas. |
@@ -590,6 +590,8 @@ El patrón es el de la página de la revisión diaria (`daily-feedback-productio
 Además, `GET /flow-approval/` (con sesión) lista los flujos de la instancia con su estado y su versión, con el botón de pausar, y las propuestas `validada` o `aprobada` que no vencieron. Sirve para pausar sin esperar un mensaje del agente.
 
 **Sin simulación construida, la página no publica:** dice el motivo de la vista previa y que la publica el operador con `--sin-simulacion`, como hoy. El botón no tiene ese atajo (decisión 10 del 2026-10-27).
+
+**Salvo una propuesta que solo apaga (E-235, 2026-10-31, valor por defecto de Andy que revisa Dan):** si todos los ítems de la propuesta son `apagar`, la página la publica sin simulación construida. Apagar solo saca envíos, y la simulación de un flujo de la ruta en legado falla con `flow_engine_unavailable` (ensayo del 31/10 en Maribel, que se terminó con `publicar <id> --sin-simulacion`). Lo decide el bridge con los ítems de la propuesta releída, congelados por su huella. Un `apagar` mezclado con cualquier otro ítem, o un `prender`, un `nuevo`, una `version` o un `volver`, siguen sin publicarse sin simulación. El segundo paso de `apagar` no cambia. Pausar ya no pasaba por una propuesta ni por la simulación.
 
 ### Un clic o dos pasos
 
@@ -699,7 +701,7 @@ Dan aprobó el 2026-10-27 (≈17:08Z) todas las recomendaciones de la lista de v
 7. **La lista de aprobadores** se verifica en el bridge, desde la configuración de la instancia, y se cambia con un PR.
 8. **Volver atrás no se pide desde la página:** se pide en el DM y llega con su propio botón.
 9. **Sin aviso al agente** si la publicación falla en la v1: lo muestra la página.
-10. **Sin publicar sin simulación** desde la página: queda para el comando del operador.
+10. **Sin publicar sin simulación** desde la página: queda para el comando del operador. Enmienda E-235 (2026-10-31, valor por defecto que revisa Dan): salvo una propuesta cuyos ítems son todos `apagar` («Qué se puede hacer en la página»).
 11. **La cohorte se carga desde la página,** en la v1 («Cargar la cohorte desde la página»).
 12. **El «Sign in with Slack» lo hace la app del Automation Expert de cada instancia** («El flag»).
 
