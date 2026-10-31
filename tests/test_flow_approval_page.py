@@ -549,7 +549,10 @@ def test_the_proposal_shows_its_preview_the_other_open_one_and_the_buttons_of_it
     forms = re.findall(r'<form[^>]*action="([^"]+)"', text)
     assert forms == ["/flow-approval/logout", f"/flow-approval/p/{PROPOSAL}/publish",
                      f"/flow-approval/p/{PROPOSAL}/discard"]
-    assert re.findall(r"<button[^>]*>([^<]*)</button>", text) == ["Salir", "Aprobar y publicar", "Descartar"]
+    assert re.findall(r"<button[^>]*>([^<]*)</button>", text) == ["Salir", "Aprobar y publicar",
+                                                                  "Descartar este pedido"]
+    # Descartar dice que descarta el pedido y que el flujo queda como esta (E-235, 2).
+    assert "el flujo queda como está ahora, sin ningún cambio" in text
     assert f'name="fingerprint" value="{"f" * 64}"' in text
     # Cada pedido valida la sesion en la base, y nunca llama a una funcion que escribe.
     names = [name for name, _ in db.calls]

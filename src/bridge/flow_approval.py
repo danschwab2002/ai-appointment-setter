@@ -893,13 +893,14 @@ def _render_change(change: Mapping[str, Any]) -> str:
     return f"<div>{head}</div>"
 
 
-def _simulation_summary(simulation: object) -> str:
+def _simulation_summary(simulation: object, *, turns_off: bool = False) -> str:
+    gate = ("Apagar solo saca envíos: la página lo publica igual." if turns_off else
+            "La página no publica sin simulación: la publica el operador con <code>--sin-simulacion</code>.")
     if not isinstance(simulation, Mapping):
-        return ("<p>Sin simulación construida. La página no publica sin simulación: la publica el operador con "
-                "<code>--sin-simulacion</code>.</p>")
+        return f"<p>Sin simulación construida. {gate}</p>"
     if simulation.get("status") != "built":
-        return (f"<p>La simulación no se pudo armar (<code>{_esc(simulation.get('reason_code'))}</code>). La página "
-                "no publica sin simulación: la publica el operador con <code>--sin-simulacion</code>.</p>")
+        return (f"<p>La simulación no se pudo armar (<code>{_esc(simulation.get('reason_code'))}</code>). "
+                f"{gate}</p>")
     summary = simulation.get("summary") if isinstance(simulation.get("summary"), Mapping) else {}
     line = ""
     fired, people = summary.get("disparos"), summary.get("personas")
@@ -982,7 +983,8 @@ def _render_proposal(proposal: Mapping[str, Any], others: list[Mapping[str, Any]
     main.append('<section class="panel"><div class="panel-heading"><h2>Para qué</h2>'
                 "<p>Texto de quien propuso, sin verificar.</p></div>"
                 f'<div class="panel-body"><div class="note">{_esc(purpose)}</div></div></section>')
-    impact = ["<h3>Simulación</h3>" + _simulation_summary(preview.get("simulacion"))]
+    impact = ["<h3>Simulación</h3>" + _simulation_summary(preview.get("simulacion"),
+                                                                turns_off=only_turns_off(proposal.get("items")))]
     in_flight = preview.get("en_curso")
     if isinstance(in_flight, Mapping) and in_flight.get("politica") is not None:
         count = in_flight.get("recorridos")
@@ -1033,7 +1035,7 @@ def _render_proposal(proposal: Mapping[str, Any], others: list[Mapping[str, Any]
 _DONE = {
     "publicada": "Publicada.",
     "ya_publicada": "Ya estaba publicada: no se volvió a publicar.",
-    "descartada": "Descartada.",
+    "descartada": "Pedido descartado: el flujo quedó como estaba, sin ningún cambio.",
     "pausado": "Pausado. No arranca recorridos nuevos; los que estaban en curso esperan sin mandar.",
     "ya_pausado": "Ya estaba pausado.",
     "generacion": "El flujo cambió mientras mirabas: no se pausó. Mirá su estado de ahora.",
@@ -1066,6 +1068,29 @@ _NOTICE = {
 }
 
 
+def cohort_count_text(members: int, maximum: int) -> str:
+    """Cuantos telefonos tiene la cohorte y cuantos lugares le quedan (E-235, 1).
+
+    ``members`` son los cargados, no los que faltan: con 1 de 5 quedan 4 lugares.
+    """
+    left = max(maximum - members, 0)
+    loaded = f"{members} de {maximum} {'teléfono cargado' if maximum == 1 else 'teléfonos cargados'}"
+    if left == 0:
+        return f"{loaded} · no quedan lugares."
+    return f"{loaded} · {'queda 1 lugar' if left == 1 else f'quedan {left} lugares'}."
+
+
+def only_turns_off(items: object) -> bool:
+    """Si la propuesta solo apaga flujos: todos sus items son ``apagar`` (E-235, 3).
+
+    Apagar solo saca envios, asi que la pagina lo publica sin simulacion. Lo
+    demas (un flujo nuevo, una version, volver, prender) la sigue necesitando.
+    Ante la duda (sin items, un item que no es un objeto), no.
+    """
+    return isinstance(items, list) and bool(items) and all(
+        isinstance(item, Mapping) and item.get("tipo") == "apagar" for item in items)
+
+
 def _hidden(name: str, value: object) -> str:
     return f'<input type="hidden" name="{_esc(name)}" value="{_esc(value)}">'
 
@@ -1078,7 +1103,7 @@ def _render_done(done: Mapping[str, str]) -> str:
     body = _esc(text) if text else f"No se hizo: <code>{_esc(code)}</code>."
     members, maximum = done.get("miembros"), done.get("max")
     if code in ("cohorte", "cohorte_ya_estaba") and members and maximum:
-        body += f" Quedan {_esc(members)} de {_esc(maximum)}."
+        body += f" {_esc(cohort_count_text(int(members), int(maximum)))}"
     notice = _NOTICE.get(done.get("aviso") or "")
     if notice:
         body += f" {_esc(notice)}"
@@ -1114,16 +1139,23 @@ def _render_actions(proposal: Mapping[str, Any], *, proposal_id: str, csrf: str,
     simulation = preview.get("simulacion")
     built = isinstance(simulation, Mapping) and simulation.get("status") == "built"
     fingerprint = proposal.get("fingerprint")
+    turns_off = only_turns_off(proposal.get("items"))
     parts = []
-    if status in ("validada", "aprobada") and not built:
+    if status in ("validada", "aprobada") and not built and not turns_off:
         parts.append('<div class="notice"><p>Sin simulación construida, la página no publica: la publica el operador '
                      "con <code>--sin-simulacion</code>.</p></div>")
     elif (status in ("validada", "aprobada") and isinstance(fingerprint, str)
           and done.get("hecho") != "flow_change_stale_base"):
-        label = "Reintentar publicar" if status == "aprobada" else "Aprobar y publicar"
+        if turns_off:
+            label = "Reintentar apagar el flujo" if status == "aprobada" else "Aprobar y apagar el flujo"
+            help_text = ("Apaga el flujo: deja de mandar. Apagar solo saca envíos, así que se publica sin simulación.")
+        else:
+            label = "Reintentar publicar" if status == "aprobada" else "Aprobar y publicar"
+            help_text = "Publica el cambio de esta propuesta."
         parts.append(f'<form method="post" action="{PREFIX}/p/{_esc(proposal_id)}/publish">'
                      f'{_hidden("csrf_token", csrf)}{_hidden("fingerprint", fingerprint)}'
-                     f'<button type="submit" class="button primary">{label}</button></form>')
+                     f'<button type="submit" class="button primary">{label}</button>'
+                     f'<p class="meta">{_esc(help_text)}</p></form>')
     elif status == "publicada":
         parts.append('<div class="notice notice--ok"><p>Esta propuesta ya está publicada.</p></div>')
     else:
@@ -1131,9 +1163,10 @@ def _render_actions(proposal: Mapping[str, Any], *, proposal_id: str, csrf: str,
                      "no se publica.</p></div>")
     if status in ("borrador", "validada", "aprobada"):
         parts.append(f'<div class="divider"></div><form method="post" action="{PREFIX}/p/{_esc(proposal_id)}/discard">'
-                     f'{_hidden("csrf_token", csrf)}<label>Motivo para descartar (una línea) '
+                     f'{_hidden("csrf_token", csrf)}<label>Motivo para descartar el pedido (una línea) '
                      f'<input type="text" name="motivo" maxlength="{DISCARD_REASON_MAX}" autocomplete="off" required>'
-                     '</label><button type="submit">Descartar</button></form>')
+                     '</label><button type="submit">Descartar este pedido</button>'
+                     f'<p class="meta">{_esc(DISCARD_HELP)}</p></form>')
     touched = {(item.get("producto"), item.get("flujo")) for item in proposal.get("items") or []
                if isinstance(item, Mapping)}
     forms = "".join(_flow_forms(flow, csrf, proposal_id) for flow in flows
@@ -1143,12 +1176,18 @@ def _render_actions(proposal: Mapping[str, Any], *, proposal_id: str, csrf: str,
     return "".join(parts)
 
 
+# Lo que dice el boton de descartar (E-235, 2): descarta la propuesta, no el flujo.
+DISCARD_HELP = ("Descarta este pedido, no el flujo: el flujo queda como está ahora, sin ningún cambio. "
+                "Para frenar un flujo ya, usá «Pausar».")
+
+
 def _render_second_step(proposal: Mapping[str, Any], *, proposal_id: str, csrf: str, confirm: str,
                         reasons: list[tuple[str, str]], others: list[Mapping[str, Any]]) -> str:
     validation = proposal.get("validation") if isinstance(proposal.get("validation"), Mapping) else {}
     preview = validation.get("preview") if isinstance(validation.get("preview"), Mapping) else {}
     in_flight = preview.get("en_curso") if isinstance(preview.get("en_curso"), Mapping) else {}
     count = in_flight.get("recorridos")
+    yes = "Sí, aprobar y apagar el flujo" if only_turns_off(proposal.get("items")) else "Sí, aprobar y publicar"
     lines = "".join(f"<li><strong>{_esc(name)}</strong>: {_esc(SECOND_STEP_TEXT.get(reason, reason))}</li>"
                     for name, reason in reasons)
     warn = ""
@@ -1162,7 +1201,7 @@ def _render_second_step(proposal: Mapping[str, Any], *, proposal_id: str, csrf: 
             f"<p>Lo que está en curso: {_esc(count) + ' recorridos' if count is not None else 'sin contar'}.</p></div>"
             f'<form method="post" action="{PREFIX}/p/{_esc(proposal_id)}/publish">{_hidden("csrf_token", csrf)}'
             f'{_hidden("fingerprint", proposal.get("fingerprint"))}{_hidden("confirmar", confirm)}'
-            '<button type="submit" class="button primary">Sí, aprobar y publicar</button></form>'
+            f'<button type="submit" class="button primary">{yes}</button></form>'
             f'<p class="meta"><a href="{PREFIX}/p/{_esc(proposal_id)}">Volver sin publicar</a></p></div></section>')
 
 
@@ -1592,8 +1631,11 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
             validation = found.get("validation") if isinstance(found.get("validation"), Mapping) else {}
             preview = validation.get("preview") if isinstance(validation.get("preview"), Mapping) else {}
             stored = preview.get("simulacion")
-            if not (isinstance(stored, Mapping) and stored.get("status") == "built"):
-                # Sin simulacion construida, la pagina no publica (decision 10 del 2026-10-27).
+            if not (isinstance(stored, Mapping) and stored.get("status") == "built") \
+                    and not only_turns_off(found.get("items")):
+                # Sin simulacion construida, la pagina no publica (decision 10 del 2026-10-27), salvo
+                # una propuesta que solo apaga flujos, que solo saca envios (E-235, valor por defecto
+                # que revisa Dan). Los items salen de la propuesta releida, congelados por su huella.
                 return _back(secret, page, hecho="simulation_not_built")
             snapshot = await store.read_store(instance, session_hash=session_hash)
             # Un clic o dos pasos: lo decide el bridge, con el almacen de ahora.
