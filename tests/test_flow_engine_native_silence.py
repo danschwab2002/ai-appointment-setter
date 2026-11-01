@@ -137,14 +137,16 @@ def test_the_fixtures_are_the_captured_followup_template_and_an_adopted_cart_con
 def test_the_capabilities_are_per_trigger() -> None:
     assert dict(NATIVE_CAPABILITIES_BY_TRIGGER) == {
         "compra": ENGINE_CAPABILITIES_NATIVE, "carrito": ENGINE_CAPABILITIES_NATIVE,
-        "pago_fallido": ENGINE_CAPABILITIES_NATIVE, NATIVE_SILENCE_TRIGGER: ENGINE_CAPABILITIES_NATIVE_SILENCE}
+        "pago_fallido": ENGINE_CAPABILITIES_NATIVE, "intencion": ENGINE_CAPABILITIES_NATIVE,
+        NATIVE_SILENCE_TRIGGER: ENGINE_CAPABILITIES_NATIVE_SILENCE}
     assert NATIVE_PERMISSION_BY_TRIGGER[NATIVE_SILENCE_TRIGGER] == "conversacion"
     silence = ENGINE_CAPABILITIES_NATIVE_SILENCE
     assert (silence.max_sends_per_path, silence.waits_between_sends) == (1, False)
     assert silence.step_types == {"plantilla"} and silence.buttons == {"checkout"}
     assert silence.exits == {"compra", "contesta"} and silence.variables == {"nombre", "producto"}
     # Los eventos no cambian: el silencio no esta en sus capacidades.
-    assert ENGINE_CAPABILITIES_NATIVE.triggers == {"compra", "carrito", "pago_fallido"}
+    # El formulario (intencion, E-252, flow-engine-v2 2.13.0) es un evento mas.
+    assert ENGINE_CAPABILITIES_NATIVE.triggers == {"compra", "carrito", "pago_fallido", "intencion"}
     assert ENGINE_CAPABILITIES_NATIVE.buttons == frozenset() and ENGINE_CAPABILITIES_NATIVE.exits == {"compra"}
 
 

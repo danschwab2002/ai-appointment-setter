@@ -37,6 +37,9 @@ FLOW_KEYS = {
     # E-165 (flow-engine-v2 2.8.0): si el bridge corre A1 con cupon y A2/Z, lo que pide una ruta
     # del carrito en motor. El de esta prueba los corre: enabled.
     "flow_engine_cart_touches",
+    # E-252 (flow-engine-v2 2.13.0): si el formulario entra por la RPC que lo rutea al nativo. El de
+    # esta prueba no: off.
+    "flow_engine_native_intent",
 }
 
 
@@ -119,6 +122,7 @@ def test_on_before_the_first_read_it_is_pending(tmp_path: Path) -> None:
     assert payload["flow_engine_start_rejections_unnotified"] == "unknown"
     assert payload["flow_engine_native_queue_pending"] == "unknown"
     assert payload["flow_engine_cart_touches"] == "enabled"
+    assert payload["flow_engine_native_intent"] == "off"
     # /ready no lee las rutas: eso es del lote.
     assert "routes" not in authority.calls
 

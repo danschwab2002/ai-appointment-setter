@@ -39,6 +39,14 @@ class SupabaseError(RuntimeError):
     """Raised when a Supabase REST call fails."""
 
 
+class SupabaseRpcMissing(SupabaseError):
+    """PostgREST answered 404 for an RPC: the function is not in the base (its migration is missing).
+
+    Only ``admit_and_route_portable_lead_precheckout`` raises it (E-252): the bridge falls back to the
+    admission of today instead of answering 503 to every form until the migration is applied.
+    """
+
+
 class SupabasePermanentError(SupabaseError):
     """Raised when retrying an unchanged request cannot succeed."""
 
@@ -240,6 +248,60 @@ PAYMENT_SLIP_V2_ADMISSION_OUTCOMES = frozenset({
 _PRECHECKOUT_PLAN_OUTCOMES = frozenset({"planned", "not_planned", "plan_failed"})
 # The reason of a plan as the base stores it: always a code, never free text.
 _PRECHECKOUT_PLAN_REASON = re.compile(r"[a-z0-9_]{1,64}")
+# Un codigo de un flujo nativo del formulario (outcome y reason de §25): minusculas, digitos, ``_``, ``:``
+# y ``-`` (``error_interno:40p01``, ``no_arranca_mientras:pago_rechazado``), nunca un valor de la persona.
+_NATIVE_FLOW_CODE = re.compile(r"[a-z0-9_:-]{1,128}")
+_UUID_TEXT = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+# Una fila de ``flujos`` que no tiene la forma de §25: queda asi, sin sus valores. ``flujos`` solo informa
+# (el log y la comparacion del corte leen la tabla de la base): una fila rara nunca vuelve 503, porque el
+# envio ya quedo admitido y el reintento de GHL leeria la misma fila para siempre.
+NATIVE_FLOW_ROW_INVALID = "fila_invalida"
+
+
+def _native_flow_outcomes(value: object) -> tuple[PrecheckoutNativeFlowOutcome, ...]:
+    """Las filas de ``flujos`` de ``admit_and_route_portable_lead_precheckout_v1``.
+
+    Cada una con la forma de §25 sale tal cual; una que no la tiene (o un ``flujos`` que no es una lista)
+    sale como ``NATIVE_FLOW_ROW_INVALID``, sin ningun valor de la fila.
+    """
+    invalid = PrecheckoutNativeFlowOutcome(
+        flow_id="-", version=None, outcome=NATIVE_FLOW_ROW_INVALID, reason=None, recovery_case_id=None
+    )
+    if not isinstance(value, list):
+        return (invalid,)
+    found: list[PrecheckoutNativeFlowOutcome] = []
+    for item in value[:50]:
+        if not isinstance(item, dict):
+            found.append(invalid)
+            continue
+        flow_id = item.get("flow_id")
+        version = item.get("version")
+        outcome = item.get("outcome")
+        reason = item.get("reason")
+        case_id = item.get("recovery_case_id")
+        if (
+            not isinstance(flow_id, str)
+            or _UUID_TEXT.fullmatch(flow_id) is None
+            or not (version is None or (type(version) is int and version >= 1))
+            or not isinstance(outcome, str)
+            or _NATIVE_FLOW_CODE.fullmatch(outcome) is None
+            or not (reason is None or (isinstance(reason, str) and _NATIVE_FLOW_CODE.fullmatch(reason)))
+            or not (case_id is None or (isinstance(case_id, str) and _UUID_TEXT.fullmatch(case_id)))
+        ):
+            found.append(invalid)
+            continue
+        found.append(
+            PrecheckoutNativeFlowOutcome(
+                flow_id=flow_id,
+                version=version,
+                outcome=outcome,
+                reason=reason,
+                recovery_case_id=case_id,
+            )
+        )
+    return tuple(found)
 # A phone as the base stores it: digits only, international length. It is the
 # only shape allowed inside a PostgREST ``in.(...)`` filter built from phones.
 _PHONE_DIGITS_RE = re.compile(r"[1-9][0-9]{6,14}")
@@ -504,6 +566,22 @@ class PrecheckoutAdmissionResult:
     purchase_intent_id: str
     plan_outcome: str | None = None
     plan_reason: str | None = None
+    # Solo de ``admit_and_route_portable_lead_precheckout`` (flow-engine-v2 §25, E-252): quien se quedo
+    # con el envio (``nativo`` o ``legado``) y lo que dijo cada flujo nativo de ``intencion``. ``None`` y
+    # vacio en toda otra admision.
+    route: str | None = None
+    native_flows: tuple[PrecheckoutNativeFlowOutcome, ...] = ()
+
+
+@dataclass(frozen=True)
+class PrecheckoutNativeFlowOutcome:
+    """Lo que un flujo nativo del formulario dijo de un envio: solo ids y codigos (§25)."""
+
+    flow_id: str
+    version: int | None
+    outcome: str
+    reason: str | None
+    recovery_case_id: str | None
 
 
 @dataclass(frozen=True)
@@ -3152,6 +3230,93 @@ class SupabaseClient:
             purchase_intent_id=purchase_intent_id,
             plan_outcome=plan_outcome if plan_valid else None,
             plan_reason=plan_reason if plan_valid else None,
+        )
+
+    async def admit_and_route_portable_lead_precheckout(
+        self,
+        *,
+        config: CommercialAllyConfig,
+        external_submission_id: str,
+        raw_payload: dict[str, object],
+        canonical_payload: dict[str, object],
+        legacy_scope_key: str | None,
+        legacy_scope_version: int | None,
+    ) -> PrecheckoutAdmissionResult:
+        """Admit a lead and route its first contact: the native engine or the legacy (flow-engine-v2 §25).
+
+        ``admit_and_route_portable_lead_precheckout_v1`` (20261101000100) has the signature and the first
+        five columns of ``admit_and_plan_portable_lead_precheckout``. The base decides, in one
+        transaction: with no native ``intencion`` flow of the product it is the legacy call as it is today
+        (the plan with the legacy scope, or only the admission when both scope values are ``None``); with
+        one, it admits and tries the native engine, and what no flow claims goes to the legacy. A
+        transient error of the base is a non-200 here (the caller answers 503 and GHL retries; the RPC is
+        idempotent by the submission id). Never logs a value of the lead.
+        """
+        if (legacy_scope_key is None) != (legacy_scope_version is None):
+            raise ValueError("legacy scope key and version go together")
+        operation = "portable_lead_precheckout_admission_and_route"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/admit_and_route_portable_lead_precheckout_v1",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": config.tenant_ref,
+                    "p_funnel_ref": config.funnel_ref,
+                    "p_binding_version": config.binding_version,
+                    "p_external_submission_id": external_submission_id,
+                    "p_raw_payload": raw_payload,
+                    "p_canonical_payload": canonical_payload,
+                    "p_legacy_scope_key": legacy_scope_key,
+                    "p_legacy_scope_version": legacy_scope_version,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code == 404:
+            # PostgREST: la funcion no existe (la base sin 20261101000100). Nada se escribio.
+            raise SupabaseRpcMissing(f"{operation}_failed: HTTP 404")
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        outcome = row.get("outcome")
+        submission_id = row.get("submission_id")
+        purchase_intent_id = row.get("purchase_intent_id")
+        plan_outcome = row.get("plan_outcome")
+        plan_reason = row.get("plan_reason")
+        route = row.get("ruta")
+        if outcome not in {"inserted", "duplicate", "semantic_conflict"}:
+            raise SupabaseError(f"{operation}_invalid_outcome")
+        if not isinstance(submission_id, str) or not submission_id:
+            raise SupabaseError(f"{operation}_invalid_submission_id")
+        if not isinstance(purchase_intent_id, str) or not purchase_intent_id:
+            raise SupabaseError(f"{operation}_invalid_purchase_intent_id")
+        if route not in {"nativo", "legado"}:
+            raise SupabaseError(f"{operation}_invalid_route")
+        native_flows = _native_flow_outcomes(row.get("flujos"))
+        plan_missing = plan_outcome is None and plan_reason is None
+        plan_valid = (
+            plan_outcome in _PRECHECKOUT_PLAN_OUTCOMES
+            and isinstance(plan_reason, str)
+            and _PRECHECKOUT_PLAN_REASON.fullmatch(plan_reason) is not None
+        )
+        if route == "nativo" or legacy_scope_key is None:
+            # El nativo se quedo con el envio, o el legado sin su scope solo admitio: no hay plan del
+            # legado que leer (la base devuelve nulos). No se valida: el envio ya quedo admitido.
+            plan_valid = False
+        elif not plan_valid and not (plan_missing and outcome != "inserted"):
+            # El legado con su scope: lo mismo que admit_and_plan_portable_lead_precheckout.
+            raise SupabaseError(f"{operation}_invalid_plan")
+        return PrecheckoutAdmissionResult(
+            outcome=outcome,
+            submission_id=submission_id,
+            purchase_intent_id=purchase_intent_id,
+            plan_outcome=plan_outcome if plan_valid else None,
+            plan_reason=plan_reason if plan_valid else None,
+            route=route,
+            native_flows=native_flows,
         )
 
     async def get_lead_first_name_inference(

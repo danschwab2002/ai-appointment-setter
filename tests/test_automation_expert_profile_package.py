@@ -100,7 +100,8 @@ def test_the_soul_fits_without_being_cut_by_hermes() -> None:
     # Hermes corta por el medio, sin avisar, todo SOUL que pase de su tope (`_truncate_content` en
     # `agent/prompt_builder.py`): el piso es 20.000 caracteres, el mismo que mide el comercial
     # (test_agente_comercial_profile.py). El medio de este SOUL es el corte del legado al motor.
-    # Medido el 2026-10-30 (E-214, P11 de M16, con la revisión E-216): 16.436 caracteres.
+    # Medido el 2026-10-30 (E-214, P11 de M16, con la revisión E-216): 16.436 caracteres; con el
+    # primer contacto nativo (E-252, P20b), 17.215.
     soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8").strip()
     assert len(soul) <= 20_000, len(soul)
 
@@ -141,8 +142,23 @@ def test_the_soul_knows_what_the_native_engine_runs_today() -> None:
         assert f"{{evento: {trigger}}}" in section, trigger
         assert f"permiso: {NATIVE_PERMISSION_BY_TRIGGER[trigger]}" in section, trigger
     assert ENGINE_CAPABILITIES_NATIVE.max_sends_per_path == 1 and "un solo mensaje" in section
-    for missing in ("el primer contacto", "el seguimiento a 24 h", "la ficha de pago"):
+    for missing in ("el seguimiento a 24 h", "la ficha de pago"):
         assert missing in section.split("**Todavía no hace**", 1)[1], missing
+    # E-252: el primer contacto (el formulario) ya lo hace el motor nativo, con su clave propia, la
+    # repeticion de 24 h y los cortes que no se escriben.
+    assert "primer contacto" not in section.split("**Todavía no hace**", 1)[1].split("\n", 1)[0]
+    first = section.split("**el primer contacto**", 1)[1].split("\n", 1)[0]
+    for needed in ("`primer_contacto`", "otra_despues_de: 24h", "el carrito, el pago rechazado, la compra",
+                   "no lo escribas", "`FLOW_ENGINE_NATIVE_INTENT_ENABLED`"):
+        assert needed in first, needed
+    # La viñeta de los disparadores nombra cada uno (no solo la del primer contacto).
+    triggers_line = next(line for line in section.splitlines() if line.startswith("- lo dispara la compra"))
+    for trigger in ENGINE_CAPABILITIES_NATIVE.triggers:
+        assert f"{{evento: {trigger}}}" in triggers_line, trigger
+    # El corte: con el primer contacto, el envio de la cohorte tiene que ser del nativo, no del legado
+    # (en una instancia sin el flag, el formulario sigue en el legado y todo lo demas da verde).
+    cut = soul.split("## Pasar un flujo del legado al motor", 1)[1].split("\n## ", 1)[0]
+    assert "la clave del nativo en `lead_history`" in cut
     # D1: las claves del legado no se usan. Las que el SOUL dice que frena la validación son exactamente
     # FLOW_KEYS (E-216, hallazgo 6: `ficha` no está reservada y no se promete).
     line = section.split("**la clave es propia:**", 1)[1].split("\n", 1)[0]

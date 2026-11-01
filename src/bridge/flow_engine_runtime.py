@@ -233,11 +233,15 @@ class FlowEngineRuntime:
         instance: Mapping[str, object],
         clock: Callable[[], float] = time.monotonic,
         cart_touches_enabled: bool = True,
+        native_intent_enabled: bool = False,
     ) -> None:
         self.instance: dict[str, object] = dict(instance)
         # E-165: si el bridge corre A1 con cupon y A2/Z. Sin ellos el motor arranca igual (por sus
         # flujos nativos), y el carrito de una ruta del legado en motor va forzado al legado.
         self.cart_touches_enabled = cart_touches_enabled
+        # E-252 (flow-engine-v2 §25): si el formulario entra por la RPC que lo rutea al nativo.
+        # Solo lo publica /ready (on/off), para la verificacion del corte.
+        self.native_intent_enabled = native_intent_enabled
         self.routes = FlowEngineRoutes(supabase=supabase, instance=instance, clock=clock)
         self.native_flows = FlowEngineNativeFlows(
             supabase=supabase, instance=instance, clock=clock
@@ -284,6 +288,7 @@ class FlowEngineRuntime:
                 str(pending) if pending is not None else "unknown"
             ),
             "flow_engine_cart_touches": "enabled" if self.cart_touches_enabled else "disabled",
+            "flow_engine_native_intent": "on" if self.native_intent_enabled else "off",
         }
 
 
