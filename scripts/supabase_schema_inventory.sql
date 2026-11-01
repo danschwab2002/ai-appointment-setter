@@ -6165,6 +6165,68 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         7,
         'flow_engine_native_intent'
+    union all
+    select
+        '20261101000200',
+        '20261101000200_flow_engine_native_silence_v1.sql',
+        -- El seguimiento a 24 h nativo (E-251, P22-2): la reserva nativa,
+        -- security definer, solo de service_role, derivada de la portable ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.claim_flow_engine_silence_v1(uuid,integer,text,bigint,bigint,bigint,text,text,text,text,text,text,text,bigint,bigint,integer,text,timestamptz)')
+              and position('reserve_portable_checkout_issuance_v2' in definition) > 0
+              and position('flow_engine_native_silence_gate: end' in definition) > 0
+              and position('flow_engine_native_silence_authorization' in definition) > 0
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- ... la barrera del legado en la portable ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.claim_portable_conversation_followup_v1(bigint,bigint,bigint,text,text,text,text,text,text,text,bigint,bigint,integer,text,timestamptz)')
+              and position('flow_engine_native_silence_barrier: end' in definition) > 0
+              and position('flow_engine_native_silence_legacy_replay' in definition) > 0
+        )::int
+        -- ... el disparador y lo que ejecuta el motor nativo ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_unsupported(jsonb)')
+              and position('flow_engine_native_silence_shape' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_trigger(jsonb)')
+              and position('flow_engine_native_silence_trigger' in definition) > 0
+        )::int
+        -- ... la simulacion y las ventas ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.read_flow_engine_native_trigger_counts_v1(jsonb,text,text,timestamptz)')
+              and position('flow_engine_native_silence_counts: end' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.read_flow_sales_v1(jsonb,timestamptz)')
+              and position('flow_engine_native_silence_sales_link: end' in definition) > 0
+        )::int
+        -- ... y la corrida en la fila del seguimiento.
+        + (
+            select count(*) = 1
+            from pg_attribute a
+            where a.attrelid = to_regclass('public.conversation_followup_events')
+              and a.attname = 'flow_id'
+              and not a.attisdropped
+        )::int,
+        7,
+        'flow_engine_native_silence'
 )
 select
     version,

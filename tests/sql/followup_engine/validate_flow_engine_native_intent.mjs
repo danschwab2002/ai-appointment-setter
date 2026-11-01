@@ -110,7 +110,10 @@ const PILOT = JSON.parse(readFileSync(join(root, 'tests/fixtures/instances/att1/
 const results = {};
 
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
-if (names.at(-1) !== MIGRATION) fail(`${MIGRATION} tiene que ser la ultima`, names.slice(-3));
+// Despues va solo el seguimiento a 24 h nativo (20261101000200, E-251), que suma el silencio al disparador.
+if (JSON.stringify(names.slice(names.indexOf(MIGRATION) + 1)) !== JSON.stringify(['20261101000200_flow_engine_native_silence_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la del seguimiento a 24 h nativo`, names.slice(-3));
+}
 if (maribel.name !== 'maribel_retomar_proceso_01') fail('el fixture no es la plantilla de Maribel');
 if (CAPTURED.length !== 2 || CAPTURED.some((envio) => envio.contract_version !== '1.1.0'
     || envio.canonical.event_type !== 'PRECHECKOUT_FORM_SUBMITTED' || envio.accion.minutos_hasta_el_envio !== 60)
@@ -145,7 +148,7 @@ const previous = {};
     grant usage on schema public to service_role, anon;
   `);
   await applyFile(db, join(root, 'supabase/baseline/20260803_public_schema.sql'));
-  for (const name of names.slice(0, -1)) await applyFile(db, join(root, 'supabase/migrations', name));
+  for (const name of names.slice(0, names.indexOf(MIGRATION))) await applyFile(db, join(root, 'supabase/migrations', name));
   const before = await snapshot(db);
   await applyFile(db, join(root, 'supabase/migrations', MIGRATION));
   const after = await snapshot(db);

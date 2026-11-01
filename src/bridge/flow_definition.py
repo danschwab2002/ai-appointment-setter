@@ -50,6 +50,12 @@ _COUPON = re.compile(r"[A-Za-z0-9_-]{1,64}")
 # Hotmart y que vence (contrato 1.1, «Los pasos»). Tiene la forma de un codigo,
 # asi que la forma no cambia; lo distinguen la regla 15 y la politica compilada.
 PERSONAL_COUPON = "personal"
+# entra.contesto_a: cualquier_plantilla (P22-1 de M16, esquema 1.3): entra donde la persona contesto una
+# plantilla del recuperador, de cualquier flujo, registrado o no, del legado o nativo. Es la adopcion que
+# exige hoy el seguimiento con cupon (inbound_adopted_template_conversation, 20261001000500:719-724;
+# blocked_not_template_reply, 20261010000100:22-33). Una lista de flujos nombra solo flujos registrados
+# (regla 10), y en una instancia sin el legado registrado (Maribel) no puede nombrar a quien adopto.
+ANY_TEMPLATE = "cualquier_plantilla"
 # A lo sumo dos cupones personales por camino: dos codigos por caso (regla del 17/10).
 PERSONAL_COUPONS_PER_PATH = 2
 # El codigo de Hotmart del medio de pago (CASHPAYMENT, MERCADO_PAGO...).
@@ -1332,7 +1338,14 @@ def _check_entry(out: _Collector, entry: object) -> None:
     if "permiso" in entry:
         _check_enum(out, entry["permiso"], ("entra", "permiso"), PERMISSIONS)
     if "contesto_a" in entry:
-        _check_list(out, entry["contesto_a"], ("entra", "contesto_a"),
+        replied_to = entry["contesto_a"]
+        if isinstance(replied_to, str):
+            # El unico texto que admite: cualquier plantilla del recuperador (1.3).
+            if replied_to != ANY_TEMPLATE:
+                out.add(INVALID_VALUE, ("entra", "contesto_a"),
+                        reason=f"contesto_a es una lista de flujos, o {ANY_TEMPLATE}.")
+            return
+        _check_list(out, replied_to, ("entra", "contesto_a"),
                     lambda value, at: _check_flow_ref(out, value, at))
 
 

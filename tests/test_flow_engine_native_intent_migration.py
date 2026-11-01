@@ -56,8 +56,10 @@ def test_it_is_one_transaction_and_the_last() -> None:
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
 
     assert "\nbegin;\n" in sql and sql.rstrip().endswith("commit;")
-    assert names[-1] == MIGRATION.name
-    assert names[-2] == "20261030000400_portable_purchase_stops_see_our_link_v1.sql"
+    # Despues va el seguimiento a 24 h nativo (20261101000200, E-251).
+    assert names[-1] == "20261101000200_flow_engine_native_silence_v1.sql"
+    assert names[-2] == MIGRATION.name
+    assert names[-3] == "20261030000400_portable_purchase_stops_see_our_link_v1.sql"
     # R9: el bloque 1 valida flow_engine_native_runs con ACCESS EXCLUSIVE.
     assert "set local lock_timeout = '5s';" in sql
     # El ALTER de flow_engine_native_runs va al final: retiene el ACCESS EXCLUSIVE lo menos posible.
@@ -199,7 +201,9 @@ def test_the_validator_and_the_captured_form() -> None:
     scripts = json.loads(PACKAGE.read_text(encoding="utf-8"))["scripts"]["test"]
     fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
 
-    assert scripts.rstrip().endswith("node validate_flow_engine_native_intent.mjs")
+    # Despues va el validador del seguimiento a 24 h nativo (20261101000200, E-251).
+    assert scripts.rstrip().endswith(
+        "node validate_flow_engine_native_intent.mjs && node validate_flow_engine_native_silence.mjs")
     assert MIGRATION.name in validator
     for legacy in (
         "validate_portable_precheckout_first_contact.mjs",

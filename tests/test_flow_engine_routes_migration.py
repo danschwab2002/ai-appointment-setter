@@ -111,6 +111,8 @@ def test_it_is_one_transaction_and_comes_right_after_the_t4b() -> None:
         "20261030000400_portable_purchase_stops_see_our_link_v1.sql",
         # El primer contacto nativo (20261101000100, E-247): el disparador intencion del motor nativo.
         "20261101000100_flow_engine_native_intent_v1.sql",
+        # El seguimiento a 24 h nativo (20261101000200, E-251): la base del silencio.
+        "20261101000200_flow_engine_native_silence_v1.sql",
     ]
 
 

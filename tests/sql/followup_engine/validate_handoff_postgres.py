@@ -500,6 +500,11 @@ def verify_effective_acls(harness: PostgresHarness) -> None:
                      -- 20261010000100): el mismo predicado sobre
                      -- human_handoff_requests; solo lee esa tabla.
                      'claim_portable_conversation_followup_v1',
+                     -- La reserva nativa del seguimiento a 24 h (migracion
+                     -- 20261101000200), derivada de la portable: el mismo
+                     -- predicado sobre human_handoff_requests (no reserva
+                     -- sobre una derivacion sin atender); solo lee esa tabla.
+                     'claim_flow_engine_silence_v1',
                      -- Las lecturas del Automation Expert (migracion
                      -- 20261015000200): atan un lead a la instancia por la
                      -- bandeja de su derivacion y muestran cuando se derivo

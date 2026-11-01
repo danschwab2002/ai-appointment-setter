@@ -135,7 +135,9 @@ def traducir(defi: dict, plantillas: dict, estado: str) -> tuple[list, list]:
     rep = topes.get("repeticion") or {}
     hor_txt = "siempre" if horario == "siempre" else (f"{horario['desde']}–{horario['hasta']} ({horario['zona']})" if isinstance(horario, dict) else "")
     datos = [["Entra si", PERMISOS.get(entra.get("permiso"), entra.get("permiso") or "")]]
-    if entra.get("contesto_a"):
+    if entra.get("contesto_a") == "cualquier_plantilla":
+        datos.append(["Contestó a", "cualquier plantilla del recuperador"])
+    elif entra.get("contesto_a"):
         datos.append(["Contestó a", ", ".join(entra["contesto_a"])])
     if hor_txt:
         datos.append(["Horario", hor_txt])

@@ -174,6 +174,8 @@ expected_service_role(signature) as (
         -- 20261101000100: la entrada del formulario y el freno del primer contacto nativo.
         ('public.admit_and_route_portable_lead_precheckout_v1(text, text, integer, text, jsonb, jsonb, text, integer)'),
         ('public._flow_engine_native_intent_stop_reason(uuid)'),
+        -- 20261101000200: la reserva del seguimiento a 24 h nativo.
+        ('public.claim_flow_engine_silence_v1(uuid, integer, text, bigint, bigint, bigint, text, text, text, text, text, text, text, bigint, bigint, integer, text, timestamp with time zone)'),
         -- 20261025000100: las lecturas del motor nativo del AE y las ventas por flujo.
         ('public.read_automation_expert_native_flows_v1(jsonb)'),
         ('public.read_automation_expert_native_history_v1(jsonb, uuid)'),

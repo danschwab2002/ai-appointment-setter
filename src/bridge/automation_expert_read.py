@@ -1625,7 +1625,8 @@ def _native_history(native: object) -> tuple[list[object], list[str]]:
 
 # El estado del control del almacen, como lo muestra la lectura.
 _NATIVE_STATE = {"prendido": "on", "pausado": "paused", "apagado": "off", "cohorte": "cohort"}
-_SALES_FIELDS = ("runs_started", "purchases_after_send", "by_case", "by_identity", "people_after_send",
+# by_link (20261101000200, P22-2 de M16): la venta de una corrida del seguimiento nativo, por su link.
+_SALES_FIELDS = ("runs_started", "purchases_after_send", "by_case", "by_identity", "by_link", "people_after_send",
                  "purchases_before_send")
 NATIVE_COHORT_MAX = 5
 

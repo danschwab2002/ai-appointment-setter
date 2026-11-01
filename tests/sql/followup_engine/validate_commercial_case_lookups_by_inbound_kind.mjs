@@ -73,9 +73,13 @@ const MIGRATIONS = readdirSync(join(root, 'supabase/migrations'))
 // 20261010000100 copia su claim_conversation_followup_v1 para la reserva
 // portable del seguimiento y, sin ella, falla con 55000
 // unexpected_conversation_followup_claim_definition. En una base real la
-// cadena es lineal: sin la 000500 no hay ninguna de estas.
+// cadena es lineal: sin la 000500 no hay ninguna de estas. 20261101000200
+// (el seguimiento a 24 h nativo) deriva su reserva de la portable y le suma la
+// barrera del legado: sin la portable aborta con 55000
+// flow_engine_native_silence_missing.
 const DERIVED_FROM_MIGRATION = [
   '20261010000100_portable_conversation_followup_claim.sql',
+  '20261101000200_flow_engine_native_silence_v1.sql',
 ];
 for (const name of DERIVED_FROM_MIGRATION) {
   if (!MIGRATIONS.includes(name) || name <= MIGRATION) {

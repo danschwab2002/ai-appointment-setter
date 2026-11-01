@@ -1255,13 +1255,20 @@ const expectAdopted = (label, lead, reply, identity) => {
   }
 
   // Una segunda corrida: la compartida no cambio, asi que recrea la misma
-  // funcion con los mismos permisos, sin avisos.
+  // funcion con los mismos permisos, sin avisos. Es la que crea esta
+  // migracion: los reemplazos que le hacen las de despues (la barrera del
+  // seguimiento nativo, 20261101000200) no estan, y nada mas cambia.
   const rerun = await rolledBack(async () => {
     const notices = await runMigration();
-    return { notices, change: diff(settled, await snapshot()) };
+    const now = await snapshot();
+    return { notices, change: diff(settled, now), portable: now.get(PORTABLE_SIGNATURE)?.definition };
   });
-  if (rerun.notices.length !== 0 || !unchanged(rerun.change)) {
-    throw new Error(`g. a second run changed something: ${JSON.stringify(rerun)}`);
+  const laterPatches = settled.get(PORTABLE_SIGNATURE).definition !== after.get(PORTABLE_SIGNATURE).definition;
+  if (rerun.notices.length !== 0 || rerun.change.added.length !== 0 || rerun.change.removed.length !== 0
+      || rerun.change.acl.length !== 0
+      || !sameSet(rerun.change.changed, laterPatches ? [PORTABLE_SIGNATURE] : [])
+      || rerun.portable !== after.get(PORTABLE_SIGNATURE).definition) {
+    throw new Error(`g. a second run changed something: ${JSON.stringify({ ...rerun, portable: undefined })}`);
   }
 
   // Con la compartida cambiada (alguien ya la apunto a la reserva portable),

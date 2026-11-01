@@ -110,7 +110,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026102500020
   // Los frenos de la compra ven nuestro link (E-215): reemplazos contados en los dos frenos portables.
   '20261030000400_portable_purchase_stops_see_our_link_v1.sql',
   // El primer contacto nativo (E-247): el disparador intencion, por reemplazos contados.
-  '20261101000100_flow_engine_native_intent_v1.sql'])) {
+  '20261101000100_flow_engine_native_intent_v1.sql',
+  // El seguimiento a 24 h nativo (E-251): el silencio del agente, por reemplazos contados.
+  '20261101000200_flow_engine_native_silence_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la del btrim del nombre del producto`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(

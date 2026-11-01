@@ -32,6 +32,7 @@ from typing import Any
 
 from .flow_definition import (
     ALWAYS,
+    ANY_TEMPLATE,
     COHORT,
     DEFINITION_CODES,
     FICHA_EVENTS,
@@ -419,28 +420,32 @@ ETIQUETAR_NOT_AFTER_TEMPLATE = _spec(
     alternative="Ponerlo después del envío, una sola vez.",
 )
 # La regla 14 de un flujo nativo (flow-engine-v2 §9): lo que la base no abre ni admite.
-_NATIVE_LIMIT = ("Un flujo nativo, en esta versión del motor: lo dispara la compra (permiso: compra, plantilla "
-                 "de utilidad), el carrito o el pago rechazado (permiso: formulario, termina con la compra); "
-                 "manda una sola "
-                 "plantilla con variables de entre nombre y producto, sin botón declarado, y repite por persona")
+_NATIVE_LIMIT = ("Un flujo nativo, en esta versión del motor: lo dispara la compra, el carrito o el pago "
+                 "rechazado, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último "
+                 "del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con "
+                 "el checkout y su cupón")
 ENGINE_NOT_SUPPORTED_NATIVE_TRIGGER = _spec(
     NATIVE_UNSUPPORTED_TRIGGER, 14, KIND_NOT_YET,
-    "El motor nativo de esta versión solo arranca con la compra, con el carrito o con el pago rechazado.",
+    "El motor nativo de esta versión solo arranca con la compra, con el carrito, con el pago rechazado o con "
+    "el silencio en que lo último lo dijo el agente.",
     limit=_NATIVE_LIMIT,
-    alternative=("Disparar con dispara: {evento: compra}, {evento: carrito} o {evento: pago_fallido}. Otro evento "
-                 "es de un flujo del legado."),
+    alternative=("Disparar con dispara: {evento: compra}, {evento: carrito}, {evento: pago_fallido} o "
+                 "{silencio: {lo_ultimo: agente, ...}}. Otro disparador es de un flujo del legado."),
 )
 ENGINE_NOT_SUPPORTED_NATIVE_PERMISSION = _spec(
     NATIVE_UNSUPPORTED_PERMISSION, 14, KIND_NOT_YET,
-    "El motor nativo de esta versión entra con permiso: compra si lo dispara la compra, y con permiso: "
-    "formulario si lo dispara el carrito o el pago rechazado.", limit=_NATIVE_LIMIT,
+    "El motor nativo de esta versión entra con permiso: compra si lo dispara la compra, con permiso: "
+    "formulario si lo dispara el carrito o el pago rechazado, y con permiso: conversacion si lo dispara "
+    "el silencio.", limit=_NATIVE_LIMIT,
     alternative=("Con la compra, permiso: compra y el OK del cliente; con el carrito o el pago rechazado, "
-                 "permiso: formulario."),
+                 "permiso: formulario; con el silencio, permiso: conversacion."),
 )
 ENGINE_NOT_SUPPORTED_NATIVE_REPEAT = _spec(
     NATIVE_UNSUPPORTED_REPEAT, 14, KIND_NOT_YET,
-    "El motor nativo repite por persona o por persona y oferta, con nunca o una duración.", limit=_NATIVE_LIMIT,
-    alternative="Usar repeticion: {una_por: persona, otra_despues_de: nunca}.",
+    "El motor nativo repite por persona o por persona y oferta, con nunca o una duración; con el silencio, "
+    "una vez por conversación y nunca otra.", limit=_NATIVE_LIMIT,
+    alternative=("Usar repeticion: {una_por: persona, otra_despues_de: nunca}; con el silencio, "
+                 "{una_por: conversacion, otra_despues_de: nunca}."),
 )
 ENGINE_NOT_SUPPORTED_NATIVE_PRIORITY = _spec(
     NATIVE_UNSUPPORTED_PRIORITY, 14, KIND_NOT_YET,
@@ -1242,7 +1247,8 @@ class _Run:
             if fits is False:
                 emitter.add(PERMISSION_TRIGGER_MISMATCH, ("entra", "permiso"))
         replied_to = entry.get("contesto_a")
-        if known and permission != "conversacion" and isinstance(replied_to, list) and replied_to:
+        if known and permission != "conversacion" and (
+                (isinstance(replied_to, list) and replied_to) or replied_to == ANY_TEMPLATE):
             emitter.add(CONTESTO_A_REQUIRES_CONVERSATION, ("entra", "contesto_a"))
 
     def _rule4(self, emitter: _Emitter, definition: Mapping[str, Any]) -> None:
@@ -1588,7 +1594,12 @@ class _Run:
             if wrong is not None:
                 emitter.add(TEMPLATE_BUTTON_MISMATCH, at + ("plantilla",), reason=wrong)
             return
-        if link == "checkout":
+        if link == "checkout" and native:
+            # El seguimiento nativo manda con parse_followup_template: exactamente un boton, el del checkout
+            # (followup_discount.py:257-273). Con respuestas rapidas fallaria en cada barrido (P22-1 de M16).
+            fits = groups == 1 and len(buttons) == 1 and _is_url_button(buttons[0]) and (
+                buttons[0].get("url") == CHECKOUT_BUTTON_URL)
+        elif link == "checkout":
             fits = groups == 1 and bool(buttons) and _is_url_button(buttons[0]) and (
                 buttons[0].get("url") == CHECKOUT_BUTTON_URL) and quick_replies(buttons[1:])
         elif link == "ficha":
@@ -1664,7 +1675,8 @@ class _Run:
             # Un codigo cerrado (motor_nativo:forma), con lo que no ejecuta en la razon.
             what = code.split(":", 1)[1]
             at: tuple[Segment, ...] = ("termina", "si") if what.startswith(("salida_", "contesta_")) \
-                else ("dispara",) if what.startswith("disparo_") else ("pasos",)
+                else ("dispara",) if what.startswith("disparo_") \
+                else ("entra", "contesto_a") if what == "contesto_a" else ("pasos",)
             emitter.add(ENGINE_NOT_SUPPORTED_NATIVE_SHAPE, at,
                         reason=f"El motor nativo de esta versión no ejecuta eso ({what}).")
 
