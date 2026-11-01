@@ -14,6 +14,10 @@ que el bridge le pone:
   contacto ya resuelto; si un flujo nativo lo toma, el legado no planifica.
   **El pago rechazado, igual** (flow-engine-v2 2.11.0, E-207): la misma llamada
   con ``trigger=NATIVE_PAYMENT_FAILURE_TRIGGER``.
+- **El formulario no pasa por aca** (flow-engine-v2 2.13.0, E-252): con
+  ``FLOW_ENGINE_NATIVE_INTENT_ENABLED`` lo admite y lo rutea la base en la
+  misma RPC (``_admit_portable_lead`` de ``app``); ``native_intent_admission``
+  lee la respuesta con los resultados del carrito, para el log.
 - **El paso ``etiquetar: cliente``** (``apply_native_tail``), despues de que la
   plantilla del paso quedo aceptada: la etiqueta ``cliente`` por un macro que
   solo la suma (el patron de ``ProductLabeler``) y una nota privada con el
@@ -26,7 +30,7 @@ en cohorte. Los logs no llevan telefono, mail ni nombre.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
@@ -57,6 +61,10 @@ NATIVE_CART_TRIGGER = "carrito"
 # El pago rechazado (E-207, flow-engine-v2 2.11.0): entra con permiso formulario, como el carrito.
 NATIVE_PAYMENT_FAILURE_TRIGGER = "pago_fallido"
 NATIVE_EVENT_TRIGGERS = frozenset({NATIVE_CART_TRIGGER, NATIVE_PAYMENT_FAILURE_TRIGGER})
+# El formulario (flow-engine-v2 §25, E-247 la base y E-252 el bridge): entra con permiso formulario. No va
+# por ``admit_native_cart`` (que fija ``fuente: hotmart``): lo admite y lo rutea la base en una sola RPC,
+# ``admit_and_route_portable_lead_precheckout_v1``, y ``native_intent_admission`` lee lo que contesto.
+NATIVE_INTENT_TRIGGER = "intencion"
 # Una accion nativa solo sale con la plantilla del paso, en el modo directo y
 # con el motor prendido: nunca por Hermes ni con la plantilla del manifiesto.
 NATIVE_NEEDS_DIRECT_TEMPLATE = "flow_engine_native_needs_direct_template"
@@ -201,6 +209,39 @@ NATIVE_PAYMENT_FAILURE_ABSORBED_REASONS = frozenset({"ya_en_curso", "ya_disparad
 NATIVE_CART_UNCLAIMED_REASONS = frozenset(
     {"fuera_de_cohorte", "flujo_apagado", "flujo_pausado", "caso_del_legado_en_curso", "no_es_un_rechazo"}
 )
+
+
+@dataclass(frozen=True)
+class NativeIntentAdmission:
+    """Lo que la base decidio de un formulario (§25), con los resultados del carrito.
+
+    ``arranco``: un flujo nativo abrio su caso (el legado no planifico). ``no_arranca``: el envio es del
+    nativo y no arranco (un freno del legado al admitir, la repeticion, el toque nativo de 24 h): el legado
+    tampoco planifico. ``sin_reclamo``: ningun flujo lo tomo y fue al legado, que hizo lo de hoy.
+    """
+
+    outcome: str
+    recovery_case_id: str | None = None
+    reason: str | None = None
+
+
+def native_intent_admission(route: str | None, flows: Sequence[object]) -> NativeIntentAdmission:
+    """Lee ``ruta`` y ``flujos`` de la entrada del formulario como un resultado del carrito.
+
+    Las filas son las de ``PrecheckoutNativeFlowOutcome`` (``outcome``, ``reason``,
+    ``recovery_case_id``). Con ``ruta`` ``legado`` es ``sin_reclamo``, con la primera razon nativa si la
+    hubo (``fuera_de_cohorte``, ``flujo_pausado``...). Nunca levanta.
+    """
+    first_reason = next(
+        (getattr(row, "reason", None) for row in flows if getattr(row, "reason", None)), None
+    )
+    if route != "nativo":
+        return NativeIntentAdmission(NATIVE_CART_UNCLAIMED, reason=first_reason)
+    for row in flows:
+        case_id = getattr(row, "recovery_case_id", None)
+        if getattr(row, "outcome", None) == "motor_arranco" and case_id is not None:
+            return NativeIntentAdmission(NATIVE_CART_STARTED, recovery_case_id=case_id)
+    return NativeIntentAdmission(NATIVE_CART_REFUSED, reason=first_reason)
 
 
 @dataclass(frozen=True)

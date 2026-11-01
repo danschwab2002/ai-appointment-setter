@@ -705,7 +705,8 @@ _EVENTO = {
     "ficha_impresa": "cuando alguien genera una ficha para pagar en efectivo",
     "ficha_vencida": "cuando una ficha de pago en efectivo vence sin pagarse",
     "compra": "cuando alguien compra",
-    "intencion": "cuando alguien muestra intención de compra en la conversación",
+    # El disparador intencion es el formulario de la landing (el primer contacto), no la conversacion.
+    "intencion": "cuando alguien llena el formulario de la landing",
 }
 _QUIEN_PIDE = {"automation_expert": "el agente (Automation Expert)", "operador": "el operador"}
 _CATEGORIA = {"UTILITY": "utilidad", "MARKETING": "marketing", "AUTHENTICATION": "autenticación"}

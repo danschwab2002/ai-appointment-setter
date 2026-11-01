@@ -262,8 +262,11 @@ def not_supported(definition: Mapping[str, Any], capabilities: EngineCapabilitie
 
 # El motor nativo de flow-engine-v2 (§9, el PR 2 en 20261024000200): ejecuta un flujo que nace en el
 # motor, sin legado, disparado por la compra o, desde 20261028000200 (E-161, §19), por el carrito
-# abandonado y, desde 20261030000200 (E-207, §23), por el pago rechazado. Un solo envio (las formas de
-# pasos ``nativo:compra``, ``nativo:carrito`` y ``nativo:pago_fallido``), con las
+# abandonado, desde 20261030000200 (E-207, §23), por el pago rechazado y, desde 20261101000100 (E-247,
+# §25; el bridge, E-252), por el formulario (``intencion``: el primer contacto, que cortan solos el
+# carrito, el pago rechazado, la compra, la baja y la derivacion, con el freno del legado). Un solo envio
+# (las formas de pasos ``nativo:compra``, ``nativo:carrito``, ``nativo:pago_fallido`` y
+# ``nativo:intencion``), con las
 # variables que declara el paso de entre ``nombre`` y ``producto`` (E-115, 20261026000100), sin boton
 # declarado, y el paso ``etiquetar`` (lo ejecuta el bridge, PR 3; la regla 5 lo deja solo con la
 # compra). La salida ``compra`` (la del carrito: la compra corta el caso antes del envio, el freno de la
@@ -271,7 +274,7 @@ def not_supported(definition: Mapping[str, Any], capabilities: EngineCapabilitie
 # (los mira la regla 13 contra el catalogo, flow-engine-v2 2.6.0). ``buttons`` vacio es el ``boton`` que
 # declara el paso, no los botones de la plantilla.
 ENGINE_CAPABILITIES_NATIVE = EngineCapabilities(
-    triggers=frozenset({"compra", "carrito", "pago_fallido"}),
+    triggers=frozenset({"compra", "carrito", "pago_fallido", "intencion"}),
     step_types=frozenset({"esperar", "plantilla", "etiquetar"}),
     max_sends_per_path=1,
     waits_between_sends=False,
@@ -306,11 +309,12 @@ FOLLOWUP_VARIABLES = ("nombre", "producto")
 # la compra con ``compra`` (la regla 17: una sola plantilla de utilidad) y el carrito con ``formulario``
 # (la intencion con consentimiento que la admision portable correlaciono con ese carrito), y el pago
 # rechazado tambien con ``formulario`` (20261030000200, E-207: la intencion con la que la admision portable
-# correlaciono ese rechazo, como el pago rechazado del legado con ``consented_intent``). El silencio del
-# agente entra con ``conversacion`` (P22-1 de M16): la persona nos escribio en esa conversacion, como el
-# seguimiento con cupon del legado.
+# correlaciono ese rechazo, como el pago rechazado del legado con ``consented_intent``). El formulario
+# (``intencion``, 20261101000100, E-247; el bridge, E-252) entra con ``formulario``: el envio consentido que
+# lo disparo. El silencio del agente entra con ``conversacion`` (P22-1 de M16): la persona nos escribio en
+# esa conversacion, como el seguimiento con cupon del legado.
 NATIVE_PERMISSION_BY_TRIGGER: Mapping[str, str] = MappingProxyType(
-    {"compra": "compra", "carrito": "formulario", "pago_fallido": "formulario",
+    {"compra": "compra", "carrito": "formulario", "pago_fallido": "formulario", "intencion": "formulario",
      NATIVE_SILENCE_TRIGGER: "conversacion"})
 # Las capacidades del motor nativo, por disparador (P22-1 de M16, flow-engine-v2 §24). Los tres eventos
 # tienen las de ``ENGINE_CAPABILITIES_NATIVE``; el silencio con lo ultimo del agente (el seguimiento a 24 h
@@ -684,6 +688,50 @@ def _same_key(unit: object, run: RunView, firing: Firing) -> bool:
     return unit != "persona_y_oferta" or run.firing.offer_ref == firing.offer_ref
 
 
+# El formulario en el motor nativo (20261101000100, bloque 5c; D2 del diseno de M16): la repeticion es la
+# de D21 del legado y no la generica. La alinea la simulacion con la base (R5): solo para ``intencion``.
+NATIVE_INTENT_EVENT = "intencion"
+
+
+def _is_native_intent(flow: EngineFlow) -> bool:
+    """Un flujo nativo (sin ``legacy_kind``) que dispara el formulario."""
+    if flow.legacy_kind is not None or not isinstance(flow.definition.get("dispara"), Mapping):
+        return False
+    trigger = trigger_of(flow.definition)
+    return trigger is not None and trigger.event == NATIVE_INTENT_EVENT
+
+
+def _native_intent_repeat(flow: EngineFlow, firing: Firing, person: PersonView, *,
+                          flows: Mapping[FlowRef, EngineFlow], unit: object,
+                          again: object) -> StartDecision | None:
+    """La repeticion de un flujo nativo del formulario, como ``_flow_engine_admit_native_flow`` (5c).
+
+    Mira los recorridos nativos de ``intencion`` de la persona, de cualquier flujo (no solo el propio):
+    uno en curso es ``ya_en_curso``; uno cerrado frena solo si tuvo un envio dentro de
+    ``otra_despues_de``, contado desde el envio y no desde el arranque (con ``nunca``, cualquier envio),
+    y entonces es ``ya_disparado``, el codigo de la base. Un recorrido que el carrito corto sin mandar
+    nada no frena. No suma el disparo al recorrido: la base no lo hace.
+    """
+    arrived = firing.received_at
+
+    def native_intent(run: RunView) -> bool:
+        other = flows.get(run.flow)
+        if run.flow == flow.ref:
+            return True
+        return other is not None and _is_native_intent(other)
+
+    runs = [run for run in person.runs
+            if native_intent(run) and run.firing.received_at <= arrived and _same_key(unit, run, firing)]
+    if any(run.open_at(arrived) for run in runs):
+        return StartDecision(False, "ya_en_curso", None)
+    minutes = None if again == NEVER else parse_duration(again)
+    for run in runs:
+        for sent in run.sends:
+            if sent <= arrived and (minutes is None or sent + timedelta(minutes=minutes) > arrived):
+                return StartDecision(False, "ya_disparado", None)
+    return None
+
+
 def plan_start(flow: EngineFlow, firing: Firing, person: PersonView, *,
                flows: Mapping[FlowRef, EngineFlow]) -> StartDecision:
     """Si el disparo arranca un recorrido de ``flow``, con la persona hasta ese instante.
@@ -695,7 +743,9 @@ def plan_start(flow: EngineFlow, firing: Firing, person: PersonView, *,
     2. la repeticion (``topes.repeticion``): un recorrido del mismo flujo, de la
        misma clave, en curso cuando llega el disparo, es ``ya_en_curso`` y el
        disparo se suma a el (``joins_run``, F#11); uno cerrado frena si no paso
-       ``otra_despues_de`` desde su ultimo envio, o siempre con ``nunca``;
+       ``otra_despues_de`` desde su ultimo envio, o siempre con ``nunca``. Con un
+       flujo nativo del formulario, la de D21 de la base (``_native_intent_repeat``:
+       de cualquier flujo nativo de ``intencion``, y ``ya_disparado`` si ya mando);
     3. ``prioridad.no_arranca_mientras``: un recorrido en curso de ese flujo, de
        la misma clave, es ``no_arranca_mientras:<flujo>``;
     4. si un flujo que le gana (``prioridad.le_gana_a`` de otro) ya disparo para
@@ -718,18 +768,24 @@ def plan_start(flow: EngineFlow, firing: Firing, person: PersonView, *,
     unit = repeat.get("una_por")
     arrived = firing.received_at
     if firing.contact_ref is not None:
-        own = [run for run in person.runs
-               if run.flow == flow.ref and run.firing.received_at <= arrived and _same_key(unit, run, firing)]
-        for run in own:
-            if run.open_at(arrived):
-                return StartDecision(False, "ya_en_curso", run.run_ref)
-        again = repeat.get("otra_despues_de")
-        for run in own:
-            if again == NEVER:
-                return StartDecision(False, "ya_en_curso", None)
-            minutes = parse_duration(again)
-            if minutes and run.sends and run.sends[-1] + timedelta(minutes=minutes) > arrived:
-                return StartDecision(False, "ya_en_curso", None)
+        if _is_native_intent(flow):
+            repeated = _native_intent_repeat(flow, firing, person, flows=flows, unit=unit,
+                                             again=repeat.get("otra_despues_de"))
+            if repeated is not None:
+                return repeated
+        else:
+            own = [run for run in person.runs
+                   if run.flow == flow.ref and run.firing.received_at <= arrived and _same_key(unit, run, firing)]
+            for run in own:
+                if run.open_at(arrived):
+                    return StartDecision(False, "ya_en_curso", run.run_ref)
+            again = repeat.get("otra_despues_de")
+            for run in own:
+                if again == NEVER:
+                    return StartDecision(False, "ya_en_curso", None)
+                minutes = parse_duration(again)
+                if minutes and run.sends and run.sends[-1] + timedelta(minutes=minutes) > arrived:
+                    return StartDecision(False, "ya_en_curso", None)
         priority = definition.get("prioridad") if isinstance(definition.get("prioridad"), Mapping) else {}
         for value in priority.get("no_arranca_mientras") or ():
             other = parse_flow_ref(value, flow.product_ref)

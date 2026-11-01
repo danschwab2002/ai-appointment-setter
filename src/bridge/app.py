@@ -202,7 +202,9 @@ from bridge.security import verify_chatwoot_signature
 from bridge.slack_handoff_projection import SlackHandoffProjectionWorker
 from bridge.slack_projection import SlackCorrelationProjectionWorker
 from bridge.slack_runtime import SlackBridgeRuntime, create_slack_bridge_runtime
+from bridge.native_flows import native_intent_admission
 from bridge.supabase import (
+    NATIVE_FLOW_ROW_INVALID,
     AutomationExpertResponseTooLarge as SupabaseResponseTooLarge,
     PILOT_SCOPE_CONSENTED_AUDIENCE_MODES,
     InboundCommercialCaseAdmissionResult,
@@ -214,6 +216,7 @@ from bridge.supabase import (
     SupabaseClient,
     SupabaseError,
     SupabasePermanentError,
+    SupabaseRpcMissing,
     sck_carries_hermes_issuance,
 )
 from bridge.hotmart_api import HotmartApiClient, load_hotmart_api_credentials
@@ -385,6 +388,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # El bridge del motor de flujos (flow-engine-v1, seccion 8): la instancia
     # sale del manifiesto, y lo que ejecuta cada flujo, de su ruta en la base.
     "flow_engine_enabled",
+    # flow-engine-v2 §25 (E-252): el formulario entra por la RPC que lo rutea al
+    # motor nativo o al legado. Lo especifico (los flujos de intencion) es de la
+    # base; por instancia, solo prenderlo.
+    "flow_engine_native_intent_enabled",
     "slack_connector_projection_enabled",
     "correlation_preresolution_enabled",
     # Transcribir un audio no depende del aliado: la key y el host de Chatwoot
@@ -951,6 +958,11 @@ class Settings:
     # flow-engine-v1, seccion 8: el bridge del motor de flujos (la T2.4).
     # Apagado, el bridge no lee nada del motor y hace exactamente lo de hoy.
     flow_engine_enabled: bool = False
+    # flow-engine-v2 §25 (E-252, P20b de M16): el formulario del producto
+    # principal entra por admit_and_route_portable_lead_precheckout_v1, que
+    # decide en la base si es del motor nativo (un flujo de intencion) o del
+    # legado. Apagado (ATT1), el formulario sigue por el codigo de hoy.
+    flow_engine_native_intent_enabled: bool = False
     slack_connector_projection_enabled: bool = False
     slack_connector_base_url: str | None = None
     slack_connector_bearer_token: str | None = None
@@ -2302,6 +2314,10 @@ class Settings:
             flow_engine_enabled=(
                 os.getenv("FLOW_ENGINE_ENABLED", "false").lower() == "true"
             ),
+            flow_engine_native_intent_enabled=(
+                os.getenv("FLOW_ENGINE_NATIVE_INTENT_ENABLED", "false").lower()
+                == "true"
+            ),
         )
 
 
@@ -3043,6 +3059,56 @@ def _validate_flow_engine(settings: Settings) -> None:
     for field_name, env_name in FLOW_ENGINE_REQUIRED_FLAGS:
         if getattr(settings, field_name) is not True:
             raise ValueError(f"{flag} requires {env_name}")
+
+
+def _validate_flow_engine_native_intent(settings: Settings) -> None:
+    """Startup gates of the native first contact after the form (flow-engine-v2 §25, E-252).
+
+    The flow is born at runtime (the Automation Expert creates it), so the
+    start cannot know whether one exists. What it can require is what the
+    native first contact needs to receive the form and what has to be able to
+    stop it, the same as the legacy one (``_validate_precheckout_first_contact``):
+
+    * the engine (``FLOW_ENGINE_ENABLED``, with the manifest, the pilot
+      boundary, the worker, the dispatcher and the direct template) and an
+      entry that admits the form;
+    * the purchase from Hotmart (the stop flag and its hottok) and the scoped
+      inbound (the durable opt-out and the handoff): the brake of the base
+      reads what they write.
+
+    Nothing is tied to ``PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED``: with it
+    off, what no native flow claims is only admitted, as today.
+    """
+    if not settings.flow_engine_native_intent_enabled:
+        return
+    flag = "FLOW_ENGINE_NATIVE_INTENT_ENABLED"
+    if settings.instance_manifest is None:
+        raise ValueError(f"{flag} requires an instance manifest")
+    if not settings.flow_engine_enabled:
+        raise ValueError(f"{flag} requires FLOW_ENGINE_ENABLED")
+    if not (
+        settings.lead_precheckout_enabled or settings.ghl_precheckout_adapter_enabled
+    ):
+        raise ValueError(
+            f"{flag} requires LEAD_PRECHECKOUT_ENABLED or "
+            "GHL_PRECHECKOUT_ADAPTER_ENABLED"
+        )
+    if not settings.pilot_boundary_enabled:
+        raise ValueError(f"{flag} requires LANCEMOS_PILOT_BOUNDARY_ENABLED")
+    if not settings.dispatcher_enabled:
+        raise ValueError(f"{flag} requires DURABLE_DISPATCHER_ENABLED")
+    if not settings.dispatcher_approved_template_direct_enabled:
+        raise ValueError(
+            f"{flag} requires DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED"
+        )
+    if not settings.portable_hotmart_purchase_stop_enabled:
+        raise ValueError(f"{flag} requires PORTABLE_HOTMART_PURCHASE_STOP_ENABLED")
+    if settings.hotmart_hottok is None:
+        raise ValueError(f"{flag} requires HOTMART_HOTTOK")
+    if not settings.chatwoot_scoped_inbound_senders_enabled:
+        raise ValueError(
+            f"{flag} requires CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED"
+        )
 
 
 def _validate_payment_failure_own_scope(settings: Settings) -> None:
@@ -3973,6 +4039,9 @@ def create_app(
             # dice la base y no a un JID fijo: sin esto el dispatcher directo
             # no recibe el binding ni arranca.
             or settings.portable_precheckout_first_contact_enabled
+            # El primer contacto nativo (E-252), igual: sin esto, apagar el
+            # flag del legado dejaria al nativo sin destinatario.
+            or settings.flow_engine_native_intent_enabled
             # La ficha le escribe a quien la genero, como el pago fallido.
             or settings.portable_hotmart_payment_slip_enabled
         )
@@ -4270,6 +4339,7 @@ def create_app(
     _validate_payment_failure_own_scope(settings)
     _validate_payment_failure_followup(settings)
     _validate_flow_engine(settings)
+    _validate_flow_engine_native_intent(settings)
     waba_template = _waba_template_config(settings)
     _validate_approved_template_direct(
         settings,
@@ -5132,6 +5202,7 @@ def create_app(
                 "ally_ref": settings.instance_manifest.ally_ref,
             },
             cart_touches_enabled=flow_engine_cart_touches_enabled(settings),
+            native_intent_enabled=settings.flow_engine_native_intent_enabled,
         )
     # MOT-001 (flow-engine-v1, seccion 8): comparte el productor del conector
     # de Slack; sin conector, no avisa y /ready dice sin_slack.
@@ -9591,6 +9662,17 @@ def create_app(
                 admission.submission_id,
             )
             return admission
+        if settings.flow_engine_native_intent_enabled:
+            # flow-engine-v2 §25 (E-252): la base admite el envio y decide en la
+            # misma transaccion si es del motor nativo (un flujo de intencion
+            # del producto) o del legado, que planifica como hoy si su flag esta
+            # prendido. Decide la base y no el cache de flujos nativos del
+            # worker (arranca vacio): asi un arranque nunca manda el formulario
+            # al legado por no haber leido todavia. La respuesta HTTP es la de
+            # siempre.
+            return await _admit_and_route_portable_lead(
+                submission, raw_payload, route
+            )
         if not settings.portable_precheckout_first_contact_enabled:
             return await shared_supabase.admit_portable_observed_lead_precheckout(
                 config=route.config,
@@ -9622,6 +9704,85 @@ def create_app(
             admission.outcome,
             admission.plan_outcome or "-",
             admission.plan_reason or "-",
+            admission.submission_id,
+        )
+        return admission
+
+    async def _admit_and_route_portable_lead(
+        submission: LeadPrecheckoutSubmission,
+        raw_payload: dict[str, object],
+        route: ProductRoute,
+    ) -> PrecheckoutAdmissionResult:
+        # El formulario del producto principal con FLOW_ENGINE_NATIVE_INTENT_ENABLED.
+        # Un error de la base es SupabaseError (503: GHL reintenta, y la RPC es
+        # idempotente por el id del envio).
+        assert shared_supabase is not None
+        legacy = settings.portable_precheckout_first_contact_enabled
+        if legacy:
+            # create_app ya no arranca sin el scope con el flag prendido.
+            assert settings.pilot_precheckout_scope_key is not None
+            assert settings.pilot_precheckout_scope_version is not None
+        try:
+            admission = await shared_supabase.admit_and_route_portable_lead_precheckout(
+                config=route.config,
+                external_submission_id=submission.external_submission_id,
+                raw_payload=raw_payload,
+                canonical_payload=submission.as_canonical_payload(),
+                legacy_scope_key=settings.pilot_precheckout_scope_key if legacy else None,
+                legacy_scope_version=(
+                    settings.pilot_precheckout_scope_version if legacy else None
+                ),
+            )
+        except SupabaseRpcMissing:
+            # El flag prendido sobre una base sin 20261101000100: un 503 por
+            # cada envio perderia los formularios cuando GHL deje de
+            # reintentar. Va el camino de hoy, con un warning por envio.
+            logger.warning(
+                "flow_engine_native_intent_rpc_missing fallback=%s delivery_id=%s",
+                "legacy_plan" if legacy else "admission",
+                submission.external_submission_id,
+            )
+            if legacy:
+                assert settings.pilot_precheckout_scope_key is not None
+                assert settings.pilot_precheckout_scope_version is not None
+                return await shared_supabase.admit_and_plan_portable_lead_precheckout(
+                    config=route.config,
+                    external_submission_id=submission.external_submission_id,
+                    raw_payload=raw_payload,
+                    canonical_payload=submission.as_canonical_payload(),
+                    scope_key=settings.pilot_precheckout_scope_key,
+                    scope_version=settings.pilot_precheckout_scope_version,
+                )
+            return await shared_supabase.admit_portable_observed_lead_precheckout(
+                config=route.config,
+                external_submission_id=submission.external_submission_id,
+                raw_payload=raw_payload,
+                canonical_payload=submission.as_canonical_payload(),
+            )
+        native = native_intent_admission(admission.route, admission.native_flows)
+        # Solo ids y codigos. Un plan del legado que fallo, una falla del motor
+        # (que el corte manda al legado) o una fila rara salen como warning.
+        flows = ",".join(
+            f"{row.flow_id}:{row.outcome}:{row.reason or '-'}"
+            for row in admission.native_flows
+        )
+        failed = admission.plan_outcome == "plan_failed" or any(
+            row.outcome == NATIVE_FLOW_ROW_INVALID
+            or (row.reason or "").startswith(
+                ("error_interno:", "motor_nativo:", "politica_compilada:")
+            )
+            for row in admission.native_flows
+        )
+        logger.log(
+            logging.WARNING if failed else logging.INFO,
+            "flow_engine_native_intent_admission admission=%s route=%s native=%s "
+            "plan=%s reason=%s flows=%s submission_id=%s",
+            admission.outcome,
+            admission.route,
+            native.outcome,
+            admission.plan_outcome or "-",
+            admission.plan_reason or "-",
+            flows or "-",
             admission.submission_id,
         )
         return admission

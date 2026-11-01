@@ -420,25 +420,26 @@ ETIQUETAR_NOT_AFTER_TEMPLATE = _spec(
     alternative="Ponerlo después del envío, una sola vez.",
 )
 # La regla 14 de un flujo nativo (flow-engine-v2 §9): lo que la base no abre ni admite.
-_NATIVE_LIMIT = ("Un flujo nativo, en esta versión del motor: lo dispara la compra, el carrito o el pago "
-                 "rechazado, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último "
-                 "del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con "
-                 "el checkout y su cupón")
+_NATIVE_LIMIT = ("Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, "
+                 "y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente "
+                 "(permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout "
+                 "y su cupón")
 ENGINE_NOT_SUPPORTED_NATIVE_TRIGGER = _spec(
     NATIVE_UNSUPPORTED_TRIGGER, 14, KIND_NOT_YET,
-    "El motor nativo de esta versión solo arranca con la compra, con el carrito, con el pago rechazado o con "
-    "el silencio en que lo último lo dijo el agente.",
+    "El motor nativo de esta versión solo arranca con la compra, con el carrito, con el pago rechazado, con "
+    "el formulario o con el silencio en que lo último lo dijo el agente.",
     limit=_NATIVE_LIMIT,
-    alternative=("Disparar con dispara: {evento: compra}, {evento: carrito}, {evento: pago_fallido} o "
-                 "{silencio: {lo_ultimo: agente, ...}}. Otro disparador es de un flujo del legado."),
+    alternative=("Disparar con dispara: {evento: compra}, {evento: carrito}, {evento: pago_fallido}, "
+                 "{evento: intencion} o {silencio: {lo_ultimo: agente, ...}}. Otro disparador es de un flujo "
+                 "del legado."),
 )
 ENGINE_NOT_SUPPORTED_NATIVE_PERMISSION = _spec(
     NATIVE_UNSUPPORTED_PERMISSION, 14, KIND_NOT_YET,
     "El motor nativo de esta versión entra con permiso: compra si lo dispara la compra, con permiso: "
-    "formulario si lo dispara el carrito o el pago rechazado, y con permiso: conversacion si lo dispara "
-    "el silencio.", limit=_NATIVE_LIMIT,
-    alternative=("Con la compra, permiso: compra y el OK del cliente; con el carrito o el pago rechazado, "
-                 "permiso: formulario; con el silencio, permiso: conversacion."),
+    "formulario si lo dispara el carrito, el pago rechazado o el formulario, y con permiso: conversacion si "
+    "lo dispara el silencio.", limit=_NATIVE_LIMIT,
+    alternative=("Con la compra, permiso: compra y el OK del cliente; con el carrito, el pago rechazado o el "
+                 "formulario, permiso: formulario; con el silencio, permiso: conversacion."),
 )
 ENGINE_NOT_SUPPORTED_NATIVE_REPEAT = _spec(
     NATIVE_UNSUPPORTED_REPEAT, 14, KIND_NOT_YET,

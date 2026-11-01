@@ -1652,25 +1652,25 @@
       "code": "motor_nativo:disparador",
       "kind": "todavia_no",
       "path": "/0/definicion/dispara",
-      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, el carrito o el pago rechazado, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
-      "reason": "El motor nativo de esta versión solo arranca con la compra, con el carrito, con el pago rechazado o con el silencio en que lo último lo dijo el agente.",
-      "alternative": "Disparar con dispara: {evento: compra}, {evento: carrito}, {evento: pago_fallido} o {silencio: {lo_ultimo: agente, ...}}. Otro disparador es de un flujo del legado."
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "El motor nativo de esta versión solo arranca con la compra, con el carrito, con el pago rechazado, con el formulario o con el silencio en que lo último lo dijo el agente.",
+      "alternative": "Disparar con dispara: {evento: compra}, {evento: carrito}, {evento: pago_fallido}, {evento: intencion} o {silencio: {lo_ultimo: agente, ...}}. Otro disparador es de un flujo del legado."
      },
      {
       "rule": 14,
       "code": "motor_nativo:permiso",
       "kind": "todavia_no",
       "path": "/0/definicion/entra/permiso",
-      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, el carrito o el pago rechazado, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
-      "reason": "El motor nativo de esta versión entra con permiso: compra si lo dispara la compra, con permiso: formulario si lo dispara el carrito o el pago rechazado, y con permiso: conversacion si lo dispara el silencio.",
-      "alternative": "Con la compra, permiso: compra y el OK del cliente; con el carrito o el pago rechazado, permiso: formulario; con el silencio, permiso: conversacion."
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "El motor nativo de esta versión entra con permiso: compra si lo dispara la compra, con permiso: formulario si lo dispara el carrito, el pago rechazado o el formulario, y con permiso: conversacion si lo dispara el silencio.",
+      "alternative": "Con la compra, permiso: compra y el OK del cliente; con el carrito, el pago rechazado o el formulario, permiso: formulario; con el silencio, permiso: conversacion."
      },
      {
       "rule": 14,
       "code": "motor_nativo:forma",
       "kind": "todavia_no",
       "path": "/0/definicion/dispara",
-      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, el carrito o el pago rechazado, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
       "reason": "El motor nativo de esta versión no ejecuta eso (disparo_ficha_impresa).",
       "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
      }
@@ -1708,7 +1708,7 @@
       "code": "motor_nativo:forma",
       "kind": "todavia_no",
       "path": "/0/definicion/pasos",
-      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, el carrito o el pago rechazado, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
       "reason": "El motor nativo de esta versión no ejecuta eso (variables_differ).",
       "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
      }
@@ -1746,9 +1746,9 @@
       "code": "motor_nativo:permiso",
       "kind": "todavia_no",
       "path": "/0/definicion/entra/permiso",
-      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, el carrito o el pago rechazado, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
-      "reason": "El motor nativo de esta versión entra con permiso: compra si lo dispara la compra, con permiso: formulario si lo dispara el carrito o el pago rechazado, y con permiso: conversacion si lo dispara el silencio.",
-      "alternative": "Con la compra, permiso: compra y el OK del cliente; con el carrito o el pago rechazado, permiso: formulario; con el silencio, permiso: conversacion."
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "El motor nativo de esta versión entra con permiso: compra si lo dispara la compra, con permiso: formulario si lo dispara el carrito, el pago rechazado o el formulario, y con permiso: conversacion si lo dispara el silencio.",
+      "alternative": "Con la compra, permiso: compra y el OK del cliente; con el carrito, el pago rechazado o el formulario, permiso: formulario; con el silencio, permiso: conversacion."
      }
     ],
     "warnings": []
@@ -1800,7 +1800,7 @@
       "code": "motor_nativo:prioridad",
       "kind": "todavia_no",
       "path": "/0/definicion/prioridad/no_arranca_mientras",
-      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, el carrito o el pago rechazado, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
       "reason": "no_arranca_mientras es una lista de flujos.",
       "alternative": "Escribir no_arranca_mientras como una lista, vacía si no hay ninguno."
      }
@@ -1838,7 +1838,7 @@
       "code": "motor_nativo:repeticion",
       "kind": "todavia_no",
       "path": "/0/definicion/topes/repeticion",
-      "limit": "Un flujo nativo, en esta versión del motor: lo dispara la compra, el carrito o el pago rechazado, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
       "reason": "El motor nativo repite por persona o por persona y oferta, con nunca o una duración; con el silencio, una vez por conversación y nunca otra.",
       "alternative": "Usar repeticion: {una_por: persona, otra_despues_de: nunca}; con el silencio, {una_por: conversacion, otra_despues_de: nunca}."
      }
