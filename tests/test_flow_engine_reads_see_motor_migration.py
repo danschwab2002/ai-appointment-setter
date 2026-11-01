@@ -106,6 +106,8 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
         "20261030000300_flow_change_list_v1.sql",
         # Los frenos de la compra ven nuestro link (20261030000400, E-215): la tercera fuente.
         "20261030000400_portable_purchase_stops_see_our_link_v1.sql",
+        # El primer contacto nativo (20261101000100, E-247): el disparador intencion del motor nativo.
+        "20261101000100_flow_engine_native_intent_v1.sql",
     ]
     native = (MIGRATIONS / "20261024000200_flow_engine_native_v1.sql").read_text(encoding="utf-8")
     assert "read_automation_expert_flows_v1" not in native

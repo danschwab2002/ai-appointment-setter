@@ -6096,6 +6096,75 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'portable_purchase_stops_see_our_link'
+    union all
+    select
+        '20261101000100',
+        '20261101000100_flow_engine_native_intent_v1.sql',
+        -- El primer contacto nativo (E-247): la entrada del formulario, security
+        -- definer, solo de service_role ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_and_route_portable_lead_precheckout_v1(text,text,integer,text,jsonb,jsonb,text,integer)')
+              and position('admit_and_plan_portable_lead_precheckout' in definition) > 0
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- ... el freno de la reevaluacion, security definer, solo de service_role ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_intent_stop_reason(uuid)')
+              and position('_portable_precheckout_stop_reason' in definition) > 0
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+        )::int
+        -- ... el permiso del formulario, de nadie de la API ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_intent_audience(uuid,uuid,uuid,text,text,text)')
+              and position('_portable_consented_intent_reason' in definition) > 0
+              and not prosecdef
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+        )::int
+        -- ... la admision nativa, el arranque y la reevaluacion con intencion ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_admit_native_flow(public.flow_controls,public.webhook_events,uuid,text,timestamptz,bigint,bigint,text)')
+              and position('flow_engine_native_intent_double_case' in definition) > 0
+              and position('flow_engine_native_intent_repeat' in definition) > 0
+              and position('flow_engine_native_intent_context' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_authorize_native_tail(uuid,uuid,public.flow_engine_runs,public.recovery_cases,public.flow_controls,timestamptz)')
+              and position('flow_engine_native_intent_recheck' in definition) > 0
+              and position('chatwoot-opt-out-user' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.reevaluate_followup_action(uuid,text,bigint,timestamptz,boolean,text,text,timestamptz,text,boolean,boolean,boolean,boolean,boolean)')
+              and position('flow_engine_native_intent_reevaluation' in definition) > 0
+              and position('flow_engine_native_intent_close' in definition) > 0
+              and not prosecdef
+        )::int
+        -- ... y la tabla del resultado por envio, con RLS.
+        + (
+            select count(*) = 1
+            from pg_class c
+            where c.oid = to_regclass('public.flow_engine_native_intent_admissions')
+              and c.relrowsecurity
+        )::int,
+        7,
+        'flow_engine_native_intent'
 )
 select
     version,

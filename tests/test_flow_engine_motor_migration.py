@@ -113,6 +113,8 @@ def test_it_is_one_transaction_and_comes_before_the_bridge_reads() -> None:
         "20261030000300_flow_change_list_v1.sql",
         # Los frenos de la compra ven nuestro link (20261030000400, E-215): la tercera fuente.
         "20261030000400_portable_purchase_stops_see_our_link_v1.sql",
+        # El primer contacto nativo (20261101000100, E-247): el disparador intencion del motor nativo.
+        "20261101000100_flow_engine_native_intent_v1.sql",
     ]
     later = (MIGRATIONS / names[position + 1]).read_text(encoding="utf-8")
     assert "create or replace" not in later.lower()

@@ -1,0 +1,229 @@
+{
+  "origen": "maribel_db (stack maribel, contabo), precheckout_submissions + portable_precheckout_first_contact_plans + scheduled_actions + purchase_intents, leido en solo lectura (default_transaction_read_only=on) el 2026-10-31 ~23:30Z (E-247)",
+  "anonimizado": "en el servidor, antes de bajar: nombre, email, telefono, ids del envio y dedupe_key sustituidos; la atribucion sin valores; las URLs sin query string. El producto, la oferta, la landing, el consentimiento y las horas son los reales.",
+  "que_son": "dos formularios de GHL de Maribel (contrato 1.1.0) que planificaron el primer contacto del legado: uno salio (accepted_by_chatwoot, a los 60 min) y al otro lo corto el carrito (superseded_by_provider_event, a los 60 min, la intencion en confirmed_abandonment)",
+  "envios": [
+    {
+      "raw": {
+        "id": "ghl-anon-1",
+        "data": {
+          "buyer": {
+            "name": "Persona Anonima 1",
+            "email": "persona-1@example.test",
+            "phone": "+521555000001",
+            "phone_national": "1555000001",
+            "phone_country_code": "52"
+          },
+          "offer": {
+            "code": "u8ikyx78"
+          },
+          "consent": {
+            "copy_version": "maribel-whatsapp-contact-v1",
+            "marketing_optin": true,
+            "whatsapp_contact": true
+          },
+          "product": {
+            "id": null,
+            "name": "El Protocolo Biohacking +",
+            "price": 1397,
+            "hotlink": "F107441770M",
+            "currency": "MXN"
+          },
+          "attribution": {
+            "sck": null,
+            "fbclid": null,
+            "referrer": null,
+            "utm_term": null,
+            "utm_medium": null,
+            "utm_source": null,
+            "utm_content": null,
+            "utm_campaign": null
+          },
+          "checkout_url": "https://pay.hotmart.com/F107441770M",
+          "checkout_country": {
+            "iso": "MX",
+            "source": "phone_country_code"
+          }
+        },
+        "event": "lead.precheckout",
+        "source": {
+          "site": "elprotocolo",
+          "aliado": "El Protocolo",
+          "system": "landing",
+          "page_url": "https://www.elprotocolo.net/epma/evg/vsl/ads-a",
+          "landing_id": "epma-vsl-ads-a"
+        },
+        "version": "1.1.0",
+        "created_at": "2026-10-31T21:18:52.975Z",
+        "dedupe_key": "anon-dedupe-1"
+      },
+      "caso": "primer_contacto_aceptado",
+      "accion": {
+        "status": "accepted_by_chatwoot",
+        "terminal_reason": "accepted_by_chatwoot",
+        "minutos_hasta_el_envio": 60,
+        "minutos_hasta_el_cierre": 60
+      },
+      "canonical": {
+        "lead": {
+          "full_name": "Persona Anonima 1"
+        },
+        "source": {
+          "aliado": "El Protocolo",
+          "page_url": "https://www.elprotocolo.net/epma/evg/vsl/ads-a",
+          "funnel_ref": "maribel",
+          "tenant_ref": "lancemos",
+          "landing_ref": "epma-vsl-ads-a"
+        },
+        "consent": {
+          "copy_version": "maribel-whatsapp-contact-v1",
+          "terms_accepted": false,
+          "marketing_optin": true,
+          "privacy_accepted": false,
+          "whatsapp_contact": true
+        },
+        "commerce": {
+          "price": "1397",
+          "currency": "MXN",
+          "offer_ref": "u8ikyx78",
+          "product_ref": "F107441770M",
+          "checkout_url": "https://pay.hotmart.com/F107441770M",
+          "product_name": "El Protocolo Biohacking +"
+        },
+        "identity": {
+          "email": "persona-1@example.test",
+          "phone": "521555000001",
+          "phone_valid": true,
+          "phone_country_iso": "MX"
+        },
+        "assurance": {
+          "provisional": false,
+          "provider_observed": true,
+          "activation_authorized": true
+        },
+        "dedupe_key": "anon-dedupe-1",
+        "event_type": "PRECHECKOUT_FORM_SUBMITTED",
+        "submitted_at": "2026-10-31T21:18:52.975000Z",
+        "contract_version": "1.1.0",
+        "external_submission_id": "ghl-anon-1"
+      },
+      "intencion": {
+        "offer_ref": "u8ikyx78",
+        "lifecycle_state": "waiting_for_purchase",
+        "current_classification": null
+      },
+      "contract_version": "1.1.0"
+    },
+    {
+      "raw": {
+        "id": "ghl-anon-2",
+        "data": {
+          "buyer": {
+            "name": "Persona Anonima 2",
+            "email": "persona-2@example.test",
+            "phone": "+521555000002",
+            "phone_national": "1555000002",
+            "phone_country_code": "52"
+          },
+          "offer": {
+            "code": "u8ikyx78"
+          },
+          "consent": {
+            "copy_version": "maribel-whatsapp-contact-v1",
+            "marketing_optin": true,
+            "whatsapp_contact": true
+          },
+          "product": {
+            "id": null,
+            "name": "El Protocolo Biohacking +",
+            "price": 1397,
+            "hotlink": "F107441770M",
+            "currency": "MXN"
+          },
+          "attribution": {
+            "sck": null,
+            "fbclid": null,
+            "referrer": null,
+            "utm_term": null,
+            "utm_medium": null,
+            "utm_source": null,
+            "utm_content": null,
+            "utm_campaign": null
+          },
+          "checkout_url": "https://pay.hotmart.com/F107441770M",
+          "checkout_country": {
+            "iso": "MX",
+            "source": "phone_country_code"
+          }
+        },
+        "event": "lead.precheckout",
+        "source": {
+          "site": "elprotocolo",
+          "aliado": "El Protocolo",
+          "system": "landing",
+          "page_url": "https://www.elprotocolo.net/epma/evg/vsl/ads-a",
+          "landing_id": "epma-vsl-ads-a"
+        },
+        "version": "1.1.0",
+        "created_at": "2026-10-31T19:42:52.003Z",
+        "dedupe_key": "anon-dedupe-2"
+      },
+      "caso": "cortado_por_el_carrito",
+      "accion": {
+        "status": "cancelled",
+        "terminal_reason": "superseded_by_provider_event",
+        "minutos_hasta_el_envio": 60,
+        "minutos_hasta_el_cierre": 60
+      },
+      "canonical": {
+        "lead": {
+          "full_name": "Persona Anonima 2"
+        },
+        "source": {
+          "aliado": "El Protocolo",
+          "page_url": "https://www.elprotocolo.net/epma/evg/vsl/ads-a",
+          "funnel_ref": "maribel",
+          "tenant_ref": "lancemos",
+          "landing_ref": "epma-vsl-ads-a"
+        },
+        "consent": {
+          "copy_version": "maribel-whatsapp-contact-v1",
+          "terms_accepted": false,
+          "marketing_optin": true,
+          "privacy_accepted": false,
+          "whatsapp_contact": true
+        },
+        "commerce": {
+          "price": "1397",
+          "currency": "MXN",
+          "offer_ref": "u8ikyx78",
+          "product_ref": "F107441770M",
+          "checkout_url": "https://pay.hotmart.com/F107441770M",
+          "product_name": "El Protocolo Biohacking +"
+        },
+        "identity": {
+          "email": "persona-2@example.test",
+          "phone": "521555000002",
+          "phone_valid": true,
+          "phone_country_iso": "MX"
+        },
+        "assurance": {
+          "provisional": false,
+          "provider_observed": true,
+          "activation_authorized": true
+        },
+        "dedupe_key": "anon-dedupe-2",
+        "event_type": "PRECHECKOUT_FORM_SUBMITTED",
+        "submitted_at": "2026-10-31T19:42:52.003000Z",
+        "contract_version": "1.1.0",
+        "external_submission_id": "ghl-anon-2"
+      },
+      "intencion": {
+        "offer_ref": "u8ikyx78",
+        "lifecycle_state": "waiting_for_purchase",
+        "current_classification": "confirmed_abandonment"
+      },
+      "contract_version": "1.1.0"
+    }
+  ]
+}

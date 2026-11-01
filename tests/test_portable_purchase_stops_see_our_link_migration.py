@@ -28,8 +28,10 @@ def test_it_is_one_transaction_and_the_last() -> None:
 
     assert sql.lstrip().startswith("-- Migration:")
     assert "\nbegin;\n" in sql and sql.rstrip().endswith("commit;")
-    assert names[-1] == MIGRATION.name
-    assert names[-2] == "20261030000300_flow_change_list_v1.sql"
+    # El primer contacto nativo (20261101000100, E-247): el disparador intencion del motor nativo.
+    assert names[-1] == "20261101000100_flow_engine_native_intent_v1.sql"
+    assert names[-2] == MIGRATION.name
+    assert names[-3] == "20261030000300_flow_change_list_v1.sql"
 
 
 def test_it_creates_only_the_third_source_and_patches_the_two_stops() -> None:
