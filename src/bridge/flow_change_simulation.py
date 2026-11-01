@@ -53,9 +53,11 @@ from .flow_replay import (
 __all__ = [
     "CAMBIOS_MAX",
     "NEW_FLOW_COUNTS_CONTRACT",
+    "build_native_flow_simulation",
     "build_new_flow_simulation",
     "build_simulation",
     "engine_flows_from_read",
+    "native_flow_counts_request",
     "summary_sha256",
 ]
 
@@ -286,6 +288,130 @@ def build_new_flow_simulation(counts: Any, items: Sequence[ProposalItem], *,
             "nace_en": "cohorte",
         }
         sharing = _sharing_the_event(world, item.producto, trigger)
+        if sharing:
+            summary["comparte_el_evento_con"] = sharing
+        return {"status": "built", "summary": summary, "summary_sha256": summary_sha256(summary), "cambios": []}
+    except _Failed as failed:
+        return {"status": "failed", "reason_code": failed.reason_code}
+    except Exception:  # noqa: BLE001 - la vista previa no se cae por la simulacion
+        return {"status": "failed", "reason_code": SIMULATION_ERROR}
+
+
+# La simulacion de un cambio sobre un flujo nativo (E-241): prender o apagar (D6) un flujo que
+# nacio en el motor. La historia del motor (read_flow_engine_history_v1) es la del
+# carrito del legado y exige su ruta (flow_engine_history_cart_route_not_found en una instancia sin
+# ella, como Maribel); un flujo nativo no corre sobre esa historia. Se cuentan los disparos de su
+# evento con la misma lectura del nuevo.
+NATIVE_FLOW_MIXED = "simulation_native_flow_mixed"
+NATIVE_FLOW_COUNTS_INVALID = "simulation_native_flow_counts_invalid"
+# D6 (E-245, valor por defecto de la coordinadora hasta que decida Dan): por ahora solo prender y
+# apagar. Un conteo de disparos alcanza para pasar un flujo de la cohorte a todos o para apagarlo,
+# pero no muestra que cambia paso por paso: una version o un volver de un nativo sigue por la
+# historia (sin simulacion: lo publica el operador). Para ampliarlo, sumar el tipo aca y en la
+# gemela del script (_NATIVE_ITEM_TYPES); el evento de version y volver ya se calcula abajo.
+NATIVE_ITEM_TYPES = frozenset({"prender", "apagar"})
+
+
+def _event_of(definition: object) -> object:
+    return ((definition.get("dispara") or {}).get("evento")) if isinstance(definition, Mapping) else None
+
+
+def native_flow_counts_request(store: Any, items: Any) -> dict[str, Any] | None:
+    """Que lectura pide la simulacion de una propuesta sobre flujos nativos, con lo que ya leyo quien valida.
+
+    ``store`` es la respuesta de ``read_flow_store_v1`` (o la del operador, con la misma forma) e
+    ``items``, los de la propuesta tal cual estan guardados. Devuelve:
+
+    * ``None`` si algun item no es de un flujo nativo, o no es de un tipo de ``NATIVE_ITEM_TYPES``
+      (un ``nuevo``, y por D6 una ``version`` o un ``volver``): la simulacion sigue por la historia
+      del motor, como antes;
+    * ``{"product_ref", "trigger"}`` si hay un solo item, de un flujo nativo: el evento es el de la
+      definicion que va a quedar (la del item en una ``version``, la del destino en un ``volver``,
+      la activa en un ``prender`` o un ``apagar``);
+    * ``{"simulation_unavailable": <motivo>}`` si son todos nativos pero no se puede pedir.
+
+    Nativo es lo que dice el almacen (``native``, una ruta del motor sin ``legacy_kind``) o un flujo en
+    ``cohorte``, que siempre es nativo (``WorldFlow.is_native``). La gemela, sin importar el bridge,
+    esta en ``scripts/flow_change_operator.py`` (``_native_flow_counts_request``).
+    """
+    if not isinstance(items, list) or not items or not isinstance(store, Mapping) \
+            or not isinstance(store.get("flows"), list):
+        return None
+    flows = {flow.get("flow_id"): flow for flow in store["flows"] if isinstance(flow, Mapping)}
+    found = []
+    for item in items:
+        if not isinstance(item, Mapping) or item.get("tipo") not in NATIVE_ITEM_TYPES:
+            return None
+        flow = flows.get(item.get("flow_id"))
+        if not isinstance(flow, Mapping) or not (flow.get("native") is True or flow.get("state") == "cohorte"):
+            return None
+        found.append((item, flow))
+    if len(found) != 1:
+        return {"simulation_unavailable": NATIVE_FLOW_MIXED}
+    item, flow = found[0]
+    versions = flow.get("versions") if isinstance(flow.get("versions"), Mapping) else {}
+    if item["tipo"] == "version":
+        definition = item.get("definicion")
+    elif item["tipo"] == "volver":
+        definition = versions.get(str(item.get("version")))
+    else:
+        definition = versions.get(str(flow.get("active_version")))
+    trigger = _event_of(definition)
+    product = item.get("producto")
+    if not isinstance(trigger, str) or not isinstance(product, str):
+        return {"simulation_unavailable": NATIVE_FLOW_COUNTS_INVALID}
+    return {"product_ref": product, "trigger": trigger}
+
+
+def build_native_flow_simulation(counts: Any, items: Sequence[ProposalItem], *,
+                                 world: FlowWorld | None) -> dict[str, Any]:
+    """La simulacion de un ``prender`` o un ``apagar`` de un flujo nativo (E-241, D6 de E-245).
+
+    ``counts`` es la respuesta de ``read_flow_engine_native_trigger_counts_v1`` para el evento del
+    flujo en la ventana de la vista previa (7 dias). El evento se vuelve a sacar aca de ``world`` y
+    los items (no se cree el que mando quien leyo) y la respuesta tiene que ser de ese producto y ese
+    evento. Es la misma estimacion que la de un ``nuevo``: cuantos disparos hubo y de cuantas
+    personas; el resumen dice ademas el flujo, el tipo de cambio y el estado de hoy, y nombra en
+    ``comparte_el_evento_con`` otro flujo nativo del producto, abierto, con el mismo evento.
+    Nunca levanta.
+    """
+    try:
+        if world is None or len(items) != 1:
+            raise _Failed(NATIVE_FLOW_MIXED)
+        item = items[0]
+        flow = world.flow(item.flow_id) if item.flow_id is not None else None
+        if item.tipo not in NATIVE_ITEM_TYPES or flow is None or not flow.is_native:
+            raise _Failed(NATIVE_FLOW_MIXED)
+        if item.tipo == "version":
+            definition: object = item.definicion
+        elif item.tipo == "volver":
+            definition = flow.versions.get(item.version) if item.version is not None else None
+        else:
+            definition = flow.active_definition
+        trigger = _event_of(definition)
+        if not isinstance(trigger, str) or not isinstance(counts, Mapping) or set(counts) != _COUNT_KEYS \
+                or counts.get("contract") != NEW_FLOW_COUNTS_CONTRACT \
+                or counts.get("product_ref") != item.producto or counts.get("trigger") != trigger:
+            raise _Failed(NATIVE_FLOW_COUNTS_INVALID)
+        try:
+            events, people = _count(counts.get("events")), _count(counts.get("people"))
+        except _Failed as error:
+            raise _Failed(NATIVE_FLOW_COUNTS_INVALID) from error
+        if people > events:
+            raise _Failed(NATIVE_FLOW_COUNTS_INVALID)
+        summary: dict[str, Any] = {
+            "flujo": f"{item.producto}/{item.flujo}", "tipo": item.tipo, "estado_hoy": flow.state,
+            "queda_en": "apagado" if item.tipo == "apagar" else (item.a or "prendido"),
+            "disparador": trigger, "desde": counts.get("since"), "hasta": counts.get("until"),
+            "disparos": events, "personas": people,
+        }
+        # Como el nuevo: el conteo es de todas las compras (o carritos) del producto, no de la cohorte.
+        if item.tipo == "apagar":
+            summary["dejarian_de_recibirlo"] = people
+        else:
+            summary["mensajes_si_fuera_para_todos"] = people
+        own = f"{flow.product_ref}/{flow.flow_key}"
+        sharing = [entry for entry in _sharing_the_event(world, item.producto, trigger) if entry["flujo"] != own]
         if sharing:
             summary["comparte_el_evento_con"] = sharing
         return {"status": "built", "summary": summary, "summary_sha256": summary_sha256(summary), "cambios": []}

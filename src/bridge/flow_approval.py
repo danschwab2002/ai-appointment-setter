@@ -893,6 +893,23 @@ def _render_change(change: Mapping[str, Any]) -> str:
     return f"<div>{head}</div>"
 
 
+_NATIVE_CHANGE_KINDS = {"prender": "prender", "apagar": "apagar"}
+_FLOW_STATE_TEXT = {"cohorte": "en prueba, solo la cohorte", "prendido": "prendido para todos",
+                    "pausado": "pausado", "apagado": "apagado"}
+
+
+def _native_change_line(summary: Mapping[str, Any]) -> str | None:
+    """El tipo de cambio de la simulacion de un flujo nativo (E-241), o None si es otra simulacion."""
+    kind, today, after = summary.get("tipo"), summary.get("estado_hoy"), summary.get("queda_en")
+    if kind not in _NATIVE_CHANGE_KINDS or not isinstance(today, str):
+        return None
+    head = (f"<p>Cambio: <strong>{_esc(_NATIVE_CHANGE_KINDS[kind])}</strong> · "
+            f"hoy {_esc(_FLOW_STATE_TEXT.get(today, today))}")
+    if isinstance(after, str):
+        head += f" → queda {_esc(_FLOW_STATE_TEXT.get(after, after))}"
+    return head + ".</p>"
+
+
 def _simulation_summary(simulation: object, *, turns_off: bool = False) -> str:
     gate = ("Apagar solo saca envíos: la página lo publica igual." if turns_off else
             "La página no publica sin simulación: la publica el operador con <code>--sin-simulacion</code>.")
@@ -905,9 +922,19 @@ def _simulation_summary(simulation: object, *, turns_off: bool = False) -> str:
     line = ""
     fired, people = summary.get("disparos"), summary.get("personas")
     if isinstance(fired, int) and isinstance(people, int):
-        line = (f"<p>En los últimos 7 días se habría disparado <strong>{_esc(fired)}</strong> "
-                f"{'vez' if fired == 1 else 'veces'}, para <strong>{_esc(people)}</strong> "
-                f"{'persona' if people == 1 else 'personas'}.</p>")
+        times = f"<strong>{_esc(fired)}</strong> {'vez' if fired == 1 else 'veces'}"
+        persons = f"<strong>{_esc(people)}</strong> {'persona' if people == 1 else 'personas'}"
+        native_change = _native_change_line(summary)
+        if native_change is not None and summary.get("tipo") == "apagar":
+            # Un flujo que se apaga no «se habria disparado»: deja de llegarles (E-245, I1).
+            line = (native_change + f"<p>En los últimos 7 días el evento llegó {times}, de {persons}: al "
+                    f"apagarlo, <strong>{_esc(people)}</strong> {'persona' if people == 1 else 'personas'} "
+                    "dejarían de recibirlo.</p>")
+        elif native_change is not None:
+            line = (native_change + f"<p>Si fuera para todos, en los últimos 7 días se habría disparado {times}, "
+                    f"para {persons}.</p>")
+        else:
+            line = f"<p>En los últimos 7 días se habría disparado {times}, para {persons}.</p>"
     return (line + "<p class=\"meta\">Estimación con los eventos reales de los últimos 7 días: no sabe qué habría "
             "contestado alguien a un mensaje que no salió.</p>")
 
