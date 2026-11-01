@@ -12,6 +12,30 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.24.3] - 2026-11-01
+
+Un parche sobre la 1.24.2, con un solo PR: un `prender` o un `apagar` de un flujo nativo se simula con los conteos del evento, sin depender de la ruta del carrito (#383, E-241, con la revisión E-245). En Maribel, el paso de la bienvenida de la cohorte a todos no se podía publicar desde la página `/flow-approval/`: la simulación quedaba `failed` con `flow_engine_unavailable` (no hay ruta del carrito) y la página solo publica una `built`. Sin migraciones, sin SQL nuevo, sin variables nuevas y sin campos nuevos en el manifiesto. `/ready` no cambia salvo la versión. Cambia el Python del bridge (`flow_change_simulation.py`, `flow_change_api.py`, `flow_change_operator.py` y `flow_approval.py`), el comando del operador (`scripts/flow_change_operator.py`) y el texto de los contratos `flow-change-cycle-v1.md` y `flow-engine-v2.md`. Los profiles no cambian, ni la imagen de Hermes.
+
+**Qué hace quien actualiza:** pasar el bridge a la imagen de esta versión (y el conector y la revisión diaria a las suyas, como siempre) y dejar el árbol del tag en el servidor, del que sale el comando del operador. Nada más: ni migraciones, ni variables, ni profile.
+
+### Corregido
+
+- **Un `prender` o un `apagar` de un flujo nativo ya simula** (#383, E-241). Una propuesta de un solo ítem `prender` o `apagar` sobre un flujo nativo (`native: true` en el almacén, o en `cohorte`) cuenta los disparos del evento de su versión activa en los últimos 7 días con `read_flow_engine_native_trigger_counts_v1`, la misma lectura del `nuevo`, y no lee la historia del carrito. Antes quedaba `failed`: en Maribel porque no hay ruta del carrito (`flow_engine_history_cart_route_not_found`), y en cualquier instancia porque la lectura del motor excluye las rutas nativas y los flujos en cohorte. El bridge (`native_flow_counts_request`) y el comando del operador (`_native_flow_counts_request`, en stdlib) deciden igual; un test de paridad lo fija. El validador vuelve a sacar el evento del almacén y exige que los conteos sean de ese producto y ese evento.
+- **Lo que no se puede simular por este camino lo dice:** varios ítems nativos dan `simulation_native_flow_mixed`; una respuesta de otro producto, otro evento o con otra forma, `simulation_native_flow_counts_invalid`; sin la lectura, `flow_engine_unavailable`. Esas propuestas las publica el operador, como antes.
+
+### Cambiado
+
+- **La página dice el alcance de un cambio nativo** (#383, E-245). «Cambio: **prender** · hoy en prueba, solo la cohorte → queda prendido para todos»; en un `prender`, «Si fuera para todos, en los últimos 7 días se habría disparado N veces, para M personas»; en un `apagar`, «el evento llegó N veces, de M personas: al apagarlo, M personas dejarían de recibirlo». El `nuevo` y el replay del carrito conservan su texto.
+- **Solo `prender` y `apagar` (D6, default de la coordinadora hasta que decida Dan).** Una `version` o un `volver` de un flujo nativo siguen por la historia: sin simulación, y los publica el operador. Un ítem del legado (`legacy_kind`: carrito, pago fallido, precheckout), o uno nativo mezclado con uno del legado, sigue por el motor y la historia, sin cambios. La versión de los contratos no sube: la enmienda va en el texto.
+
+### Qué hace quien actualiza
+
+- **Sin migraciones**, sin SQL nuevo, sin variables nuevas en el bridge ni en el profile, y sin campos nuevos en el manifiesto. `/ready` no cambia salvo `instance_product_version`.
+- **Las tres imágenes salen del tag**, como siempre. Solo el bridge cambia de código; la revisión diaria y el conector de Slack no importan los módulos que cambian, pero sus imágenes llevan la versión nueva.
+- **El comando del operador y el bridge van juntos.** El envoltorio de la instancia corre `scripts/flow_change_operator.py` del árbol de la versión que corre el bridge (`<raiz>/build/<version>`), así que la subida deja ese árbol en el servidor. Un script nuevo contra una imagen vieja no rompe nada (el validador viejo ignora `native_flow_counts` y queda `simulation_not_built`), pero no simula.
+- **Maribel:** desde la 1.24.2, el bridge, el conector y la revisión diaria a las imágenes de la 1.24.3. Sin paso de profile. Una propuesta `prender` de la bienvenida validada después de la subida muestra «se habría disparado N veces» y el botón para publicar. **ATT1:** cuando suba (desde la 1.24.0, con la 1.24.1 y la 1.24.2 en el medio), sus flujos del legado no cambian; sus flujos nativos pasan de `failed` a `built` en un `prender` o un `apagar`.
+- **Johanna:** nada que hacer.
+
 ## [1.24.2] - 2026-10-31
 
 Un parche sobre la 1.24.1, con un solo PR: tres arreglos de la página de aprobación de flujos (`/flow-approval/`) que salieron del ensayo real del 31/10 en Maribel (#381, E-235). Sin migraciones, sin variables nuevas y sin campos nuevos en el manifiesto. `/ready` no cambia salvo la versión. Solo cambia el Python de `flow_approval.py` (y el texto del contrato `flow-change-cycle-v1.md`). Los profiles no cambian, ni la imagen de Hermes.
