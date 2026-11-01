@@ -70,6 +70,14 @@ def test_only_service_role_executes_the_native_claim() -> None:
     assert "message = 'flow_engine_native_silence_acl_unexpected'" in code
 
 
+def test_the_native_claim_is_in_the_effective_handoff_acl_allowlist() -> None:
+    # La reserva nativa lee human_handoff_requests (el predicado de la portable) y la ejecuta
+    # service_role: el chequeo exhaustivo de Postgres real (validate_handoff_postgres.py, en CI)
+    # la tiene que nombrar, como a la portable (20261010000100).
+    handoff = (ROOT / "tests" / "sql" / "followup_engine" / "validate_handoff_postgres.py").read_text(encoding="utf-8")
+    assert "'claim_flow_engine_silence_v1'," in handoff
+
+
 def test_it_does_not_name_the_adoption_event() -> None:
     assert "inbound_adopted_" + "template_conversation" not in _sql()
 
