@@ -55,10 +55,12 @@ from types import MappingProxyType
 from typing import Any, Protocol
 
 from .flow_definition import (
+    ANY_TEMPLATE,
     DEFAULT_VARIABLES,
     MAX_DEPTH,
     NEVER,
     NO_CAP,
+    PERSONAL_COUPON,
     TO_CREATE,
     is_pool,
     parse_duration,
@@ -70,10 +72,10 @@ from .flow_policy import STEPS_BY_LEGACY_KIND
 from .flow_schedule import DEFAULT_ZONE, LAST_MINUTE, Franja, franja_of, is_open, next_open
 
 __all__ = [
-    "ENGINE_CAPABILITIES_NATIVE", "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_PARAMETERS", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
+    "ENGINE_CAPABILITIES_NATIVE", "ENGINE_CAPABILITIES_NATIVE_SILENCE", "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_PARAMETERS", "NATIVE_CAPABILITIES_BY_TRIGGER", "NATIVE_SILENCE_TRIGGER", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
     "BolsaLedger", "ControlLine", "Eligible", "EngineCapabilities", "EngineFlow", "Firing", "FlowRef",
     "GateDecision", "GateFacts", "PersonView", "Plan", "PlanInvalid", "PlanNotSupported", "PlannedStep",
-    "RunView", "StartDecision", "evaluate_gate", "first_eligible", "legacy_motivo", "native_not_supported", "native_variables_fit", "not_supported", "plan_start",
+    "RunView", "StartDecision", "evaluate_gate", "first_eligible", "legacy_motivo", "native_not_supported", "native_trigger_key", "native_variables_fit", "not_supported", "plan_start",
     "plan_steps", "pool_zone", "step_start", "wins",
 ]
 
@@ -278,13 +280,56 @@ ENGINE_CAPABILITIES_NATIVE = EngineCapabilities(
     exits=frozenset({"compra"}),
     relations_between_engine_flows_only=True,
 )
+# El disparador nativo del seguimiento a 24 h con cupon (P22-1 de M16): un silencio en el que lo ultimo lo
+# dijo el agente. El silencio con lo ultimo de la persona (la reactivacion) sigue fuera del motor nativo.
+NATIVE_SILENCE_TRIGGER = "silencio:agente"
+# Lo que el motor nativo ejecuta con ese silencio: lo que hace el barrido del legado
+# (``followup_discount.ConversationFollowupSweeper``), que manda en el momento del barrido. Un solo envio,
+# sin espera; la plantilla con las variables del paso, de entre nombre y producto; el boton del checkout
+# con un cupon fijo (``boton: {link: checkout, cupon: <codigo>}``: ``parse_followup_template`` exige ese
+# boton y ninguno mas); y las salidas compra y contesta. El motor que lo ejecuta (la reserva y el barrido
+# nativos) son P22-2 y P22-3: hasta que esten, la base no abre un silencio nativo (``motor_nativo:disparador``
+# en ``_flow_engine_native_unsupported``).
+ENGINE_CAPABILITIES_NATIVE_SILENCE = EngineCapabilities(
+    triggers=frozenset({"silencio:agente"}),
+    step_types=frozenset({"plantilla"}),
+    max_sends_per_path=1,
+    waits_between_sends=False,
+    variables=frozenset({"nombre", "producto"}),
+    buttons=frozenset({"checkout"}),
+    exits=frozenset({"compra", "contesta"}),
+    relations_between_engine_flows_only=True,
+)
+# Las variables del seguimiento, en su orden: las que manda el barrido (FollowupTemplate.params).
+FOLLOWUP_VARIABLES = ("nombre", "producto")
 # El permiso con el que entra cada disparador nativo (``_flow_engine_native_unsupported``, 20261028000200):
 # la compra con ``compra`` (la regla 17: una sola plantilla de utilidad) y el carrito con ``formulario``
 # (la intencion con consentimiento que la admision portable correlaciono con ese carrito), y el pago
 # rechazado tambien con ``formulario`` (20261030000200, E-207: la intencion con la que la admision portable
-# correlaciono ese rechazo, como el pago rechazado del legado con ``consented_intent``).
+# correlaciono ese rechazo, como el pago rechazado del legado con ``consented_intent``). El silencio del
+# agente entra con ``conversacion`` (P22-1 de M16): la persona nos escribio en esa conversacion, como el
+# seguimiento con cupon del legado.
 NATIVE_PERMISSION_BY_TRIGGER: Mapping[str, str] = MappingProxyType(
-    {"compra": "compra", "carrito": "formulario", "pago_fallido": "formulario"})
+    {"compra": "compra", "carrito": "formulario", "pago_fallido": "formulario",
+     NATIVE_SILENCE_TRIGGER: "conversacion"})
+# Las capacidades del motor nativo, por disparador (P22-1 de M16, flow-engine-v2 §24). Los tres eventos
+# tienen las de ``ENGINE_CAPABILITIES_NATIVE``; el silencio con lo ultimo del agente (el seguimiento a 24 h
+# con cupon), las suyas. Un disparador que no esta aca no lo ejecuta el motor nativo: la regla 14 lo mide
+# con ``ENGINE_CAPABILITIES_NATIVE`` y da ``motor_nativo:disparador``, como antes. Los eventos salen de
+# ``ENGINE_CAPABILITIES_NATIVE.triggers``: un evento nativo nuevo se suma ahi y en
+# ``NATIVE_PERMISSION_BY_TRIGGER``, como hasta ahora.
+NATIVE_CAPABILITIES_BY_TRIGGER: Mapping[str, EngineCapabilities] = MappingProxyType({
+    **{event: ENGINE_CAPABILITIES_NATIVE for event in sorted(ENGINE_CAPABILITIES_NATIVE.triggers)},
+    NATIVE_SILENCE_TRIGGER: ENGINE_CAPABILITIES_NATIVE_SILENCE,
+})
+# Con que repite cada disparador nativo: un evento, por persona o por persona y oferta; el silencio, como
+# el legado, una vez por conversacion y nunca otra (el indice unico de ``conversation_followup_events``
+# por conversacion, 20260928000400:119-121, no deja una segunda).
+NATIVE_EVENT_REPEAT_UNITS = ("persona", "persona_y_oferta")
+NATIVE_REPEAT_BY_TRIGGER: Mapping[str, tuple[str, ...]] = MappingProxyType({
+    **{event: NATIVE_EVENT_REPEAT_UNITS for event in sorted(ENGINE_CAPABILITIES_NATIVE.triggers)},
+    NATIVE_SILENCE_TRIGGER: ("conversacion",),
+})
 # Las variables que el bridge sabe llenar en un paso nativo de la compra
 # (``_flow_engine_native_steps('nativo:compra')``, ``variables_de``): el paso manda las que declara, en
 # su orden, al menos una y ninguna repetida; otra lista es ``variables_differ`` (20261026000100).
@@ -309,6 +354,57 @@ NATIVE_UNSUPPORTED_REPEAT = "motor_nativo:repeticion"
 NATIVE_UNSUPPORTED_PRIORITY = "motor_nativo:prioridad"
 
 
+def native_trigger_key(definition: Mapping[str, Any]) -> str | None:
+    """El disparador nativo de la definicion (``compra``, ``carrito``, ``pago_fallido`` o ``silencio:agente``).
+
+    ``None`` si ``dispara`` no es exactamente un evento o un silencio que el motor nativo ejecuta.
+    """
+    trigger = definition.get("dispara")
+    if not isinstance(trigger, Mapping):
+        return None
+    if set(trigger) == {"evento"}:
+        event = trigger.get("evento")
+        key = event if isinstance(event, str) and event in ENGINE_CAPABILITIES_NATIVE.triggers else None
+    elif set(trigger) == {"silencio"}:
+        silence = trigger.get("silencio")
+        speaker = silence.get("lo_ultimo") if isinstance(silence, Mapping) else None
+        key = f"silencio:{speaker}" if isinstance(speaker, str) else None
+    else:
+        key = None
+    return key if key in NATIVE_CAPABILITIES_BY_TRIGGER else None
+
+
+def _native_silence_not_supported(definition: Mapping[str, Any], add: Callable[[str], None]) -> None:
+    """Lo que el silencio nativo exige ademas de sus capacidades: la conversacion adoptada y el cupon fijo.
+
+    La reserva del legado, que el nativo reusa (P22-2), solo manda en una conversacion adoptada, de
+    cualquier plantilla (``blocked_not_template_reply``): ``contesto_a`` tiene que ser
+    ``cualquier_plantilla``. Una lista de flujos no la filtra, y vacio (cualquiera que nos escribio) no
+    es lo que hace. Y el envio lleva el boton del checkout con el cupon: sin boton el barrido no manda
+    (``followup_template_button_missing``), y el codigo personal es del carrito, no del seguimiento.
+    """
+    entry = definition.get("entra")
+    if not isinstance(entry, Mapping) or entry.get("contesto_a") != ANY_TEMPLATE:
+        add(f"{NOT_SUPPORTED}:contesto_a")
+    # El barrido corta siempre con la compra (la reserva) y con la respuesta (la relectura, _still_waiting):
+    # la definicion lo tiene que decir.
+    ends = definition.get("termina")
+    exits = ends.get("si") if isinstance(ends, Mapping) else None
+    if not isinstance(exits, list) or not {"compra", "contesta"} <= set(exits):
+        add(f"{NOT_SUPPORTED}:salida_compra_y_contesta")
+    for step in _walk_steps(definition.get("pasos")):
+        if step_type(step) != "plantilla" or not isinstance(step, Mapping):
+            continue
+        # FollowupTemplate.params manda siempre {{1}} nombre y {{2}} producto (followup_discount.py:129-153).
+        if step.get("variables") != list(FOLLOWUP_VARIABLES):
+            add(f"{NOT_SUPPORTED}:variables_seguimiento")
+        button = step.get("boton")
+        if not isinstance(button, Mapping) or button.get("link") != "checkout" or "cupon" not in button:
+            add(f"{NOT_SUPPORTED}:boton_sin_cupon")
+        elif button.get("cupon") == PERSONAL_COUPON:
+            add(f"{NOT_SUPPORTED}:cupon_personal")
+
+
 def native_not_supported(definition: Mapping[str, Any]) -> tuple[str, ...]:
     """Lo que el motor nativo no ejecuta de una definicion, en orden; vacio si la ejecuta.
 
@@ -317,6 +413,12 @@ def native_not_supported(definition: Mapping[str, Any]) -> tuple[str, ...]:
     le corresponde, la repeticion, la prioridad y un solo envio), y lo que el compilador de la politica
     rechaza con las formas ``nativo:compra`` y ``nativo:carrito`` (un envio, variables de ``nombre`` y
     ``producto``, sin espera despues del envio).
+
+    Las capacidades son por disparador (``NATIVE_CAPABILITIES_BY_TRIGGER``, P22-1 de M16): con el
+    silencio en que lo ultimo lo dijo el agente, las de ``ENGINE_CAPABILITIES_NATIVE_SILENCE``, el
+    permiso ``conversacion``, ``contesto_a: cualquier_plantilla``, una vez por conversacion y nunca otra,
+    y el boton del checkout con un cupon fijo. Con un disparador que el motor nativo no ejecuta, las de
+    los eventos, como antes.
     """
     found: list[str] = []
 
@@ -324,17 +426,19 @@ def native_not_supported(definition: Mapping[str, Any]) -> tuple[str, ...]:
         if code not in found:
             found.append(code)
 
-    trigger = definition.get("dispara")
-    event = trigger.get("evento") if isinstance(trigger, Mapping) and set(trigger) == {"evento"} else None
-    if not isinstance(event, str) or event not in NATIVE_PERMISSION_BY_TRIGGER:
+    key = native_trigger_key(definition)
+    if key is None:
         add(NATIVE_UNSUPPORTED_TRIGGER)
-        event = None
+    capabilities = NATIVE_CAPABILITIES_BY_TRIGGER.get(key or "", ENGINE_CAPABILITIES_NATIVE)
     entry = definition.get("entra")
-    if not isinstance(entry, Mapping) or entry.get("permiso") != NATIVE_PERMISSION_BY_TRIGGER.get(event or "compra"):
+    if not isinstance(entry, Mapping) or entry.get("permiso") != NATIVE_PERMISSION_BY_TRIGGER.get(key or "compra"):
         add(NATIVE_UNSUPPORTED_PERMISSION)
     caps = definition.get("topes")
     repeat = caps.get("repeticion") if isinstance(caps, Mapping) else None
-    if not isinstance(repeat, Mapping) or repeat.get("una_por") not in ("persona", "persona_y_oferta"):
+    units = NATIVE_REPEAT_BY_TRIGGER.get(key or "", NATIVE_EVENT_REPEAT_UNITS)
+    if not isinstance(repeat, Mapping) or repeat.get("una_por") not in units:
+        add(NATIVE_UNSUPPORTED_REPEAT)
+    elif key == NATIVE_SILENCE_TRIGGER and repeat.get("otra_despues_de") != NEVER:
         add(NATIVE_UNSUPPORTED_REPEAT)
     elif repeat.get("otra_despues_de") != NEVER and parse_duration(repeat.get("otra_despues_de")) is None:
         add(NATIVE_UNSUPPORTED_REPEAT)
@@ -342,8 +446,10 @@ def native_not_supported(definition: Mapping[str, Any]) -> tuple[str, ...]:
     if isinstance(priority, Mapping) and "no_arranca_mientras" in priority \
             and not isinstance(priority.get("no_arranca_mientras"), list):
         add(NATIVE_UNSUPPORTED_PRIORITY)
-    for code in not_supported(definition, ENGINE_CAPABILITIES_NATIVE):
+    for code in not_supported(definition, capabilities):
         add(code)
+    if key == NATIVE_SILENCE_TRIGGER:
+        _native_silence_not_supported(definition, add)
     for step in _walk_steps(definition.get("pasos")):
         if step_type(step) == "plantilla" and isinstance(step, Mapping) \
                 and not native_variables_fit(step.get("variables")):

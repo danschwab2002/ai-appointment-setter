@@ -94,7 +94,9 @@ def test_the_fixture_is_the_real_chain_with_the_maribel_template() -> None:
 def test_the_native_engine_runs_the_one_touch_cart() -> None:
     assert native_not_supported(CART) == ()
     assert "carrito" in ENGINE_CAPABILITIES_NATIVE.triggers and ENGINE_CAPABILITIES_NATIVE.exits == {"compra"}
-    assert dict(NATIVE_PERMISSION_BY_TRIGGER) == {"compra": "compra", "carrito": "formulario", "pago_fallido": "formulario"}
+    # El silencio del agente (P22-1 de M16) entra con conversacion: test_flow_engine_native_silence.py.
+    assert dict(NATIVE_PERMISSION_BY_TRIGGER) == {"compra": "compra", "carrito": "formulario", "pago_fallido": "formulario",
+                                                  "silencio:agente": "conversacion"}
 
 
 @pytest.mark.parametrize(("change", "code"), [
