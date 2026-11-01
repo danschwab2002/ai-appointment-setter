@@ -455,8 +455,9 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # y 20261025000100 (sus lecturas nativas) las tres del AE. 20261025000300
     # (la nota privada al derivar, F-034 D8) suma la lectura del link, y
     # 20261025000400 (la pausa del agente al comprar, E-100) la de las
-    # conversaciones del comprador.
-    assert len(allowlisted) == 171
+    # conversaciones del comprador. 20261101000100 (el primer contacto nativo, E-247)
+    # suma la entrada del formulario y el freno que la reevaluacion llama como service_role.
+    assert len(allowlisted) == 173
     assert (
         "read_purchase_agent_pause_conversations_v1(bigint, bigint, text, text, text)"
         in allowlisted
@@ -1645,14 +1646,15 @@ def test_flow_change_list_fingerprint_is_before_the_link_stops() -> None:
         assert marker in compact_fingerprint, marker
 
 
-def test_portable_purchase_stops_see_our_link_fingerprint_is_last() -> None:
+def test_portable_purchase_stops_see_our_link_fingerprint_is_before_the_native_intent() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261030000400 (los frenos de la compra ven nuestro link, E-215) es la ultima.
-    fingerprint = sql.split("'20261030000400'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261030000400 (los frenos de la compra ven nuestro link, E-215), antes de la de E-247.
+    fingerprint = sql.split("'20261030000400'", 1)[1].split(
+        "    union all\n    select\n        '20261101000100'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261030000400_portable_purchase_stops_see_our_link_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",3,'portable_purchase_stops_see_our_link')")
+    assert compact_fingerprint.endswith(",3,'portable_purchase_stops_see_our_link'")
     for marker in (
         "to_regprocedure('public._portable_checkout_link_purchase_exists(text,text,uuid,text,text)')",
         "to_regprocedure('public._portable_precheckout_stop_reason(uuid,uuid)')",
@@ -1661,5 +1663,26 @@ def test_portable_purchase_stops_see_our_link_fingerprint_is_last() -> None:
         "position('purchase_matched'indefinition)>0",
         "notprosecdef",
         "provolatile='s'",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_flow_engine_native_intent_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261101000100 (el primer contacto nativo, E-247) es la ultima.
+    fingerprint = sql.split("'20261101000100'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261101000100_flow_engine_native_intent_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",7,'flow_engine_native_intent')")
+    for marker in (
+        "to_regprocedure('public.admit_and_route_portable_lead_precheckout_v1(text,text,integer,text,jsonb,jsonb,text,integer)')",
+        "to_regprocedure('public._flow_engine_native_intent_stop_reason(uuid)')",
+        "to_regprocedure('public._flow_engine_native_intent_audience(uuid,uuid,uuid,text,text,text)')",
+        "position('flow_engine_native_intent_double_case'indefinition)>0",
+        "position('flow_engine_native_intent_recheck'indefinition)>0",
+        "position('flow_engine_native_intent_reevaluation'indefinition)>0",
+        "to_regclass('public.flow_engine_native_intent_admissions')",
+        "has_function_privilege('service_role',oid,'EXECUTE')",
     ):
         assert marker in compact_fingerprint, marker
