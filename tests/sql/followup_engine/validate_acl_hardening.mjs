@@ -247,6 +247,7 @@ const rows = await db.query(`
       ('read_flow_engine_native_trigger_counts_v1(jsonb,text,text,timestamp with time zone)'),
       ('admit_and_route_portable_lead_precheckout_v1(text,text,integer,text,jsonb,jsonb,text,integer)'),
       ('_flow_engine_native_intent_stop_reason(uuid)'),
+      ('claim_flow_engine_silence_v1(uuid,integer,text,bigint,bigint,bigint,text,text,text,text,text,text,text,bigint,bigint,integer,text,timestamp with time zone)'),
       ('read_automation_expert_native_flows_v1(jsonb)'),
       ('read_automation_expert_native_history_v1(jsonb,uuid)'),
       ('read_flow_sales_v1(jsonb,timestamp with time zone)'),
@@ -312,11 +313,12 @@ const result = rows.rows[0];
 // (20261024000500) adds its seven entrypoints, and the agent that creates
 // flows (20261024000600) adds the read of the new flow simulation, and its
 // native reads (20261025000100) add three: the native flows, the native
-// history of a lead and the sales by flow, and the native first contact after
+// history of a lead and the sales by flow, the native first contact after
 // the form (20261101000100) adds two: the form entrypoint and the stop reason
-// that reevaluate_followup_action calls as service_role.
+// that reevaluate_followup_action calls as service_role, and the native
+// followup after the agent's silence (20261101000200) adds its claim.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 173) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 174) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

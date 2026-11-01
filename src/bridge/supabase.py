@@ -837,6 +837,14 @@ class ConversationReactivationSettlement:
 # en la portable) cuando la emision no quedo en 'reserved'.
 # 'blocked_not_template_reply' lo devuelve solo la portable: la conversacion no
 # es la respuesta a una plantilla nuestra (no fue adoptada) y el cupon no sale.
+# 'blocked_native_flow' (20261101000200, P22-2 de M16) lo devuelve solo la
+# portable: un silencio nativo del agente de la instancia, prendido o en cohorte
+# con ese contacto, se quedo con la conversacion. Sin un silencio nativo no sale
+# nunca. Los tres 'blocked_flow_*' y 'blocked_out_of_cohort' los devuelve solo
+# la reserva nativa, claim_flow_engine_silence_v1 (la llama el barrido nativo,
+# P22-3): el flujo no corre o no es de esta instancia, la version o su paso no
+# son los que ejecuta el barrido, el contacto no esta en la cohorte, o la bolsa
+# llego a su tope.
 FOLLOWUP_CLAIM_OUTCOMES = frozenset(
     {
         "claimed",
@@ -847,6 +855,11 @@ FOLLOWUP_CLAIM_OUTCOMES = frozenset(
         "blocked_conversation",
         "blocked_contact",
         "blocked_not_template_reply",
+        "blocked_native_flow",
+        "blocked_flow_not_running",
+        "blocked_flow_version",
+        "blocked_out_of_cohort",
+        "blocked_flow_cap",
         "purchase_already_approved",
         "issuance_invalid_request",
         "issuance_replay_conflict",

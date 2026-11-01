@@ -456,8 +456,9 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # (la nota privada al derivar, F-034 D8) suma la lectura del link, y
     # 20261025000400 (la pausa del agente al comprar, E-100) la de las
     # conversaciones del comprador. 20261101000100 (el primer contacto nativo, E-247)
-    # suma la entrada del formulario y el freno que la reevaluacion llama como service_role.
-    assert len(allowlisted) == 173
+    # suma la entrada del formulario y el freno que la reevaluacion llama como service_role,
+    # y 20261101000200 (el seguimiento a 24 h nativo, E-251) suma su reserva nativa.
+    assert len(allowlisted) == 174
     assert (
         "read_purchase_agent_pause_conversations_v1(bigint, bigint, text, text, text)"
         in allowlisted
@@ -1667,14 +1668,15 @@ def test_portable_purchase_stops_see_our_link_fingerprint_is_before_the_native_i
         assert marker in compact_fingerprint, marker
 
 
-def test_flow_engine_native_intent_fingerprint_is_last() -> None:
+def test_flow_engine_native_intent_fingerprint_is_before_the_native_silence() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261101000100 (el primer contacto nativo, E-247) es la ultima.
-    fingerprint = sql.split("'20261101000100'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261101000100 (el primer contacto nativo, E-247), antes de la de E-251.
+    fingerprint = sql.split("'20261101000100'", 1)[1].split(
+        "    union all\n    select\n        '20261101000200'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261101000100_flow_engine_native_intent_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",7,'flow_engine_native_intent')")
+    assert compact_fingerprint.endswith(",7,'flow_engine_native_intent'")
     for marker in (
         "to_regprocedure('public.admit_and_route_portable_lead_precheckout_v1(text,text,integer,text,jsonb,jsonb,text,integer)')",
         "to_regprocedure('public._flow_engine_native_intent_stop_reason(uuid)')",
@@ -1684,5 +1686,28 @@ def test_flow_engine_native_intent_fingerprint_is_last() -> None:
         "position('flow_engine_native_intent_reevaluation'indefinition)>0",
         "to_regclass('public.flow_engine_native_intent_admissions')",
         "has_function_privilege('service_role',oid,'EXECUTE')",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_flow_engine_native_silence_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261101000200 (el seguimiento a 24 h nativo, E-251) es la ultima.
+    fingerprint = sql.split("'20261101000200'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261101000200_flow_engine_native_silence_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",7,'flow_engine_native_silence')")
+    for marker in (
+        "to_regprocedure('public.claim_flow_engine_silence_v1(uuid,integer,text,bigint,bigint,bigint,text,text,"
+        "text,text,text,text,text,bigint,bigint,integer,text,timestamptz)')",
+        "position('flow_engine_native_silence_barrier:end'indefinition)>0",
+        "position('flow_engine_native_silence_legacy_replay'indefinition)>0",
+        "position('flow_engine_native_silence_shape'indefinition)>0",
+        "position('flow_engine_native_silence_trigger'indefinition)>0",
+        "position('flow_engine_native_silence_counts:end'indefinition)>0",
+        "position('flow_engine_native_silence_sales_link:end'indefinition)>0",
+        "nothas_function_privilege('anon',oid,'EXECUTE')",
+        "a.attname='flow_id'",
     ):
         assert marker in compact_fingerprint, marker
