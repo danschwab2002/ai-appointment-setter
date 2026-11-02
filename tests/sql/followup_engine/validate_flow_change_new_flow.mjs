@@ -127,7 +127,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026102500010
   // El primer contacto nativo (E-247): el disparador intencion, por reemplazos contados.
   '20261101000100_flow_engine_native_intent_v1.sql',
   // El seguimiento a 24 h nativo (E-251): el silencio del agente, por reemplazos contados.
-  '20261101000200_flow_engine_native_silence_v1.sql'])) {
+  '20261101000200_flow_engine_native_silence_v1.sql',
+  // Los frenos del seguimiento (E-263): las dos reservas, por reemplazo contado.
+  '20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de las lecturas nativas del AE`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(

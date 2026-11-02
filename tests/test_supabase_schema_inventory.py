@@ -1692,12 +1692,17 @@ def test_flow_engine_native_intent_fingerprint_is_before_the_native_silence() ->
 
 def test_flow_engine_native_silence_fingerprint_is_last() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261101000200 (el seguimiento a 24 h nativo, E-251) es la ultima.
-    fingerprint = sql.split("'20261101000200'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261101000200 (el seguimiento a 24 h nativo, E-251), antes de
+    # la de 20261101000300 (los frenos del seguimiento, E-263).
+    fingerprint = (
+        sql.split("'20261101000200'", 1)[1]
+        .split("select\n    version,", 1)[0]
+        .split("    union all\n    select\n        '20261101000300'", 1)[0]
+    )
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261101000200_flow_engine_native_silence_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",7,'flow_engine_native_silence')")
+    assert compact_fingerprint.endswith(",7,'flow_engine_native_silence'")
     for marker in (
         "to_regprocedure('public.claim_flow_engine_silence_v1(uuid,integer,text,bigint,bigint,bigint,text,text,"
         "text,text,text,text,text,bigint,bigint,integer,text,timestamptz)')",
@@ -1709,5 +1714,29 @@ def test_flow_engine_native_silence_fingerprint_is_last() -> None:
         "position('flow_engine_native_silence_sales_link:end'indefinition)>0",
         "nothas_function_privilege('anon',oid,'EXECUTE')",
         "a.attname='flow_id'",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_followup_stops_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261101000300 (los frenos del seguimiento despues de Z y con
+    # una ficha vigente, E-263) es la ultima, con las dos reservas.
+    fingerprint = sql.split("'20261101000300'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert (
+        "'20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql'"
+        in fingerprint
+    )
+    assert compact_fingerprint.endswith(
+        ",2,'followup_stops_after_last_touch_and_pending_payment')"
+    )
+    for marker in (
+        "to_regprocedure('public.claim_portable_conversation_followup_v1(",
+        "to_regprocedure('public.claim_flow_engine_silence_v1(",
+        "position('followup_stops_after_last_touch_and_pending_payment:end'indefinition)>0",
+        "position('blocked_after_last_touch'indefinition)>0",
+        "position('blocked_pending_payment'indefinition)>0",
     ):
         assert marker in compact_fingerprint, marker

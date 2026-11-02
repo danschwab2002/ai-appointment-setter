@@ -111,7 +111,7 @@ const results = {};
 
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 // Despues va solo el seguimiento a 24 h nativo (20261101000200, E-251), que suma el silencio al disparador.
-if (JSON.stringify(names.slice(names.indexOf(MIGRATION) + 1)) !== JSON.stringify(['20261101000200_flow_engine_native_silence_v1.sql'])) {
+if (JSON.stringify(names.slice(names.indexOf(MIGRATION) + 1)) !== JSON.stringify(['20261101000200_flow_engine_native_silence_v1.sql', '20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la del seguimiento a 24 h nativo`, names.slice(-3));
 }
 if (maribel.name !== 'maribel_retomar_proceso_01') fail('el fixture no es la plantilla de Maribel');

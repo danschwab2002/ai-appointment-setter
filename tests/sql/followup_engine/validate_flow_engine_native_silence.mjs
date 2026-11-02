@@ -78,7 +78,11 @@ const fixture = (name) => JSON.parse(readFileSync(join(root, 'tests/fixtures', n
 const names = readdirSync(join(root, 'supabase/migrations')).filter((name) => name.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-if (names.slice(position + 1).length !== 0) fail(`${MIGRATION} es la ultima de la cadena`, names.slice(position + 1));
+// Despues va solo la de los frenos del seguimiento (20261101000300, E-263), que parcha las dos reservas: la forma
+// de esta se mide antes de aplicarla, y el mundo de abajo corre con la cadena entera.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de los frenos del seguimiento`, names.slice(position + 1));
+}
 
 // La plantilla del seguimiento de ATT1, del catalogo capturado.
 const CATALOG = fixture('chatwoot_inbox_11_message_templates_20261010.json');

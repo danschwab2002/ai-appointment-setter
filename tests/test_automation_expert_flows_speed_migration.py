@@ -113,6 +113,8 @@ def test_it_is_one_transaction_and_comes_before_the_motor() -> None:
         "20261101000100_flow_engine_native_intent_v1.sql",
         # El seguimiento a 24 h nativo (20261101000200, E-251): la base del silencio.
         "20261101000200_flow_engine_native_silence_v1.sql",
+        # Los frenos del seguimiento despues de Z y con una ficha vigente (20261101000300, E-263).
+        "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql",
     ]
     for later in names[position + 1:]:
         if later != reads:

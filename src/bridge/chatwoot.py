@@ -22,6 +22,7 @@ from bridge.filtering import (
     matches_allowed_whatsapp_identity,
     matches_allowed_whatsapp_phone,
 )
+from bridge.lead_decline import detect_lead_decline
 from bridge.reply_splitter import reply_batch_hash, reply_part_hash
 
 # Decision y reason code del agente que viajan como content_attributes del
@@ -85,6 +86,10 @@ class CanonicalConversationSnapshot:
     checkpoint_message_id: int | None
     checkpoint_created_at: int | None
     human_assignee_present: bool = False
+    # F-150 (E-263): la persona escribio un rechazo claro despues del ancla
+    # (bridge.lead_decline). El recordatorio de la ficha (C3) lo usa para no
+    # salir; nada mas lo lee.
+    declined_after_anchor: bool = False
 
     @property
     def automation_paused(self) -> bool:
@@ -652,6 +657,20 @@ class ChatwootClient:
             and sender.get("type") != "agent_bot"
             for _, _, message_type, private, sender in after_anchor
         )
+        # F-150: lo que escribio la persona despues del ancla (el toque
+        # anterior), en orden, para el «no» claro.
+        inbound_after_ids = [
+            message_id
+            for message_id, _, message_type, private, _ in after_anchor
+            if message_type == 0 and not private
+        ]
+        contents = {message.get("id"): message.get("content") for message in messages}
+        declined = (
+            detect_lead_decline(
+                [contents.get(message_id) for message_id in sorted(inbound_after_ids)]
+            )
+            is not None
+        )
         checkpoint = messages[-1] if messages else None
         checkpoint_id = checkpoint.get("id") if checkpoint else None
         checkpoint_at = checkpoint.get("created_at") if checkpoint else None
@@ -675,6 +694,7 @@ class ChatwootClient:
             checkpoint_message_id=checkpoint_id,
             checkpoint_created_at=checkpoint_at,
             human_assignee_present=human_assignee_present,
+            declined_after_anchor=declined,
         )
 
     async def _get_canonical_messages(
