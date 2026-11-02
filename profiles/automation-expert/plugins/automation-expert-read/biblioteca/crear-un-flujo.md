@@ -65,12 +65,20 @@ Cuando ya está todo, antes de llamar a `propose_flow_change`, devolvé lo que e
 
 Si el pedido vino completo, el resumen es igual de corto y marca **lo que completaste vos** («esto no me lo dijiste y lo dejé así: …»). Con el sí, seguí los pasos de tu SOUL: proponer, validar, contar la vista previa y la simulación, y el botón para aprobar. Ese cierre también va corto y sin códigos: el mensaje como lo va a ver la persona, a cuántas personas les habría llegado en la semana, que arranca solo en la cohorte de prueba y quién lo aprueba con el botón. Lo que el sistema no sabe, en una frase con tus palabras (por ejemplo, «no cuenta a quienes ya están en medio de otro mensaje»). Si la propuesta vuelve distinta de lo que confirmó la persona (por ejemplo, otra repetición), corregila antes de contarla.
 
+## El pago rechazado, con sus versiones
+
+El pago rechazado es el único flujo que puede mandar **una versión del mensaje según lo que pasó**, como hace ATT1 con cuatro: a quien ya tenía el descuento, a quien le rechazaron dos veces o más, a quien no le alcanzó el saldo, y a todos los demás. Sigue siendo **un solo mensaje por persona**: lo que pasó elige cuál le llega. Cómo se escribe está en la página de `hotmart`.
+
+- **En la charla**, contá las versiones en lenguaje de negocio («si ya tenía el descuento le llega esta; si le rechazaron dos veces, esta otra…»), cada una con su texto como lo ve la persona, en el orden en que se eligen. La espera es la misma para todas.
+- **El botón** lleva el link al pago con el descuento de la instancia ya puesto. Las plantillas tienen que traer ese botón primero.
+- **En las ventas** cada versión trae cuántos mensajes salieron y cuántas compras hubo después: «compró después de recibirlo», no «el mensaje causó la compra».
+
 ## Si pide algo que el motor no hace
 
 Decí qué parte no se puede, por qué en una línea, y qué se puede hoy. Ejemplos:
 - **Dos mensajes seguidos** (uno al toque y otro al día siguiente): hoy un flujo manda un solo mensaje, y tampoco sirve un segundo flujo del mismo momento: dos flujos de la compra no pueden estar prendidos a la vez. No lo ofrezcas como «otro flujo aparte», no le redactes la plantilla al segundo y no lo metas en ninguna propuesta. Ofrecé armar el primero ahora; el segundo todavía no.
 - **Otro momento que lo dispare** (por ejemplo, cuando alguien se registra a un webinar o pide un reembolso): hoy un flujo arranca solo con los momentos de tu SOUL; nombralos en una línea, con palabras de negocio, y ofrecé armar uno. No expliques cómo llega cada aviso ni por qué ese no está, y no ofrezcas «explorar» un momento parecido que no resuelve lo que pidió. Lo otro, que se lo pidan al equipo del producto: vos no guardás pedidos ni los anotás.
-- **Una condición** («si no abrió el mensaje, mandale otro»): el motor no tiene condiciones todavía.
+- **Una condición** («si no abrió el mensaje, mandale otro»): el motor no tiene condiciones todavía, salvo las del pago rechazado (abajo).
 - **Algo que hoy hace el legado** (la ficha de pago, la reactivación; el seguimiento con cupón ya se crea como nativo): sigue corriendo en el legado, y ahí no lo podés crear ni cambiar.
 
 No armes una propuesta que sabés que la validación va a frenar.

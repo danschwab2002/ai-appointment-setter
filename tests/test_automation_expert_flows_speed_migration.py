@@ -129,6 +129,8 @@ def test_it_is_one_transaction_and_comes_before_the_motor() -> None:
         "20261103000600_flow_approval_history_v1.sql",
         # Si la persona ya es cliente (20261103000700, E-297).
         "20261103000700_customer_status_v1.sql",
+        # Las cuatro ramas del pago rechazado nativo (20261103000900, E-306).
+        "20261103000900_flow_engine_native_payment_failure_branches_v1.sql",
     ]
     for later in names[position + 1:]:
         if later != reads:

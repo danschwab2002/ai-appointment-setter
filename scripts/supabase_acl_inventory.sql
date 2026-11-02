@@ -200,7 +200,10 @@ expected_service_role(signature) as (
         ('public.mark_meta_delivery_rejection_notified_v1(uuid, timestamp with time zone)'),
         ('public.block_meta_first_touch_retry_v1(uuid, text, timestamp with time zone)'),
         -- 20261103000700: si la persona ya es cliente (E-297).
-        ('public.get_customer_status_v1(text, text[], bigint, bigint, bigint, text)')
+        ('public.get_customer_status_v1(text, text[], bigint, bigint, bigint, text)'),
+        -- 20261103000900: los datos y el registro de la rama del pago rechazado nativo (E-306).
+        ('public.get_flow_engine_native_payment_failure_context_v1(uuid, text, bigint, timestamp with time zone)'),
+        ('public.record_flow_engine_native_branch_v1(uuid, uuid, text, bigint, integer, timestamp with time zone)')
 ),
 functions as (
     select

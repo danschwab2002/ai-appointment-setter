@@ -68,8 +68,10 @@ const results = {};
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`${MIGRATION} no esta en la cadena`);
-// Es la ultima de la cadena.
-if (position !== names.length - 1) fail(`despues de ${MIGRATION} no va ninguna`, names.slice(position + 1));
+// Despues va solo la de las cuatro ramas del pago rechazado nativo (20261103000900, E-306).
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261103000900_flow_engine_native_payment_failure_branches_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de las ramas del pago rechazado`, names.slice(position + 1));
+}
 const apply = async (file) => db.exec(readFileSync(file, 'utf8').replace(
   /create extension if not exists pgcrypto;/gi,
   '-- pgcrypto is built into PGlite',

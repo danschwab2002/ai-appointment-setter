@@ -126,6 +126,8 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
         "20261103000600_flow_approval_history_v1.sql",
         # Si la persona ya es cliente (20261103000700, E-297).
         "20261103000700_customer_status_v1.sql",
+        # Las cuatro ramas del pago rechazado nativo (20261103000900, E-306).
+        "20261103000900_flow_engine_native_payment_failure_branches_v1.sql",
     ]
     native = (MIGRATIONS / "20261024000200_flow_engine_native_v1.sql").read_text(encoding="utf-8")
     assert "read_automation_expert_flows_v1" not in native

@@ -30,7 +30,7 @@ owns the attempt, the final gate and the send.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
@@ -168,6 +168,40 @@ def choose_variant(
     if refusal_kind == "insufficient_funds":
         return VARIANT_INSUFFICIENT_FUNDS
     return VARIANT_DECLINED
+
+
+# The data of the native refused payment for each variant of ATT1 (flow-engine-v2 §27, E-306): the chain
+# that keeps its order is «descuento_previo: si» -> «rechazos: varios» -> «tipo_de_rechazo: sin_saldo» ->
+# everything else. ``choose_native_branch`` with that chain picks what ``choose_variant`` picks
+# (tests/test_flow_engine_native_payment_failure_branches.py fixes the parity).
+VARIANT_BY_NATIVE_DATUM: Mapping[str, tuple[str, str]] = {
+    VARIANT_COUPON: ("descuento_previo", "si"),
+    VARIANT_TWO_REFUSALS: ("rechazos", "varios"),
+    VARIANT_INSUFFICIENT_FUNDS: ("tipo_de_rechazo", "sin_saldo"),
+}
+
+
+def choose_native_branch(branches: Sequence[object], value_of: Callable[[str], str | None]) -> int:
+    """The first branch of a native chain whose condition holds; the last one (no condition) otherwise.
+
+    ``branches`` carry ``datum`` and ``values`` (``None`` in the last one), as
+    ``supabase.FlowEngineNativeBranch``; ``value_of`` gives the value of a datum
+    (``NativePaymentFailureData.value_of``). It is the rule of ``choose_variant``
+    generalized to «the first branch that applies», and the one the base checks
+    again before the send (``_flow_engine_native_payment_failure_choice``).
+    """
+    if not branches:
+        raise ValueError("native_branches_empty")
+    for index, branch in enumerate(branches):
+        datum = getattr(branch, "datum", None)
+        if datum is None:
+            if index != len(branches) - 1:
+                raise ValueError("native_branch_without_condition_not_last")
+            return index
+        values = getattr(branch, "values", None) or ()
+        if value_of(datum) in values:
+            return index
+    raise ValueError("native_branches_without_default")
 
 
 def recovery_button_suffix(checkout_url_final: str, coupon_code: str | None) -> str:

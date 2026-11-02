@@ -466,8 +466,13 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261103000500 (los rechazos de Meta, E-284) suma sus seis: registrar,
     # listar, reservar, cerrar y frenar el reintento, y marcar el aviso.
     # 20261103000700 (si la persona ya es cliente, E-297) suma su lectura.
-    assert len(allowlisted) == 186
+    assert len(allowlisted) == 188
     assert "get_customer_status_v1(text, text[], bigint, bigint, bigint, text)" in allowlisted
+    # 20261103000900 (las ramas del pago rechazado nativo, E-306): los datos y el registro.
+    assert ("get_flow_engine_native_payment_failure_context_v1(uuid, text, bigint, timestamp with time zone)"
+            in allowlisted)
+    assert ("record_flow_engine_native_branch_v1(uuid, uuid, text, bigint, integer, timestamp with time zone)"
+            in allowlisted)
     assert "block_meta_first_touch_retry_v1(uuid, text, timestamp with time zone)" in allowlisted
     assert "purge_identity_recycles_v1()" in allowlisted
     assert "record_meta_template_status_v1(jsonb, uuid, text, text, text, text, boolean)" in allowlisted
@@ -1901,17 +1906,35 @@ def test_flow_approval_history_fingerprint() -> None:
 
 def test_customer_status_fingerprint_is_last() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261103000700 (si la persona ya es cliente, E-297) es la
-    # ultima: la lectura solo para service_role, con sus fuentes y los
-    # reembolsos por la transaccion.
-    fingerprint = sql.split("'20261103000700'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261103000700 (si la persona ya es cliente, E-297): la
+    # lectura solo para service_role, con sus fuentes y los reembolsos por la
+    # transaccion. Despues va solo la de 20261103000900 (E-306).
+    fingerprint = sql.split("'20261103000700'", 1)[1].split("union all\n    select\n        '20261103000900'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261103000700_customer_status_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",2,'customer_status')")
+    assert compact_fingerprint.endswith(",2,'customer_status'")
     for marker in (
         "to_regprocedure('public.get_customer_status_v1(text,text[],bigint,bigint,bigint,text)')",
         "position('invalid_customer_status_input'indefinition)>0",
         "position('PURCHASE_CHARGEBACK'indefinition)>0",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_payment_failure_branches_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261103000900 (las ramas del pago rechazado nativo, E-306) es
+    # la ultima: los datos y el registro solo para service_role, el contexto con
+    # sus ramas, y la forma, el compilador y la reserva del link con su marca.
+    fingerprint = sql.split("'20261103000900'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261103000900_flow_engine_native_payment_failure_branches_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",3,'flow_engine_native_payment_failure_branches')")
+    for marker in (
+        "to_regprocedure('public.record_flow_engine_native_branch_v1(uuid,uuid,text,bigint,integer,timestamptz)')",
+        "position('flow_engine_native_payment_failure_branches'indefinition)>0",
+        "to_regprocedure('public.reserve_recovery_checkout_issuance_v1(uuid,text,bigint,uuid,text,timestamptz)')",
     ):
         assert marker in compact_fingerprint, marker

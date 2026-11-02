@@ -265,7 +265,10 @@ const rows = await db.query(`
       ('mark_meta_delivery_rejection_notified_v1(uuid,timestamp with time zone)'),
       ('block_meta_first_touch_retry_v1(uuid,text,timestamp with time zone)'),
       -- 20261103000700: si la persona ya es cliente (E-297).
-      ('get_customer_status_v1(text,text[],bigint,bigint,bigint,text)')
+      ('get_customer_status_v1(text,text[],bigint,bigint,bigint,text)'),
+      -- 20261103000900: los datos y el registro de la rama del pago rechazado nativo (E-306).
+      ('get_flow_engine_native_payment_failure_context_v1(uuid,text,bigint,timestamp with time zone)'),
+      ('record_flow_engine_native_branch_v1(uuid,uuid,text,bigint,integer,timestamp with time zone)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -286,6 +289,7 @@ const rows = await db.query(`
 `);
 const result = rows.rows[0];
 // 20261103000700 (si la persona ya es cliente, E-297) suma su lectura: 186.
+// 20261103000900 (las ramas del pago rechazado nativo, E-306) suma los datos y el registro: 188.
 // Historical baseline guard was `result.expected_count !== 63`; the current
 // baseline is 68 RPCs, daily feedback adds fourteen, payment links add three,
 // the one-shot operator disposition adds one, and correlation event context
@@ -336,7 +340,7 @@ const result = rows.rows[0];
 // The Meta rejections (20261103000500, E-284) add six: record, list due,
 // claim, settle and block the retry, and mark the 131026 notice.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 186) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 188) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

@@ -307,6 +307,47 @@ def _native_flow_outcomes(value: object) -> tuple[PrecheckoutNativeFlowOutcome, 
 _PHONE_DIGITS_RE = re.compile(r"[1-9][0-9]{6,14}")
 
 
+def _native_branches(value: object, *, operation: str) -> tuple[FlowEngineNativeBranch, ...] | None:
+    """Las ramas de ``template_branches`` (20261103000900), o None; una forma rara es ``invalid_row``."""
+    if value is None:
+        return None
+    if not isinstance(value, list) or not 2 <= len(value) <= 4:
+        raise SupabaseError(f"{operation}_invalid_row")
+    branches: list[FlowEngineNativeBranch] = []
+    for index, item in enumerate(value):
+        last = index == len(value) - 1
+        if not isinstance(item, dict) or set(item) != {"cuando", "paso"}:
+            raise SupabaseError(f"{operation}_invalid_row")
+        condition, step = item["cuando"], item["paso"]
+        if last != (condition is None) or not isinstance(step, dict):
+            raise SupabaseError(f"{operation}_invalid_row")
+        datum: str | None = None
+        values: tuple[str, ...] | None = None
+        if condition is not None:
+            if not isinstance(condition, dict) or set(condition) != {"dato", "es"}:
+                raise SupabaseError(f"{operation}_invalid_row")
+            datum, listed = condition["dato"], condition["es"]
+            allowed = NATIVE_PAYMENT_FAILURE_DATA_VALUES.get(datum) if isinstance(datum, str) else None
+            if allowed is None or not isinstance(listed, list) or not listed or any(
+                not isinstance(entry, str) or entry not in allowed for entry in listed
+            ):
+                raise SupabaseError(f"{operation}_invalid_row")
+            values = tuple(listed)
+        name, language, variables, button = (step.get("plantilla"), step.get("idioma"), step.get("variables"),
+                                              step.get("boton"))
+        if (not isinstance(name, str) or not name or not isinstance(language, str) or not language
+                or not isinstance(variables, list)
+                or any(not isinstance(entry, str) or not entry for entry in variables)
+                or (button is not None and (not isinstance(button, dict) or any(
+                    not isinstance(key, str) or not isinstance(entry, str) for key, entry in button.items())))):
+            raise SupabaseError(f"{operation}_invalid_row")
+        branches.append(FlowEngineNativeBranch(
+            datum=datum, values=values, template_name=name, template_language=language,
+            template_variables=tuple(variables), template_button=dict(button) if button is not None else None,
+        ))
+    return tuple(branches)
+
+
 def _pilot_plan_rejection(response: httpx.Response) -> str | None:
     """Return the rejection reason of a pilot planner, or None if unknown."""
     try:
@@ -1128,6 +1169,49 @@ class FlowEngineStepContext:
     # El entra.permiso de la version fijada (20261028000200, E-161). None con una
     # base sin la migracion: el envio nativo sigue exigiendo utilidad.
     entry_permission: str | None = None
+    # Las ramas de la cadena de un pago rechazado nativo, en el orden en que se
+    # eligen (20261103000900, E-306, flow-engine-v2 §27). None sin la cadena, o
+    # con una base sin la migracion.
+    template_branches: tuple[FlowEngineNativeBranch, ...] | None = None
+
+
+@dataclass(frozen=True)
+class FlowEngineNativeBranch:
+    """Una rama de la cadena del pago rechazado nativo: su condicion y su plantilla.
+
+    ``datum`` y ``values`` son ``None`` en la ultima rama, el ``si_no`` final.
+    """
+
+    datum: str | None
+    values: tuple[str, ...] | None
+    template_name: str
+    template_language: str
+    template_variables: tuple[str, ...]
+    template_button: dict[str, str] | None
+
+
+@dataclass(frozen=True)
+class NativePaymentFailureData:
+    """Los tres datos del recorrido de un pago rechazado nativo (flow-engine-v2 §27)."""
+
+    tipo_de_rechazo: str
+    rechazos: str
+    descuento_previo: str
+    refusal_count: int
+    latest_failed_at: datetime
+
+    def value_of(self, datum: str) -> str | None:
+        return {"tipo_de_rechazo": self.tipo_de_rechazo, "rechazos": self.rechazos,
+                "descuento_previo": self.descuento_previo}.get(datum)
+
+
+# Los valores de cada dato (flow_definition.CONDITION_VALUES de los tres del pago rechazado).
+NATIVE_PAYMENT_FAILURE_DATA_VALUES: dict[str, frozenset[str]] = {
+    "tipo_de_rechazo": frozenset({"sin_saldo", "banco"}),
+    "rechazos": frozenset({"uno", "varios"}),
+    "descuento_previo": frozenset({"si", "no"}),
+}
+NATIVE_BRANCH_RECORD_OUTCOMES = frozenset({"recorded", "already_recorded"})
 
 
 @dataclass(frozen=True)
@@ -6862,6 +6946,7 @@ class SupabaseClient:
         permission = row.get("entry_permission")
         if permission is not None and (not isinstance(permission, str) or not permission):
             raise SupabaseError(f"{operation}_invalid_row")
+        branches = _native_branches(row.get("template_branches"), operation=operation)
         return FlowEngineStepContext(
             flow_id=_required_string(row, "flow_id", operation=operation),
             version=_required_positive_int(row, "version", operation=operation),
@@ -6875,7 +6960,104 @@ class SupabaseClient:
             template_button=dict(button) if button is not None else None,
             legacy_dispatch_ok=_required_bool(row, "legacy_dispatch_ok", operation=operation),
             entry_permission=permission,
+            template_branches=branches,
         )
+
+    async def get_flow_engine_native_payment_failure_context(
+        self,
+        *,
+        action_id: str,
+        worker_id: str,
+        lease_generation: int,
+        now: str,
+    ) -> NativePaymentFailureData:
+        """The three data of a native refused payment, under the current lease (20261103000900).
+
+        A 55000 (no lease, an action that is not a native refused payment, a
+        case without its refusal) is a ``SupabasePermanentError`` with its
+        reason. A 404 (the base without the migration) is a ``SupabaseError``.
+        """
+        operation = "flow_engine_native_payment_failure_context"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_flow_engine_native_payment_failure_context_v1",
+            content=json.dumps({
+                "p_action_id": action_id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": lease_generation,
+                "p_now": now,
+            }),
+        )
+        if response.status_code != 200:
+            rejection = _pilot_plan_rejection(response)
+            if rejection is not None:
+                raise SupabasePermanentError(f"{operation}_rejected: {rejection}", reason=rejection)
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        if set(row) != {"tipo_de_rechazo", "rechazos", "descuento_previo", "refusal_count", "latest_failed_at"}:
+            raise _invalid_row_error(operation)
+        values = {
+            datum: _required_string(row, datum, operation=operation)
+            for datum in NATIVE_PAYMENT_FAILURE_DATA_VALUES
+        }
+        count = _required_int(row, "refusal_count", operation=operation)
+        if any(values[datum] not in allowed for datum, allowed in NATIVE_PAYMENT_FAILURE_DATA_VALUES.items()) \
+                or count < 1 or (values["rechazos"] == "varios") != (count >= 2):
+            raise _invalid_row_error(operation)
+        return NativePaymentFailureData(
+            tipo_de_rechazo=values["tipo_de_rechazo"],
+            rechazos=values["rechazos"],
+            descuento_previo=values["descuento_previo"],
+            refusal_count=count,
+            latest_failed_at=_required_aware_timestamp(row, "latest_failed_at", operation=operation),
+        )
+
+    async def record_flow_engine_native_branch(
+        self,
+        *,
+        action_id: str,
+        attempt_id: str,
+        worker_id: str,
+        lease_generation: int,
+        branch_index: int,
+        now: str,
+    ) -> tuple[str, str]:
+        """Record the branch the bridge picked, before the send: ``(outcome, template_name)``.
+
+        The base reads the data again and refuses a branch that is not the first
+        one that applies (``flow_engine_native_branch_stale``, a 55000 like the
+        others: a ``SupabasePermanentError`` with its reason). Idempotent per
+        attempt: the same branch again is ``already_recorded``.
+        """
+        operation = "record_flow_engine_native_branch"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/record_flow_engine_native_branch_v1",
+            content=json.dumps({
+                "p_action_id": action_id,
+                "p_attempt_id": attempt_id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": lease_generation,
+                "p_branch_index": branch_index,
+                "p_now": now,
+            }),
+        )
+        if response.status_code != 200:
+            rejection = _pilot_plan_rejection(response)
+            if rejection is not None:
+                raise SupabasePermanentError(f"{operation}_rejected: {rejection}", reason=rejection)
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1 or set(rows[0]) != {"outcome", "template_name"}:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        outcome = _required_string(rows[0], "outcome", operation=operation)
+        template = _required_string(rows[0], "template_name", operation=operation)
+        if outcome not in NATIVE_BRANCH_RECORD_OUTCOMES:
+            raise _invalid_row_error(operation)
+        return outcome, template
 
     async def read_flow_engine_routes(
         self, instance: Mapping[str, object]

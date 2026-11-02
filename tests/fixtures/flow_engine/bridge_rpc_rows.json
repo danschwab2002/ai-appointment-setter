@@ -135,7 +135,8 @@
         "cupon": "personal"
       },
       "legacy_dispatch_ok": true,
-      "entry_permission": "formulario"
+      "entry_permission": "formulario",
+      "template_branches": null
     },
     "cart_second_touch": {
       "flow_id": "00000000-0000-4000-8000-000000000011",
@@ -152,7 +153,8 @@
       ],
       "template_button": null,
       "legacy_dispatch_ok": true,
-      "entry_permission": "formulario"
+      "entry_permission": "formulario",
+      "template_branches": null
     },
     "cart_last_touch": {
       "flow_id": "00000000-0000-4000-8000-000000000011",
@@ -173,7 +175,8 @@
         "cupon": "personal"
       },
       "legacy_dispatch_ok": true,
-      "entry_permission": "formulario"
+      "entry_permission": "formulario",
+      "template_branches": null
     }
   },
   "reads": {

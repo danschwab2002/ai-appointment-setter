@@ -90,6 +90,8 @@ from bridge.payment_failure_followups import (
 )
 from bridge.payment_failure_variant import (
     PAYMENT_FAILURE_TRIGGER,
+    choose_native_branch,
+    recovery_button_suffix,
     PaymentFailureFirstTouchReady,
     PaymentFailurePlanningConfig,
     PaymentFailureVariantsConfig,
@@ -133,9 +135,11 @@ from bridge.recovery_agent import (
     is_valid_followup_message_proposal,
     required_recovery_decision,
 )
+from bridge.followup_discount import COUPON_CODE_RE
 from bridge.resolution import ResolutionError, resolve_event
 from bridge.supabase import (
     DeliveryAttempt,
+    FlowEngineNativeBranch,
     FlowEngineRunTerminated,
     FlowEngineStepContext,
     FollowupExecutionContext,
@@ -175,6 +179,13 @@ FLOW_ENGINE_POLICY_PREFIX = "flujo:"
 # Una version cuyas variables o boton el bridge no sabe armar (decision D5 de
 # la T2.4): cierra sin mandar y sin reintento.
 FLOW_ENGINE_STEP_UNSUPPORTED = "flow_engine_step_unsupported"
+# Las ramas del pago rechazado nativo (flow-engine-v2 §27, E-306): los datos y el
+# registro de la eleccion, que no responden, se reintentan; una eleccion vieja
+# (un rechazo nuevo entre la lectura y el registro) tambien.
+NATIVE_BRANCH_DATA_UNAVAILABLE = "flow_engine_native_branch_data_unavailable"
+NATIVE_BRANCH_RECORD_UNAVAILABLE = "flow_engine_native_branch_record_unavailable"
+NATIVE_BRANCH_STALE = "flow_engine_native_branch_stale"
+NATIVE_CHECKOUT_UNAVAILABLE = "flow_engine_native_checkout_unavailable"
 NATIVE_QUEUE_REFRESH_SECONDS = 60.0
 _FLOW_ENGINE_CART_BUTTON = {"link": "checkout", "cupon": "personal"}
 # Lo que el bridge arma a mano para cada paso del carrito: las variables, en
@@ -1390,6 +1401,7 @@ class DurableDispatcher:
                 action=action,
                 execution_context=execution_context,
                 step_template=step_template,
+                attempt=attempt,
             )
         cart_discount = self._cart_discount
         cart_followups = self._cart_followups
@@ -1772,17 +1784,29 @@ class DurableDispatcher:
         action: ScheduledAction,
         execution_context: FollowupExecutionContext,
         step_template: FlowEngineStepContext | None,
+        attempt: DeliveryAttempt | None = None,
     ) -> _ApprovedTemplateComposition:
         """The send of a native step (flow-engine-v2): its pinned template.
 
         A first contact with the variables the step declares, in its order,
         out of ``nombre`` and ``producto``, in a template whose category the
         permission of its pinned version accepts: utility with ``compra`` (rule 17), also marketing otherwise.
-        The step declares no button; the template may carry fixed URL buttons
+        Without a declared button the template may carry fixed URL buttons
         (E-115) and quick replies (2.6.0), and nothing else. Without the engine flag it closes for good
         (``flow_engine_native_needs_engine``): it never goes out with the
         template of the manifest. A step context that did not answer is
         retried; a shape the bridge cannot build closes for good.
+
+        The native refused payment (flow-engine-v2 §27, E-306) adds two things.
+        With ``template_branches`` (the chain), the base gives the three data,
+        the bridge picks the first branch that applies (``choose_native_branch``)
+        and records it before the send (the base reads the data again and
+        refuses a stale pick, which is retried); a failure of the data or of the
+        record closes with its own reason and never falls to another branch:
+        each branch says something that may not have happened. With the
+        checkout button (``{link: checkout}``, with or without a fixed coupon),
+        the link is OUR issued one (``offDiscount=<code>`` with the coupon), as
+        B1 of the legacy: the template opens with the checkout URL button.
         """
         if not self._flow_engine_enabled:
             return _ApprovedTemplateComposition(
@@ -1792,24 +1816,41 @@ class DurableDispatcher:
             return _ApprovedTemplateComposition(
                 failure_reason=NATIVE_STEP_CONTEXT_UNAVAILABLE
             )
+        if action.action_type != "first_contact_review" or step_template.step_key != action.step_key:
+            return self._native_step_unsupported(action, step_template)
+        template_name = step_template.template_name
+        template_language = step_template.template_language
         variables = step_template.template_variables
+        button = step_template.template_button
+        branches = step_template.template_branches
+        if branches is not None or button is not None:
+            if attempt is None:
+                # The record and the link are per attempt: without one there is nothing to build.
+                return self._native_step_unsupported(action, step_template)
+        if branches is not None:
+            picked = await self._pick_native_branch(action=action, attempt=attempt, branches=branches)
+            if isinstance(picked, _ApprovedTemplateComposition):
+                return picked
+            template_name = picked.template_name
+            template_language = picked.template_language
+            variables = picked.template_variables
+            button = picked.template_button
+        coupon_code: str | None = None
+        if button is not None:
+            coupon_code = button.get("cupon")
+            if (
+                set(button) - {"link", "cupon"}
+                or button.get("link") != "checkout"
+                or (coupon_code is not None and (
+                    not COUPON_CODE_RE.fullmatch(coupon_code) or coupon_code == "personal"))
+            ):
+                return self._native_step_unsupported(action, step_template)
         if (
-            action.action_type != "first_contact_review"
-            or step_template.step_key != action.step_key
-            or step_template.template_button is not None
-            or not variables
+            not variables
             or len(set(variables)) != len(variables)
             or not set(variables) <= NATIVE_STEP_VARIABLES
         ):
-            logger.warning(
-                "flow_engine_step_unsupported action_id=%s step=%s version=%s",
-                action.action_id,
-                action.step_key,
-                step_template.version,
-            )
-            return _ApprovedTemplateComposition(
-                failure_reason=FLOW_ENGINE_STEP_UNSUPPORTED, retryable=False
-            )
+            return self._native_step_unsupported(action, step_template)
         buyer_name = execution_context.buyer_name
         product_name = execution_context.product_name
         greeting_name: str | None = None
@@ -1849,21 +1890,31 @@ class DurableDispatcher:
             )
             return _ApprovedTemplateComposition(failure_reason=APPROVED_TEMPLATE_UNAVAILABLE)
         try:
-            approved = parse_approved_template(
-                inbox,
-                template_name=step_template.template_name,
-                expected_language=step_template.template_language,
-                expected_category=native_step_categories(step_template.entry_permission),
-                parameter_count=len(variables),
-                parameterless_buttons_only=True,
-            )
+            if button is None:
+                approved = parse_approved_template(
+                    inbox,
+                    template_name=template_name,
+                    expected_language=template_language,
+                    expected_category=native_step_categories(step_template.entry_permission),
+                    parameter_count=len(variables),
+                    parameterless_buttons_only=True,
+                )
+            else:
+                approved = parse_approved_template(
+                    inbox,
+                    template_name=template_name,
+                    expected_language=template_language,
+                    expected_category=native_step_categories(step_template.entry_permission),
+                    parameter_count=len(variables),
+                    checkout_button=True,
+                )
             message = approved.render(ordered)
-            processed = approved.processed_params(ordered)
+            processed = approved.processed_params(ordered) if button is None else None
         except ApprovedTemplateError as exc:
             logger.warning(
                 "approved_template_rejected action_id=%s template=%s reason=%s detail=%s",
                 action.action_id,
-                step_template.template_name,
+                template_name,
                 exc.reason,
                 exc.detail,
             )
@@ -1871,20 +1922,170 @@ class DurableDispatcher:
                 failure_reason=exc.reason,
                 retryable=exc.reason != APPROVED_TEMPLATE_PARAMETERS_MISSING,
             )
+        issuance_id: str | None = None
+        if button is not None:
+            assert attempt is not None
+            linked = await self._native_checkout_link(
+                action=action, attempt=attempt, approved=approved, ordered=ordered, coupon_code=coupon_code
+            )
+            if isinstance(linked, _ApprovedTemplateComposition):
+                return linked
+            issuance_id, processed = linked
         return _ApprovedTemplateComposition(
             proposal=FollowupMessageProposal(
-                strategy=f"approved_template:{step_template.template_name}",
+                strategy=f"approved_template:{template_name}",
                 message=message,
             ),
             greeting_name=greeting_name,
-            template_name=step_template.template_name,
+            template_name=template_name,
             template_params={
-                "name": step_template.template_name,
+                "name": template_name,
                 "category": approved.category,
-                "language": step_template.template_language,
+                "language": template_language,
                 "processed_params": processed,
             },
+            issuance_id=issuance_id,
         )
+
+    def _native_step_unsupported(
+        self, action: ScheduledAction, step_template: FlowEngineStepContext
+    ) -> _ApprovedTemplateComposition:
+        logger.warning(
+            "flow_engine_step_unsupported action_id=%s step=%s version=%s",
+            action.action_id,
+            action.step_key,
+            step_template.version,
+        )
+        return _ApprovedTemplateComposition(
+            failure_reason=FLOW_ENGINE_STEP_UNSUPPORTED, retryable=False
+        )
+
+    async def _pick_native_branch(
+        self,
+        *,
+        action: ScheduledAction,
+        attempt: DeliveryAttempt,
+        branches: tuple[FlowEngineNativeBranch, ...],
+    ) -> FlowEngineNativeBranch | _ApprovedTemplateComposition:
+        """The branch of the native refused payment, recorded before the send (flow-engine-v2 §27)."""
+        now = self._clock()
+        try:
+            data = await self._supabase.get_flow_engine_native_payment_failure_context(
+                action_id=action.action_id,
+                worker_id=self._worker_id,
+                lease_generation=action.lease_generation,
+                now=now,
+            )
+        except SupabasePermanentError as exc:
+            logger.warning(
+                "flow_engine_native_branch_data_rejected action_id=%s reason=%s",
+                action.action_id,
+                exc.reason,
+            )
+            return _ApprovedTemplateComposition(
+                failure_reason=exc.reason or NATIVE_BRANCH_DATA_UNAVAILABLE, retryable=False
+            )
+        except SupabaseError as exc:
+            logger.warning(
+                "flow_engine_native_branch_data_unavailable action_id=%s error=%s",
+                action.action_id,
+                type(exc).__name__,
+            )
+            return _ApprovedTemplateComposition(failure_reason=NATIVE_BRANCH_DATA_UNAVAILABLE)
+        try:
+            index = choose_native_branch(branches, data.value_of)
+        except ValueError:
+            return _ApprovedTemplateComposition(failure_reason=FLOW_ENGINE_STEP_UNSUPPORTED, retryable=False)
+        branch = branches[index]
+        try:
+            _, recorded = await self._supabase.record_flow_engine_native_branch(
+                action_id=action.action_id,
+                attempt_id=attempt.attempt_id,
+                worker_id=self._worker_id,
+                lease_generation=action.lease_generation,
+                branch_index=index,
+                now=now,
+            )
+        except SupabasePermanentError as exc:
+            logger.warning(
+                "flow_engine_native_branch_record_rejected action_id=%s branch=%s reason=%s",
+                action.action_id,
+                index,
+                exc.reason,
+            )
+            # A stale pick (a new refusal between the read and the record) is read again.
+            return _ApprovedTemplateComposition(
+                failure_reason=exc.reason or NATIVE_BRANCH_RECORD_UNAVAILABLE,
+                retryable=exc.reason == NATIVE_BRANCH_STALE,
+            )
+        except SupabaseError as exc:
+            logger.warning(
+                "flow_engine_native_branch_record_unavailable action_id=%s error=%s",
+                action.action_id,
+                type(exc).__name__,
+            )
+            return _ApprovedTemplateComposition(failure_reason=NATIVE_BRANCH_RECORD_UNAVAILABLE)
+        if recorded != branch.template_name:
+            return _ApprovedTemplateComposition(failure_reason=FLOW_ENGINE_STEP_UNSUPPORTED, retryable=False)
+        logger.info(
+            "flow_engine_native_branch_chosen action_id=%s branch=%s template=%s "
+            "tipo_de_rechazo=%s rechazos=%s descuento_previo=%s",
+            action.action_id,
+            index,
+            branch.template_name,
+            data.tipo_de_rechazo,
+            data.rechazos,
+            data.descuento_previo,
+        )
+        return branch
+
+    async def _native_checkout_link(
+        self,
+        *,
+        action: ScheduledAction,
+        attempt: DeliveryAttempt,
+        approved: Any,
+        ordered: dict[str, str],
+        coupon_code: str | None,
+    ) -> tuple[str, Any] | _ApprovedTemplateComposition:
+        """Our issued link for the checkout button of a native step, with the fixed coupon if any."""
+        try:
+            reservation = await self._supabase.reserve_recovery_checkout_issuance(
+                action_id=action.action_id,
+                worker_id=self._worker_id,
+                lease_generation=action.lease_generation,
+                attempt_id=attempt.attempt_id,
+                issuance_ulid=generate_issuance_ulid(),
+                now=self._clock(),
+            )
+        except SupabaseError as exc:
+            logger.warning(
+                "flow_engine_native_checkout_unavailable action_id=%s error=%s",
+                action.action_id,
+                type(exc).__name__,
+            )
+            return _ApprovedTemplateComposition(failure_reason=NATIVE_CHECKOUT_UNAVAILABLE)
+        if reservation.outcome != "reserved":
+            # A stop (a purchase, a blocked case or contact), a replay or a
+            # missing piece: none goes out without our link.
+            return _ApprovedTemplateComposition(
+                failure_reason=f"recovery_checkout_{reservation.outcome}", retryable=False
+            )
+        assert reservation.issuance_id is not None
+        assert reservation.checkout_url_final is not None
+        try:
+            suffix = recovery_button_suffix(reservation.checkout_url_final, coupon_code)
+            processed = approved.processed_params(ordered, button_suffix=suffix)
+        except (ValueError, ApprovedTemplateError) as exc:
+            logger.warning(
+                "flow_engine_native_checkout_button_invalid action_id=%s error=%s",
+                action.action_id,
+                type(exc).__name__,
+            )
+            return _ApprovedTemplateComposition(
+                failure_reason="flow_engine_native_checkout_button_invalid", retryable=False
+            )
+        return reservation.issuance_id, processed
 
     async def _record_payment_failure_first_touch(
         self,

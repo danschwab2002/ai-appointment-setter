@@ -1629,6 +1629,8 @@ _NATIVE_STATE = {"prendido": "on", "pausado": "paused", "apagado": "off", "cohor
 _SALES_FIELDS = ("runs_started", "purchases_after_send", "by_case", "by_identity", "by_link", "people_after_send",
                  "purchases_before_send")
 NATIVE_COHORT_MAX = 5
+# El nombre de una plantilla de Meta, la clave de by_branch.
+_BRANCH_TEMPLATE_RE = re.compile(r"[a-z0-9_]{1,512}")
 
 
 def build_native_flows(raw: object) -> list[dict[str, object]]:
@@ -1715,6 +1717,14 @@ def attach_sales(flows: Sequence[dict[str, object]], raw: object) -> list[dict[s
         sales["by_step"] = {
             step: count for step, count in (by_step or {}).items() if code_ok(step) and _int(count) is not None
         } if isinstance(by_step, dict) else {}
+        # by_branch (20261103000900, E-306): las versiones del pago rechazado nativo, por plantilla.
+        by_branch = item.get("by_branch")
+        sales["by_branch"] = {
+            template: {"sends": _int(counts.get("sends")), "purchases": _int(counts.get("purchases"))}
+            for template, counts in (by_branch or {}).items()
+            if isinstance(template, str) and _BRANCH_TEMPLATE_RE.fullmatch(template) and isinstance(counts, dict)
+            and _int(counts.get("sends")) is not None and _int(counts.get("purchases")) is not None
+        } if isinstance(by_branch, dict) else {}
         sales.update({
             "since": raw.get("since") if isinstance(raw.get("since"), str) else None,
             "until": raw.get("until") if isinstance(raw.get("until"), str) else None,

@@ -1,0 +1,172 @@
+{
+  "_capture": {
+    "origen": "validate_flow_engine_native_payment_failure_branches.mjs: la cadena entera de migraciones (PGlite), el formulario y los rechazos capturados de Maribel por las admisiones portables, y las cuatro plantillas reconstruidas de Maribel en las ramas",
+    "encargo": "E-306",
+    "regenerar": "cd tests/sql/followup_engine && node validate_flow_engine_native_payment_failure_branches.mjs --emit"
+  },
+  "step_context": {
+    "flow_id": "<flow_id>",
+    "version": 1,
+    "product_ref": "att1",
+    "flow_key": "pago_rechazado",
+    "step_key": "first_contact",
+    "send_ordinal": 1,
+    "template_name": "maribel_pago_rechazado_banco_01",
+    "template_language": "es_MX",
+    "template_variables": [
+      "nombre",
+      "producto"
+    ],
+    "template_button": {
+      "link": "checkout",
+      "cupon": "PROTOCOLO10"
+    },
+    "legacy_dispatch_ok": false,
+    "entry_permission": "formulario",
+    "template_branches": [
+      {
+        "paso": {
+          "boton": {
+            "link": "checkout",
+            "cupon": "PROTOCOLO10"
+          },
+          "idioma": "es_MX",
+          "plantilla": "maribel_pago_rechazado_cupon_01",
+          "variables": [
+            "nombre",
+            "producto"
+          ]
+        },
+        "cuando": {
+          "es": [
+            "si"
+          ],
+          "dato": "descuento_previo"
+        }
+      },
+      {
+        "paso": {
+          "boton": {
+            "link": "checkout",
+            "cupon": "PROTOCOLO10"
+          },
+          "idioma": "es_MX",
+          "plantilla": "maribel_pago_rechazado_dos_veces_01",
+          "variables": [
+            "nombre",
+            "producto"
+          ]
+        },
+        "cuando": {
+          "es": [
+            "varios"
+          ],
+          "dato": "rechazos"
+        }
+      },
+      {
+        "paso": {
+          "boton": {
+            "link": "checkout",
+            "cupon": "PROTOCOLO10"
+          },
+          "idioma": "es_MX",
+          "plantilla": "maribel_pago_rechazado_saldo_01",
+          "variables": [
+            "nombre",
+            "producto"
+          ]
+        },
+        "cuando": {
+          "es": [
+            "sin_saldo"
+          ],
+          "dato": "tipo_de_rechazo"
+        }
+      },
+      {
+        "paso": {
+          "boton": {
+            "link": "checkout",
+            "cupon": "PROTOCOLO10"
+          },
+          "idioma": "es_MX",
+          "plantilla": "maribel_pago_rechazado_banco_01",
+          "variables": [
+            "nombre",
+            "producto"
+          ]
+        },
+        "cuando": null
+      }
+    ]
+  },
+  "data_saldo": {
+    "tipo_de_rechazo": "sin_saldo",
+    "rechazos": "uno",
+    "descuento_previo": "no",
+    "refusal_count": 1
+  },
+  "data_banco": {
+    "tipo_de_rechazo": "banco",
+    "rechazos": "uno",
+    "descuento_previo": "no",
+    "refusal_count": 1
+  },
+  "data_dos": {
+    "tipo_de_rechazo": "banco",
+    "rechazos": "varios",
+    "descuento_previo": "no",
+    "refusal_count": 2
+  },
+  "data_previo": {
+    "tipo_de_rechazo": "banco",
+    "rechazos": "uno",
+    "descuento_previo": "si",
+    "refusal_count": 1
+  },
+  "record": {
+    "outcome": "recorded",
+    "template_name": "maribel_pago_rechazado_banco_01"
+  },
+  "record_replay": {
+    "outcome": "already_recorded",
+    "template_name": "maribel_pago_rechazado_banco_01"
+  },
+  "record_stale": {
+    "code": "55000",
+    "message": "flow_engine_native_branch_stale"
+  },
+  "reservation": {
+    "outcome": "reserved",
+    "offer_resolution": "recovery_case_offer",
+    "url_shape": "https://pay.hotmart.com/D98014973Y?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<sck>"
+  },
+  "authorization": {
+    "outcome": "request_started"
+  },
+  "sales_by_branch": {
+    "maribel_pago_rechazado_banco_01": {
+      "sends": 1,
+      "purchases": 1
+    }
+  },
+  "plain_step_context": {
+    "flow_id": "<flow_id>",
+    "version": 1,
+    "product_ref": "att1",
+    "flow_key": "pago_rechazado_simple",
+    "step_key": "first_contact",
+    "send_ordinal": 1,
+    "template_name": "maribel_pago_rechazado_banco_01",
+    "template_language": "es_MX",
+    "template_variables": [
+      "nombre",
+      "producto"
+    ],
+    "template_button": null,
+    "legacy_dispatch_ok": false,
+    "entry_permission": "formulario",
+    "template_branches": null
+  }
+}

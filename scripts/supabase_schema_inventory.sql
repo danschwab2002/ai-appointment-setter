@@ -6539,6 +6539,47 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'customer_status'
+    union all
+    select
+        '20261103000900',
+        '20261103000900_flow_engine_native_payment_failure_branches_v1.sql',
+        -- Las ramas del pago rechazado nativo (E-306): los datos y el registro,
+        -- solo para service_role ...
+        (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public.get_flow_engine_native_payment_failure_context_v1(uuid,text,bigint,timestamptz)'),
+                to_regprocedure('public.record_flow_engine_native_branch_v1(uuid,uuid,text,bigint,integer,timestamptz)')
+            )
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- ... el contexto del paso con sus ramas ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.flow_engine_execution_context_v1(uuid)')
+              and position('flow_engine_native_payment_failure_branches' in definition) > 0
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+        )::int
+        -- ... y la forma, el compilador y la reserva del link, con su marca.
+        + (
+            select count(*) = 3
+            from functions
+            where oid in (
+                to_regprocedure('public._flow_engine_native_unsupported(jsonb)'),
+                to_regprocedure('public._flow_engine_compile_policy_core(jsonb,text,integer,text,text)'),
+                to_regprocedure('public.reserve_recovery_checkout_issuance_v1(uuid,text,bigint,uuid,text,timestamptz)')
+            )
+              and position('flow_engine_native_payment_failure' in definition) > 0
+        )::int,
+        3,
+        'flow_engine_native_payment_failure_branches'
 )
 select
     version,
