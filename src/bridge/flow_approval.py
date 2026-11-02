@@ -11,9 +11,16 @@ sumar un telefono a la cohorte, siempre con el ID de Slack de la sesion.
 Las rutas, todas bajo ``/flow-approval/`` y solo con ``FLOW_APPROVAL_ENABLED``
 (apagado, no existen y dan 404):
 
-* ``GET /flow-approval/``: la lista de flujos de la instancia (con pausar y la
-  cohorte) y las propuestas validadas o aprobadas sin vencer.
-* ``GET /flow-approval/p/{proposal_id}``: una propuesta y sus botones.
+* ``GET /flow-approval/``: las propuestas validadas o aprobadas sin vencer, el
+  boton «Historial» y la lista de flujos de la instancia (con pausar y la
+  cohorte).
+* ``GET /flow-approval/historial``: todas las propuestas (E-295), de a
+  ``HISTORY_PAGE``, la mas nueva arriba, con ``?desde=<id>`` para la pagina
+  siguiente; cada una abre su detalle.
+* ``GET /flow-approval/p/{proposal_id}``: una propuesta, su linea de tiempo y
+  sus botones; si esta cerrada (publicada, descartada o vencida), solo lectura.
+* ``GET /flow-approval/p/{proposal_id}/v/{flow_id}/{version}``: la version de un
+  flujo que publico esa propuesta (E-295), solo lectura.
 * ``POST /flow-approval/p/{proposal_id}/publish``: aprobar y publicar, como
   ``_publish`` del comando del operador (relee, catalogo, revalida en fase
   ``publish`` con la clase de quien pidio, aprueba con ``slack``, revalida si
@@ -368,6 +375,19 @@ class ApprovalStore:
         return await self._rpc("approver_read_open_flow_changes_v1", {
             "p_instance": instance, "p_session_hash": session_hash, "p_proposal_id": proposal_id})
 
+    # -- el historial (E-295, migracion 20261103000600). Solo lectura. -----------
+
+    async def list_history(self, instance: Mapping[str, str], *, session_hash: str, before: str | None,
+                           limit: int) -> dict[str, Any]:
+        return await self._rpc("approver_list_flow_changes_v1", {
+            "p_instance": instance, "p_session_hash": session_hash, "p_before_proposal_id": before,
+            "p_limit": limit})
+
+    async def read_record(self, instance: Mapping[str, str], *, session_hash: str,
+                          proposal_id: str) -> dict[str, Any]:
+        return await self._rpc("approver_read_flow_change_record_v1", {
+            "p_instance": instance, "p_session_hash": session_hash, "p_proposal_id": proposal_id})
+
     # -- las escrituras (A′ PR 3b). El actor lo pone la base, desde la sesion. ----
 
     async def approve(self, instance: Mapping[str, str], *, session_hash: str, proposal_id: str,
@@ -645,7 +665,12 @@ _PAGE_CSS = (
     ".row-sub{color:var(--cw-subtle);font-size:12px;overflow-wrap:anywhere}.row-forms{display:flex;flex-wrap:wrap;gap:8px;"
     "justify-content:flex-end}.row-forms form{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin:0}"
     "a.row{color:var(--cw-text);text-decoration:none}a.row:hover{background:var(--cw-hover)}"
-    ".empty{padding:16px 18px;color:var(--cw-muted);font-size:14px}\n"
+    ".empty{padding:16px 18px;color:var(--cw-muted);font-size:14px}"
+    ".header-actions{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;margin:14px 0 0}"
+    ".more{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:14px 18px;"
+    "border-top:1px solid var(--cw-border-soft);font-size:13px}"
+    "ol.timeline{margin:0;padding-left:18px;font-size:14px;display:grid;gap:6px}ol.timeline li{overflow-wrap:anywhere}"
+    ".when{color:var(--cw-subtle);font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}\n"
     ".auth{max-width:460px;margin:9vh auto 0}.confirm{max-width:560px}.auth .panel-body{display:grid;gap:14px}.auth .button{width:100%}\n"
     "@media(max-width:880px){.layout{grid-template-columns:1fr}.panel--side{position:static}}"
     "@media(max-width:620px){.topbar{height:58px;padding:0 16px}.brand-name,.secure-badge{display:none}"
@@ -948,8 +973,269 @@ def _render_simulation(simulation: object) -> str:
     return f"<div><h3>Simulación</h3><pre>{_esc(_json_text(summary))}</pre></div>"
 
 
+# -- el historial (E-295) ---------------------------------------------------------
+
+# Cuantas propuestas trae cada pagina del historial (la base acepta de 1 a 50).
+HISTORY_PAGE = 20
+# La pagina del historial: se llega por el boton «Historial» de la portada (pedido de Dan del 2026-11-02).
+HISTORY_PATH = f"{PREFIX}/historial"
+# Lo que esta abierto y lo que ya termino: una cerrada es solo lectura.
+OPEN_STATUSES = frozenset({"borrador", "validada", "aprobada"})
+# El estado en palabras, en la lista. Va el efectivo: una validada que paso las 24 horas es vencida.
+_HISTORY_STATUS = {
+    "borrador": "borrador, sin validar", "validada": "esperando el sí", "aprobada": "aprobada, sin publicar",
+    "publicada": "publicada", "descartada": "descartada", "vencida": "vencida sin publicar",
+}
+_HISTORY_CHIP = {"validada": "chip--info", "aprobada": "chip--warn", "publicada": "chip--ok"}
+# La linea de tiempo: que paso, en palabras (los tipos del CHECK de flow_change_events, 20261024000600).
+_EVENT_TEXT = {
+    "flow_change_draft_saved": "Se guardó el borrador",
+    "flow_change_validation_blocked": "La validación encontró bloqueos",
+    "flow_change_validation_rejected": "La base no aceptó la validación",
+    "flow_change_validated": "Se validó: quedó esperando el sí",
+    "flow_change_approved": "Se aprobó",
+    "flow_change_approval_rejected": "No se pudo aprobar",
+    "flow_change_publish_rejected": "No se pudo publicar",
+    "flow_change_published": "Se publicó",
+    "flow_control_changed": "Cambió el estado del flujo",
+    "flow_change_discarded": "Se descartó",
+    "flow_change_expired": "Venció sin publicarse",
+    "flow_route_created": "Se creó la ruta del flujo nativo",
+    "flow_route_moved": "Se movió la ruta del flujo nativo",
+    "flow_created": "Se creó el flujo",
+    "flow_cohort_changed": "Cambió la cohorte de prueba",
+}
+# Los eventos que no salieron bien: su codigo va al lado, para quien quiera buscarlo.
+_EVENT_WARN = frozenset({"flow_change_validation_blocked", "flow_change_validation_rejected",
+                         "flow_change_approval_rejected", "flow_change_publish_rejected"})
+# Un actor: un ID de Slack, el codigo del operador o el del sistema (_flow_store_actor_is_valid).
+_ACTOR_REF = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+
+
+def _when(value: object, time_zone: str | None) -> str:
+    """Una fecha de la base como dia y hora, en la zona de la instancia (o UTC, y lo dice)."""
+    if not isinstance(value, str):
+        return "—"
+    try:
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return _esc(value)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    zone = None
+    if time_zone:
+        try:
+            from zoneinfo import ZoneInfo
+
+            zone = ZoneInfo(time_zone)
+        except (ValueError, KeyError, OSError):
+            zone = None
+    shown = moment.astimezone(zone or UTC)
+    return shown.strftime("%d/%m/%Y %H:%M") + ("" if zone is not None else " UTC")
+
+
+def _actor(kind: object, ref: object, *, me: str | None = None) -> str:
+    """Quien hizo algo: la clase y su ID de Slack o su codigo. Nunca un telefono ni un mail (la base no los guarda)."""
+    who = f"<code>{_esc(ref)}</code>" if isinstance(ref, str) and _ACTOR_REF.fullmatch(ref) else None
+    if kind == "slack":
+        if who is None:
+            return "alguien por Slack"
+        return f"vos ({who})" if ref == me else f"{who} por Slack"
+    if kind == "automation_expert":
+        return f"el agente, a pedido de {who}" if who else "el agente"
+    if kind == "operador":
+        return f"el operador {who}" if who else "el operador"
+    if kind == "sistema":
+        return "el sistema"
+    return _esc(kind) if kind else "—"
+
+
+def _proposal_title(flows_of_row: object, names: Mapping[tuple[str, str], str]) -> str:
+    parts = []
+    for flow in flows_of_row if isinstance(flows_of_row, list) else []:
+        if not isinstance(flow, Mapping):
+            continue
+        key = (str(flow.get("producto")), str(flow.get("flujo")))
+        name = names.get(key) or _flow_name(*key)
+        parts.append(f"{_TIPO.get(str(flow.get('tipo')), flow.get('tipo'))}: {name}")
+    return "; ".join(parts) or "Propuesta sin flujos"
+
+
+def _version_path(proposal_id: object, version: Mapping[str, Any]) -> str | None:
+    flow_id, number = version.get("flow_id"), version.get("version")
+    if not (_canonical_uuid(proposal_id) and _canonical_uuid(flow_id) and isinstance(number, int)
+            and not isinstance(number, bool) and number > 0):
+        return None
+    return f"{PREFIX}/p/{proposal_id}/v/{flow_id}/{number}"
+
+
+def _history_row(row: Mapping[str, Any], names: Mapping[tuple[str, str], str], time_zone: str | None,
+                 me: str | None) -> str:
+    proposal_id = row.get("proposal_id")
+    if not _canonical_uuid(proposal_id):
+        return ""
+    status = str(row.get("effective_status") or row.get("status"))
+    lines = [f"pedida por {_actor(row.get('requested_by_kind'), row.get('requested_by_ref'), me=me)} el "
+             f"{_when(row.get('created_at'), time_zone)}"]
+    if row.get("approved_at"):
+        lines.append(f"aprobada por {_actor(row.get('approved_by_kind'), row.get('approved_by_ref'), me=me)} el "
+                     f"{_when(row.get('approved_at'), time_zone)}")
+    if row.get("published_at"):
+        versions = [version for version in row.get("versions") or [] if isinstance(version, Mapping)]
+        made = ", ".join(f"{_esc(_flow_name(v.get('producto'), v.get('flujo')))} versión {_esc(v.get('version'))}"
+                         for v in versions)
+        lines.append(f"publicada el {_when(row.get('published_at'), time_zone)}" + (f" ({made})" if made else ""))
+    if status == "descartada" and row.get("closed_at"):
+        lines.append(f"descartada por {_actor(row.get('closed_by_kind'), row.get('closed_by_ref'), me=me)} el "
+                     f"{_when(row.get('closed_at'), time_zone)}")
+    elif status == "vencida":
+        lines.append(f"venció el {_when(row.get('expires_at'), time_zone)}")
+    return (f'<a class="row" href="{PREFIX}/p/{_esc(proposal_id)}"><div><div class="row-name">'
+            f"{_esc(_proposal_title(row.get('flows'), names))}</div>"
+            f'<div class="row-sub">{" · ".join(lines)}</div></div>'
+            f"<div>{_chip(_HISTORY_STATUS.get(status, status), _HISTORY_CHIP.get(status))}</div></a>")
+
+
+def _flow_names(flows: list[Mapping[str, Any]]) -> dict[tuple[str, str], str]:
+    """El nombre de cada flujo del almacen (el de su version activa), por producto y flujo."""
+    out: dict[tuple[str, str], str] = {}
+    for flow in flows:
+        versions = flow.get("versions") if isinstance(flow.get("versions"), Mapping) else {}
+        active = versions.get(str(flow.get("active_version"))) if flow.get("active_version") is not None else None
+        if isinstance(active, Mapping) and isinstance(active.get("nombre"), str):
+            out[(str(flow.get("product_ref")), str(flow.get("flow_key")))] = active["nombre"]
+    return out
+
+
+def _render_history(history: Mapping[str, Any], flows: list[Mapping[str, Any]], *, time_zone: str | None,
+                    me: str | None, before: str | None) -> str:
+    if history.get("unavailable") is True:
+        return ('<section class="panel" id="historial"><div class="panel-heading"><h2>Las propuestas</h2></div>'
+                '<p class="empty">El historial no contestó. Probá en un rato.</p></section>')
+    rows = [row for row in history.get("proposals") or [] if isinstance(row, Mapping)]
+    names = _flow_names(flows)
+    listed = "".join(_history_row(row, names, time_zone, me) for row in rows)
+    total = history.get("total")
+    count = (f"{total} {'propuesta' if total == 1 else 'propuestas'} en total. "
+             if isinstance(total, int) and not isinstance(total, bool) else "")
+    more = ""
+    following = history.get("next_before")
+    if history.get("has_more") is True and _canonical_uuid(following):
+        more += f'<a class="button" href="{HISTORY_PATH}?{urlencode({"desde": following})}">Ver más</a>'
+    if before is not None:
+        more += f'<a href="{HISTORY_PATH}">Volver a las más nuevas</a>'
+    return ('<section class="panel" id="historial"><div class="panel-heading"><h2>Las propuestas</h2>'
+            f"<p>{count}La más nueva arriba.</p></div>"
+            + (listed if listed else '<p class="empty">' + ("No hay más propuestas." if before else
+                                                             "Todavía no hay propuestas.") + "</p>")
+            + (f'<div class="more">{more}</div>' if more else "") + "</section>")
+
+
+def _render_history_page(history: Mapping[str, Any], flows: list[Mapping[str, Any]], *, time_zone: str | None,
+                         me: str | None, before: str | None) -> str:
+    return ('<header class="page-header"><p class="meta"><a href="' + PREFIX + '/">Aprobación de flujos</a></p>'
+            "<h1>Historial de propuestas</h1>"
+            '<p class="meta">Todo lo que el agente o el operador propuso cambiar en los flujos de esta instancia. '
+            "Abrí una para ver qué cambiaba y qué pasó.</p></header>"
+            + _render_history(history, flows, time_zone=time_zone, me=me, before=before))
+
+
+def _render_timeline(record: Mapping[str, Any], time_zone: str | None, me: str | None) -> str:
+    events = [event for event in record.get("events") or [] if isinstance(event, Mapping)]
+    items = []
+    for event in events:
+        kind = str(event.get("event_type"))
+        text = _esc(_EVENT_TEXT.get(kind, kind))
+        if event.get("producto") and event.get("flujo"):
+            text += f" · {_esc(_flow_name(event.get('producto'), event.get('flujo')))}"
+        code = event.get("reason_code")
+        if kind in _EVENT_WARN and isinstance(code, str) and _CODE.fullmatch(code):
+            text += f" <code>{_esc(code)}</code>"
+        items.append(f'<li><span class="when">{_when(event.get("created_at"), time_zone)}</span> {text}'
+                     f'<span class="row-sub"> · {_actor(event.get("actor_kind"), event.get("actor_ref"), me=me)}'
+                     "</span></li>")
+    total = record.get("events_total")
+    cut = (f'<p class="meta">Se muestran los primeros {len(events)} de {total} eventos.</p>'
+           if isinstance(total, int) and total > len(events) else "")
+    return ('<section class="panel"><div class="panel-heading"><h2>Lo que pasó</h2>'
+            "<p>Cada paso de la propuesta, el más viejo arriba.</p></div><div class=\"panel-body\">"
+            + (f'<ol class="timeline">{"".join(items)}</ol>' if items else '<p class="muted">Sin eventos.</p>')
+            + cut + "</div></section>")
+
+
+def _render_closed(record: Mapping[str, Any], proposal_id: str, time_zone: str | None, me: str | None) -> str:
+    """El lado de una propuesta cerrada: como termino, quien, y la version que genero. Sin botones."""
+    status = str(record.get("effective_status") or record.get("status"))
+    if status == "publicada":
+        parts = ['<div class="notice notice--ok"><p>Esta propuesta ya está publicada: es solo lectura.</p></div>']
+    else:
+        parts = [f'<div class="notice"><p>Esta propuesta está <strong>{_esc(_HISTORY_STATUS.get(status, status))}'
+                 "</strong>: es solo lectura.</p></div>"]
+    facts = [f"<li>Pedida por {_actor(record.get('requested_by_kind'), record.get('requested_by_ref'), me=me)} "
+             f"el {_when(record.get('created_at'), time_zone)}</li>"]
+    if record.get("approved_at"):
+        facts.append(f"<li>Aprobada por {_actor(record.get('approved_by_kind'), record.get('approved_by_ref'), me=me)}"
+                     f" el {_when(record.get('approved_at'), time_zone)}</li>")
+    if record.get("published_at"):
+        facts.append(f"<li>Publicada el {_when(record.get('published_at'), time_zone)}</li>")
+    if status == "descartada":
+        facts.append(f"<li>Descartada por {_actor(record.get('closed_by_kind'), record.get('closed_by_ref'), me=me)}"
+                     f" el {_when(record.get('closed_at'), time_zone)}</li>")
+    elif status == "vencida":
+        facts.append(f"<li>Venció el {_when(record.get('expires_at'), time_zone)}, sin publicarse</li>")
+    parts.append(f'<ul class="plain">{"".join(facts)}</ul>')
+    reason = record.get("close_reason")
+    if status == "descartada" and isinstance(reason, str) and reason:
+        parts.append(f'<h3>El motivo</h3><p class="meta">Texto de quien la descartó, sin verificar.</p>'
+                     f'<div class="note">{_esc(reason)}</div>')
+    links = []
+    for version in record.get("versions") or []:
+        if isinstance(version, Mapping) and (path := _version_path(proposal_id, version)):
+            links.append(f'<li><a href="{_esc(path)}">{_esc(_flow_name(version.get("producto"), version.get("flujo")))}'
+                         f", versión {_esc(version.get('version'))}</a></li>")
+    if links:
+        parts.append(f'<h3>Lo que generó</h3><ul class="plain">{"".join(links)}</ul>')
+    return "".join(parts)
+
+
+def _render_version(flow: Mapping[str, Any], number: int, definition: Mapping[str, Any], proposal_id: str,
+                    messages: Mapping[str, Mapping[str, Any]], *, time_zone: str | None,
+                    published_at: object) -> str:
+    name = definition.get("nombre") or _flow_name(flow.get("product_ref"), flow.get("flow_key"))
+    active = flow.get("active_version")
+    if active == number:
+        now = _chip(f"es la versión de hoy · {_ESTADO_FLUJO.get(str(flow.get('state')), flow.get('state'))}",
+                    _ESTADO_CHIP.get(str(flow.get("state"))))
+    else:
+        now = _chip(f"ya no es la de hoy: hoy corre la versión {active if active is not None else '—'}", "chip--warn")
+    cells = [("Qué flujo", f"{_esc(name)}<small>{_esc(_flow_name(flow.get('product_ref'), flow.get('flow_key')))}"
+                          "</small>"),
+             ("Versión", f"{_esc(number)}<small>publicada el {_when(published_at, time_zone)}</small>"),
+             ("Cuándo arranca", _trigger_text(definition)), ("En qué horario", _schedule_text(definition)),
+             ("Cuándo termina", _end_text(definition))]
+    summary = '<div class="summary-grid">' + "".join(
+        f'<div class="summary-item"><span class="summary-label">{label}</span><div class="summary-value">{value}</div>'
+        "</div>" for label, value in cells) + "</div>"
+    steps = _render_steps(definition.get("pasos"), "/pasos", messages)
+    body = ('<section class="panel"><div class="panel-heading"><h2>Resumen</h2>'
+            "<p>La versión del flujo que publicó la propuesta.</p></div>" + summary)
+    if steps:
+        body += ('<div class="panel-heading panel-heading--split"><h2>Lo que recibe la persona</h2>'
+                 "<p>Los mensajes como los vio quien aprobó, en la vista previa de la propuesta.</p></div>"
+                 f'<div class="thread">{steps}</div>')
+    body += "</section>"
+    body += ('<section class="panel"><details class="tech"><summary>Detalle técnico (la definición)</summary>'
+             f'<div class="tech-body"><pre>{_esc(json.dumps(definition, ensure_ascii=False, indent=2, sort_keys=True))}'
+             "</pre></div></details></section>")
+    return (f'<header class="page-header"><p class="meta">Versión de un flujo</p><h1>{_esc(name)}, versión '
+            f'{_esc(number)}</h1><p class="meta">{now}<a href="{PREFIX}/p/{_esc(proposal_id)}">La propuesta que la '
+            f'publicó</a><a href="{PREFIX}/">Ver todos los flujos</a></p></header><div class="stack">{body}</div>')
+
+
 def _render_proposal(proposal: Mapping[str, Any], others: list[Mapping[str, Any]], *, actions: str = "",
-                     done: Mapping[str, str] | None = None, flows: list[Mapping[str, Any]] | None = None) -> str:
+                     done: Mapping[str, str] | None = None, flows: list[Mapping[str, Any]] | None = None,
+                     record: Mapping[str, Any] | None = None, time_zone: str | None = None,
+                     me: str | None = None) -> str:
     status = proposal.get("effective_status") or proposal.get("status")
     validation = proposal.get("validation") if isinstance(proposal.get("validation"), Mapping) else {}
     preview = validation.get("preview") if isinstance(validation.get("preview"), Mapping) else {}
@@ -976,7 +1262,7 @@ def _render_proposal(proposal: Mapping[str, Any], others: list[Mapping[str, Any]
     done_html = _render_done(done or {})
     if done_html:
         main.append(done_html)
-    if others:
+    if others and str(status) in OPEN_STATUSES:
         listed = "".join(
             f"<li>{_esc(', '.join(f'{flow.get('producto')}/{flow.get('flujo')}' for flow in other.get('flows') or []))}"
             f" · {_esc(_STATUS.get(str(other.get('status')), other.get('status')))}"
@@ -1031,7 +1317,8 @@ def _render_proposal(proposal: Mapping[str, Any], others: list[Mapping[str, Any]
     if warnings:
         impact.append(f"<h3>Advertencias</h3><p>El validador dejó {len(warnings)} "
                       f"{'advertencia' if len(warnings) == 1 else 'advertencias'}: están en «Detalle técnico».</p>")
-    main.append('<section class="panel"><div class="panel-heading"><h2>Antes de decidir</h2></div>'
+    decide = "Antes de decidir" if str(status) in OPEN_STATUSES else "Lo que se vio antes de decidir"
+    main.append(f'<section class="panel"><div class="panel-heading"><h2>{decide}</h2></div>'
                 f'<div class="panel-body">{"".join(impact)}</div></section>')
     tech = [f"<div><h3>La propuesta</h3><p><code>{_esc(proposal.get('proposal_id'))}</code> · pedida por "
             f"{_esc(proposal.get('requested_by_kind'))} · estado <code>{_esc(status)}</code></p></div>"]
@@ -1047,12 +1334,21 @@ def _render_proposal(proposal: Mapping[str, Any], others: list[Mapping[str, Any]
     if gaps:
         tech.append("<div><h3>Lo que la vista previa todavía no sabe</h3><ul class=\"plain\">" + "".join(
             f"<li><code>{_esc(gap.get('code'))}</code></li>" for gap in gaps) + "</ul></div>")
+    if record is not None:
+        main.append(_render_timeline(record, time_zone, me))
     main.append('<section class="panel"><details class="tech"><summary>Detalle técnico (campo por campo)</summary>'
                 f'<div class="tech-body">{"".join(tech)}</div></details></section>')
-    side = (f'<aside class="panel panel--side"><div class="panel-heading"><h2>Tu decisión</h2>'
-            "<p>Publicar hace que el cambio empiece a correr.</p></div>"
-            f'<div class="actions">{actions}<p class="meta"><a href="{PREFIX}/">Ver todos los flujos</a></p></div>'
-            "</aside>")
+    back = (f'<p class="meta"><a href="{PREFIX}/">Ver todos los flujos</a> · '
+            f'<a href="{HISTORY_PATH}">Volver al historial</a></p>')
+    if str(status) in OPEN_STATUSES:
+        side = (f'<aside class="panel panel--side"><div class="panel-heading"><h2>Tu decisión</h2>'
+                "<p>Publicar hace que el cambio empiece a correr.</p></div>"
+                f'<div class="actions">{actions}{back}</div></aside>')
+    else:
+        closed = _render_closed(record or proposal, str(proposal.get("proposal_id")), time_zone, me)
+        side = (f'<aside class="panel panel--side"><div class="panel-heading"><h2>Cómo terminó</h2>'
+                "<p>Una propuesta cerrada no se aprueba ni se descarta.</p></div>"
+                f'<div class="actions">{closed}{back}</div></aside>')
     return f'{header}<div class="layout"><div class="stack">{"".join(main)}</div>{side}</div>'
 
 
@@ -1260,10 +1556,12 @@ def _render_index(store: Mapping[str, Any], open_rows: list[Mapping[str, Any]], 
     return (_render_done(done or {})
             + '<header class="page-header"><p class="meta">Aprobación de flujos</p><h1>Flujos de la instancia</h1>'
             '<p class="meta">Los mensajes automáticos que manda el recuperador y lo que el agente propone cambiar.</p>'
+            f'<p class="header-actions"><a class="button" href="{HISTORY_PATH}">Historial</a>'
+            '<span class="meta">Todas las propuestas, también las publicadas, descartadas y vencidas.</span></p>'
             '</header><div class="stack"><section class="panel"><div class="panel-heading">'
             "<h2>Propuestas esperando el sí</h2><p>Abrí una para ver qué cambia y decidir.</p></div>"
-            + (proposals if proposals else '<p class="empty">Ninguna.</p>')
-            + '</section><section class="panel"><div class="panel-heading"><h2>Los flujos</h2>'
+            + (proposals if proposals else '<p class="empty">Ninguna.</p>') + "</section>"
+            + '<section class="panel"><div class="panel-heading"><h2>Los flujos</h2>'
             "<p>Pausar frena los recorridos nuevos; los que están en curso esperan sin mandar.</p></div>"
             + (rows if rows else '<p class="empty">Esta instancia no tiene flujos.</p>') + "</section></div>")
 
@@ -1421,6 +1719,45 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
         return HTMLResponse(_shell("Flujos", _render_index(flows, rows, csrf=csrf, done=_done_from_query(request, config, secret)),
                                    user=user, csrf=csrf))
 
+    @app.get(HISTORY_PATH)
+    async def history_page(request: Request) -> Response:
+        """El historial de propuestas (E-295): de a ``HISTORY_PAGE``, con ?desde=<id> para la pagina siguiente."""
+        before = request.query_params.get("desde")
+        if before is not None and not _canonical_uuid(before):
+            return _page("Historial", "No existe esa página del historial.", 404)
+        who = await _who(request)
+        if who is None:
+            return _logged_out(_login(None))
+        user, secret = who
+        try:
+            flows = await store.read_store(instance, session_hash=_sha(secret))
+        except SessionInvalid:
+            return _logged_out(_login(None))
+        except (StoreUnavailable, StoreRejected):
+            # Sin el almacen, el historial sale igual: los flujos solo dan el nombre de cada uno.
+            flows = {}
+        history = await _history(secret, before)
+        if isinstance(history, Response):
+            return history
+        logger.info("flow_approval route=history rows=%d", len(history.get("proposals") or []))
+        csrf = config.csrf_token(secret)
+        return HTMLResponse(_shell("Historial", _render_history_page(
+            history, _flows_of(flows), time_zone=time_zone, me=user, before=before), user=user, csrf=csrf))
+
+    async def _history(secret: str, before: str | None) -> dict[str, Any] | Response:
+        """Una pagina del historial. Si la lectura no contesta, la portada sale igual y lo dice."""
+        try:
+            return await store.list_history(instance, session_hash=_sha(secret), before=before, limit=HISTORY_PAGE)
+        except SessionInvalid:
+            return _logged_out(_login(None))
+        except StoreRejected as rejected:
+            if rejected.code == "flow_change_not_found":
+                return _page("Historial", "No existe esa página del historial.", 404)
+            logger.info("flow_approval route=history history=%s", rejected.code)
+        except StoreUnavailable:
+            logger.info("flow_approval route=history history=unavailable")
+        return {"unavailable": True, "proposals": []}
+
     @app.get(PREFIX + "/p/{proposal_id}")
     async def proposal(proposal_id: str, request: Request) -> Response:
         if not _canonical_uuid(proposal_id):
@@ -1442,13 +1779,76 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
         except StoreUnavailable:
             logger.info("flow_approval route=proposal status=503")
             return _page("Propuesta", "El almacén de flujos no contestó. Probá en un rato.", 503)
+        record = await _record(secret, proposal_id)
+        if isinstance(record, Response):
+            return record
         rows = others.get("proposals") if isinstance(others.get("proposals"), list) else []
         logger.info("flow_approval route=proposal proposal=%s others=%d", proposal_id, len(rows))
         csrf = config.csrf_token(secret)
         done = _done_from_query(request, config, secret)
         actions = _render_actions(found, proposal_id=proposal_id, csrf=csrf, flows=_flows_of(snapshot), done=done)
-        body = _render_proposal(found, rows, actions=actions, done=done, flows=_flows_of(snapshot))
+        body = _render_proposal(found, rows, actions=actions, done=done, flows=_flows_of(snapshot), record=record,
+                                time_zone=time_zone, me=user)
         return HTMLResponse(_shell("Propuesta", body, user=user, csrf=csrf))
+
+    async def _record(secret: str, proposal_id: str) -> dict[str, Any] | Response | None:
+        """La linea de tiempo y como termino (E-295). Si no contesta, el detalle sale sin ella."""
+        try:
+            return await store.read_record(instance, session_hash=_sha(secret), proposal_id=proposal_id)
+        except SessionInvalid:
+            return _logged_out(_login(proposal_id))
+        except StoreRejected as rejected:
+            if rejected.code == "flow_change_not_found":
+                return _page("Propuesta", "No existe esa propuesta en esta instancia.", 404)
+            logger.info("flow_approval route=proposal record=%s", rejected.code)
+        except StoreUnavailable:
+            logger.info("flow_approval route=proposal record=unavailable")
+        return None
+
+    @app.get(PREFIX + "/p/{proposal_id}/v/{flow_id}/{version}")
+    async def flow_version(proposal_id: str, flow_id: str, version: str, request: Request) -> Response:
+        """La version de un flujo que publico una propuesta (E-295). Solo lectura."""
+        if not (_canonical_uuid(proposal_id) and _canonical_uuid(flow_id) and version.isdigit()
+                and len(version) <= 9 and int(version) > 0):
+            return _page("Versión", "No existe esa versión.", 404)
+        who = await _who(request)
+        if who is None:
+            return _logged_out(_login(proposal_id))
+        user, secret = who
+        number = int(version)
+        try:
+            record = await store.read_record(instance, session_hash=_sha(secret), proposal_id=proposal_id)
+            found = await store.get_proposal(instance, session_hash=_sha(secret), proposal_id=proposal_id)
+            snapshot = await store.read_store(instance, session_hash=_sha(secret))
+        except SessionInvalid:
+            return _logged_out(_login(proposal_id))
+        except StoreRejected as rejected:
+            if rejected.code == "flow_change_not_found":
+                return _page("Versión", "No existe esa propuesta en esta instancia.", 404)
+            return _page("Versión", "No se pudo leer la versión.", 503)
+        except StoreUnavailable:
+            logger.info("flow_approval route=version status=503")
+            return _page("Versión", "El almacén de flujos no contestó. Probá en un rato.", 503)
+        made = next((entry for entry in record.get("versions") or [] if isinstance(entry, Mapping)
+                     and entry.get("flow_id") == flow_id and entry.get("version") == number), None)
+        flow = next((entry for entry in _flows_of(snapshot) if entry.get("flow_id") == flow_id), None)
+        versions = flow.get("versions") if isinstance(flow, Mapping) and isinstance(flow.get("versions"), Mapping) \
+            else {}
+        definition = versions.get(str(number))
+        # Solo una version que publico esta propuesta: un link armado a mano con otra no muestra nada.
+        if made is None or flow is None or not isinstance(definition, Mapping):
+            return _page("Versión", "Esa propuesta no publicó esa versión.", 404)
+        validation = found.get("validation") if isinstance(found.get("validation"), Mapping) else {}
+        preview = validation.get("preview") if isinstance(validation.get("preview"), Mapping) else {}
+        messages = {message["ruta"]: message for message in preview.get("mensajes") or []
+                    if isinstance(message, Mapping) and isinstance(message.get("ruta"), str)
+                    and (message.get("producto"), message.get("flujo")) == (flow.get("product_ref"),
+                                                                            flow.get("flow_key"))}
+        logger.info("flow_approval route=version proposal=%s version=%d", proposal_id, number)
+        csrf = config.csrf_token(secret)
+        body = _render_version(flow, number, definition, proposal_id, messages, time_zone=time_zone,
+                               published_at=made.get("published_at"))
+        return HTMLResponse(_shell("Versión", body, user=user, csrf=csrf))
 
     @app.get(PREFIX + "/auth/slack/start")
     async def slack_start(request: Request) -> Response:

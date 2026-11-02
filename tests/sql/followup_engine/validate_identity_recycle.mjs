@@ -82,7 +82,9 @@ const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.end
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`${MIGRATION} no esta en la cadena`);
 // Despues va solo la de los rechazos de Meta (20261103000500, E-284), que no toca el reciclado.
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261103000500_meta_delivery_rejections_v1.sql'])) {
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261103000500_meta_delivery_rejections_v1.sql',
+  // El historial de la pagina de aprobacion (20261103000600, E-295): dos lecturas del rol de la pagina.
+  '20261103000600_flow_approval_history_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de los rechazos de Meta`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(

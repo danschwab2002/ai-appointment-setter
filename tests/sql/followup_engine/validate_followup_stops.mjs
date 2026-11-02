@@ -72,7 +72,9 @@ if (!same(names.slice(position + 1), ['20261102000100_recovery_coupon_by_reply_v
   // El reciclado de un telefono de prueba (20261102000400, E-270).
   '20261102000400_identity_recycle_v1.sql',
   // Los rechazos de Meta (20261103000500, E-284).
-  '20261103000500_meta_delivery_rejections_v1.sql'])) {
+  '20261103000500_meta_delivery_rejections_v1.sql',
+  // El historial de la pagina de aprobacion (20261103000600, E-295): dos lecturas del rol de la pagina.
+  '20261103000600_flow_approval_history_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la renovacion por respuesta`, names.slice(position + 1));
 }
 

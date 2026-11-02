@@ -92,7 +92,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026102800030
   // El reciclado de un telefono de prueba (20261102000400, E-270).
   '20261102000400_identity_recycle_v1.sql',
   // Los rechazos de Meta (20261103000500, E-284).
-  '20261103000500_meta_delivery_rejections_v1.sql'])) {
+  '20261103000500_meta_delivery_rejections_v1.sql',
+  // El historial de la pagina de aprobacion (20261103000600, E-295): dos lecturas del rol de la pagina.
+  '20261103000600_flow_approval_history_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de sumar ofertas`, names.slice(position + 1));
 }
 if (maribel.name !== 'maribel_retomar_proceso_01' || maribel.category !== 'MARKETING') {
