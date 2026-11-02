@@ -12,6 +12,11 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Agregado (apagado por defecto)
+
+- **El aviso al derivar, solo a clientas** (E-304, P-11, decisión D12 de Dan del 2026-11-02; contrato `docs/contracts/executable-human-handoff-v1.md`). Con `CUSTOMER_HANDOFF_NOTICE_ENABLED` (apagado por defecto, portable; exige `HUMAN_HANDOFF_ADMISSION_ENABLED` y `AGENT_CUSTOMER_STATUS_ENABLED`), cuando el entrante de una clienta se deriva (la entrada del agente trae `customer_status` con algún producto, en cualquier estado, o la etiqueta `cliente`), le llega el aviso fijo de F-034: «Le paso tu consulta al equipo y te responden por este mismo chat.». Vale también para la derivación de `customer_link_request` (D6) y para la forzada por salud. Mismo texto, marca y camino que el aviso general: una vez por conversación, antes de la pausa, con las guardas de envío y como respuesta al mensaje que la persona acaba de mandar. A quien no es clienta no le llega nada, y con `HANDOFF_NOTICE_ENABLED` prendido nada cambia (no se repite). Log nuevo en `LOGGED_INFO_EVENTS`: `customer_status_handoff_notice` (resultado, motivo y número de conversación, sin teléfono ni mail).
+
+
 ## [1.28.0] - 2026-11-02
 
 Una menor sobre la 1.27.0, con tres PR (#402, #403 y #404) y dos migraciones. Lo grande es que el agente puede saber que la persona ya es cliente (#403 y #404): la base lee qué compró y el bridge, con `AGENT_CUSTOMER_STATUS_ENABLED`, se lo pasa al agente y no le manda el link ni el cupón de lo que ya compró; nace apagado. **Al subir, para las personas que escriben no cambia nada.** Para quien aprueba flujos, la página de aprobación suma el botón «Historial» con todas las propuestas (#402), en las instancias que ya tienen la página prendida. El profile del Automation Expert, el agente comercial, la imagen de Hermes y el conector de Slack no cambian.
