@@ -1856,21 +1856,41 @@ def test_identity_recycle_fingerprint() -> None:
         assert marker in compact_fingerprint, marker
 
 
-def test_meta_delivery_rejections_fingerprint_is_last() -> None:
+def test_meta_delivery_rejections_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261103000500 (los rechazos de Meta y el unico reintento del
-    # 131049, E-284) es la ultima: la tabla con RLS y sin lectura para la API,
-    # las seis funciones solo para service_role, el cierre del 131026 y la vista.
-    fingerprint = sql.split("'20261103000500'", 1)[1].split("select\n    version,", 1)[0]
+    # 131049, E-284): la tabla con RLS y sin lectura para la API, las seis
+    # funciones solo para service_role, el cierre del 131026 y la vista. Desde
+    # E-295 la sigue la del historial de la pagina de aprobacion.
+    fingerprint = sql.split("'20261103000500'", 1)[1].split("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261103000500_meta_delivery_rejections_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",4,'meta_delivery_rejections')")
+    assert compact_fingerprint.endswith(",4,'meta_delivery_rejections'")
     for marker in (
         "to_regclass('public.meta_delivery_rejections')",
         "selectcount(*)=6",
         "to_regprocedure('public.block_meta_first_touch_retry_v1(uuid,text,timestamptz)')",
         "position('meta_131026_unreachable'indefinition)>0",
         "to_regclass('public.meta_delivery_rejection_counts_v1')",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_flow_approval_history_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261103000600 (el historial de la pagina de aprobacion, E-295)
+    # es la ultima: las dos lecturas solo para flow_change_approver, la lista
+    # sin el para que y la interna de las versiones para nadie de la API.
+    fingerprint = sql.split("'20261103000600'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261103000600_flow_approval_history_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",3,'flow_approval_history')")
+    for marker in (
+        "to_regprocedure('public.approver_list_flow_changes_v1(jsonb,text,uuid,integer)')",
+        "to_regprocedure('public.approver_read_flow_change_record_v1(jsonb,text,uuid)')",
+        "to_regprocedure('public._flow_approval_published_versions(uuid)')",
+        "position('p.purpose'indefinition)=0",
     ):
         assert marker in compact_fingerprint, marker

@@ -64,6 +64,8 @@ OUTSIDER = "U0NOAPRUEBA3"
 CLIENT_ID = "1234567890.987654321"
 PROPOSAL = "11111111-2222-4333-8444-555555555555"
 RIVAL = "99999999-2222-4333-8444-555555555555"
+# Quien le pidio el cambio al agente (un ID de Slack inventado, sin digitos seguidos que parezcan un telefono).
+ASKER = "U0PIDEALAE1"
 
 
 def _jwt(claims: dict) -> str:
@@ -92,7 +94,7 @@ class PostgrestEmulator:
         self.proposal = {
             "proposal_id": PROPOSAL, "status": "validada", "effective_status": "validada", "revision": 1,
             "items": BRIDGE["items"], "purpose": BRIDGE["purpose"], "requested_by_kind": "automation_expert",
-            "requested_by_ref": "U0123456789", "validation": {"preview": preview, "result": BRIDGE["result"]},
+            "requested_by_ref": ASKER, "validation": {"preview": preview, "result": BRIDGE["result"]},
             "fingerprint": "f" * 64, "validated_at": "2026-10-28T02:00:00Z", "expires_at": "2026-10-29T02:00:00Z",
         }
         self.proposal["draft_base"] = {}
@@ -107,6 +109,34 @@ class PostgrestEmulator:
         self.cohort_result: dict | None = None
         self.cohort_members = 2
         self.writes: list[tuple[str, str]] = []
+        # El historial (E-295, 20261103000600): las filas de mas, despues de la propuesta y la rival, y lo que
+        # contesta el detalle si la prueba quiere otra cosa. None en history_down: la lectura contesta.
+        self.extra_history: list[dict] = []
+        self.history_down: str | None = None
+        self.record_down: str | None = None
+        self.versions: list[dict] = []
+        self.events: list[dict] = [
+            {"event_type": "flow_change_draft_saved", "actor_kind": "automation_expert", "actor_ref": ASKER,
+             "reason_code": "ok", "generation": None, "created_at": "2026-10-28T01:59:00Z", "producto": None,
+             "flujo": None},
+            {"event_type": "flow_change_validated", "actor_kind": "automation_expert", "actor_ref": ASKER,
+             "reason_code": "ok", "generation": None, "created_at": "2026-10-28T02:00:00Z", "producto": None,
+             "flujo": None},
+        ]
+
+    def history_rows(self) -> list[dict]:
+        """Lo que contesta approver_list_flow_changes_v1: la propuesta, la rival y las de mas, la mas nueva arriba."""
+        proposal = self.proposal
+        mine = {key: proposal.get(key) for key in (
+            "proposal_id", "status", "effective_status", "requested_by_kind", "requested_by_ref", "approved_by_kind",
+            "approved_by_ref", "closed_by_kind", "closed_by_ref", "validated_at", "expires_at", "approved_at",
+            "published_at", "closed_at")}
+        mine.update(created_at="2026-10-28T01:59:00Z", versions=self.versions,
+                    flows=[{"producto": item["producto"], "flujo": item["flujo"], "tipo": item["tipo"]}
+                           for item in proposal["items"]])
+        rival = {**self.others[0], "effective_status": self.others[0]["status"], "created_at": "2026-10-28T00:59:00Z",
+                 "requested_by_ref": ASKER, "versions": []}
+        return [mine, rival, *self.extra_history]
 
     def add_welcome_in_cohort(self) -> None:
         """La bienvenida ya publicada en la cohorte (un flujo nativo), como la deja publicar el nuevo."""
@@ -173,6 +203,34 @@ class PostgrestEmulator:
             rows = self.others if body["p_proposal_id"] else [
                 {**self.others[0], "proposal_id": PROPOSAL}, self.others[0]]
             return httpx.Response(200, json={"proposals": rows})
+        if name == "approver_list_flow_changes_v1":
+            if self.history_down:
+                return self._raise(self.history_down, "no_existe", 404)
+            rows = self.history_rows()
+            limit = body["p_limit"]
+            assert 1 <= limit <= 50
+            if body["p_before_proposal_id"] is not None:
+                ids = [row["proposal_id"] for row in rows]
+                if body["p_before_proposal_id"] not in ids:
+                    return self._raise("P0002", "flow_change_not_found", 500)
+                rows = rows[ids.index(body["p_before_proposal_id"]) + 1:]
+            page, more = rows[:limit], len(rows) > limit
+            return httpx.Response(200, json={"proposals": page, "has_more": more,
+                                             "next_before": page[-1]["proposal_id"] if more else None,
+                                             "total": len(self.history_rows())})
+        if name == "approver_read_flow_change_record_v1":
+            if body["p_proposal_id"] != PROPOSAL:
+                return self._raise("P0002", "flow_change_not_found", 500)
+            if self.record_down:
+                return self._raise(self.record_down, "no_existe", 404)
+            proposal = self.proposal
+            return httpx.Response(200, json={
+                **{key: proposal.get(key) for key in (
+                    "proposal_id", "status", "effective_status", "requested_by_kind", "requested_by_ref",
+                    "approved_by_kind", "approved_by_ref", "closed_by_kind", "closed_by_ref", "close_reason",
+                    "validated_at", "expires_at", "approved_at", "published_at", "closed_at")},
+                "created_at": "2026-10-28T01:59:00Z", "versions": self.versions, "events": self.events,
+                "events_total": len(self.events)})
         if name == "approver_read_flow_store_v1":
             return httpx.Response(200, json={"database_at": ATT1_STORE["database_at"], "products": ["att1"],
                                              "flows": copy.deepcopy(self.flows)})

@@ -6474,6 +6474,44 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         + (to_regclass('public.meta_delivery_rejection_counts_v1') is not null)::int,
         4,
         'meta_delivery_rejections'
+    union all
+    select
+        '20261103000600',
+        '20261103000600_flow_approval_history_v1.sql',
+        -- El historial de la pagina de aprobacion (E-295): las dos lecturas,
+        -- solo para flow_change_approver ...
+        (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public.approver_list_flow_changes_v1(jsonb,text,uuid,integer)'),
+                to_regprocedure('public.approver_read_flow_change_record_v1(jsonb,text,uuid)')
+            )
+              and prosecdef
+              and coalesce(has_function_privilege(to_regrole('flow_change_approver'), oid, 'EXECUTE'), false)
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- ... la lista por cursor, sin el para que ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.approver_list_flow_changes_v1(jsonb,text,uuid,integer)')
+              and position('flow_approval_history_parameters_invalid' in definition) > 0
+              and position('p.purpose' in definition) = 0
+        )::int
+        -- ... y la interna de las versiones, para nadie de la API.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_approval_published_versions(uuid)')
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        3,
+        'flow_approval_history'
 )
 select
     version,

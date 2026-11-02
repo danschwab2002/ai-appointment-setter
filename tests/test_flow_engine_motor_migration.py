@@ -129,6 +129,8 @@ def test_it_is_one_transaction_and_comes_before_the_bridge_reads() -> None:
         "20261102000400_identity_recycle_v1.sql",
         # Los rechazos de Meta (20261103000500, E-284).
         "20261103000500_meta_delivery_rejections_v1.sql",
+        # El historial de la pagina de aprobacion (20261103000600, E-295).
+        "20261103000600_flow_approval_history_v1.sql",
     ]
     later = (MIGRATIONS / names[position + 1]).read_text(encoding="utf-8")
     assert "create or replace" not in later.lower()
