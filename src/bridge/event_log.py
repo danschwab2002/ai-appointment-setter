@@ -57,6 +57,12 @@ LOGGED_INFO_EVENTS = frozenset(
         "meta_first_touch_retry",
         "meta_first_touch_retry_skipped",
         "meta_delivery_notice_already_admitted",
+        # si la persona ya es cliente (bridge.app, E-297): cuantos productos,
+        # sus estados y fuentes, y el numero de conversacion; nunca el
+        # telefono ni el mail
+        "customer_status_context",
+        "customer_status_link_blocked",
+        "customer_status_coupon_skipped",
     }
 )
 

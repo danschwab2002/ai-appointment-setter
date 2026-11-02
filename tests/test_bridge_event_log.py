@@ -276,7 +276,7 @@ def test_every_reviewed_event_is_a_hotmart_line_present_in_the_code() -> None:
         for name in ("app.py", "worker.py", "purchase_agent_pause.py", "meta_delivery.py")
     )
     for name in LOGGED_INFO_EVENTS:
-        assert name.startswith(("hotmart_", "purchase_agent_", "meta_")), name
+        assert name.startswith(("hotmart_", "purchase_agent_", "meta_", "customer_status_")), name
         assert f'"{name} ' in sources, name
 
 
