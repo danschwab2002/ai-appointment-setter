@@ -27,8 +27,10 @@ def test_it_is_one_transaction_with_lock_timeout_and_the_last() -> None:
     sql = _sql()
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
     # Despues va solo la de las solicitudes de plantilla de Meta (20261102000200, E-268).
-    assert names[-1] == "20261102000200_meta_template_requests_v1.sql"
-    assert names[-2] == MIGRATION.name
+    # El barrido del seguimiento a 24 h nativo (20261102000300, E-269).
+    assert names[-1] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
+    assert names[-2] == "20261102000200_meta_template_requests_v1.sql"
+    assert names[-3] == MIGRATION.name
     assert sql.count("\nbegin;\n") == 1 and sql.rstrip().endswith("commit;")
     assert "set local lock_timeout = '5s';" in sql
     assert "message = 'recovery_coupon_by_reply_already_applied'" in sql
@@ -76,5 +78,5 @@ def test_the_validator_is_the_last_of_the_npm_chain() -> None:
     chain = json.loads(PACKAGE.read_text(encoding="utf-8"))["scripts"]["test"]
     assert chain.rstrip().endswith(
         " && node validate_followup_stops.mjs && node validate_recovery_coupon_by_reply.mjs"
-        " && node validate_meta_template_requests.mjs --check"
+        " && node validate_meta_template_requests.mjs --check && node validate_flow_engine_native_silence_sweep.mjs"
     )

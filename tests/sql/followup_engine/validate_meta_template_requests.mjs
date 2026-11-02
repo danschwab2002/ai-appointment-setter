@@ -98,7 +98,10 @@ await shapeDb.exec(`
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`${MIGRATION} no esta en la cadena`);
-if (names.slice(position + 1).length !== 0) fail(`${MIGRATION} es la ultima de la cadena`, names.slice(position + 1));
+// Despues va solo el barrido del seguimiento nativo (20261102000300, E-269), que no toca lo de esta.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261102000300_flow_engine_native_silence_sweep_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la del barrido del seguimiento nativo`, names.slice(position + 1));
+}
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(
   /create extension if not exists pgcrypto;/gi, '-- pgcrypto is built into PGlite'));
 await applyFile(shapeDb, join(root, 'supabase/baseline/20260803_public_schema.sql'));

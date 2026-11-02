@@ -1165,6 +1165,36 @@ class FlowEngineNativeFlow:
 
 
 @dataclass(frozen=True)
+class FlowEngineNativeSilence:
+    """One native agent silence of the instance that runs (P22-3 de M16, E-269).
+
+    The row of ``read_flow_engine_native_silences_v1`` (20261102000300): the
+    flow, its active version with its sha256 and definition (what the native
+    sweep executes and what its reservation checks), and, in ``cohorte``, the
+    Chatwoot conversations of the cohort contacts (``None`` when ``prendido``:
+    the whole inbox).
+    """
+
+    flow_id: str
+    product_ref: str
+    flow_key: str
+    state: str
+    active_version: int
+    definition_sha256: str
+    definition: dict[str, Any]
+    cohort_conversation_ids: frozenset[int] | None
+
+
+@dataclass(frozen=True)
+class NativeSilenceRun:
+    """The three arguments the native reservation adds to the portable one."""
+
+    flow_id: str
+    version: int
+    definition_sha256: str
+
+
+@dataclass(frozen=True)
 class FlowEngineNativeQueuedEvent:
     """A purchase the native admission has not answered yet."""
 
@@ -5364,6 +5394,7 @@ class SupabaseClient:
         inbound_age_seconds: int,
         issuance_ulid: str,
         phone_equivalence: bool = False,
+        native_run: NativeSilenceRun | None = None,
     ) -> ConversationFollowupClaim:
         """Reservar el seguimiento con cupon y emitir su link de pago.
 
@@ -5380,18 +5411,39 @@ class SupabaseClient:
         mismos errores: cambia la RPC, y la operacion que nombra el error de
         una respuesta que no es una lista de filas. Sin el flag, la compartida
         de siempre.
+
+        Con ``native_run`` (el barrido nativo, P22-3 de M16) pega en
+        claim_flow_engine_silence_v1 (20261101000200): la portable derivada,
+        con el flujo, la version y su sha256 delante, y las barreras del flujo
+        (su control, su version, la cohorte y la bolsa). Exige
+        ``phone_equivalence``: el nativo solo corre con manifiesto.
         """
-        if phone_equivalence:
+        if native_run is not None:
+            if not phone_equivalence:
+                raise ValueError("native_run requires phone_equivalence")
+            operation = "flow_engine_silence_claim"
+            path = "/rest/v1/rpc/claim_flow_engine_silence_v1"
+        elif phone_equivalence:
             operation = "portable_conversation_followup_claim"
             path = "/rest/v1/rpc/claim_portable_conversation_followup_v1"
         else:
             operation = "conversation_followup_claim"
             path = "/rest/v1/rpc/claim_conversation_followup_v1"
+        native_args: dict[str, object] = (
+            {
+                "p_flow_id": native_run.flow_id,
+                "p_version": native_run.version,
+                "p_definition_sha256": native_run.definition_sha256,
+            }
+            if native_run is not None
+            else {}
+        )
         response = await self._request(
             "POST",
             path,
             content=json.dumps(
                 {
+                    **native_args,
                     "p_external_conversation_id": external_conversation_id,
                     "p_chatwoot_account_id": chatwoot_account_id,
                     "p_chatwoot_inbox_id": chatwoot_inbox_id,
@@ -6802,6 +6854,58 @@ class SupabaseClient:
                 ),
                 active_version=version,
                 trigger=trigger,
+            ))
+        return tuple(result)
+
+    async def read_flow_engine_native_silences(
+        self, instance: Mapping[str, object]
+    ) -> tuple[FlowEngineNativeSilence, ...]:
+        """The native agent silences of the instance that run (20261102000300, E-269).
+
+        Fails closed on any shape it does not know: the native sweep runs only
+        what it read whole. The definition is kept as read; the sweep checks it
+        again before running it.
+        """
+        operation = "read_flow_engine_native_silences_v1"
+        payload = await self._flow_engine_object(
+            operation, {"p_instance": dict(instance)}
+        )
+        rows = payload.get("flows")
+        if payload.get("contract") != "flow-engine-v2" or not isinstance(rows, list) or any(
+            not isinstance(row, dict) for row in rows
+        ):
+            raise SupabaseError(f"{operation}_invalid_shape")
+        result = []
+        for row in rows:
+            version = row.get("active_version")
+            sha = row.get("definition_sha256")
+            definition = row.get("definition")
+            state = row.get("state")
+            cohort = row.get("cohort_conversation_ids")
+            if (
+                not isinstance(version, int) or isinstance(version, bool) or version < 1
+                or not isinstance(sha, str) or re.fullmatch(r"[0-9a-f]{64}", sha) is None
+                or not isinstance(definition, dict)
+                or state not in FLOW_ENGINE_NATIVE_ON_STATES
+                or (state == "cohorte") != isinstance(cohort, list)
+                or (state == "prendido" and cohort is not None)
+                or (isinstance(cohort, list) and any(
+                    not isinstance(item, int) or isinstance(item, bool) or item <= 0
+                    for item in cohort
+                ))
+            ):
+                raise SupabaseError(f"{operation}_invalid_row")
+            result.append(FlowEngineNativeSilence(
+                flow_id=_required_string(row, "flow_id", operation=operation),
+                product_ref=_required_string(row, "product_ref", operation=operation),
+                flow_key=_required_string(row, "flow_key", operation=operation),
+                state=state,
+                active_version=version,
+                definition_sha256=sha,
+                definition=definition,
+                cohort_conversation_ids=(
+                    frozenset(cohort) if isinstance(cohort, list) else None
+                ),
             ))
         return tuple(result)
 

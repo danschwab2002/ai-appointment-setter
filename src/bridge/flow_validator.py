@@ -1677,6 +1677,7 @@ class _Run:
             what = code.split(":", 1)[1]
             at: tuple[Segment, ...] = ("termina", "si") if what.startswith(("salida_", "contesta_")) \
                 else ("dispara",) if what.startswith("disparo_") \
+                else ("dispara", "silencio") if what.startswith("silencio_") \
                 else ("entra", "contesto_a") if what == "contesto_a" else ("pasos",)
             emitter.add(ENGINE_NOT_SUPPORTED_NATIVE_SHAPE, at,
                         reason=f"El motor nativo de esta versión no ejecuta eso ({what}).")

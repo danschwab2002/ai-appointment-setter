@@ -144,8 +144,17 @@ def test_the_soul_knows_what_the_native_engine_runs_today() -> None:
         assert f"{{evento: {trigger}}}" in section, trigger
         assert f"permiso: {NATIVE_PERMISSION_BY_TRIGGER[trigger]}" in section, trigger
     assert ENGINE_CAPABILITIES_NATIVE.max_sends_per_path == 1 and "un solo mensaje" in section
-    for missing in ("el seguimiento a 24 h", "la ficha de pago"):
+    for missing in ("la ficha de pago", "la reactivación"):
         assert missing in section.split("**Todavía no hace**", 1)[1], missing
+    # E-269: el seguimiento a 24 h con cupon ya lo hace el motor nativo (el barrido nativo, P22-3), con su
+    # clave propia, el silencio del agente, la conversacion adoptada y el boton del checkout con el cupon.
+    assert "seguimiento" not in section.split("**Todavía no hace**", 1)[1].split("\n", 1)[0]
+    followup = section.split("**el seguimiento a 24 h con cupón**", 1)[1].split("\n", 1)[0]
+    for needed in ("`seguimiento_cupon`", "lo_ultimo: agente", "desde: 24h, hasta: 72h", "permiso: conversacion",
+                   "contesto_a: cualquier_plantilla", "termina: {si: [compra, contesta]}",
+                   "una_por: conversacion, otra_despues_de: nunca", "link: checkout", "no se cambia conversando",
+                   "un solo botón"):
+        assert needed in followup, needed
     # E-252: el primer contacto (el formulario) ya lo hace el motor nativo, con su clave propia, la
     # repeticion de 24 h y los cortes que no se escriben.
     assert "primer contacto" not in section.split("**Todavía no hace**", 1)[1].split("\n", 1)[0]

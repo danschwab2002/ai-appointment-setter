@@ -250,6 +250,7 @@ const rows = await db.query(`
       ('admit_and_route_portable_lead_precheckout_v1(text,text,integer,text,jsonb,jsonb,text,integer)'),
       ('_flow_engine_native_intent_stop_reason(uuid)'),
       ('claim_flow_engine_silence_v1(uuid,integer,text,bigint,bigint,bigint,text,text,text,text,text,text,text,bigint,bigint,integer,text,timestamp with time zone)'),
+      ('read_flow_engine_native_silences_v1(jsonb)'),
       ('read_automation_expert_native_flows_v1(jsonb)'),
       ('read_automation_expert_native_history_v1(jsonb,uuid)'),
       ('read_flow_sales_v1(jsonb,timestamp with time zone)'),
@@ -322,7 +323,7 @@ const result = rows.rows[0];
 // followup after the agent's silence (20261101000200) adds its claim.
 // The Meta template requests (20261102000200) add the status the poller records.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 177) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 178) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

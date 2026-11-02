@@ -6353,6 +6353,21 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         6,
         'meta_template_requests'
+    union all
+    select
+        '20261102000300',
+        '20261102000300_flow_engine_native_silence_sweep_v1.sql',
+        -- Lo que lee el barrido del seguimiento a 24 h nativo (E-269): los
+        -- silencios del agente que corren, con su definicion y su cohorte.
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.read_flow_engine_native_silences_v1(jsonb)')
+              and prosecdef
+              and position('flow_engine_native_silence_sweep_trigger_guard' in definition) > 0
+        )::int,
+        1,
+        'flow_engine_native_silence_sweep'
 )
 select
     version,

@@ -23,7 +23,9 @@ def _sql() -> str:
 def test_it_is_one_transaction_with_lock_timeout_the_last_and_does_not_run_twice() -> None:
     sql = _sql()
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
-    assert names[-1] == MIGRATION.name
+    # El barrido del seguimiento a 24 h nativo (20261102000300, E-269).
+    assert names[-1] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
+    assert names[-2] == MIGRATION.name
     assert sql.count("\nbegin;\n") == 1 and sql.rstrip().endswith("commit;")
     assert "set local lock_timeout = '5s';" in sql
     assert "message = 'meta_template_requests_already_applied'" in sql
@@ -69,4 +71,4 @@ def test_nothing_in_it_calls_meta_or_reads_a_token() -> None:
 
 def test_the_validator_is_the_last_of_the_npm_chain() -> None:
     chain = json.loads(PACKAGE.read_text(encoding="utf-8"))["scripts"]["test"]
-    assert chain.rstrip().endswith(" && node validate_meta_template_requests.mjs --check")
+    assert chain.rstrip().endswith(" && node validate_meta_template_requests.mjs --check && node validate_flow_engine_native_silence_sweep.mjs")

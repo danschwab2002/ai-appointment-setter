@@ -204,6 +204,7 @@ from bridge.slack_handoff_projection import SlackHandoffProjectionWorker
 from bridge.slack_projection import SlackCorrelationProjectionWorker
 from bridge.slack_runtime import SlackBridgeRuntime, create_slack_bridge_runtime
 from bridge.native_flows import native_intent_admission
+from bridge.native_silence import NativeSilenceSpec, NativeSilenceSweepers
 from bridge.supabase import (
     NATIVE_FLOW_ROW_INVALID,
     AutomationExpertResponseTooLarge as SupabaseResponseTooLarge,
@@ -5794,6 +5795,10 @@ def create_app(
         None
     )
     conversation_followup_sweeper: ConversationFollowupSweeper | None = None
+    # El barrido nativo del seguimiento a 24 h (P22-3 de M16, E-269): lo arma
+    # el motor (FLOW_ENGINE_ENABLED) con Chatwoot; sin un silencio nativo
+    # publicado no arma ningun barredor.
+    native_silence_sweepers: NativeSilenceSweepers | None = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
@@ -5845,6 +5850,8 @@ def create_app(
                 await conversation_reactivation_sweeper.start()
             if conversation_followup_sweeper is not None:
                 await conversation_followup_sweeper.start()
+            if native_silence_sweepers is not None:
+                await native_silence_sweepers.start()
             if flow_engine_divergence_notifier is not None:
                 await flow_engine_divergence_notifier.start()
             if flow_engine_rejection_notifier is not None:
@@ -5859,6 +5866,10 @@ def create_app(
                 (
                     "flow_engine_divergence_notifier",
                     flow_engine_divergence_notifier,
+                ),
+                (
+                    "native_silence_sweepers",
+                    native_silence_sweepers,
                 ),
                 (
                     "conversation_followup_sweeper",
@@ -5919,6 +5930,7 @@ def create_app(
         conversation_reactivation_sweeper
     )
     app.state.conversation_followup_sweeper = conversation_followup_sweeper
+    app.state.native_silence_sweepers = native_silence_sweepers
 
     # Con manifiesto, el mismo movil puede estar guardado con la otra forma
     # (52 + 10 del formulario, 521 + 10 del wa_id; 54 y 549 en Argentina). Sin
@@ -8285,6 +8297,74 @@ def create_app(
             app.state.conversation_followup_sweeper = (
                 conversation_followup_sweeper
             )
+        if (
+            flow_engine_runtime is not None
+            and isinstance(control_client, ChatwootClient)
+            and settings.chatwoot_account_id is not None
+            and settings.chatwoot_inbox_id is not None
+            and shared_supabase is not None
+            and settings.instance_manifest is not None
+        ):
+            # El barrido nativo del seguimiento a 24 h (P22-3 de M16, E-269):
+            # las mismas variables de ritmo y alcance que el legado (el
+            # intervalo, las paginas y el maximo por barrido de
+            # CONVERSATION_FOLLOWUP_*, y ALLOWED_WHATSAPP_JID), el producto del
+            # manifiesto y todo lo demas de la definicion publicada. Con
+            # manifiesto siempre: la identidad resuelta, la reserva portable
+            # (la nativa deriva de ella) y el filtro del nombre.
+            native_manifest = settings.instance_manifest
+            native_chatwoot = control_client
+            native_supabase = shared_supabase
+            native_account_id = settings.chatwoot_account_id
+            native_inbox_id = settings.chatwoot_inbox_id
+            native_allowed_phone = (
+                None
+                if settings.chatwoot_scoped_inbound_senders_enabled
+                else allowed_phone_from_jid(settings.allowed_jid)
+            )
+
+            def build_native_silence_sweeper(
+                spec: NativeSilenceSpec,
+            ) -> ConversationFollowupSweeper:
+                return ConversationFollowupSweeper(
+                    chatwoot=native_chatwoot,
+                    supabase=native_supabase,
+                    account_id=native_account_id,
+                    inbox_id=native_inbox_id,
+                    template_name=spec.template_name,
+                    coupon_code=spec.coupon_code,
+                    product_name=native_manifest.product_name,
+                    expected_template_language=spec.template_language,
+                    scan_interval_seconds=(
+                        settings.conversation_followup_interval_seconds
+                    ),
+                    min_inbound_age_seconds=spec.min_age_seconds,
+                    max_inbound_age_seconds=spec.max_age_seconds,
+                    max_sends_per_scan=(
+                        settings.conversation_followup_max_sends_per_scan
+                    ),
+                    max_pages=settings.conversation_followup_max_pages,
+                    allowed_phone=native_allowed_phone,
+                    refuse_unsafe_greeting=True,
+                    phone_equivalence=True,
+                    external_user_id_resolver=resolve_inbound_external_user_id,
+                    native_run=spec.run,
+                    send_window=spec.window,
+                    conversation_statuses=spec.conversation_statuses,
+                    only_conversation_ids=spec.cohort_conversation_ids,
+                    log_prefix="flow_engine_silence",
+                )
+
+            native_silence_sweepers = NativeSilenceSweepers(
+                supabase=shared_supabase,
+                instance={
+                    "tenant_ref": native_manifest.tenant_ref,
+                    "ally_ref": native_manifest.ally_ref,
+                },
+                product_ref=native_manifest.funnel_ref,
+                build=build_native_silence_sweeper,
+            )
+            app.state.native_silence_sweepers = native_silence_sweepers
 
     if settings.operator_correlation_read_enabled:
         operator_token = settings.operator_correlation_read_token
@@ -9205,6 +9285,21 @@ def create_app(
                             _followup_send_hours_text(followup_send_hours)
                         ),
                     }
+        if native_silence_sweepers is not None:
+            # El barrido nativo del seguimiento (E-269): de lo que ya esta en
+            # memoria, sin numeros ni nombres. Ninguna clave da 503.
+            stalled_monitor_readiness = {
+                **stalled_monitor_readiness,
+                **native_silence_sweepers.readiness(),
+            }
+        elif flow_engine_runtime is not None:
+            # Con el motor y sin el barrido (sin el cliente de control de Chatwoot
+            # o sin las ids): un silencio nativo publicado le saca la conversacion
+            # al legado y nadie la manda. Se publica, no se calla.
+            stalled_monitor_readiness = {
+                **stalled_monitor_readiness,
+                "flow_engine_native_silence_read": "sin_barredor",
+            }
         if (
             correlation_preresolution_worker is not None
             and not correlation_preresolution_worker.healthy

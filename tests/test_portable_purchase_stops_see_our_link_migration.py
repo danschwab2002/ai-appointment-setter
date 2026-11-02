@@ -32,15 +32,17 @@ def test_it_is_one_transaction_and_the_last() -> None:
     # Los frenos del seguimiento despues de Z y con una ficha vigente (20261101000300, E-263).
     # La renovacion por respuesta y el cupon del turno (20261102000100, E-267).
     # Las solicitudes de plantilla de Meta (20261102000200, E-268, F-146 partes 1 y 2).
-    assert names[-1] == "20261102000200_meta_template_requests_v1.sql"
-    assert names[-2] == "20261102000100_recovery_coupon_by_reply_v1.sql"
-    assert names[-3] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
+    # El barrido del seguimiento a 24 h nativo (20261102000300, E-269).
+    assert names[-1] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
+    assert names[-2] == "20261102000200_meta_template_requests_v1.sql"
+    assert names[-3] == "20261102000100_recovery_coupon_by_reply_v1.sql"
+    assert names[-4] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
     # Antes, el seguimiento a 24 h nativo (20261101000200, E-251).
-    assert names[-4] == "20261101000200_flow_engine_native_silence_v1.sql"
+    assert names[-5] == "20261101000200_flow_engine_native_silence_v1.sql"
     # Antes, el primer contacto nativo (20261101000100, E-247): el disparador intencion.
-    assert names[-5] == "20261101000100_flow_engine_native_intent_v1.sql"
-    assert names[-6] == MIGRATION.name
-    assert names[-7] == "20261030000300_flow_change_list_v1.sql"
+    assert names[-6] == "20261101000100_flow_engine_native_intent_v1.sql"
+    assert names[-7] == MIGRATION.name
+    assert names[-8] == "20261030000300_flow_change_list_v1.sql"
 
 
 def test_it_creates_only_the_third_source_and_patches_the_two_stops() -> None:

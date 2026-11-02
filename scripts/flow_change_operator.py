@@ -317,7 +317,7 @@ class Ops:
             if len(items) != 1:
                 return {"simulation_unavailable": "simulation_new_flow_mixed"}
             definition = new_flows[0].get("definicion")
-            trigger = (definition.get("dispara") or {}).get("evento") if isinstance(definition, Mapping) else None
+            trigger = _simulation_trigger(definition)
             try:
                 counts = self.sql_json(SQL_NEW_FLOW_COUNTS, {**args, "product": next(iter(products)),
                                                              "trigger": trigger}, read_only=True)
@@ -483,6 +483,22 @@ ENGINE_PAGES_MAX = 10
 _NATIVE_ITEM_TYPES = frozenset({"prender", "apagar"})
 
 
+def _simulation_trigger(definition: object) -> str | None:
+    """Gemela de flow_change_simulation.simulation_trigger: el evento, ``silencio`` (P22-3, E-269) o None."""
+    if not isinstance(definition, Mapping):
+        return None
+    trigger = definition.get("dispara")
+    if not isinstance(trigger, Mapping):
+        return None
+    event = trigger.get("evento")
+    if isinstance(event, str):
+        return event
+    silence = trigger.get("silencio")
+    if set(trigger) == {"silencio"} and isinstance(silence, Mapping) and silence.get("lo_ultimo") == "agente":
+        return "silencio"
+    return None
+
+
 def _native_flow_counts_request(store: object, items: object) -> dict[str, Any] | None:
     """None si algun item no es de un flujo nativo; si no, el producto y el evento a contar, o el motivo."""
     if not isinstance(items, list) or not items or not isinstance(store, Mapping) \
@@ -507,7 +523,7 @@ def _native_flow_counts_request(store: object, items: object) -> dict[str, Any] 
         definition = versions.get(str(item.get("version")))
     else:
         definition = versions.get(str(flow.get("active_version")))
-    trigger = ((definition.get("dispara") or {}).get("evento")) if isinstance(definition, Mapping) else None
+    trigger = _simulation_trigger(definition)
     product = item.get("producto")
     if not isinstance(trigger, str) or not isinstance(product, str):
         return {"simulation_unavailable": "simulation_native_flow_counts_invalid"}
