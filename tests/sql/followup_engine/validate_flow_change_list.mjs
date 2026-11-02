@@ -64,7 +64,7 @@ const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.end
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`${MIGRATION} no esta en la cadena`);
 // Despues va solo la de los frenos de la compra con nuestro link (E-215), que no toca esta lectura.
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261030000400_portable_purchase_stops_see_our_link_v1.sql', '20261101000100_flow_engine_native_intent_v1.sql', '20261101000200_flow_engine_native_silence_v1.sql'])) {
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261030000400_portable_purchase_stops_see_our_link_v1.sql', '20261101000100_flow_engine_native_intent_v1.sql', '20261101000200_flow_engine_native_silence_v1.sql', '20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de E-215`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(

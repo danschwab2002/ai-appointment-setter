@@ -6227,6 +6227,31 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         7,
         'flow_engine_native_silence'
+    union all
+    select
+        '20261101000300',
+        '20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql',
+        -- Los frenos del seguimiento con cupon despues de Z y con una ficha
+        -- vigente (E-263, F-149 y F-150): el mismo bloque en la portable ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.claim_portable_conversation_followup_v1(bigint,bigint,bigint,text,text,text,text,text,text,text,bigint,bigint,integer,text,timestamptz)')
+              and position('followup_stops_after_last_touch_and_pending_payment: end' in definition) > 0
+              and position('blocked_after_last_touch' in definition) > 0
+              and position('blocked_pending_payment' in definition) > 0
+        )::int
+        -- ... y en la nativa.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.claim_flow_engine_silence_v1(uuid,integer,text,bigint,bigint,bigint,text,text,text,text,text,text,text,bigint,bigint,integer,text,timestamptz)')
+              and position('followup_stops_after_last_touch_and_pending_payment: end' in definition) > 0
+              and position('blocked_after_last_touch' in definition) > 0
+              and position('blocked_pending_payment' in definition) > 0
+        )::int,
+        2,
+        'followup_stops_after_last_touch_and_pending_payment'
 )
 select
     version,

@@ -29,11 +29,14 @@ def test_it_is_one_transaction_and_the_last() -> None:
     assert sql.lstrip().startswith("-- Migration:")
     assert "\nbegin;\n" in sql and sql.rstrip().endswith("commit;")
     # Despues va el seguimiento a 24 h nativo (20261101000200, E-251).
-    assert names[-1] == "20261101000200_flow_engine_native_silence_v1.sql"
+    # Los frenos del seguimiento despues de Z y con una ficha vigente (20261101000300, E-263).
+    assert names[-1] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
+    # Antes, el seguimiento a 24 h nativo (20261101000200, E-251).
+    assert names[-2] == "20261101000200_flow_engine_native_silence_v1.sql"
     # Antes, el primer contacto nativo (20261101000100, E-247): el disparador intencion.
-    assert names[-2] == "20261101000100_flow_engine_native_intent_v1.sql"
-    assert names[-3] == MIGRATION.name
-    assert names[-4] == "20261030000300_flow_change_list_v1.sql"
+    assert names[-3] == "20261101000100_flow_engine_native_intent_v1.sql"
+    assert names[-4] == MIGRATION.name
+    assert names[-5] == "20261030000300_flow_change_list_v1.sql"
 
 
 def test_it_creates_only_the_third_source_and_patches_the_two_stops() -> None:

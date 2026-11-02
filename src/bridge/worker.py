@@ -122,6 +122,7 @@ from bridge.native_flows import (
 from bridge.product_label import ProductLabeler
 from bridge.purchase_agent_pause import PurchaseAgentPause
 from bridge.followup_steps import FOLLOWING_STEP_TRIGGERS
+from bridge.lead_decline import LEAD_DECLINED
 from bridge.payment_slip_reminders import PAYMENT_SLIP_STEPS
 from bridge.phones import equivalent_whatsapp_phones, whatsapp_phone_region
 from bridge.product_routes import HotmartUnrouted, ProductRoutes
@@ -999,6 +1000,12 @@ class DurableDispatcher:
         # quien tomo el flujo). Sin el flag, None: ninguna llamada nueva.
         self._purchase_pause_after_native_welcome = purchase_pause_after_native_welcome
         self._native_purchase_buyers: dict[str, tuple[str | None, str | None]] = {}
+        # F-150 (E-263, D4): las acciones cuya ultima lectura de Chatwoot vio un
+        # «no» claro de la persona despues del toque anterior. Lo usa solo el
+        # recordatorio de la ficha (C2 y C3): no sale y cierra con
+        # lead_declined. Contestar sin un «no» claro lo sigue dejando salir
+        # (20261019000800).
+        self._declined_after_anchor: set[str] = set()
         self._payment_slip = payment_slip
         self._payment_failure_variants = payment_failure_variants
         self._payment_failure_followup = payment_failure_followup
@@ -1300,6 +1307,10 @@ class DurableDispatcher:
                     snapshot.checkpoint_message_id is not None
                     and snapshot.checkpoint_created_at is not None
                 ):
+                    if snapshot.declined_after_anchor:
+                        self._declined_after_anchor.add(action.action_id)
+                    else:
+                        self._declined_after_anchor.discard(action.action_id)
                     evidence = {
                         "p_chatwoot_conversation_id": str(snapshot.conversation_id),
                         "p_chatwoot_checkpoint_message_id": str(
@@ -1441,6 +1452,16 @@ class DurableDispatcher:
             ):
                 return _ApprovedTemplateComposition(
                     failure_reason=APPROVED_TEMPLATE_DIRECT_UNSUPPORTED_ACTION,
+                    retryable=False,
+                )
+            if slip_step and action.action_id in self._declined_after_anchor:
+                # F-150 (D4): la persona escribio un «no» claro despues del toque
+                # anterior. El recordatorio de la ficha no sale y no se
+                # reintenta; la persona no queda dada de baja. Cambia a
+                # proposito lo que dice 20261019000800 («un no escrito que no
+                # sea una frase de baja no corta el recordatorio»).
+                return _ApprovedTemplateComposition(
+                    failure_reason=LEAD_DECLINED,
                     retryable=False,
                 )
             step_key = action.step_key
@@ -2215,6 +2236,7 @@ class DurableDispatcher:
         actions = await self.claim_due(now=now)
         decisions: list[ReevaluationDecision] = []
         self._native_purchase_buyers.clear()
+        self._declined_after_anchor.clear()
         for action in actions:
             evidence = await self._load_chatwoot_evidence(action=action, now=now)
             # The anchor picks the reevaluation: the first contact after the

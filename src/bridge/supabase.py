@@ -923,6 +923,10 @@ class ConversationReactivationSettlement:
 # P22-3): el flujo no corre o no es de esta instancia, la version o su paso no
 # son los que ejecuta el barrido, el contacto no esta en la cohorte, o la bolsa
 # llego a su tope.
+# 'blocked_after_last_touch' y 'blocked_pending_payment' (20261101000300, F-149 y
+# F-150) los devuelven la portable y la nativa, despues de la compra: a esa
+# persona le salio Z del carrito (cart_last_touch) en los ultimos 30 dias, o
+# tiene una ficha de pago en efectivo vigente. Sin Z ni ficha no salen nunca.
 FOLLOWUP_CLAIM_OUTCOMES = frozenset(
     {
         "claimed",
@@ -934,6 +938,8 @@ FOLLOWUP_CLAIM_OUTCOMES = frozenset(
         "blocked_contact",
         "blocked_not_template_reply",
         "blocked_native_flow",
+        "blocked_after_last_touch",
+        "blocked_pending_payment",
         "blocked_flow_not_running",
         "blocked_flow_version",
         "blocked_out_of_cohort",

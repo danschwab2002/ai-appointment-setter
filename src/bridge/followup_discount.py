@@ -44,8 +44,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
+from bridge.business_auto_reply import TEMPLATE_MARKERS
 from bridge.chatwoot import ChatwootProtocolError
 from bridge.checkout_issuance import generate_issuance_ulid
+from bridge.lead_decline import LEAD_DECLINED, detect_lead_decline
 from bridge.lead_first_name import resolve_greeting_name, template_greeting_name_is_safe
 from bridge.phones import equivalent_whatsapp_phones, same_whatsapp_phone
 from bridge.reactivation import _last_conversational_message, _scan_summary
@@ -98,6 +100,16 @@ HELD_ONLY_PHONE = "held_only_phone"
 OUTSIDE_SEND_HOURS = "outside_send_hours"
 # Cuantos motivos muestra el resumen (el default de reactivation._scan_summary).
 _SUMMARY_TOP_REASONS = 4
+
+# Los tres frenos de E-263 (F-149 y F-150, 2026-11-01): un «no» claro escrito
+# despues de nuestra ultima plantilla (lo decide evaluate_followup_candidate),
+# un Z del carrito en los ultimos 30 dias y una ficha de pago en efectivo
+# vigente (los dos los decide la reserva en la base, 20261101000300). Cada uno
+# se loguea una vez por conversacion y por proceso, con el numero de la
+# conversacion y nada mas, para medir 7 dias cuantos seguimientos frena (D3).
+FOLLOWUP_STOP_REASONS = frozenset(
+    {LEAD_DECLINED, "blocked_after_last_touch", "blocked_pending_payment"}
+)
 
 
 @dataclass(frozen=True)
@@ -376,6 +388,39 @@ def _followup_regime(conversational: Sequence[dict[str, object]]) -> str:
     return REGIME_WENT_QUIET
 
 
+def _is_our_template(message: dict[str, object]) -> bool:
+    """Un mensaje nuestro que salio como plantilla: lleva una de sus marcas."""
+    if message.get("message_type") not in (1, 3):
+        return False
+    attributes = message.get("content_attributes")
+    return isinstance(attributes, dict) and any(
+        marker in attributes for marker in TEMPLATE_MARKERS
+    )
+
+
+def _inbound_texts_after_last_template(
+    conversational: Sequence[dict[str, object]],
+) -> list[object]:
+    """Lo que escribio la persona despues de nuestra ultima plantilla, en orden.
+
+    Si en el historial leido no hay ninguna plantilla nuestra, todo lo que
+    escribio: equivocarse para el lado de no mandar el cupon es el error barato.
+    """
+    ordered = sorted(
+        conversational,
+        key=lambda message: message["id"] if isinstance(message.get("id"), int) else 0,  # type: ignore[return-value]
+    )
+    last_template = max(
+        (index for index, message in enumerate(ordered) if _is_our_template(message)),
+        default=-1,
+    )
+    return [
+        message.get("content")
+        for message in ordered[last_template + 1 :]
+        if message.get("message_type") == 0 and _sender_type(message) == "contact"
+    ]
+
+
 def evaluate_followup_candidate(
     details: object,
     messages: Sequence[object],
@@ -385,6 +430,7 @@ def evaluate_followup_candidate(
     min_inbound_age_seconds: int = DEFAULT_MIN_INBOUND_AGE_SECONDS,
     max_inbound_age_seconds: int = DEFAULT_MAX_INBOUND_AGE_SECONDS,
     allowed_phone: str | None = None,
+    stop_on_lead_decline: bool = True,
 ) -> FollowupDecision:
     """Decidir si una conversacion recibe el seguimiento con cupon.
 
@@ -392,6 +438,12 @@ def evaluate_followup_candidate(
     motivo por el que se salteo. La compra, la derivacion sin atender y el
     opt-out durable los chequea la base al reservar; aca se descarta lo que
     Chatwoot ya muestra.
+
+    ``stop_on_lead_decline`` (F-150, 2026-11-01): un rechazo claro de la
+    persona despues de nuestra ultima plantilla (``bridge.lead_decline``) da
+    ``lead_declined``. Va al final, despues de la ventana de edad: solo cuenta
+    a quien de otro modo habria recibido el cupon. El barredor sin manifiesto
+    (Johanna) lo apaga, para quedar como estaba.
     """
     if (
         not isinstance(expected_inbox_id, int)
@@ -515,6 +567,13 @@ def evaluate_followup_candidate(
         return _skip("inbound_too_recent")
     if inbound_age_seconds > max_inbound_age_seconds:
         return _skip("inbound_too_old")
+
+    # F-150: un «no» claro desde nuestra ultima plantilla. No es una baja: el
+    # contacto sigue igual y, si vuelve a escribir, el agente la atiende.
+    if stop_on_lead_decline and detect_lead_decline(
+        _inbound_texts_after_last_template(conversational)
+    ) is not None:
+        return _skip(LEAD_DECLINED)
 
     last_outbound_id = last_message.get("id")
     assert isinstance(last_outbound_id, int)
@@ -705,6 +764,8 @@ class ConversationFollowupSweeper:
         self._last_scan_summary = "never"
         self._last_attempt_failed = False
         self._last_outcome: str | None = None
+        # F-149 y F-150: las conversaciones que ya se loguearon con cada freno.
+        self._stops_logged: set[tuple[int, str]] = set()
 
     @property
     def last_scan_state(self) -> str:
@@ -822,9 +883,14 @@ class ConversationFollowupSweeper:
                 min_inbound_age_seconds=self._min_inbound_age_seconds,
                 max_inbound_age_seconds=self._max_inbound_age_seconds,
                 allowed_phone=self._allowed_phone,
+                # El «no» claro, solo con manifiesto (ATT1 y Maribel): sin
+                # manifiesto (Johanna) el barredor queda como estaba.
+                stop_on_lead_decline=self._phone_equivalence,
             )
             if decision.candidate is None:
                 motivos[decision.skip_reason or "unknown"] += 1
+                if decision.skip_reason == LEAD_DECLINED:
+                    self._log_stop(details.get("id"), LEAD_DECLINED)
                 continue
             if self._only_phone is not None and not same_whatsapp_phone(
                 decision.candidate.phone, self._only_phone
@@ -843,6 +909,10 @@ class ConversationFollowupSweeper:
             else:
                 motivos[self._last_outcome or "not_sent"] += 1
                 failed = failed or self._last_attempt_failed
+                if self._last_outcome in FOLLOWUP_STOP_REASONS:
+                    self._log_stop(
+                        decision.candidate.conversation_id, self._last_outcome
+                    )
         self._last_sent_count = sent
         self._has_completed_scan = True
         self._last_scan_state = "error" if failed else "healthy"
@@ -851,6 +921,26 @@ class ConversationFollowupSweeper:
         )
         logger.info("conversation_followup_scan %s", self._last_scan_summary)
         return sent
+
+    def _log_stop(self, conversation_id: object, reason: str) -> None:
+        """Un freno de E-263, una vez por conversacion y por proceso.
+
+        Es lo que se cuenta en la medicion de 7 dias (D3): el resumen del
+        barrido lo repite cada 5 minutos y solo muestra los motivos mas
+        frecuentes. Lleva el numero de la conversacion de Chatwoot y el motivo,
+        nunca el telefono ni el texto.
+        """
+        if not isinstance(conversation_id, int) or isinstance(conversation_id, bool):
+            return
+        key = (conversation_id, reason)
+        if key in self._stops_logged:
+            return
+        self._stops_logged.add(key)
+        logger.info(
+            "conversation_followup_stopped reason=%s conversation=%s",
+            reason,
+            conversation_id,
+        )
 
     def _inside_send_hours(self) -> bool:
         """Si la hora local del reloj del barredor cae en [inicio, fin)."""

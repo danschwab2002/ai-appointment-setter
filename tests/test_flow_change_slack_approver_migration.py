@@ -53,18 +53,20 @@ def test_it_is_one_transaction_and_comes_before_the_native_cart() -> None:
     # La lista de las propuestas del AE (20261030000300, E-208): una lectura nueva.
     # Los frenos de la compra ven nuestro link (20261030000400, E-215): la tercera fuente.
     # El seguimiento a 24 h nativo (20261101000200, E-251): la base del silencio.
-    assert names[-1] == "20261101000200_flow_engine_native_silence_v1.sql"
+    # Los frenos del seguimiento despues de Z y con una ficha vigente (20261101000300, E-263).
+    assert names[-1] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
+    assert names[-2] == "20261101000200_flow_engine_native_silence_v1.sql"
     # Antes, el primer contacto nativo (20261101000100, E-247): el disparador intencion.
-    assert names[-2] == "20261101000100_flow_engine_native_intent_v1.sql"
-    assert names[-3] == "20261030000400_portable_purchase_stops_see_our_link_v1.sql"
-    assert names[-4] == "20261030000300_flow_change_list_v1.sql"
-    assert names[-5] == "20261030000200_flow_engine_native_payment_failure_v1.sql"
-    assert names[-6] == "20261030000100_flow_engine_native_legacy_double_case_v1.sql"
-    assert names[-7] == "20261028000400_purchase_by_our_link_counts_v1.sql"
-    assert names[-8] == "20261028000300_pilot_scope_offer_append_v1.sql"
-    assert names[-9] == "20261028000200_flow_engine_native_cart_v1.sql"
-    assert names[-10] == MIGRATION.name
-    assert names[-11] == "20261026000200_flow_engine_native_offer_in_context_v1.sql"
+    assert names[-3] == "20261101000100_flow_engine_native_intent_v1.sql"
+    assert names[-4] == "20261030000400_portable_purchase_stops_see_our_link_v1.sql"
+    assert names[-5] == "20261030000300_flow_change_list_v1.sql"
+    assert names[-6] == "20261030000200_flow_engine_native_payment_failure_v1.sql"
+    assert names[-7] == "20261030000100_flow_engine_native_legacy_double_case_v1.sql"
+    assert names[-8] == "20261028000400_purchase_by_our_link_counts_v1.sql"
+    assert names[-9] == "20261028000300_pilot_scope_offer_append_v1.sql"
+    assert names[-10] == "20261028000200_flow_engine_native_cart_v1.sql"
+    assert names[-11] == MIGRATION.name
+    assert names[-12] == "20261026000200_flow_engine_native_offer_in_context_v1.sql"
     # Correrla dos veces aborta, y necesita el almacen y la cohorte del operador.
     assert "flow_change_slack_approver_already_applied" in sql
     assert "flow_change_store_missing" in sql
@@ -83,6 +85,7 @@ def test_the_validator_is_in_the_npm_chain() -> None:
         " && node validate_flow_change_list.mjs --check"
         " && node validate_flow_engine_native_intent.mjs"
         " && node validate_flow_engine_native_silence.mjs"
+        " && node validate_followup_stops.mjs"
     )
 
 
