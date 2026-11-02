@@ -413,6 +413,17 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
         lambda: run(with_(flow_def("carrito"), lambda d: d["pasos"][0].update(variables=["nombre", "medio_de_pago"]))),
         lambda: run(flow_def("ficha"), "ficha", phase="draft"),
     ),
+    # Los datos del pago rechazado (1.4, E-306): con el carrito, no; con el pago rechazado, si.
+    **{
+        f"{datum}_requires_payment_failure_trigger": (
+            lambda datum=datum, value=value: run(with_(flow_def("carrito"), lambda d: d.update(pasos=[
+                {"condicion": {"dato": datum, "es": [value]}, "entonces": [d["pasos"][0]], "si_no": []}]))),
+            lambda datum=datum, value=value: run(with_(flow_def("pago_fallido"), lambda d: d.update(pasos=[
+                {"condicion": {"dato": datum, "es": [value]}, "entonces": [d["pasos"][0]], "si_no": []}])),
+                "pago_fallido", phase="draft"),
+        )
+        for datum, value in (("tipo_de_rechazo", "sin_saldo"), ("rechazos", "varios"), ("descuento_previo", "si"))
+    },
     "ficha_link_requires_ficha_trigger": (
         lambda: run(with_(flow_def("carrito"), lambda d: d["pasos"][0].update(boton={"link": "ficha"}))),
         lambda: run(flow_def("ficha"), "ficha", phase="draft"),
@@ -786,6 +797,8 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         3: {"permission_trigger_mismatch", "contesto_a_requires_conversation"},
         4: {"purchase_exit_missing", "purchase_exit_with_purchase_trigger"},
         5: {"ficha_vencida_requires_ficha_trigger", "medio_de_pago_requires_ficha_trigger",
+            "tipo_de_rechazo_requires_payment_failure_trigger", "rechazos_requires_payment_failure_trigger",
+            "descuento_previo_requires_payment_failure_trigger",
             "ficha_link_requires_ficha_trigger", "coupon_requires_checkout_link",
             "variable_needs_personal_coupon", "variable_needs_event_trigger",
             "etiquetar_requires_purchase_trigger"},

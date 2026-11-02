@@ -56,6 +56,8 @@ from typing import Any, Protocol
 
 from .flow_definition import (
     ANY_TEMPLATE,
+    PAYMENT_FAILURE_CONDITION_DATA,
+    condition_chain,
     DEFAULT_VARIABLES,
     MAX_DEPTH,
     NEVER,
@@ -72,10 +74,10 @@ from .flow_policy import STEPS_BY_LEGACY_KIND
 from .flow_schedule import DEFAULT_ZONE, LAST_MINUTE, Franja, franja_of, is_open, next_open
 
 __all__ = [
-    "ENGINE_CAPABILITIES_NATIVE", "ENGINE_CAPABILITIES_NATIVE_SILENCE", "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_PARAMETERS", "NATIVE_CAPABILITIES_BY_TRIGGER", "NATIVE_SILENCE_TRIGGER", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
+    "ENGINE_CAPABILITIES_NATIVE", "ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE", "ENGINE_CAPABILITIES_NATIVE_SILENCE", "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_PARAMETERS", "NATIVE_CAPABILITIES_BY_TRIGGER", "NATIVE_SILENCE_TRIGGER", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
     "BolsaLedger", "ControlLine", "Eligible", "EngineCapabilities", "EngineFlow", "Firing", "FlowRef",
     "GateDecision", "GateFacts", "PersonView", "Plan", "PlanInvalid", "PlanNotSupported", "PlannedStep",
-    "RunView", "StartDecision", "evaluate_gate", "first_eligible", "legacy_motivo", "native_not_supported", "native_trigger_key", "native_variables_fit", "not_supported", "plan_start",
+    "RunView", "StartDecision", "evaluate_gate", "first_eligible", "legacy_motivo", "native_not_supported", "native_payment_failure_branches", "native_trigger_key", "native_variables_fit", "not_supported", "plan_start",
     "plan_steps", "pool_zone", "step_start", "wins",
 ]
 
@@ -304,6 +306,17 @@ ENGINE_CAPABILITIES_NATIVE_SILENCE = EngineCapabilities(
     exits=frozenset({"compra", "contesta"}),
     relations_between_engine_flows_only=True,
 )
+# El pago rechazado nativo con sus ramas (P-16, E-306, flow-engine-v2 §27): lo de los eventos, mas la
+# condicion (solo con los datos del pago rechazado, en una cadena al final, cada rama con una sola
+# plantilla) y el boton del checkout, sin cupon o con un cupon fijo (el link nuestro con
+# ``offDiscount=<codigo>``, como el seguimiento con cupon). El cupon personal es la fase B. Un envio por
+# camino: la condicion elige uno. Lo ejecutan la base (20261103000900) y el envio del bridge (A5).
+ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE = dataclasses.replace(
+    ENGINE_CAPABILITIES_NATIVE,
+    step_types=ENGINE_CAPABILITIES_NATIVE.step_types | {"condicion"},
+    buttons=frozenset({"checkout"}),
+)
+NATIVE_PAYMENT_FAILURE_TRIGGER = "pago_fallido"
 # Las variables del seguimiento, en su orden: las que manda el barrido (FollowupTemplate.params).
 FOLLOWUP_VARIABLES = ("nombre", "producto")
 # La ventana del silencio nativo, en minutos (P22-3, E-269): la del barrido del legado, de 24 a 72 h.
@@ -328,6 +341,7 @@ NATIVE_PERMISSION_BY_TRIGGER: Mapping[str, str] = MappingProxyType(
 # ``NATIVE_PERMISSION_BY_TRIGGER``, como hasta ahora.
 NATIVE_CAPABILITIES_BY_TRIGGER: Mapping[str, EngineCapabilities] = MappingProxyType({
     **{event: ENGINE_CAPABILITIES_NATIVE for event in sorted(ENGINE_CAPABILITIES_NATIVE.triggers)},
+    NATIVE_PAYMENT_FAILURE_TRIGGER: ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE,
     NATIVE_SILENCE_TRIGGER: ENGINE_CAPABILITIES_NATIVE_SILENCE,
 })
 # Con que repite cada disparador nativo: un evento, por persona o por persona y oferta; el silencio, como
@@ -426,6 +440,59 @@ def _native_silence_not_supported(definition: Mapping[str, Any], add: Callable[[
             add(f"{NOT_SUPPORTED}:cupon_personal")
 
 
+def native_payment_failure_branches(definition: Mapping[str, Any]
+                                    ) -> tuple[tuple[Mapping[str, Any] | None, Mapping[str, Any]], ...] | None:
+    """Las ramas de un pago rechazado nativo con condicion: ``(condicion, plantilla)`` en orden; None sin condicion.
+
+    La primera rama cuya condicion se cumple gana; la ultima (``None``) es el ``si_no`` final. Es la forma
+    que ejecutan la base y el bridge (flow-engine-v2 §27): la cadena es el ultimo paso, y cada rama es un
+    solo paso ``plantilla``. Con otra forma, ``None`` tambien: la mira ``native_not_supported``.
+    """
+    steps = definition.get("pasos")
+    if not isinstance(steps, list) or not steps or step_type(steps[-1]) != "condicion":
+        return None
+    chain = condition_chain(steps[-1])
+    if chain is None:
+        return None
+    branches: list[tuple[Mapping[str, Any] | None, Mapping[str, Any]]] = []
+    for condition, branch in chain:
+        if not isinstance(branch, list) or len(branch) != 1 or step_type(branch[0]) != "plantilla":
+            return None
+        branches.append((condition, branch[0]))
+    return tuple(branches)
+
+
+def _native_payment_failure_not_supported(definition: Mapping[str, Any], add: Callable[[str], None]) -> None:
+    """Lo que el pago rechazado nativo exige ademas de sus capacidades (flow-engine-v2 §27).
+
+    La condicion, solo con los datos del pago rechazado, en una cadena que es el ultimo paso, con una sola
+    plantilla por rama (sin esperas adentro: la gracia es una sola, antes de elegir). El boton, sin cupon o
+    con un codigo fijo: ``cupon: personal`` todavia no (la fase B).
+    """
+    steps = definition.get("pasos")
+    walked = _walk_steps(steps)
+    for step in walked:
+        kind = step_type(step)
+        if kind == "condicion" and isinstance(step, Mapping):
+            condition = step.get("condicion")
+            datum = condition.get("dato") if isinstance(condition, Mapping) else None
+            if datum not in PAYMENT_FAILURE_CONDITION_DATA:
+                add(f"{NOT_SUPPORTED}:condicion_dato")
+        elif kind == "plantilla" and isinstance(step, Mapping):
+            button = step.get("boton")
+            if isinstance(button, Mapping) and button.get("cupon") == PERSONAL_COUPON:
+                add(f"{NOT_SUPPORTED}:cupon_personal")
+    if not isinstance(steps, list):
+        return
+    conditions = [index for index, step in enumerate(steps) if step_type(step) == "condicion"]
+    if not conditions:
+        return
+    if conditions != [len(steps) - 1]:
+        add(f"{NOT_SUPPORTED}:condicion_no_al_final")
+    elif native_payment_failure_branches(definition) is None:
+        add(f"{NOT_SUPPORTED}:rama_de_un_envio")
+
+
 def native_not_supported(definition: Mapping[str, Any]) -> tuple[str, ...]:
     """Lo que el motor nativo no ejecuta de una definicion, en orden; vacio si la ejecuta.
 
@@ -471,6 +538,8 @@ def native_not_supported(definition: Mapping[str, Any]) -> tuple[str, ...]:
         add(code)
     if key == NATIVE_SILENCE_TRIGGER:
         _native_silence_not_supported(definition, add)
+    if key == NATIVE_PAYMENT_FAILURE_TRIGGER:
+        _native_payment_failure_not_supported(definition, add)
     for step in _walk_steps(definition.get("pasos")):
         if step_type(step) == "plantilla" and isinstance(step, Mapping) \
                 and not native_variables_fit(step.get("variables")):

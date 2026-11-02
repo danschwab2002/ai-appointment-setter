@@ -1,7 +1,7 @@
 {
  "_generated": {
   "generator": "tests/test_flow_validator.py (test_the_bridge_json_with_the_base_is_the_one_in_the_repo)",
-  "date": "2026-11-01",
+  "date": "2026-11-02",
   "from": "los casos negativo y positivo de cada codigo de CASES, dos bordes del resultado y validator_json() con las dos fases y los dos actores",
   "regenerate": "FLOW_STORE_FIXTURE_DIR=tests/fixtures/flow_store uv run pytest tests/test_flow_validator.py"
  },
@@ -569,6 +569,50 @@
     "contract": "setter-flujo/v1",
     "rules_version": 1,
     "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "descuento_previo_requires_payment_failure_trigger",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 5,
+      "code": "descuento_previo_requires_payment_failure_trigger",
+      "kind": "forma",
+      "path": "/0/definicion/pasos/0/condicion/dato",
+      "reason": "descuento_previo, como dato de una condición, va solo con el disparador pago_fallido."
+     }
+    ],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "empty_branch_with_le_gana_a",
+      "kind": "advertencia",
+      "path": "/0/definicion/pasos/0",
+      "reason": "A quien cae en la rama vacía no le llega nada, y tampoco el flujo al que este le gana."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "descuento_previo_requires_payment_failure_trigger",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
     "actor": "operador"
    }
   },
@@ -1912,7 +1956,7 @@
       "code": "nested_condition",
       "kind": "forma",
       "path": "/0/definicion/pasos/0/entonces/0/condicion",
-      "reason": "Una condición no puede llevar otra adentro."
+      "reason": "Una condición no puede llevar otra adentro. Con el disparador pago_fallido, sí como único paso del si_no de otra, hasta tres niveles (la cadena del pago rechazado)."
      }
     ],
     "warnings": [
@@ -2327,6 +2371,50 @@
     "contract": "setter-flujo/v1",
     "rules_version": 1,
     "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "rechazos_requires_payment_failure_trigger",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 5,
+      "code": "rechazos_requires_payment_failure_trigger",
+      "kind": "forma",
+      "path": "/0/definicion/pasos/0/condicion/dato",
+      "reason": "rechazos, como dato de una condición, va solo con el disparador pago_fallido."
+     }
+    ],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "empty_branch_with_le_gana_a",
+      "kind": "advertencia",
+      "path": "/0/definicion/pasos/0",
+      "reason": "A quien cae en la rama vacía no le llega nada, y tampoco el flujo al que este le gana."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "rechazos_requires_payment_failure_trigger",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
     "actor": "operador"
    }
   },
@@ -3035,6 +3123,50 @@
     "contract": "setter-flujo/v1",
     "rules_version": 1,
     "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "tipo_de_rechazo_requires_payment_failure_trigger",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 5,
+      "code": "tipo_de_rechazo_requires_payment_failure_trigger",
+      "kind": "forma",
+      "path": "/0/definicion/pasos/0/condicion/dato",
+      "reason": "tipo_de_rechazo, como dato de una condición, va solo con el disparador pago_fallido."
+     }
+    ],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "empty_branch_with_le_gana_a",
+      "kind": "advertencia",
+      "path": "/0/definicion/pasos/0",
+      "reason": "A quien cae en la rama vacía no le llega nada, y tampoco el flujo al que este le gana."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "tipo_de_rechazo_requires_payment_failure_trigger",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
     "actor": "operador"
    }
   },

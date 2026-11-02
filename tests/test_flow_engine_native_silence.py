@@ -59,6 +59,7 @@ from bridge import flow_definition as fd
 from bridge.flow_definition import ANY_TEMPLATE, ProposalItem, check_definition
 from bridge.flow_engine import (
     ENGINE_CAPABILITIES_NATIVE,
+    ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE,
     ENGINE_CAPABILITIES_NATIVE_SILENCE,
     NATIVE_CAPABILITIES_BY_TRIGGER,
     NATIVE_PERMISSION_BY_TRIGGER,
@@ -138,7 +139,8 @@ def test_the_fixtures_are_the_captured_followup_template_and_an_adopted_cart_con
 def test_the_capabilities_are_per_trigger() -> None:
     assert dict(NATIVE_CAPABILITIES_BY_TRIGGER) == {
         "compra": ENGINE_CAPABILITIES_NATIVE, "carrito": ENGINE_CAPABILITIES_NATIVE,
-        "pago_fallido": ENGINE_CAPABILITIES_NATIVE, "intencion": ENGINE_CAPABILITIES_NATIVE,
+        # El pago rechazado, con sus ramas y el boton del checkout (P-16, E-306, flow-engine-v2 §27).
+        "pago_fallido": ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE, "intencion": ENGINE_CAPABILITIES_NATIVE,
         NATIVE_SILENCE_TRIGGER: ENGINE_CAPABILITIES_NATIVE_SILENCE}
     assert NATIVE_PERMISSION_BY_TRIGGER[NATIVE_SILENCE_TRIGGER] == "conversacion"
     silence = ENGINE_CAPABILITIES_NATIVE_SILENCE
@@ -218,11 +220,14 @@ def test_the_native_events_run_as_before(definition: dict[str, Any]) -> None:
     once = copy.deepcopy(definition)
     once["topes"]["repeticion"] = {"una_por": "conversacion", "otra_despues_de": "nunca"}
     assert "motor_nativo:repeticion" in native_not_supported(once)
-    # Y el boton del checkout, solo del silencio.
+    # Y el boton del checkout, del silencio y, desde E-306 (flow-engine-v2 §27), del pago rechazado.
     with_button = copy.deepcopy(definition)
     step = next(step for step in with_button["pasos"] if "plantilla" in step)
     step["boton"] = {"link": "checkout", "cupon": "PROTOCOLO10"}
-    assert "engine_not_supported:boton_checkout" in native_not_supported(with_button)
+    if definition is PAYMENT:
+        assert native_not_supported(with_button) == ()
+    else:
+        assert "engine_not_supported:boton_checkout" in native_not_supported(with_button)
 
 
 # -- El esquema: cualquier_plantilla y el cupon -------------------------------------

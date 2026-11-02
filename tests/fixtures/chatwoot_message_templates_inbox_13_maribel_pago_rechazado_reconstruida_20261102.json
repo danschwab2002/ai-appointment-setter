@@ -1,0 +1,170 @@
+{
+ "_capture": {
+  "origen": "RECONSTRUIDA, no leida del catalogo de Chatwoot. El cuerpo y los botones son el pedido que meta_plantillas.py arma para la WABA de Maribel (la funcion pedido() del script sobre su fuente, plantillas-meta-maribel.json del OS, las cuatro entradas de E-302), vuelta a correr el 2026-11-02 para E-306. APPROVED y MARKETING: lo que informo la coordinadora del programa el 2026-11-02 (las cuatro aprobadas en Meta ese dia). Sin id de Meta: no se leyo. parameter_format como lo sincroniza Chatwoot (la captura del inbox 11 del 2026-10-19).",
+  "captured_at": null,
+  "reconstruida_el": "2026-11-02",
+  "pendiente": "Reemplazar por la captura de channel_whatsapp.message_templates del inbox 13 (Maribel WhatsApp, cuenta 3), en solo lectura, como la del inbox 11 del pago rechazado de ATT1 (chatwoot_message_templates_inbox_11_pago_rechazado_20261019.json). Si Meta cambio el cuerpo o los botones al aprobarlas, la captura manda.",
+  "anonimizado": "No hace falta: es la definicion de cuatro plantillas, sin datos de personas. El ejemplo del boton es el de la fuente (EJEMPLO10).",
+  "lo_que_prueba": "Las cuatro ramas del pago rechazado de Maribel (P-16, D1 «Las 4», D10 PROTOCOLO10): cuerpo con {{1}} nombre y {{2}} producto, el boton de URL del checkout con variable primero (https://pay.hotmart.com/{{1}}) y la respuesta rapida «No más mensajes» despues, sin encabezado y en MARKETING."
+ },
+ "id": 13,
+ "channel_type": "Channel::Whatsapp",
+ "message_templates": [
+  {
+   "id": null,
+   "name": "maribel_pago_rechazado_cupon_01",
+   "status": "APPROVED",
+   "category": "MARKETING",
+   "language": "es_MX",
+   "components": [
+    {
+     "type": "BODY",
+     "text": "Hola, {{1}}. El pago que intentaste por *{{2}}* no pasó.\n\nTe escribo del equipo de El Protocolo: tu *10 % de descuento* sigue activo. En el botón está el pago preparado con tu descuento, y ahí puedes usar otra tarjeta u otro medio de pago de tu país.\n\n¿Quieres que te ayude a que pase esta vez?",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "El Protocolo Biohacking +"
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "type": "URL",
+       "text": "Usar mi descuento",
+       "url": "https://pay.hotmart.com/{{1}}",
+       "example": [
+        "https://pay.hotmart.com/F107441770M?off=u8ikyx78&checkoutMode=10&offDiscount=EJEMPLO10"
+       ]
+      },
+      {
+       "type": "QUICK_REPLY",
+       "text": "No más mensajes"
+      }
+     ]
+    }
+   ],
+   "parameter_format": "POSITIONAL"
+  },
+  {
+   "id": null,
+   "name": "maribel_pago_rechazado_dos_veces_01",
+   "status": "APPROVED",
+   "category": "MARKETING",
+   "language": "es_MX",
+   "components": [
+    {
+     "type": "BODY",
+     "text": "Hola, {{1}}. El pago que intentaste por *{{2}}* no pasó dos veces.\n\nTe escribo del equipo de El Protocolo. Para no hacerte pasar por lo mismo otra vez, te conviene pagarlo con otra tarjeta u otro medio de pago de tu país. En el botón está el pago preparado con tu *10 % de descuento*, y ahí eliges.\n\n¿Te digo cuáles tienes disponibles?",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "El Protocolo Biohacking +"
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "type": "URL",
+       "text": "Usar mi descuento",
+       "url": "https://pay.hotmart.com/{{1}}",
+       "example": [
+        "https://pay.hotmart.com/F107441770M?off=u8ikyx78&checkoutMode=10&offDiscount=EJEMPLO10"
+       ]
+      },
+      {
+       "type": "QUICK_REPLY",
+       "text": "No más mensajes"
+      }
+     ]
+    }
+   ],
+   "parameter_format": "POSITIONAL"
+  },
+  {
+   "id": null,
+   "name": "maribel_pago_rechazado_saldo_01",
+   "status": "APPROVED",
+   "category": "MARKETING",
+   "language": "es_MX",
+   "components": [
+    {
+     "type": "BODY",
+     "text": "Hola, {{1}}. El pago que intentaste por *{{2}}* no pasó porque la tarjeta no tenía saldo o límite en ese momento.\n\nTe escribo del equipo de El Protocolo. Para que te quede más cómodo, tienes un *10 % de descuento*, con el pago preparado en el botón. Ahí también puedes elegir otro medio de pago de tu país.\n\nSi hoy no te queda bien, respóndeme y lo vemos.",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "El Protocolo Biohacking +"
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "type": "URL",
+       "text": "Usar mi descuento",
+       "url": "https://pay.hotmart.com/{{1}}",
+       "example": [
+        "https://pay.hotmart.com/F107441770M?off=u8ikyx78&checkoutMode=10&offDiscount=EJEMPLO10"
+       ]
+      },
+      {
+       "type": "QUICK_REPLY",
+       "text": "No más mensajes"
+      }
+     ]
+    }
+   ],
+   "parameter_format": "POSITIONAL"
+  },
+  {
+   "id": null,
+   "name": "maribel_pago_rechazado_banco_01",
+   "status": "APPROVED",
+   "category": "MARKETING",
+   "language": "es_MX",
+   "components": [
+    {
+     "type": "BODY",
+     "text": "Hola, {{1}}. El pago que intentaste por *{{2}}* no se aprobó.\n\nTe escribo del equipo de El Protocolo. Si fue con tarjeta, pasa seguido con las compras en línea o internacionales, y muchas veces se resuelve en un minuto desde la app de tu banco. Si prefieres otra tarjeta u otro medio, el pago está preparado en el botón con tu *10 % de descuento*.\n\n¿De qué banco es tu tarjeta? Te digo qué activar.",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "El Protocolo Biohacking +"
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "type": "URL",
+       "text": "Usar mi descuento",
+       "url": "https://pay.hotmart.com/{{1}}",
+       "example": [
+        "https://pay.hotmart.com/F107441770M?off=u8ikyx78&checkoutMode=10&offDiscount=EJEMPLO10"
+       ]
+      },
+      {
+       "type": "QUICK_REPLY",
+       "text": "No más mensajes"
+      }
+     ]
+    }
+   ],
+   "parameter_format": "POSITIONAL"
+  }
+ ]
+}
