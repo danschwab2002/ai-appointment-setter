@@ -10,8 +10,11 @@ Cuatro piezas, separadas a proposito, con la misma forma que la reactivacion:
 
 * ``parse_followup_template`` valida la plantilla del catalogo que publica
   Chatwoot: aprobada, con dos o tres marcadores (nombre y producto, y el cupon
-  si tambien va en el texto) y exactamente un boton de URL dinamica sobre
-  ``https://pay.hotmart.com/``, que es el que siempre lleva el cupon.
+  si tambien va en el texto), el boton de URL dinamica sobre
+  ``https://pay.hotmart.com/`` primero (es el que siempre lleva el cupon) y,
+  despues, la respuesta rapida «No más mensajes» (E-272, decision de Dan del
+  2026-11-02). La forma vieja, con el checkout solo, se sigue aceptando con un
+  aviso en el log hasta que Meta apruebe las ``_02``.
 * ``followup_button_suffix`` arma la parte variable del boton desde el link que
   emitio la base, sumandole ``offDiscount``. El link ya trae la oferta del lead,
   ``src=hermes``, el ``sck`` con la marca del recuperador y el ``fbclid``.
@@ -77,6 +80,20 @@ LISTING_MARGIN_SECONDS = 3_600
 
 HOTMART_CHECKOUT_PREFIX = "https://pay.hotmart.com/"
 FOLLOWUP_BUTTON_URL = HOTMART_CHECKOUT_PREFIX + "{{1}}"
+# La respuesta rapida de la baja (decision de Dan del 2026-11-02: toda plantilla
+# de marketing del recuperador la lleva). Texto exacto, el mismo que
+# ``template_request.OPT_OUT_BUTTON`` (una prueba fija que son iguales): tocarla
+# manda ese texto como mensaje del lead, y ``opt_out.detect_explicit_opt_out``
+# lo registra como baja por el camino de siempre.
+FOLLOWUP_OPT_OUT_BUTTON = "No más mensajes"
+# El log de la forma vieja (solo el checkout, sin la baja). Se corta cuando Meta
+# apruebe ``att1_seguimiento_descuento_02`` y ``maribel_seguimiento_descuento_02``
+# y las dos instancias apunten a ellas (E-272), y Johanna tenga la suya
+# (``johanna_seguimiento_descuento_01`` tambien es de un solo boton): ahi la
+# forma vieja pasa a ser
+# ``followup_template_opt_out_button_missing``. El log sale como
+# ``<log_prefix>_template_without_opt_out_button template=<nombre>``.
+FOLLOWUP_TEMPLATE_WITHOUT_OPT_OUT = "template_without_opt_out_button"
 COUPON_CODE_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 # Lo que puede ir despues de pay.hotmart.com/ sin escapar nada: el link que
 # emite la base ya viene con la | del sck codificada (%7C) y la ~ literal (el
@@ -133,6 +150,10 @@ class FollowupTemplate:
     category: str
     body: str
     carries_coupon: bool = True
+    # True con la respuesta rapida «No más mensajes» despues del checkout (las
+    # ``_02``, E-272). False es la forma vieja, de un solo boton: se acepta con
+    # un aviso en el log hasta que se corte (ver FOLLOWUP_TEMPLATE_WITHOUT_OPT_OUT).
+    has_opt_out_button: bool = False
 
     def render(self, *, first_name: str, product_name: str, coupon_code: str) -> str:
         """El texto que se ve en Chatwoot, con los marcadores reemplazados.
@@ -159,8 +180,13 @@ class FollowupTemplate:
         ``processed_params.buttons`` (``Whatsapp::TemplateProcessorService``,
         ``process_button_components``): cada entrada con ``type: 'url'`` se
         manda como ``sub_type: url`` con el ``parameter`` como texto, y el
-        indice es la posicion en la lista. La plantilla tiene un solo boton,
-        asi que va en el indice 0.
+        indice es la posicion en la lista. El boton de URL es siempre el
+        primero de la plantilla (``parse_followup_template`` no acepta otro
+        orden), asi que va en el indice 0. La respuesta rapida «No más
+        mensajes», cuando esta, no lleva parametro y no va en la lista: la
+        misma forma que manda el A1 y el Z del carrito de ATT1
+        (``ApprovedTemplate.processed_params`` con ``att1_carrito_descuento_01``
+        y ``att1_ultima_renovacion_01``, URL primero y la baja despues).
 
         El cuerpo lleva el ``"3"`` solo si la plantilla tiene ``{{3}}``. Meta
         rechaza con #132000 un cuerpo con otra cantidad de parametros que la
@@ -208,6 +234,13 @@ def parse_followup_template(
     Acepta dos formas del cuerpo, y ``carries_coupon`` dice cual leyo: con el
     cupon en el texto (``{{1}}``, ``{{2}}`` y ``{{3}}``, la de Johanna) o con
     el cupon solo en el boton (``{{1}}`` y ``{{2}}``, la de ATT1).
+
+    Y dos formas de los botones, y ``has_opt_out_button`` dice cual leyo: el
+    checkout y despues la respuesta rapida «No más mensajes» (las ``_02``,
+    E-272), o el checkout solo (las ``_01``, que siguen saliendo hasta que Meta
+    apruebe las nuevas). El checkout va primero en las dos: Chatwoot 4.13
+    indexa el boton de URL por su posicion en ``processed_params.buttons`` y
+    el bridge lo manda en el 0 (ver ``FollowupTemplate.params``).
     """
     if not isinstance(template_name, str) or not template_name.strip():
         raise ValueError("followup_template_name_missing")
@@ -269,10 +302,12 @@ def parse_followup_template(
     else:
         raise ChatwootProtocolError("followup_template_unexpected_placeholders")
 
-    # Exactamente un boton, y tiene que ser de URL dinamica sobre el checkout
-    # de Hotmart. Sin el boton, el cupon queda en un texto que hay que copiar a
-    # mano (o, sin {{3}}, en ningun lado), que es justo lo que el seguimiento
-    # viene a evitar.
+    # Primero el boton de URL dinamica sobre el checkout de Hotmart. Sin el
+    # boton, el cupon queda en un texto que hay que copiar a mano (o, sin {{3}},
+    # en ningun lado), que es justo lo que el seguimiento viene a evitar. Despues,
+    # nada (la forma vieja) o la respuesta rapida «No más mensajes» y nada mas:
+    # otra respuesta rapida, un segundo link o el checkout en otro lugar que el
+    # primero fallan cerrado.
     button_groups = [
         component
         for component in components
@@ -281,15 +316,22 @@ def parse_followup_template(
     if len(button_groups) != 1:
         raise ChatwootProtocolError("followup_template_button_missing")
     buttons = button_groups[0].get("buttons")
-    if not isinstance(buttons, list) or len(buttons) != 1:
+    if not isinstance(buttons, list) or not buttons:
         raise ChatwootProtocolError("followup_template_button_missing")
-    button = buttons[0]
-    if (
-        not isinstance(button, dict)
-        or button.get("type") != "URL"
-        or button.get("url") != FOLLOWUP_BUTTON_URL
-    ):
+    if len(buttons) > 2:
+        raise ChatwootProtocolError("followup_template_unexpected_button")
+    if not all(_is_checkout_button(button) or _is_opt_out_button(button) for button in buttons):
+        if _is_checkout_button(buttons[0]):
+            raise ChatwootProtocolError("followup_template_unexpected_button")
         raise ChatwootProtocolError("followup_template_button_not_dynamic_checkout")
+    if not _is_checkout_button(buttons[0]):
+        # La baja primero y el checkout despues: el boton de URL quedaria en el
+        # indice 1 y el bridge lo manda en el 0, asi que Meta rechazaria el envio.
+        if any(_is_checkout_button(button) for button in buttons):
+            raise ChatwootProtocolError("followup_template_checkout_button_not_first")
+        raise ChatwootProtocolError("followup_template_button_not_dynamic_checkout")
+    if len(buttons) == 2 and not _is_opt_out_button(buttons[1]):
+        raise ChatwootProtocolError("followup_template_unexpected_button")
 
     return FollowupTemplate(
         name=wanted,
@@ -297,6 +339,24 @@ def parse_followup_template(
         category=category.strip(),
         body=body,
         carries_coupon=carries_coupon,
+        has_opt_out_button=len(buttons) == 2,
+    )
+
+
+def _is_checkout_button(button: object) -> bool:
+    return (
+        isinstance(button, dict)
+        and button.get("type") == "URL"
+        and button.get("url") == FOLLOWUP_BUTTON_URL
+    )
+
+
+def _is_opt_out_button(button: object) -> bool:
+    # El texto exacto: es lo que llega como mensaje del lead al tocarla.
+    return (
+        isinstance(button, dict)
+        and button.get("type") == "QUICK_REPLY"
+        and button.get("text") == FOLLOWUP_OPT_OUT_BUTTON
     )
 
 
@@ -826,6 +886,8 @@ class ConversationFollowupSweeper:
         self._last_outcome: str | None = None
         # F-149 y F-150: las conversaciones que ya se loguearon con cada freno.
         self._stops_logged: set[tuple[int, str]] = set()
+        # E-272: la plantilla de un solo boton se loguea una vez por proceso.
+        self._legacy_template_logged = False
 
     @property
     def last_scan_state(self) -> str:
@@ -951,6 +1013,13 @@ class ConversationFollowupSweeper:
             template_name=self._template_name,
             expected_language=self._expected_template_language,
         )
+        if not template.has_opt_out_button and not self._legacy_template_logged:
+            # Una vez por proceso: la forma vieja sigue saliendo, pero se ve.
+            self._legacy_template_logged = True
+            logger.warning(
+                f"{self._log_prefix}_{FOLLOWUP_TEMPLATE_WITHOUT_OPT_OUT} template=%s",
+                template.name,
+            )
         now_epoch = int(self._clock())
         # Abiertas y resueltas, solo las que tuvieron actividad dentro de la
         # ventana: una conversacion con el ultimo mensaje del lead hace mas de

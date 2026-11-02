@@ -23,7 +23,8 @@ Lo que fijan:
   otra repeticion;
 * ``contesto_a: cualquier_plantilla`` es un texto del esquema (regla 1), va solo con
   ``permiso: conversacion`` (regla 3) y no depende de que flujos estan registrados (regla 10);
-* la regla 13 pide un solo boton en un nativo con el checkout, y en el legado no cambia;
+* la regla 13 pide en un nativo con el checkout ese boton primero y, despues, nada o «No más mensajes»
+  (E-272), y en el legado no cambia;
 * el cupon con ``+`` (``PROTOCOLO10+``, el del link del agente) sigue frenado por la forma;
 * los flujos de hoy validan igual.
 """
@@ -278,22 +279,31 @@ def test_the_silence_of_the_person_stays_out_of_the_native_engine() -> None:
     assert "motor_nativo:disparador" in blocks
 
 
-# -- La regla 13: un solo boton --------------------------------------------------
+# -- La regla 13: el checkout primero y, despues, nada o la baja (E-272) ------------
 
 
-def _with_quick_reply(payload: dict[str, Any]) -> None:
+def _with_quick_reply(payload: dict[str, Any], text: str = "No más mensajes") -> None:
     template = template_of(payload, TEMPLATE)
     buttons = next(c for c in template["components"] if c["type"] == "BUTTONS")["buttons"]
-    buttons.append({"type": "QUICK_REPLY", "text": "No más mensajes"})
+    buttons.append({"type": "QUICK_REPLY", "text": text})
 
 
-def test_rule_13_wants_a_single_checkout_button_in_the_native_followup() -> None:
+def test_rule_13_takes_the_checkout_then_the_opt_out_in_the_native_followup() -> None:
+    # E-272 (decision de Dan del 2026-11-02): la _02 lleva el checkout y despues «No más mensajes».
     catalog = catalog_with(_with_quick_reply)
-    assert "template_button_mismatch" in _blocks(FOLLOWUP, in_world=world(keys=()), catalog=catalog)
-    # Lo que manda el barrido: con la respuesta rapida, la plantilla no sale.
+    assert "template_button_mismatch" not in _blocks(FOLLOWUP, in_world=world(keys=()), catalog=catalog)
+    # Lo que manda el barrido: con la baja despues del checkout, la plantilla sale.
     payload = copy.deepcopy(INBOX_11)
     _with_quick_reply(payload)
-    with pytest.raises(Exception, match="followup_template_button_missing"):
+    assert parse_followup_template(payload, template_name=TEMPLATE, expected_language="es_MX").has_opt_out_button
+
+
+def test_rule_13_still_refuses_another_quick_reply_in_the_native_followup() -> None:
+    catalog = catalog_with(lambda payload: _with_quick_reply(payload, "Necesito ayuda"))
+    assert "template_button_mismatch" in _blocks(FOLLOWUP, in_world=world(keys=()), catalog=catalog)
+    payload = copy.deepcopy(INBOX_11)
+    _with_quick_reply(payload, "Necesito ayuda")
+    with pytest.raises(Exception, match="followup_template_unexpected_button"):
         parse_followup_template(payload, template_name=TEMPLATE, expected_language="es_MX")
 
 

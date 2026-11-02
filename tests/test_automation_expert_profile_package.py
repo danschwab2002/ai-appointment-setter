@@ -153,7 +153,7 @@ def test_the_soul_knows_what_the_native_engine_runs_today() -> None:
     for needed in ("`seguimiento_cupon`", "lo_ultimo: agente", "desde: 24h, hasta: 72h", "permiso: conversacion",
                    "contesto_a: cualquier_plantilla", "termina: {si: [compra, contesta]}",
                    "una_por: conversacion, otra_despues_de: nunca", "link: checkout", "no se cambia conversando",
-                   "un solo botón"):
+                   "el checkout y, si la tiene, «No más mensajes»"):
         assert needed in followup, needed
     # E-252: el primer contacto (el formulario) ya lo hace el motor nativo, con su clave propia, la
     # repeticion de 24 h y los cortes que no se escriben.

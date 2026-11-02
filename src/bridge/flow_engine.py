@@ -290,7 +290,8 @@ NATIVE_SILENCE_TRIGGER = "silencio:agente"
 # (``followup_discount.ConversationFollowupSweeper``), que manda en el momento del barrido. Un solo envio,
 # sin espera; la plantilla con las variables del paso, de entre nombre y producto; el boton del checkout
 # con un cupon fijo (``boton: {link: checkout, cupon: <codigo>}``: ``parse_followup_template`` exige ese
-# boton y ninguno mas); y las salidas compra y contesta. Lo ejecutan la reserva nativa de la base
+# boton primero y, despues, nada o la respuesta rapida «No más mensajes», E-272); y las salidas compra y
+# contesta. Lo ejecutan la reserva nativa de la base
 # (``claim_flow_engine_silence_v1``, P22-2, 20261101000200) y el barrido nativo del bridge
 # (``native_silence.NativeSilenceSweepers``, P22-3, E-269), con la ventana de 24 a 72 h del legado.
 ENGINE_CAPABILITIES_NATIVE_SILENCE = EngineCapabilities(

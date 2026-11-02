@@ -129,8 +129,8 @@ def test_the_slip_templates_of_the_legacy_use_data_the_flow_cannot_fill() -> Non
 
 
 def test_a_marketing_one_without_the_opt_out_is_blocked_even_if_meta_took_it() -> None:
-    # maribel_seguimiento_descuento_01 se subio sin la baja a proposito (el seguimiento con cupon manda un
-    # solo boton): desde el AE no se puede.
+    # maribel_seguimiento_descuento_01 se subio sin la baja (el seguimiento con cupon mandaba un solo boton
+    # hasta E-272): desde el AE no se puede, y desde el 2026-11-02 no hay excepcion (decision de Dan).
     row = BY_NAME["maribel_seguimiento_descuento_01"]
     result = check(parse_template(row["template"]), MARIBEL)
     assert _codes(result.blocks) == ["template_marketing_without_opt_out"]

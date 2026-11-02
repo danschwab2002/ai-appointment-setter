@@ -12,6 +12,12 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Cambiado
+
+- **El seguimiento con cupón acepta la plantilla con «No más mensajes»** (E-272, decisión de Dan del 2026-11-02: toda plantilla de marketing del recuperador lleva la baja, sin la excepción `_sin_baja_porque`). `parse_followup_template` acepta el botón del checkout primero y, después, la respuesta rápida `No más mensajes` (texto exacto); el envío no cambia (el parámetro del botón de URL va en el índice 0, como en el A1 y el Z del carrito), y tocarla registra la baja por el camino de siempre. La plantilla de un solo botón (las `_01` de ATT1, Maribel y Johanna) se sigue mandando, con el aviso `conversation_followup_template_without_opt_out_button` en el log una vez por proceso, hasta que Meta apruebe las `_02` y las instancias apunten a ellas; ahí se corta. La regla 13 del validador de flujos acepta la misma forma en el seguimiento nativo, y desde el AE ya se puede pedir el seguimiento con la baja (template-request-v1). Cambia una línea del SOUL del Automation Expert.
+
+**Qué hace quien actualiza:** nada para seguir como hoy. Para pasar a la `_02`, después de que Meta la apruebe: cambiar `[plantillas].descuento` del manifiesto y `CONVERSATION_FOLLOWUP_TEMPLATE_NAME` juntos, y, si el seguimiento corre en el motor nativo, una versión nueva del flujo con la plantilla nueva.
+
 ## [1.26.0] - 2026-11-02
 
 Una menor sobre la 1.25.0, con seis PR (#390 a #395) y cuatro migraciones. **Para las personas que escriben no cambia nada al subir:** todo lo nuevo nace apagado o espera a que alguien publique un flujo. Lo grande es el seguimiento a 24 h con cupón en el motor nativo (#394): la 1.25.0 dejaba publicarlo pero nadie lo mandaba; desde esta versión, un silencio nativo en cohorte o prendido manda el cupón él mismo, y el legado le deja esas conversaciones. Sin un silencio nativo publicado, el seguimiento lo sigue mandando el legado como en la 1.25.0. El resto es del Automation Expert (conversa un flujo antes de armarlo, recuerda el permiso de WhatsApp, opera etiquetas de Chatwoot) y la base de tres cosas que todavía no se usan (el cupón por respuesta, las solicitudes de plantilla de Meta y el reciclado de un teléfono de prueba). Cambia el profile del Automation Expert. La imagen de Hermes no cambia.

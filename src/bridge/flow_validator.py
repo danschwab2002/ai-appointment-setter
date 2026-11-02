@@ -117,6 +117,9 @@ PHASES = ("draft", "publish")
 # Hotmart (followup_discount.FOLLOWUP_BUTTON_URL; una prueba fija que son la
 # misma). Se escribe aca para no importar el modulo del barrido.
 CHECKOUT_BUTTON_URL = "https://pay.hotmart.com/{{1}}"
+# La respuesta rapida de la baja que el seguimiento nativo acepta despues del checkout
+# (followup_discount.FOLLOWUP_OPT_OUT_BUTTON, E-272; una prueba fija que son el mismo texto).
+FOLLOWUP_OPT_OUT_BUTTON = "No más mensajes"
 # El resultado que acepta la base: hasta 200 hallazgos entre los dos, y hasta
 # 61440 bytes de texto jsonb (_flow_change_result_is_valid; con la vista previa
 # entra en la columna validation). Con los textos de la regla 13, 200 hallazgos
@@ -1596,9 +1599,13 @@ class _Run:
                 emitter.add(TEMPLATE_BUTTON_MISMATCH, at + ("plantilla",), reason=wrong)
             return
         if link == "checkout" and native:
-            # El seguimiento nativo manda con parse_followup_template: exactamente un boton, el del checkout
-            # (followup_discount.py:257-273). Con respuestas rapidas fallaria en cada barrido (P22-1 de M16).
-            fits = groups == 1 and len(buttons) == 1 and _is_url_button(buttons[0]) and (
+            # El seguimiento nativo manda con parse_followup_template: el checkout primero y, despues, nada
+            # (la forma vieja, las _01) o la respuesta rapida «No más mensajes» y nada mas (las _02, E-272).
+            # Otra respuesta rapida fallaria en cada barrido (P22-1 de M16).
+            opt_out = (len(buttons) == 2 and isinstance(buttons[1], Mapping)
+                       and buttons[1].get("type") == "QUICK_REPLY"
+                       and buttons[1].get("text") == FOLLOWUP_OPT_OUT_BUTTON)
+            fits = groups == 1 and (len(buttons) == 1 or opt_out) and _is_url_button(buttons[0]) and (
                 buttons[0].get("url") == CHECKOUT_BUTTON_URL)
         elif link == "checkout":
             fits = groups == 1 and bool(buttons) and _is_url_button(buttons[0]) and (
