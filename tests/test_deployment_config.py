@@ -608,7 +608,9 @@ def test_deployment_declares_automation_expert_change_default_off(tmp_path: Path
     env_lines = (PROJECT_ROOT / ".env.example").read_text().splitlines()
     compose = (PROJECT_ROOT / "compose.yaml").read_text()
     for name, default in (("AUTOMATION_EXPERT_CHANGE_ENABLED", "false"), ("AUTOMATION_EXPERT_CHANGE_TOKEN", ""),
-                          ("AUTOMATION_EXPERT_CHANGE_DB_KEY", "")):
+                          ("AUTOMATION_EXPERT_CHANGE_DB_KEY", ""),
+                          # automation-expert-chatwoot-v1 (F-143): la herramienta acotada de Chatwoot, apagada.
+                          ("AUTOMATION_EXPERT_CHATWOOT_ENABLED", "false")):
         assert f"{name}={default}" in env_lines
         assert f"{name}: ${{{name}:-{default}}}" in compose
     settings = Settings(
@@ -620,6 +622,7 @@ def test_deployment_declares_automation_expert_change_default_off(tmp_path: Path
     assert settings.automation_expert_change_enabled is False
     assert settings.automation_expert_change_token is None
     assert settings.automation_expert_change_db_key is None
+    assert settings.automation_expert_chatwoot_enabled is False
 
 
 def test_deployment_declares_flow_approval_default_off(tmp_path: Path) -> None:

@@ -12,6 +12,12 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Agregado
+
+- **El Automation Expert opera Chatwoot con una herramienta acotada** (E-256, F-143, decisión del 31/10). Cuatro herramientas nuevas del plugin `automation-expert-change` 0.4.0 (`list_chatwoot_labels`, `create_chatwoot_label`, `add_chatwoot_label_to_conversation`, `list_chatwoot_macros`) sobre cuatro rutas del bridge (`/internal/automation-expert/v1/chatwoot/...`, contrato `automation-expert-chatwoot-v1` 1.0.0). El bridge solo pide a Chatwoot una lista cerrada de seis métodos y rutas, con la cuenta del manifiesto fija; todo `DELETE` se rechaza. Sumar una etiqueta a una conversación nunca saca otra. Las etiquetas `automation_*` no se crean ni se ponen por acá. Detrás de `AUTOMATION_EXPERT_CHATWOOT_ENABLED` (apagado por defecto), que exige las rutas de cambio y que `CHATWOOT_ACCOUNT_ID` sea la del manifiesto. El SOUL suma una sección corta «Chatwoot» y la biblioteca (`chatwoot-whatsapp`) lo explica. Crear macros queda para otra versión.
+
+**Qué hace quien actualiza:** nada para seguir igual (el flag nace apagado). Para prenderlo en una instancia: el bridge de esta versión, los profiles de esta versión (plugin 0.4.0 + SOUL, van juntos; la distribución pasa a 0.3.0), y `AUTOMATION_EXPERT_CHATWOOT_ENABLED=true` en `bridge.env`. Sin migraciones ni campos nuevos en el manifiesto.
+
 ## [1.25.0] - 2026-11-02
 
 Una menor sobre la 1.24.3, con cuatro PR y tres migraciones. Lo urgente son los frenos del seguimiento con cupón (#388, E-263): en ATT1 y Maribel salía el cupón a quien ya había dicho que no, a quien ya había recibido el último toque del carrito (Z) y a quien tenía una ficha de pago en efectivo sin vencer. Esos frenos rigen apenas se aplica la `20261101000300`, sin flag. El resto es la base del primer contacto nativo y del seguimiento a 24 h nativo (#386, #385 y #387): **quedan apagados**. Sin un flujo nativo de `intencion` o de silencio publicado, y con `FLOW_ENGINE_NATIVE_INTENT_ENABLED` en `false` (el default), el formulario y el seguimiento hacen lo mismo que en la 1.24.3. Cambia el profile del Automation Expert (su `SOUL.md` y el lienzo de su plugin de lectura). La imagen de Hermes no cambia.
