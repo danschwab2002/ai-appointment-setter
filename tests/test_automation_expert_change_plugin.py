@@ -26,7 +26,10 @@ FLOW = "00000001-0000-4000-8000-0000000a7701"
 PREFIX = "/internal/automation-expert/v1"
 TOOLS = ["get_flow_definitions", "propose_flow_change", "validate_flow_change", "get_flow_change",
          # Ciclo 1.10.0 (E-208): las dos lecturas del catalogo y de las propuestas.
-         "list_flow_changes", "list_templates"]
+         "list_flow_changes", "list_templates",
+         # automation-expert-chatwoot-v1 (E-256, F-143): la herramienta acotada de Chatwoot.
+         "list_chatwoot_labels", "create_chatwoot_label", "add_chatwoot_label_to_conversation",
+         "list_chatwoot_macros"]
 
 
 def _load_plugin() -> ModuleType:
@@ -69,6 +72,8 @@ def test_no_tool_approves_publishes_or_pauses() -> None:
     names = {value["name"] for value in vars(schemas).values() if isinstance(value, dict) and "name" in value}
     assert names == set(TOOLS)
     assert not any(word in name for name in names for word in ("approve", "publish", "pause", "discard"))
+    # Ninguna borra, saca, ejecuta ni manda (F-143: lectura y creacion si, borrado no).
+    assert not any(word in name for name in names for word in ("delete", "remove", "execute", "send"))
 
 
 class _Bridge(BaseHTTPRequestHandler):
@@ -252,3 +257,84 @@ def test_list_templates_reads_the_catalog_route(bridge: type[_Bridge]) -> None:
     assert bridge.seen[0]["path"] == f"{PREFIX}/templates"
     bridge.routes[f"GET {PREFIX}/templates"] = (503, {"detail": "template_catalog_unavailable"})
     assert json.loads(_tools().list_templates({})) == {"error": "template_catalog_unavailable"}
+
+
+# ----------------------------------------------------------------- Chatwoot (automation-expert-chatwoot-v1)
+
+
+CHATWOOT = f"{PREFIX}/chatwoot"
+
+
+def _cw(data: object) -> dict[str, object]:
+    return {"contract": "automation-expert-chatwoot-v1", "contract_version": "1.0.0", "data": data}
+
+
+def test_the_chatwoot_reads_go_to_their_routes_with_the_change_token(bridge: type[_Bridge]) -> None:
+    bridge.routes[f"GET {CHATWOOT}/labels"] = (200, _cw({"labels": [{"title": "cliente"}]}))
+    bridge.routes[f"GET {CHATWOOT}/macros"] = (200, _cw({"macros": [{"id": 12}]}))
+    tools = _tools()
+    assert json.loads(tools.list_chatwoot_labels({}))["data"]["labels"] == [{"title": "cliente"}]
+    assert json.loads(tools.list_chatwoot_macros({}))["data"]["macros"] == [{"id": 12}]
+    assert [seen["path"] for seen in bridge.seen] == [f"{CHATWOOT}/labels", f"{CHATWOOT}/macros"]
+    assert all(seen["authorization"] == f"Bearer {TOKEN}" for seen in bridge.seen)
+
+
+def test_creating_a_label_sends_who_asks_from_the_session(bridge: type[_Bridge]) -> None:
+    bridge.routes[f"POST {CHATWOOT}/labels"] = (201, _cw({"created": True, "label": {"title": "cliente"}}))
+    result = json.loads(_tools().create_chatwoot_label({"title": " Cliente ", "description": "Compro",
+                                                         "color": "#1f93ff"}))
+    assert result["data"]["created"] is True
+    assert json.loads(str(bridge.seen[0]["body"])) == {"title": "cliente", "description": "Compro",
+                                                       "color": "#1f93ff", "requested_by": {"slack_user": "U0123456789"}}
+
+
+def test_adding_a_label_goes_to_the_conversation_route(bridge: type[_Bridge]) -> None:
+    bridge.routes[f"POST {CHATWOOT}/conversations/50/labels"] = (200, _cw({"changed": True}))
+    result = json.loads(_tools().add_chatwoot_label_to_conversation({"conversation_id": 50, "label": "cliente"}))
+    assert result["data"]["changed"] is True
+    assert json.loads(str(bridge.seen[0]["body"])) == {"label": "cliente",
+                                                       "requested_by": {"slack_user": "U0123456789"}}
+
+
+@pytest.mark.parametrize(("tool", "params", "code"), [
+    ("create_chatwoot_label", {"title": "automation_paused"}, "chatwoot_label_reserved"),
+    ("create_chatwoot_label", {"title": "con espacio"}, "invalid_body"),
+    ("create_chatwoot_label", {"title": 5}, "invalid_body"),
+    ("create_chatwoot_label", {"title": "cliente", "description": "a ana@example.org"}, "identifier_not_allowed"),
+    ("add_chatwoot_label_to_conversation", {"conversation_id": "50", "label": "cliente"}, "invalid_body"),
+    ("add_chatwoot_label_to_conversation", {"conversation_id": 0, "label": "cliente"}, "invalid_body"),
+    ("add_chatwoot_label_to_conversation", {"conversation_id": True, "label": "cliente"}, "invalid_body"),
+    ("add_chatwoot_label_to_conversation", {"conversation_id": 50, "label": "automation_opted_out"},
+     "chatwoot_label_reserved"),
+])
+def test_the_chatwoot_writes_check_before_the_network(bridge: type[_Bridge], tool: str, params: dict,
+                                                      code: str) -> None:
+    assert json.loads(getattr(_tools(), tool)(params)) == {"error": code}
+    assert bridge.seen == []
+
+
+def test_outside_slack_the_chatwoot_writes_do_not_go(bridge: type[_Bridge], monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HERMES_SESSION_PLATFORM", "cli")
+    tools = _tools()
+    assert json.loads(tools.create_chatwoot_label({"title": "cliente"})) == {"error": "requested_by_unavailable"}
+    assert json.loads(tools.add_chatwoot_label_to_conversation({"conversation_id": 50, "label": "cliente"})) == {
+        "error": "requested_by_unavailable"}
+    assert bridge.seen == []
+
+
+def test_a_bridge_without_the_flag_says_the_tool_is_not_on(bridge: type[_Bridge]) -> None:
+    # Sin AUTOMATION_EXPERT_CHATWOOT_ENABLED la ruta no existe: FastAPI contesta su 404 generico.
+    bridge.routes[f"GET {CHATWOOT}/labels"] = (404, {"detail": "Not Found"})
+    assert json.loads(_tools().list_chatwoot_labels({})) == {"error": "chatwoot_tool_not_enabled"}
+    # El mismo 404 en una ruta de cambio sigue siendo «no disponible», como antes.
+    bridge.routes[f"GET {PREFIX}/flow-store"] = (404, {"detail": "Not Found"})
+    assert json.loads(_tools().get_flow_definitions({})) == {"error": "automation_expert_change_unavailable"}
+
+
+@pytest.mark.parametrize("code", ["chatwoot_delete_not_allowed", "chatwoot_call_not_allowed",
+                                  "chatwoot_conversation_not_found", "chatwoot_label_not_found",
+                                  "chatwoot_tool_unavailable"])
+def test_the_closed_codes_of_the_chatwoot_routes_come_back_as_they_are(bridge: type[_Bridge], code: str) -> None:
+    bridge.routes[f"POST {CHATWOOT}/conversations/50/labels"] = (404, {"detail": code})
+    result = json.loads(_tools().add_chatwoot_label_to_conversation({"conversation_id": 50, "label": "cliente"}))
+    assert result == {"error": code}

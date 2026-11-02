@@ -130,3 +130,69 @@ GET_FLOW_CHANGE = {
         "additionalProperties": False,
     },
 }
+
+# automation-expert-chatwoot-v1 (F-143): la herramienta acotada de Chatwoot. Lee y crea; no borra,
+# no saca etiquetas y no manda mensajes.
+_LABEL_TITLE = {"type": "string", "minLength": 1, "maxLength": 40,
+                "description": "El nombre de la etiqueta: letras, números, guion o guion bajo, en minúsculas "
+                               "(Chatwoot la pasa a minúsculas). No puede empezar con automation_."}
+
+LIST_CHATWOOT_LABELS = {
+    "name": "list_chatwoot_labels",
+    "description": (
+        "Lista las etiquetas de la cuenta de Chatwoot de esta instancia: título, descripción, color y si "
+        "se ve en la barra lateral. Usala antes de crear una, para no repetirla, y antes de ponerle una a "
+        "una conversación. Solo lee."
+    ),
+    "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+}
+
+CREATE_CHATWOOT_LABEL = {
+    "name": "create_chatwoot_label",
+    "description": (
+        "Crea una etiqueta en la cuenta de Chatwoot de esta instancia (por ejemplo cliente, la que pone "
+        "el paso etiquetar). Si ya existe, no la toca y vuelve con created: false. No la pone en ninguna "
+        "conversación. No hay forma de borrar una etiqueta desde acá."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "title": _LABEL_TITLE,
+            "description": {"type": "string", "maxLength": 200,
+                            "description": "Para qué es, en una línea. Sin teléfonos ni mails."},
+            "color": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$",
+                      "description": "El color en hexadecimal (default #1f93ff)."},
+            "show_on_sidebar": {"type": "boolean", "description": "Si se ve en la barra lateral (default true)."},
+        },
+        "required": ["title"],
+        "additionalProperties": False,
+    },
+}
+
+ADD_CHATWOOT_LABEL_TO_CONVERSATION = {
+    "name": "add_chatwoot_label_to_conversation",
+    "description": (
+        "Le suma una etiqueta que ya existe a una conversación de la bandeja de esta instancia, por su "
+        "número de conversación. No saca ninguna otra etiqueta y no manda nada a la persona. Si ya la "
+        "tenía, vuelve con changed: false. Usala solo si quien te habla lo pidió en la charla."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "conversation_id": {"type": "integer", "minimum": 1, "description": "El número de la conversación en Chatwoot."},
+            "label": _LABEL_TITLE,
+        },
+        "required": ["conversation_id", "label"],
+        "additionalProperties": False,
+    },
+}
+
+LIST_CHATWOOT_MACROS = {
+    "name": "list_chatwoot_macros",
+    "description": (
+        "Lista los macros de la cuenta de Chatwoot de esta instancia: id, nombre, visibilidad y sus "
+        "acciones (por ejemplo add_label con su etiqueta). Sirve para decir qué macro usa la instancia "
+        "para pausar, reanudar, dar de baja o poner la etiqueta cliente. Solo lee: no ejecuta ni crea macros."
+    ),
+    "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+}

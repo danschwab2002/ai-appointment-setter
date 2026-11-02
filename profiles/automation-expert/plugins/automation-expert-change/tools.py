@@ -20,6 +20,11 @@ Desde el ciclo 1.10.0 (M16 P6 y P7) suma dos lecturas: el catalogo de
 plantillas de la bandeja (``list_templates``) y las propuestas de la instancia
 con su estado (``list_flow_changes``).
 
+Desde la 0.4.0 (automation-expert-chatwoot-v1, F-143) suma la herramienta
+acotada de Chatwoot: leer y crear etiquetas, sumarle una a una conversacion y
+leer los macros. No borra, no saca etiquetas y no manda mensajes; la lista
+cerrada de rutas de Chatwoot la aplica el bridge.
+
 Con el canal del link prendido (ciclo 1.9.0), una validacion que deja la
 propuesta ``validada`` postea el boton «Revisar y aprobar» en el mismo DM
 (``approval_button.py``). El boton es un link a la pagina del bridge: tampoco
@@ -73,6 +78,18 @@ _BRIDGE_ERRORS = frozenset({
     "template_catalog_unavailable",
     "automation_expert_change_unavailable",
     "automation_expert_change_busy",
+    # La herramienta acotada de Chatwoot (automation-expert-chatwoot-v1, F-143).
+    "chatwoot_delete_not_allowed",
+    "chatwoot_call_not_allowed",
+    "chatwoot_label_reserved",
+    "chatwoot_label_not_found",
+    "chatwoot_conversation_not_found",
+    "chatwoot_label_rejected",
+    "chatwoot_label_not_confirmed",
+    "chatwoot_tool_unavailable",
+    "chatwoot_tool_response_invalid",
+    "chatwoot_tool_response_too_large",
+    "invalid_conversation_id",
 })
 
 
@@ -208,6 +225,10 @@ def _request(method: str, path: str, body: dict[str, object] | None = None) -> d
             return out
         if exc.code == 401:
             return {"error": "automation_expert_change_authentication_required"}
+        # Las rutas de Chatwoot solo existen con AUTOMATION_EXPERT_CHATWOOT_ENABLED: sin el flag, el
+        # bridge contesta el 404 generico de FastAPI.
+        if exc.code == 404 and detail == "Not Found" and path.startswith(f"{PREFIX}/chatwoot/"):
+            return {"error": "chatwoot_tool_not_enabled"}
         return {"error": "automation_expert_change_unavailable"}
     except (URLError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError, OSError):
         return {"error": "automation_expert_change_unavailable"}
@@ -321,3 +342,74 @@ def get_flow_change(params: dict[str, object], **kwargs: object) -> str:
     if proposal_id is None:
         return _dumps({"error": "invalid_proposal_id"})
     return _dumps(_request("GET", f"{PREFIX}/flow-changes/{proposal_id}"))
+
+
+# automation-expert-chatwoot-v1 (F-143): la herramienta acotada de Chatwoot. La lista cerrada de
+# rutas de Chatwoot vive en el bridge (bridge/automation_expert_chatwoot.py); el plugin solo habla
+# con sus cuatro rutas, y valida antes de salir a la red.
+CHATWOOT_PREFIX = f"{PREFIX}/chatwoot"
+_LABEL_RE = re.compile(r"^[\w-]{1,40}$")
+
+
+def _label(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    label = value.strip().lower()
+    if not _LABEL_RE.fullmatch(label) or looks_like_identifier(label):
+        return None
+    return label
+
+
+def _chatwoot(method: str, path: str, body: dict[str, object] | None = None) -> str:
+    return _dumps(_request(method, f"{CHATWOOT_PREFIX}{path}", body))
+
+
+def list_chatwoot_labels(params: dict[str, object], **kwargs: object) -> str:
+    """Las etiquetas de la cuenta de Chatwoot de la instancia. Solo lee."""
+    del params, kwargs
+    return _chatwoot("GET", "/labels")
+
+
+def create_chatwoot_label(params: dict[str, object], **kwargs: object) -> str:
+    """Crea una etiqueta en la cuenta de la instancia; si ya esta, no la toca."""
+    del kwargs
+    try:
+        requested_by = _requested_by()
+    except ValueError as exc:
+        return _dumps({"error": str(exc)})
+    title = _label(params.get("title"))
+    if title is None:
+        return _dumps({"error": "invalid_body"})
+    if title.startswith("automation_"):
+        return _dumps({"error": "chatwoot_label_reserved"})
+    body: dict[str, object] = {"title": title, "requested_by": requested_by}
+    for key in ("description", "color", "show_on_sidebar"):
+        if params.get(key) is not None:
+            body[key] = params[key]
+    description = body.get("description")
+    if description is not None and (not isinstance(description, str) or looks_like_identifier(description)):
+        return _dumps({"error": "identifier_not_allowed" if isinstance(description, str) else "invalid_body"})
+    return _chatwoot("POST", "/labels", body)
+
+
+def add_chatwoot_label_to_conversation(params: dict[str, object], **kwargs: object) -> str:
+    """Le suma una etiqueta existente a una conversacion de la bandeja. Nunca saca otra."""
+    del kwargs
+    try:
+        requested_by = _requested_by()
+    except ValueError as exc:
+        return _dumps({"error": str(exc)})
+    conversation_id = params.get("conversation_id")
+    label = _label(params.get("label"))
+    if type(conversation_id) is not int or not 1 <= conversation_id < 10**12 or label is None:
+        return _dumps({"error": "invalid_body"})
+    if label.startswith("automation_"):
+        return _dumps({"error": "chatwoot_label_reserved"})
+    return _chatwoot("POST", f"/conversations/{conversation_id}/labels",
+                     {"label": label, "requested_by": requested_by})
+
+
+def list_chatwoot_macros(params: dict[str, object], **kwargs: object) -> str:
+    """Los macros de la cuenta de la instancia, con sus acciones. Solo lee."""
+    del params, kwargs
+    return _chatwoot("GET", "/macros")

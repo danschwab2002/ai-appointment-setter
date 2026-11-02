@@ -133,7 +133,7 @@ from bridge.opt_out_confirmation import (
     opt_out_confirmation_already_sent,
     validate_opt_out_confirmation_text,
 )
-from bridge import flow_approval, flow_change_api
+from bridge import automation_expert_chatwoot, flow_approval, flow_change_api
 from bridge.automation_expert_read import (
     CHATWOOT_MAX_MESSAGES_PER_CONVERSATION,
     CHATWOOT_READ_TIMEOUT_SECONDS,
@@ -381,6 +381,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # Las rutas de cambio del Automation Expert (flow-change-cycle-v1), con la
     # misma marca de instancia.
     "automation_expert_change_enabled",
+    # La herramienta acotada de Chatwoot del Automation Expert
+    # (automation-expert-chatwoot-v1, F-143): la cuenta y la bandeja salen del
+    # manifiesto.
+    "automation_expert_chatwoot_enabled",
     # La pagina de aprobacion (flow-change-cycle-v1 1.9.0, A′ PR 3a): la
     # instancia sale del manifiesto, y la lista de aprobadores, de la
     # configuracion de la instancia.
@@ -944,6 +948,10 @@ class Settings:
     automation_expert_change_enabled: bool = False
     automation_expert_change_token: str | None = None
     automation_expert_change_db_key: str | None = None
+    # automation-expert-chatwoot-v1 (F-143): leer y crear etiquetas, sumarle una a
+    # una conversacion y leer los macros, con una lista cerrada de rutas de
+    # Chatwoot y sin DELETE. Apagado, las rutas no existen.
+    automation_expert_chatwoot_enabled: bool = False
     # flow-change-cycle-v1 1.9.0: la pagina de aprobacion con «Sign in with
     # Slack» (A′ PR 3a, solo muestra). Apagada, las rutas /flow-approval/ no
     # existen. Los tres secretos son distintos de todo otro valor.
@@ -2286,6 +2294,10 @@ class Settings:
             ),
             automation_expert_change_db_key=(
                 os.getenv("AUTOMATION_EXPERT_CHANGE_DB_KEY", "").strip() or None
+            ),
+            automation_expert_chatwoot_enabled=(
+                os.getenv("AUTOMATION_EXPERT_CHATWOOT_ENABLED", "false").lower()
+                == "true"
             ),
             flow_approval_enabled=(
                 os.getenv("FLOW_APPROVAL_ENABLED", "false").lower() == "true"
@@ -3945,6 +3957,7 @@ def create_app(
     lead_first_name_client: FirstNameInferenceClient | None = None,
     audio_transcriber: AudioTranscriber | None = None,
     flow_change_store: flow_change_api.FlowChangeStore | None = None,
+    automation_expert_chatwoot_client: automation_expert_chatwoot.ScopedChatwoot | None = None,
     flow_approval_store: flow_approval.ApprovalStore | None = None,
     flow_approval_oidc: flow_approval.SlackIdTokenClient | None = None,
 ) -> FastAPI:
@@ -4019,6 +4032,8 @@ def create_app(
             instance_readiness["automation_expert_read"] = "enabled"
         if settings.automation_expert_change_enabled:
             instance_readiness["automation_expert_change"] = "enabled"
+        if settings.automation_expert_chatwoot_enabled:
+            instance_readiness["automation_expert_chatwoot"] = "enabled"
         if settings.flow_approval_enabled:
             instance_readiness["flow_approval"] = "enabled"
         ghl_adapter_risk = _ghl_adapter_risk_readiness(settings.instance_manifest)
@@ -4312,6 +4327,9 @@ def create_app(
     # flow-change-cycle-v1: manifiesto, Supabase, la lectura prendida, la clave
     # del plugin distinta de todo y el JWT del rol (nunca la key de service_role).
     flow_change_api.check_settings(settings)
+    # automation-expert-chatwoot-v1: las rutas de cambio prendidas, la clave de
+    # control y la cuenta de Chatwoot igual a la del manifiesto.
+    automation_expert_chatwoot.check_settings(settings)
     # flow-change-cycle-v1 1.9.0: la pagina de aprobacion exige su app de
     # Slack, la lista, el secreto de la sesion y el JWT de su rol.
     flow_approval.check_settings(settings)
@@ -8409,6 +8427,27 @@ def create_app(
             ally_ref=change_manifest.ally_ref,
             time_zone=change_manifest.time_zone,
             inbox_id=change_manifest.chatwoot_inbox_id,
+        )
+
+    if settings.automation_expert_chatwoot_enabled:
+        # automation-expert-chatwoot-v1 (F-143): su propio cliente, con la lista
+        # cerrada y la cuenta y la bandeja del manifiesto fijas. Con el flag
+        # apagado las rutas no existen y dan 404.
+        assert settings.instance_manifest is not None
+        assert settings.automation_expert_change_token is not None
+        scoped_manifest = settings.instance_manifest
+        automation_expert_chatwoot.register_automation_expert_chatwoot_routes(
+            app,
+            token=settings.automation_expert_change_token,
+            chatwoot=automation_expert_chatwoot_client
+            or automation_expert_chatwoot.ScopedChatwoot(
+                base_url=settings.chatwoot_base_url or "",
+                account_id=scoped_manifest.chatwoot_account_id,
+                access_token=settings.chatwoot_control_api_access_token or "",
+                inbox_id=scoped_manifest.chatwoot_inbox_id,
+            ),
+            tenant_ref=scoped_manifest.tenant_ref,
+            ally_ref=scoped_manifest.ally_ref,
         )
 
     approval_config = flow_approval.check_settings(settings)

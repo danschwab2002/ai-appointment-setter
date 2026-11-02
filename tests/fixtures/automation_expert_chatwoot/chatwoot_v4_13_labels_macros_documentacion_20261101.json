@@ -1,0 +1,55 @@
+{
+  "_fixture": {
+    "written_at": "2026-11-01",
+    "kind": "FIXTURE DE DOCUMENTACION, FALTA CAPTURA REAL. Ninguna de estas respuestas se leyo de un Chatwoot: la forma sale del codigo publico de Chatwoot v4.13.0 (la version de la instancia, docs/current-state.md:48), leido el 2026-11-01 en raw.githubusercontent.com/chatwoot/chatwoot/v4.13.0: app/controllers/api/v1/accounts/labels_controller.rb, app/views/api/v1/accounts/labels/index.json.jbuilder y create.json.jbuilder, app/models/label.rb (default color #1f93ff, titulo en minusculas, unico por cuenta), app/controllers/concerns/label_concern.rb y app/models/concerns/labelable.rb (POST de las etiquetas de una conversacion = update_labels, REEMPLAZA la lista entera), app/views/api/v1/accounts/conversations/labels/*.json.jbuilder ({\"payload\": [titulos]}), app/controllers/concerns/request_exception_handler.rb (el 422 de un RecordInvalid), app/views/api/v1/accounts/macros/index.json.jbuilder y app/views/api/v1/models/_macro.json.jbuilder.",
+    "what_is_real": "Lo unico real: (1) el pedido del 31/10 ~14:10Z (decision 2026-10-31-el-ae-escribe-en-chatwoot-con-una-herramienta-acotada): POST /api/v1/accounts/3/labels con title, color y show_on_sidebar creo la etiqueta 10 `cliente`; el color usado no quedo anotado. (2) Los macros 4, 5 y 6 de la cuenta 2 y la forma del show de un macro, de la captura real tests/fixtures/chatwoot_macros_account_2_20261016.json (get_macro_4 y macros_account_2); aca se ponen en la forma del index (`payload` como lista, visibility como texto, como la devuelve la API). El macro 7 y su created_by son sinteticos (example.org), para probar que se tapan.",
+    "debt": "Capturar del VPS, en solo lectura y con el token de control de una instancia: GET /api/v1/accounts/<n>/labels, GET /api/v1/accounts/<n>/macros (sacando created_by y updated_by, que traen nombre y mail), y GET /api/v1/accounts/<n>/conversations/<id>/labels. El POST de una etiqueta y el de las etiquetas de una conversacion se capturan cuando se prenda la herramienta en una instancia, con una etiqueta de prueba.",
+    "why": "La herramienta acotada de Chatwoot del Automation Expert (automation-expert-chatwoot-v1, F-143) lee y crea etiquetas, le suma una a una conversacion y lee los macros. Estas son las formas que parsea src/bridge/automation_expert_chatwoot.py."
+  },
+  "labels_index_account_2": {
+    "status": 200,
+    "body": {
+      "payload": [
+        {"id": 1, "title": "automation_opted_out", "description": null, "color": "#1f93ff", "show_on_sidebar": true},
+        {"id": 2, "title": "automation_paused", "description": null, "color": "#1f93ff", "show_on_sidebar": true},
+        {"id": 3, "title": "producto_att1", "description": "Etiqueta de producto", "color": "#1f93ff", "show_on_sidebar": true}
+      ]
+    }
+  },
+  "label_create_request_20261031": {
+    "path": "/api/v1/accounts/3/labels",
+    "body_keys": ["title", "color", "show_on_sidebar"]
+  },
+  "label_create_cliente": {
+    "status": 200,
+    "body": {"id": 10, "title": "cliente", "description": "Compro el producto", "color": "#1f93ff", "show_on_sidebar": true}
+  },
+  "label_create_duplicate": {
+    "status": 422,
+    "body": {"message": "Title has already been taken", "attributes": ["title"]}
+  },
+  "conversation_labels_after_add": {
+    "status": 200,
+    "body": {"payload": ["automation_paused", "cliente"]}
+  },
+  "macros_index_account_2": {
+    "status": 200,
+    "body": {
+      "payload": [
+        {"id": 4, "name": "Pausar", "visibility": "global", "account_id": 2,
+         "actions": [{"action_name": "add_label", "action_params": ["automation_paused"]}]},
+        {"id": 5, "name": "Reanudar", "visibility": "global", "account_id": 2,
+         "actions": [{"action_name": "remove_label", "action_params": ["automation_paused"]}]},
+        {"id": 6, "name": "No más mensajes", "visibility": "global", "account_id": 2,
+         "actions": [{"action_name": "add_label", "action_params": ["automation_opted_out", "automation_paused"]}]},
+        {"id": 7, "name": "Transcripcion al equipo", "visibility": "personal", "account_id": 2,
+         "created_by": {"id": 99, "name": "Persona Sintetica", "available_name": "Persona", "email": "persona@example.org",
+                        "role": "administrator", "thumbnail": ""},
+         "updated_by": {"id": 99, "name": "Persona Sintetica", "available_name": "Persona", "email": "persona@example.org",
+                        "role": "administrator", "thumbnail": ""},
+         "actions": [{"action_name": "send_email_transcript", "action_params": ["equipo@example.org"]},
+                     {"action_name": "assign_team", "action_params": [3]}]}
+      ]
+    }
+  }
+}

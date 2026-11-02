@@ -7,17 +7,25 @@ sus herramientas.
 
 from .approval_button import ACTION_ID, ack_only
 from .schemas import (
+    ADD_CHATWOOT_LABEL_TO_CONVERSATION,
+    CREATE_CHATWOOT_LABEL,
     GET_FLOW_CHANGE,
     GET_FLOW_DEFINITIONS,
     LIST_FLOW_CHANGES,
+    LIST_CHATWOOT_LABELS,
+    LIST_CHATWOOT_MACROS,
     LIST_TEMPLATES,
     PROPOSE_FLOW_CHANGE,
     VALIDATE_FLOW_CHANGE,
 )
 from .tools import (
     PROFILE_NAME,
+    add_chatwoot_label_to_conversation,
+    create_chatwoot_label,
     get_flow_change,
     get_flow_definitions,
+    list_chatwoot_labels,
+    list_chatwoot_macros,
     list_flow_changes,
     list_templates,
     propose_flow_change,
@@ -25,7 +33,10 @@ from .tools import (
 )
 
 _TOOLS = frozenset({"get_flow_definitions", "propose_flow_change", "validate_flow_change", "get_flow_change",
-                    "list_flow_changes", "list_templates"})
+                    "list_flow_changes", "list_templates",
+                    # automation-expert-chatwoot-v1 (F-143): la herramienta acotada de Chatwoot.
+                    "list_chatwoot_labels", "create_chatwoot_label", "add_chatwoot_label_to_conversation",
+                    "list_chatwoot_macros"})
 
 
 def make_profile_guard(profile_name):
@@ -50,6 +61,11 @@ def register(ctx):
         ("get_flow_change", GET_FLOW_CHANGE, get_flow_change),
         ("list_flow_changes", LIST_FLOW_CHANGES, list_flow_changes),
         ("list_templates", LIST_TEMPLATES, list_templates),
+        ("list_chatwoot_labels", LIST_CHATWOOT_LABELS, list_chatwoot_labels),
+        ("create_chatwoot_label", CREATE_CHATWOOT_LABEL, create_chatwoot_label),
+        ("add_chatwoot_label_to_conversation", ADD_CHATWOOT_LABEL_TO_CONVERSATION,
+         add_chatwoot_label_to_conversation),
+        ("list_chatwoot_macros", LIST_CHATWOOT_MACROS, list_chatwoot_macros),
     ):
         ctx.register_tool(name=name, toolset="automation_expert_change", schema=schema, handler=handler)
     ctx.register_hook("pre_tool_call", make_profile_guard(getattr(ctx, "profile_name", None)))
