@@ -7857,6 +7857,29 @@ def create_app(
             assert settings.chatwoot_inbox_id is not None
             assert control_client is not None
             link_coupon_code = agent_link_coupon_code(context)
+            link_conversation_id = conversation_id
+            link_trigger_id = message_id
+
+            async def split_link_text(text: str) -> tuple[str, ...]:
+                return await resolve_reply_parts(
+                    conversation_id=link_conversation_id,
+                    trigger_message_id=link_trigger_id,
+                    reply=text,
+                )
+
+            async def contact_wrote_after_link_trigger() -> bool:
+                # Ante cualquier duda (Chatwoot no responde), lo de siempre:
+                # se deriva.
+                try:
+                    history = await control_client.get_conversation_messages(
+                        conversation_id=link_conversation_id,
+                        limit=200,
+                        required_message_ids=(link_trigger_id,),
+                    )
+                except (ChatwootProtocolError, httpx.HTTPError, ValueError):
+                    return False
+                return _contact_wrote_after(history, link_trigger_id)
+
             try:
                 delivery = await deliver_checkout_issuance_v2(
                     # Con manifiesto, la reserva busca la intencion por las
@@ -7878,19 +7901,39 @@ def create_app(
                     delivery_id=delivery_id,
                     preamble=reply,
                     expected_jid=scoped_expected_jid,
-                    # Con plantilla, el link viaja en su boton: primero el
-                    # texto del agente y, tras la pausa entre partes, la
-                    # plantilla. Si no se puede usar, sale escrito.
+                    # Con plantilla, el link viaja en su boton: primero los
+                    # globos del texto del agente y, tras la pausa entre
+                    # partes, la plantilla. Si no se puede usar, la URL sola.
                     link_template_name=settings.payment_link_template_name,
                     link_template_language=settings.payment_link_template_language,
                     link_coupon_code=link_coupon_code,
                     part_delay_seconds=settings.reply_part_delay_seconds,
                     part_sleep=reply_part_sleep,
+                    # E-292: con plantilla, el texto pasa por el divisor como
+                    # cualquier turno y el link va en el ultimo mensaje, solo.
+                    # Sin plantilla la entrega no lo llama.
+                    preamble_splitter=split_link_text,
                 )
             except CheckoutDeliveryError as exc:
                 raise RetryableChatwootWorkError(exc.code) from exc
             if delivery.outcome == "blocked":
                 reason = delivery.reason or "blocked"
+                if (
+                    reason == "conversation_advanced"
+                    and await contact_wrote_after_link_trigger()
+                ):
+                    # E-292: la persona escribio despues del mensaje que pidio
+                    # el link. Como en un turno normal (la respuesta vieja no
+                    # sale y el mensaje nuevo tiene su propio turno), no se
+                    # deriva ni se pausa: el agente contesta lo nuevo en el
+                    # turno siguiente, que ve que el link no salio. La emision
+                    # de este turno queda reservada sin salir.
+                    logger.info(
+                        "payment_link_superseded reason=contact_wrote_after_trigger"
+                        " issuance_id=%s",
+                        delivery.issuance_id,
+                    )
+                    return
                 logger.info("payment_link_handoff reason=%s", reason)
                 await request_current_inbound_handoff({
                     **completed_proposal,
@@ -8157,52 +8200,11 @@ def create_app(
             and not await durable_reply_authorizer()
         ):
             return
-        parts = (reply,)
-        try:
-            persisted_parts = await reply_manifest_reader.load_existing(
-                conversation_id=conversation_id,
-                trigger_message_id=message_id,
-                reply=reply,
-            )
-        except ReplySplitManifestConflictError as exc:
-            raise RuntimeError("reply_split_manifest_conflict") from exc
-        except ReplySplitManifestStorageError as exc:
-            raise RuntimeError("reply_split_manifest_storage_error") from exc
-        if persisted_parts is not None:
-            parts = persisted_parts
-        elif settings.reply_splitter_enabled:
-            if configured_reply_splitter is None:
-                raise RuntimeError("reply_splitter_not_configured")
-            split_failure: str | None = None
-            try:
-                candidate_parts = await configured_reply_splitter.split(
-                    conversation_id=conversation_id,
-                    trigger_message_id=message_id,
-                    reply=reply,
-                )
-            except ReplySplitManifestConflictError as exc:
-                raise RuntimeError("reply_split_manifest_conflict") from exc
-            except ReplySplitManifestStorageError as exc:
-                raise RuntimeError("reply_split_manifest_storage_error") from exc
-            except Exception:
-                candidate_parts = (reply,)
-                split_failure = "splitter_error"
-            validated_parts = validate_reply_parts(reply, candidate_parts)
-            if validated_parts is None:
-                validated_parts = (reply,)
-                split_failure = "invalid_parts"
-            try:
-                parts = await reply_manifest_reader.persist_parts(
-                    conversation_id=conversation_id,
-                    trigger_message_id=message_id,
-                    reply=reply,
-                    parts=validated_parts,
-                    failure=split_failure,
-                )
-            except ReplySplitManifestConflictError as exc:
-                raise RuntimeError("reply_split_manifest_conflict") from exc
-            except ReplySplitManifestStorageError as exc:
-                raise RuntimeError("reply_split_manifest_storage_error") from exc
+        parts = await resolve_reply_parts(
+            conversation_id=conversation_id,
+            trigger_message_id=message_id,
+            reply=reply,
+        )
 
         reply_decision_marker = _agent_marker(completed_proposal.get("decision"))
         reply_reason_marker = _agent_marker(completed_proposal.get("reason_code"))
@@ -8236,6 +8238,65 @@ def create_app(
                     raise RuntimeError("invalid_chatwoot_reply_result")
         except ChatwootReplyDeliveryUnknownError as exc:
             raise RetryableChatwootWorkError("reply_delivery_unknown") from exc
+    async def resolve_reply_parts(
+        *,
+        conversation_id: int,
+        trigger_message_id: int,
+        reply: str,
+    ) -> tuple[str, ...]:
+        """Los globos de una respuesta: el manifiesto, el divisor o uno solo.
+
+        Lo usan el turno normal y el texto que acompana al link de pago
+        (E-292), con el mismo manifiesto por conversacion y mensaje, asi que un
+        reintento reusa las mismas partes.
+        """
+        try:
+            persisted_parts = await reply_manifest_reader.load_existing(
+                conversation_id=conversation_id,
+                trigger_message_id=trigger_message_id,
+                reply=reply,
+            )
+        except ReplySplitManifestConflictError as exc:
+            raise RuntimeError("reply_split_manifest_conflict") from exc
+        except ReplySplitManifestStorageError as exc:
+            raise RuntimeError("reply_split_manifest_storage_error") from exc
+        if persisted_parts is not None:
+            return persisted_parts
+        if not settings.reply_splitter_enabled:
+            return (reply,)
+        if configured_reply_splitter is None:
+            raise RuntimeError("reply_splitter_not_configured")
+        split_failure: str | None = None
+        try:
+            candidate_parts = await configured_reply_splitter.split(
+                conversation_id=conversation_id,
+                trigger_message_id=trigger_message_id,
+                reply=reply,
+            )
+        except ReplySplitManifestConflictError as exc:
+            raise RuntimeError("reply_split_manifest_conflict") from exc
+        except ReplySplitManifestStorageError as exc:
+            raise RuntimeError("reply_split_manifest_storage_error") from exc
+        except Exception:
+            candidate_parts = (reply,)
+            split_failure = "splitter_error"
+        validated_parts = validate_reply_parts(reply, candidate_parts)
+        if validated_parts is None:
+            validated_parts = (reply,)
+            split_failure = "invalid_parts"
+        try:
+            return await reply_manifest_reader.persist_parts(
+                conversation_id=conversation_id,
+                trigger_message_id=trigger_message_id,
+                reply=reply,
+                parts=validated_parts,
+                failure=split_failure,
+            )
+        except ReplySplitManifestConflictError as exc:
+            raise RuntimeError("reply_split_manifest_conflict") from exc
+        except ReplySplitManifestStorageError as exc:
+            raise RuntimeError("reply_split_manifest_storage_error") from exc
+
     if chatwoot_inbox is not None:
         def inbound_debounce_key(payload: dict[str, object]) -> str | None:
             decision = classify_scoped_chatwoot_event(payload)
@@ -12027,3 +12088,28 @@ def build_app() -> FastAPI:
             **product_kwargs,
         )
     return create_app(settings, shadow_processor=shadow_processor)
+
+
+def _contact_wrote_after(
+    messages: list[dict[str, object]], trigger_message_id: int
+) -> bool:
+    """Si la persona escribio un mensaje publico despues del que disparo el turno.
+
+    El historial de Chatwoot viene en orden de llegada, como lo lee la
+    autorizacion de cada parte (``ChatwootClient._current_authorization_result``).
+    Un mensaje del bot, una nota privada o una actividad no cuentan.
+    """
+    seen_trigger = False
+    for message in messages:
+        if not seen_trigger:
+            seen_trigger = message.get("id") == trigger_message_id
+            continue
+        sender = message.get("sender")
+        if (
+            message.get("private") is False
+            and message.get("message_type") == 0
+            and isinstance(sender, dict)
+            and sender.get("type") == "contact"
+        ):
+            return True
+    return False

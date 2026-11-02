@@ -295,9 +295,12 @@ def test_the_link_goes_in_the_template_button_after_the_agent_text() -> None:
         (_catalog(), httpx.ConnectError("boom"), "ConnectError"),
     ],
 )
-def test_without_a_usable_template_the_link_goes_as_text(
+def test_without_a_usable_template_the_link_goes_alone_after_the_text(
     catalog, inbox_error, reason, caplog
 ) -> None:
+    # E-292: con la plantilla configurada, el link sale siempre en un mensaje
+    # propio. Si la plantilla no se puede usar, ese mensaje es la URL sola,
+    # nunca pegada al texto del agente.
     db = FakeSupabase()
     control = TemplateControl(catalog, inbox_error=inbox_error)
     sleeps = []
@@ -306,12 +309,19 @@ def test_without_a_usable_template_the_link_goes_as_text(
         result = _deliver_with_template(db, control, sleeps)
 
     assert result.outcome == "sent"
-    (only,) = _sends(control)
-    assert only["content"] == f"{PREAMBLE}\n{URL}"
-    assert "part_count" not in only
-    assert "template_params" not in only
-    assert sleeps == []
+    assert result.chatwoot_message_id == 7102
+    first, second = _sends(control)
+    assert first["content"] == PREAMBLE
+    assert (first["part_index"], first["part_count"], first["prior_parts"]) == (1, 2, ())
+    assert "pre_send_authorizer" not in first
+    assert second["content"] == URL
+    assert (second["part_index"], second["part_count"]) == (2, 2)
+    assert second["prior_parts"] == (PREAMBLE,)
+    assert "template_params" not in second
+    assert "pre_send_authorizer" in second
+    assert sleeps == [2.5]
     assert [name for name, _ in db.calls] == ["reserve", "authorize", "finalize"]
+    assert db.calls[-1][1]["chatwoot_message_id"] == 7102
     assert f"payment_link_template_unavailable reason={reason}" in caplog.text
 
 

@@ -68,17 +68,17 @@ The issued URL is not modified. The button suffix is the URL without `https://pa
 
 The category is whatever Meta assigned; `UTILITY` is the intent.
 
-**Two parts.** The message goes out as two parts of the same reply batch, with the existing per-part idempotency:
-1. The agent's text, with no URL and no issuance authorization.
-2. The template, posted with `template_params`: `name`, `category`, `language`, and `processed_params.buttons[0] = {type: url, parameter: <suffix>}`. There is no `body` key, because the body has no placeholders.
+**With a template name, the link is always its own message.** Since E-292 (Dan's condition of 2026-11-02, decision P-07 point 4: the link goes as an "independent message"), the reply goes out as one batch of `n + 1` parts with the existing per-part idempotency:
+1. Parts `1..n` are the agent's text, cut by the reply splitter exactly as in any other turn (`CHATWOOT_REPLY_SPLITTER_ENABLED`, with its per-conversation and per-trigger manifest). They carry no URL and no issuance authorization. The parts must rebuild the text exactly (`validate_reply_parts`) and be at most three, so the batch fits the four-part limit; otherwise the text goes as one part. With the splitter off, `n = 1`.
+2. Part `n + 1` is the link: the template, posted with `template_params`: `name`, `category`, `language`, and `processed_params.buttons[0] = {type: url, parameter: <suffix>}`. There is no `body` key, because the body has no placeholders. If the template cannot be used, part `n + 1` is the URL alone (see the fallback below).
 
-The configured reply-part delay (`CHATWOOT_REPLY_PART_DELAY_SECONDS`, 2 s by default) separates the two parts, because Chatwoot sends each message to WhatsApp from its own job.
+The configured reply-part delay (`CHATWOOT_REPLY_PART_DELAY_SECONDS`, 2 s by default) separates the parts, because Chatwoot sends each message to WhatsApp from its own job. A part that a retry finds already delivered (`duplicate`) is not waited on again.
 
-**Authorization.** The durable issuance is authorized at part 2, immediately before its POST, and finalized with part 2's Chatwoot message id. Retry semantics for the URL are unchanged.
+**Authorization.** The durable issuance is authorized at part `n + 1`, immediately before its POST, and finalized with part `n + 1`'s Chatwoot message id. Retry semantics for the URL are unchanged. Because the batch has `n + 1` parts with the template or without it, a retry that switches from the template to the written URL reuses the same part identities and does not repeat any text bubble.
 
-**What the team sees.** Part 2's Chatwoot `content` is the template body, a newline, and the full URL. Chatwoot sends only the template to WhatsApp and shows `content` to the team. Readers that detect an agent link by `pay.hotmart.com` keep working, such as the coupon follow-up and the OS readers.
+**What the team sees.** Part `n + 1`'s Chatwoot `content` is the template body, a newline, and the full URL. Chatwoot sends only the template to WhatsApp and shows `content` to the team. Readers that detect an agent link by `pay.hotmart.com` keep working, such as the coupon follow-up and the OS readers.
 
-**Fallback to the written URL.** The URL is written in a single message, as before, in any of these cases:
+**Fallback to the written URL.** Part `n + 1` is the URL alone, as its own message after the agent's text, never appended to it, in any of these cases:
 - the template is missing or not approved;
 - the template fails validation;
 - the catalog read fails;
@@ -86,7 +86,9 @@ The configured reply-part delay (`CHATWOOT_REPLY_PART_DELAY_SECONDS`, 2 s by def
 
 In each case the bridge logs `payment_link_template_unavailable reason=<code>` at WARNING. The log line carries no URL.
 
-**Part 2 blocked after part 1.** If part 1 is delivered and part 2 is blocked by the live checks (a takeover, a pause, or a new message from the lead), the delivery is `blocked`, and the conversation goes to a human with that reason. The lead got the agent's text without the URL.
+**The link blocked by the live checks.** Before each part, the live checks can block the delivery: a takeover, a pause, or the conversation having advanced past the trigger. A blocked delivery is `blocked`, the issuance stays reserved and unsent, and the lead may have received part of the agent's text without the URL. What happens next depends on why (E-292):
+- **The lead wrote after the trigger** (`conversation_advanced`, and a re-read of the Chatwoot history shows a public contact message after the trigger): the turn ends like a normal superseded turn. There is no handoff and no `automation_paused`. The new message has its own turn, where the agent answers it and sees that the link did not go out. The bridge logs `payment_link_superseded reason=contact_wrote_after_trigger issuance_id=<id>`.
+- **Any other reason**, or the history cannot be re-read: the conversation goes to a human with `payment_link_<reason>`, as before.
 
 **Not handled.** If WhatsApp fails the template after Chatwoot accepted it, the message turns `failed` in Chatwoot, and the bridge does not watch for that.
 

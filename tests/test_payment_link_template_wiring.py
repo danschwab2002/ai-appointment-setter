@@ -16,7 +16,9 @@ from typing import Any
 
 import pytest
 
-from bridge.app import Settings, create_app
+import httpx
+
+from bridge.app import Settings, _contact_wrote_after, create_app
 from test_payment_link_template import (
     LINK_BODY,
     LINK_TEMPLATE,
@@ -25,6 +27,7 @@ from test_payment_link_template import (
 from test_webhook import (
     StubChatwootClient,
     StubPaymentLinkSupabase,
+    StubReplySplitter,
     StubShadowProcessor,
     _post,
     _signed_headers,
@@ -73,6 +76,8 @@ def _settings(tmp_path: Path, **overrides: object) -> Settings:
         "webhook_secret": SECRET,
         "allowed_jid": "12025550123@s.whatsapp.net",
         "capture_dir": tmp_path,
+        # Cada prueba con su carpeta: el manifiesto del divisor vive aca.
+        "reply_dir": tmp_path / "replies",
         "max_age_seconds": 300,
         "agent_bot_id": 1,
         "chatwoot_account_id": 1,
@@ -116,6 +121,9 @@ def _deliver(
     settings: Settings,
     chatwoot: CatalogChatwoot,
     supabase: StubPaymentLinkSupabase,
+    *,
+    reply: str = PREAMBLE,
+    reply_splitter: StubReplySplitter | None = None,
 ) -> list[float]:
     """El lead pide el link y el agente decide send_payment_link."""
     payload: dict[str, object] = {
@@ -136,7 +144,7 @@ def _deliver(
         "decision": "send_payment_link",
         "qualification_status": "in_progress",
         "reason_code": "payment_link_requested",
-        "reply": PREAMBLE,
+        "reply": reply,
         "captured_fields": {},
         "missing_fields": [],
     })
@@ -150,6 +158,7 @@ def _deliver(
         chatwoot_client=chatwoot,
         shadow_processor=shadow,
         supabase_client=supabase,  # type: ignore[arg-type]
+        reply_splitter=reply_splitter,
         reply_part_sleep=record_delay,
     )
     raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
@@ -254,10 +263,12 @@ def test_without_template_the_link_is_written_as_before(tmp_path: Path) -> None:
     assert supabase.finalize_calls[0]["chatwoot_message_id"] == 900
 
 
-def test_template_missing_from_the_catalog_writes_the_link(
+def test_template_missing_from_the_catalog_sends_the_url_alone(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    # E-292: con la plantilla configurada, el link sale siempre en un mensaje
+    # propio. Si la plantilla falta en el catalogo, ese mensaje es la URL sola.
     chatwoot = _chatwoot()
     supabase = StubPaymentLinkSupabase()
 
@@ -267,21 +278,221 @@ def test_template_missing_from_the_catalog_writes_the_link(
                 tmp_path,
                 payment_link_template_name="johanna_enlace_pago_02",
                 payment_link_template_language="es_EC",
+                reply_part_delay_seconds=2.5,
             ),
             chatwoot,
             supabase,
         )
 
     assert chatwoot.inbox_reads == [9]
-    assert chatwoot.reply_calls == [_written_link_call()]
-    assert chatwoot.sent_template_params == [None]
-    assert delays == []
+    assert chatwoot.reply_calls == [
+        {
+            "conversation_id": 322,
+            "trigger_message_id": 902,
+            "delivery_id": "payment-link-template",
+            "content": PREAMBLE,
+            "part_index": 1,
+            "part_count": 2,
+            "prior_parts": (),
+            "expected_jid": LEAD_JID,
+        },
+        {
+            "conversation_id": 322,
+            "trigger_message_id": 902,
+            "delivery_id": "payment-link-template",
+            "content": CHECKOUT_URL,
+            "part_index": 2,
+            "part_count": 2,
+            "prior_parts": (PREAMBLE,),
+            "expected_jid": LEAD_JID,
+        },
+    ]
+    assert chatwoot.sent_template_params == [None, None]
+    assert delays == [2.5]
+    assert chatwoot.pre_send_authorization_calls == 1
     assert supabase.finalize_calls[0]["status"] == "accepted_by_chatwoot"
     assert (
         "payment_link_template_unavailable reason=payment_link_template_not_found"
         in caplog.text
     )
     assert "pay.hotmart.com" not in caplog.text
+
+
+LONG_REPLY = (
+    "Sí, claro. El acceso es de por vida y tiene garantía de 7 días. "
+    "Podés completar tu compra acá:"
+)
+LONG_PARTS = (
+    "Sí, claro. El acceso es de por vida y tiene garantía de 7 días.",
+    "Podés completar tu compra acá:",
+)
+
+
+def test_with_the_template_the_agent_text_goes_through_the_splitter(
+    tmp_path: Path,
+) -> None:
+    # E-292: el texto que acompana al link sale en globos, como cualquier turno,
+    # y el link va en el ultimo mensaje, solo.
+    chatwoot = _chatwoot()
+    supabase = StubPaymentLinkSupabase()
+    splitter = StubReplySplitter(LONG_PARTS)
+
+    delays = _deliver(
+        _settings(
+            tmp_path,
+            payment_link_template_name=LINK_TEMPLATE,
+            payment_link_template_language="es_EC",
+            reply_splitter_enabled=True,
+            reply_part_delay_seconds=2.5,
+        ),
+        chatwoot,
+        supabase,
+        reply=LONG_REPLY,
+        reply_splitter=splitter,
+    )
+
+    assert splitter.calls == [(322, 902, LONG_REPLY)]
+    assert [call["content"] for call in chatwoot.reply_calls] == [
+        *LONG_PARTS,
+        f"{LINK_BODY}\n{CHECKOUT_URL}",
+    ]
+    assert [
+        (call["part_index"], call["part_count"], call["prior_parts"])
+        for call in chatwoot.reply_calls
+    ] == [(1, 3, ()), (2, 3, LONG_PARTS[:1]), (3, 3, LONG_PARTS)]
+    assert chatwoot.sent_template_params[:2] == [None, None]
+    assert chatwoot.sent_template_params[2]["name"] == LINK_TEMPLATE  # type: ignore[index]
+    assert delays == [2.5, 2.5]
+    assert chatwoot.pre_send_authorization_calls == 1
+    assert supabase.finalize_calls[0]["chatwoot_message_id"] == 901
+
+
+def test_without_the_template_the_splitter_is_not_asked(tmp_path: Path) -> None:
+    # Hoy ninguna aliada tiene la plantilla: aunque el divisor este prendido,
+    # el texto y el link salen juntos, como antes.
+    chatwoot = _chatwoot()
+    supabase = StubPaymentLinkSupabase()
+    splitter = StubReplySplitter(LONG_PARTS)
+
+    delays = _deliver(
+        _settings(tmp_path, reply_splitter_enabled=True),
+        chatwoot,
+        supabase,
+        reply=LONG_REPLY,
+        reply_splitter=splitter,
+    )
+
+    assert splitter.calls == []
+    assert [call["content"] for call in chatwoot.reply_calls] == [
+        f"{LONG_REPLY}\n{CHECKOUT_URL}",
+    ]
+    assert delays == []
+
+
+LATER_CONTACT_MESSAGE = {
+    "id": 903,
+    "created_at": 1789164005,
+    "message_type": 0,
+    "private": False,
+    "content": "Y se puede pagar en cuotas?",
+    "sender": {"type": "contact", "id": 20},
+}
+LATER_BOT_TEMPLATE = {
+    "id": 904,
+    "created_at": 1789164006,
+    "message_type": 1,
+    "private": False,
+    "content": "Plantilla de un flujo",
+    "sender": {"type": "agent_bot", "id": 1},
+}
+ADVANCED = {"status": "blocked", "reason": "conversation_advanced"}
+
+
+def _advanced_chatwoot(*later: dict[str, object], **kwargs: Any) -> CatalogChatwoot:
+    chatwoot = _chatwoot()
+    return CatalogChatwoot(
+        catalog=chatwoot.catalog,
+        messages=[*chatwoot.messages, *later],
+        reply_result=ADVANCED,
+        **kwargs,
+    )
+
+
+@pytest.mark.parametrize("template", [None, LINK_TEMPLATE])
+def test_a_new_message_from_the_person_does_not_hand_off_the_link_turn(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    template: str | None,
+) -> None:
+    # E-292: la persona escribio despues de pedir el link, y Chatwoot frena el
+    # envio (conversation_advanced). Como un turno normal: no se deriva ni se
+    # pausa; el mensaje nuevo tiene su turno y el agente contesta ahi.
+    chatwoot = _advanced_chatwoot(LATER_CONTACT_MESSAGE)
+    supabase = StubPaymentLinkSupabase()
+
+    with caplog.at_level(logging.INFO, logger="bridge.app"):
+        _deliver(
+            _settings(
+                tmp_path,
+                payment_link_template_name=template,
+                payment_link_template_language="es_EC" if template else None,
+            ),
+            chatwoot,
+            supabase,
+        )
+
+    assert supabase.handoff_calls == []
+    assert "label:automation_paused" not in chatwoot.events
+    assert supabase.finalize_calls == []
+    assert chatwoot.history_required_ids[-1] == (902,)
+    assert "payment_link_superseded reason=contact_wrote_after_trigger" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "later, history_error",
+    [
+        ((), None),
+        ((LATER_BOT_TEMPLATE,), None),
+        ((LATER_CONTACT_MESSAGE,), httpx.ConnectError("boom")),
+    ],
+)
+def test_without_a_new_message_from_the_person_the_link_turn_hands_off(
+    tmp_path: Path,
+    later: tuple[dict[str, object], ...],
+    history_error: Exception | None,
+) -> None:
+    # Si no hay un mensaje nuevo de la persona (otra cosa movio la
+    # conversacion) o no se puede leer el historial, nadie mas va a contestar:
+    # se deriva como hasta ahora.
+    chatwoot = _advanced_chatwoot(*later)
+    supabase = StubPaymentLinkSupabase()
+    if history_error is not None:
+        # El historial del turno se lee bien; se cae solo la relectura que
+        # viene despues del envio frenado.
+        original = chatwoot.get_conversation_messages
+
+        async def flaky(**kwargs: Any) -> list[dict[str, object]]:
+            if chatwoot.reply_expected_inbox_ids:
+                raise history_error
+            return await original(**kwargs)
+
+        chatwoot.get_conversation_messages = flaky  # type: ignore[method-assign]
+
+    _deliver(_settings(tmp_path), chatwoot, supabase)
+
+    assert len(supabase.handoff_calls) == 1
+    assert "label:automation_paused" in chatwoot.events
+
+
+def test_contact_wrote_after_reads_only_public_contact_messages() -> None:
+    trigger = {"id": 10, "message_type": 0, "private": False, "sender": {"type": "contact"}}
+    note = {"id": 11, "message_type": 0, "private": True, "sender": {"type": "contact"}}
+    bot = {"id": 12, "message_type": 1, "private": False, "sender": {"type": "agent_bot"}}
+    earlier = {"id": 9, "message_type": 0, "private": False, "sender": {"type": "contact"}}
+    later = {"id": 13, "message_type": 0, "private": False, "sender": {"type": "contact"}}
+    assert _contact_wrote_after([earlier, trigger, note, bot], 10) is False
+    assert _contact_wrote_after([earlier, trigger, note, bot, later], 10) is True
+    assert _contact_wrote_after([earlier, later], 10) is False
 
 
 def _settings_from_env(monkeypatch: pytest.MonkeyPatch) -> Settings:
