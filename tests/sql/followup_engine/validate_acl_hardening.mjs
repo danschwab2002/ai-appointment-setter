@@ -256,6 +256,7 @@ const rows = await db.query(`
       ('read_flow_sales_v1(jsonb,timestamp with time zone)'),
       ('read_handoff_note_checkout_link_v1(uuid,bigint,bigint,timestamp with time zone)'),
       ('read_purchase_agent_pause_conversations_v1(bigint,bigint,text,text,text)'),
+      ('purge_identity_recycles_v1()'),
       ('record_meta_template_status_v1(jsonb,uuid,text,text,text,text,boolean)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
@@ -322,8 +323,9 @@ const result = rows.rows[0];
 // that reevaluate_followup_action calls as service_role, and the native
 // followup after the agent's silence (20261101000200) adds its claim.
 // The Meta template requests (20261102000200) add the status the poller records.
+// The recycle of a test phone (20261102000400) adds the purge of its journal.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 178) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 179) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

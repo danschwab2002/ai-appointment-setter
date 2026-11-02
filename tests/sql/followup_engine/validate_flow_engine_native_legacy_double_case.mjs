@@ -78,7 +78,9 @@ const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Despues va el pago rechazado nativo (E-207), que toca las mismas dos funciones por reemplazo contado. Y despues, la lista de las propuestas (E-208) y los frenos de la compra con nuestro link (E-215).
 if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261030000200_flow_engine_native_payment_failure_v1.sql', '20261030000300_flow_change_list_v1.sql', '20261030000400_portable_purchase_stops_see_our_link_v1.sql', '20261101000100_flow_engine_native_intent_v1.sql', '20261101000200_flow_engine_native_silence_v1.sql', '20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql', '20261102000100_recovery_coupon_by_reply_v1.sql',
-  '20261102000200_meta_template_requests_v1.sql', '20261102000300_flow_engine_native_silence_sweep_v1.sql'])) {
+  '20261102000200_meta_template_requests_v1.sql', '20261102000300_flow_engine_native_silence_sweep_v1.sql',
+  // El reciclado de un telefono de prueba (20261102000400, E-270).
+  '20261102000400_identity_recycle_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la del pago rechazado nativo`, names.slice(position + 1));
 }
 

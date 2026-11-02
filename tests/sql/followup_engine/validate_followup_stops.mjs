@@ -68,7 +68,9 @@ const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Despues va solo la renovacion por respuesta (20261102000100, E-267), que no toca las reservas.
 if (!same(names.slice(position + 1), ['20261102000100_recovery_coupon_by_reply_v1.sql',
-  '20261102000200_meta_template_requests_v1.sql', '20261102000300_flow_engine_native_silence_sweep_v1.sql'])) {
+  '20261102000200_meta_template_requests_v1.sql', '20261102000300_flow_engine_native_silence_sweep_v1.sql',
+  // El reciclado de un telefono de prueba (20261102000400, E-270).
+  '20261102000400_identity_recycle_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la renovacion por respuesta`, names.slice(position + 1));
 }
 

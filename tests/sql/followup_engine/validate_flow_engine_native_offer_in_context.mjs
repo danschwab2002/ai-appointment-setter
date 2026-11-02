@@ -76,7 +76,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026102800010
   '20261101000200_flow_engine_native_silence_v1.sql',
   // Los frenos del seguimiento (E-263): las dos reservas, por reemplazo contado.
   '20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql', '20261102000100_recovery_coupon_by_reply_v1.sql',
-  '20261102000200_meta_template_requests_v1.sql', '20261102000300_flow_engine_native_silence_sweep_v1.sql'])) {
+  '20261102000200_meta_template_requests_v1.sql', '20261102000300_flow_engine_native_silence_sweep_v1.sql',
+  // El reciclado de un telefono de prueba (20261102000400, E-270).
+  '20261102000400_identity_recycle_v1.sql'])) {
   fail(`despues de ${MIGRATION} van solo la de la pagina de aprobacion y la del carrito nativo`, names.slice(position + 1));
 }
 if (captured.payload.event !== 'PURCHASE_APPROVED' || captured.payload.data.purchase.offer.code !== 'gopi6lh7'

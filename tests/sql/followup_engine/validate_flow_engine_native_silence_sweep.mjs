@@ -60,7 +60,10 @@ const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 const names = readdirSync(join(root, 'supabase/migrations')).filter((name) => name.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-if (names.slice(position + 1).length !== 0) fail(`${MIGRATION} es la ultima de la cadena`, names.slice(position + 1));
+// Despues va solo el reciclado de un telefono de prueba (20261102000400, E-270).
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261102000400_identity_recycle_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo el reciclado`, names.slice(position + 1));
+}
 
 const CATALOG = fixture('chatwoot_inbox_11_message_templates_20261010.json');
 const template = one((CATALOG.message_templates ?? []).filter((item) => item.name === 'att1_seguimiento_descuento_01'),

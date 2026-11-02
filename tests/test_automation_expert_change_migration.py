@@ -112,6 +112,8 @@ def test_it_is_one_transaction_and_comes_before_the_flow_engine_routes() -> None
         "20261102000200_meta_template_requests_v1.sql",
         # El barrido del seguimiento a 24 h nativo (20261102000300, E-269).
         "20261102000300_flow_engine_native_silence_sweep_v1.sql",
+        # El reciclado de un telefono de prueba (20261102000400, E-270, F-147 PR 1).
+        "20261102000400_identity_recycle_v1.sql",
     ]
 
 

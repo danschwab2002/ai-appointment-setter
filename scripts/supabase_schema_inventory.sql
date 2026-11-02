@@ -6368,6 +6368,70 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         1,
         'flow_engine_native_silence_sweep'
+    union all
+    select
+        '20261102000400',
+        '20261102000400_identity_recycle_v1.sql',
+        -- El reciclado de un telefono de prueba (E-270, F-147 PR 1): las tres
+        -- tablas, con RLS ...
+        (
+            select count(*) = 3
+            from pg_class c
+            where c.oid in (to_regclass('public.identity_recycles'),
+                            to_regclass('public.identity_recycle_rows'),
+                            to_regclass('public.identity_recycle_activity'))
+              and c.relrowsecurity
+        )::int
+        -- ... la excepcion con nombre en las dos funciones de inmutabilidad ...
+        + (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public.protect_hotmart_purchase_intent_correlation()'),
+                to_regprocedure('public.protect_hotmart_cart_source_event()')
+            )
+              and position('identity_recycle_v1: begin' in definition) > 0
+              and position('public._identity_recycle_allows(' in definition) > 0
+        )::int
+        -- ... las cuatro de la pagina, solo para su rol (nunca el del agente) ...
+        + (
+            select count(*) = 4
+            from functions
+            where oid in (
+                to_regprocedure('public.approver_identity_recycle_preview_v1(jsonb,text,text,text,boolean)'),
+                to_regprocedure('public.approver_identity_recycle_apply_v1(jsonb,text,text,text,boolean,text)'),
+                to_regprocedure('public.approver_get_identity_recycle_v1(jsonb,text,uuid)'),
+                to_regprocedure('public.approver_identity_recycle_undo_v1(jsonb,text,uuid)')
+            )
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+              and coalesce(has_function_privilege(to_regrole('flow_change_approver'), oid, 'EXECUTE'), false)
+              and not coalesce(has_function_privilege(to_regrole('automation_expert_change'), oid, 'EXECUTE'), false)
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+        )::int
+        -- ... la purga, solo para service_role ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.purge_identity_recycles_v1()')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- ... y las ids de prueba, para nadie de la API.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.test_activity_ids_v1()')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+        )::int,
+        5,
+        'identity_recycle'
 )
 select
     version,

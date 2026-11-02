@@ -132,6 +132,7 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261102000200",
         # El barrido del seguimiento a 24 h nativo (E-269).
         "20261102000300",
+        "20261102000400",
     ]
 
     sql = _sql()

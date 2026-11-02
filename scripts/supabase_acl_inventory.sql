@@ -189,6 +189,8 @@ expected_service_role(signature) as (
         -- 20261025000400: las conversaciones del comprador para pausar al agente (E-100).
         ('public.read_purchase_agent_pause_conversations_v1(bigint, bigint, text, text, text)'),
         -- 20261102000200: el estado que leyo el sondeo de las solicitudes de plantilla (F-146).
+        -- 20261102000400: la purga del diario de los reciclados de telefonos de prueba (F-147).
+        ('public.purge_identity_recycles_v1()'),
         ('public.record_meta_template_status_v1(jsonb, uuid, text, text, text, text, boolean)')
 ),
 functions as (
