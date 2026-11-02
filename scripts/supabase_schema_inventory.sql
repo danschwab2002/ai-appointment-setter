@@ -6512,6 +6512,33 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'flow_approval_history'
+    union all
+    select
+        '20261103000700',
+        '20261103000700_customer_status_v1.sql',
+        -- Si la persona ya es cliente (E-297): la lectura, solo para
+        -- service_role ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_customer_status_v1(text,text[],bigint,bigint,bigint,text)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- ... con sus tres fuentes y los reembolsos por la transaccion.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_customer_status_v1(text,text[],bigint,bigint,bigint,text)')
+              and position('invalid_customer_status_input' in definition) > 0
+              and position('this_conversation_links' in definition) > 0
+              and position('person_emails' in definition) > 0
+              and position('PURCHASE_CHARGEBACK' in definition) > 0
+        )::int,
+        2,
+        'customer_status'
 )
 select
     version,
