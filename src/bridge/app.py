@@ -218,6 +218,7 @@ from bridge.supabase import (
     InboundCommercialCaseAdmissionResult,
     OperatorCorrelationResolutionError,
     PilotBoundaryConfig,
+    CustomerStatus,
     PersonActivity,
     PrecheckoutAdmissionResult,
     RecentPaymentFailure,
@@ -250,6 +251,14 @@ from bridge.recovery_coupon_reply import (
     reply_may_renew,
 )
 from bridge.recovery_coupons import RecoveryCouponWorker
+from bridge.customer_status import (
+    CUSTOMER_LINK_REQUEST_REASON,
+    CUSTOMER_STATUS_CONTEXT_KEY,
+    conversation_labels,
+    customer_entry_for,
+    customer_status_entries,
+    is_customer_of_anything,
+)
 from bridge.event_log import configure_bridge_event_log, hotmart_log_fields
 from bridge.flow_engine_runtime import (
     DivergenceNotifier,
@@ -349,6 +358,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # agente recibe el cupon vigente de la persona. La regla es del producto;
     # por instancia, solo prenderlo (con el conocimiento que usa el dato).
     "recovery_coupon_by_reply_enabled",
+    # E-297: si la persona ya es cliente, en la entrada del agente, y el freno
+    # del link y del cupon de lo que ya compro. La regla es del producto; por
+    # instancia, solo prenderlo.
+    "agent_customer_status_enabled",
     "hotmart_purchase_worker_enabled",
     "lead_precheckout_enabled",
     # El adaptador de GHL traduce el formulario a lead.precheckout y lo manda
@@ -857,6 +870,11 @@ class Settings:
     # 10 %», y la entrada del agente trae ``recovery_coupon``. Apagado, todo
     # como antes: ni se llama a la base.
     recovery_coupon_by_reply_enabled: bool = False
+    # E-297 (bridge/customer_status.py, migracion 20261103000700): la entrada
+    # del agente trae ``customer_status`` (los productos que la persona ya
+    # compro) y el bridge no le manda el link ni el cupon de lo que ya tiene.
+    # Apagado, todo como antes: ni se llama a la base.
+    agent_customer_status_enabled: bool = False
     precheckout_form_enabled: bool = False
     precheckout_form_token: str | None = None
     precheckout_max_age_seconds: int = 300
@@ -1486,6 +1504,10 @@ class Settings:
             os.getenv("RECOVERY_COUPON_BY_REPLY_ENABLED", "false").strip().lower()
             == "true"
         )
+        agent_customer_status_enabled = (
+            os.getenv("AGENT_CUSTOMER_STATUS_ENABLED", "false").strip().lower()
+            == "true"
+        )
         hotmart_api_credentials_file_value = (
             os.getenv("HOTMART_API_CREDENTIALS_FILE", "").strip()
         )
@@ -2103,6 +2125,7 @@ class Settings:
                 recovery_cart_last_touch_template_name
             ),
             recovery_coupon_by_reply_enabled=recovery_coupon_by_reply_enabled,
+            agent_customer_status_enabled=agent_customer_status_enabled,
             precheckout_form_enabled=precheckout_form_enabled,
             precheckout_form_token=precheckout_form_token,
             precheckout_max_age_seconds=precheckout_max_age_seconds,
@@ -3341,6 +3364,22 @@ def _validate_recovery_coupon_by_reply(settings: Settings) -> None:
         raise ValueError(f"{flag} requires CHATWOOT_ACCOUNT_ID and CHATWOOT_INBOX_ID")
 
 
+def _validate_agent_customer_status(settings: Settings) -> None:
+    """E-297: si la persona ya es cliente, solo con manifiesto.
+
+    La lectura va por cuenta, inbox y conversacion de Chatwoot y por los funnels
+    de la instancia. Johanna (sin manifiesto) no la tiene. Apagado no se lee
+    nada.
+    """
+    if not settings.agent_customer_status_enabled:
+        return
+    flag = "AGENT_CUSTOMER_STATUS_ENABLED"
+    if settings.instance_manifest is None:
+        raise ValueError(f"{flag} requires an instance manifest")
+    if settings.chatwoot_account_id is None or settings.chatwoot_inbox_id is None:
+        raise ValueError(f"{flag} requires CHATWOOT_ACCOUNT_ID and CHATWOOT_INBOX_ID")
+
+
 def _validate_payment_failure_followup(settings: Settings) -> None:
     """B2 o Z del pago rechazado: solo encima de B1 en variantes.
 
@@ -4531,6 +4570,7 @@ def create_app(
     _validate_payment_failure_own_scope(settings)
     _validate_payment_failure_followup(settings)
     _validate_recovery_coupon_by_reply(settings)
+    _validate_agent_customer_status(settings)
     _validate_flow_engine(settings)
     _validate_flow_engine_native_intent(settings)
     waba_template = _waba_template_config(settings)
@@ -6161,6 +6201,13 @@ def create_app(
         assert shared_supabase is not None
         assert settings.chatwoot_account_id is not None
         assert settings.chatwoot_inbox_id is not None
+        if is_customer_of_anything(context):
+            # E-297: a quien ya compro no se le renueva el cupon por respuesta
+            # ni se le dice que tiene uno (D4, D5).
+            logger.info(
+                "customer_status_coupon_skipped conversation=%s", conversation_id
+            )
+            return
         message_ref = (
             current_message.get("_message_ref") if current_message is not None else None
         )
@@ -6372,6 +6419,57 @@ def create_app(
         if failure_product is not None:
             context["product"] = failure_product
         return context
+
+    async def _customer_status_context(
+        *,
+        conversation_id: int,
+        wa_id: str | None,
+        payload: dict[str, object],
+    ) -> list[dict[str, str]] | None:
+        """E-297: los productos que la persona ya compro, para la entrada del agente.
+
+        La base ve el link de esta conversacion, el telefono y el mail del
+        contacto; la etiqueta ``cliente`` de la conversacion la suma
+        ``customer_status_entries``. Si la lectura falla (o la migracion no esta
+        aplicada) el agente contesta igual, con lo que diga la etiqueta.
+        """
+        labels = conversation_labels(payload)
+        statuses: tuple[CustomerStatus, ...] = ()
+        if (
+            shared_supabase is not None
+            and wa_id
+            and settings.chatwoot_account_id is not None
+            and settings.chatwoot_inbox_id is not None
+        ):
+            try:
+                statuses = await shared_supabase.get_customer_status(
+                    tenant_ref=settings.commercial_ally_config.tenant_ref,
+                    funnel_refs=tuple(
+                        route.config.funnel_ref for route in commercial_ally_routes
+                    ),
+                    chatwoot_account_id=settings.chatwoot_account_id,
+                    chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                    chatwoot_conversation_id=conversation_id,
+                    whatsapp_phone=wa_id,
+                )
+            except SupabaseError as exc:
+                logger.warning(
+                    "customer_status_lookup_failed error=%s conversation=%s",
+                    type(exc).__name__,
+                    conversation_id,
+                )
+        entries = customer_status_entries(
+            statuses, routes=commercial_ally_routes, labels=labels
+        )
+        # El estado y la fuente de cada producto, nunca el telefono ni el mail.
+        logger.info(
+            "customer_status_context items=%s statuses=%s sources=%s conversation=%s",
+            len(entries),
+            ",".join(entry["status"] for entry in entries) or "-",
+            ",".join(entry["source"] for entry in entries) or "-",
+            conversation_id,
+        )
+        return entries or None
 
     async def _read_person_activity(
         wa_id: str | None,
@@ -7497,6 +7595,14 @@ def create_app(
                 )
                 if person_activity is not None:
                     context["person_activity"] = person_activity
+            if settings.agent_customer_status_enabled:
+                customer_status = await _customer_status_context(
+                    conversation_id=conversation_id,
+                    wa_id=person_wa_id,
+                    payload=payload,
+                )
+                if customer_status is not None:
+                    context[CUSTOMER_STATUS_CONTEXT_KEY] = customer_status
             completed_proposal = (
                 shadow_processor.get_completed_proposal(delivery_id=delivery_id)
                 if shadow_processor is not None
@@ -7851,6 +7957,35 @@ def create_app(
                     })
                     return
                 link_funnel_ref = link_route.config.funnel_ref
+            customer_route = (
+                commercial_ally_routes.by_key(link_product)
+                if len(commercial_ally_routes) > 1 and link_product is not None
+                else commercial_ally_routes.principal
+            )
+            customer_entry = (
+                customer_entry_for(context, route=customer_route)
+                if settings.agent_customer_status_enabled
+                and context is not None
+                and customer_route is not None
+                else None
+            )
+            if customer_entry is not None:
+                # E-297, D6: la persona ya compro este producto (o lo
+                # reembolso, o hubo un contracargo). El link no sale, aunque el
+                # modelo lo pida: el turno lo atiende una persona.
+                logger.info(
+                    "customer_status_link_blocked status=%s source=%s conversation=%s",
+                    customer_entry.get("status"),
+                    customer_entry.get("source"),
+                    conversation_id,
+                )
+                await request_current_inbound_handoff({
+                    **completed_proposal,
+                    "decision": "handoff",
+                    "qualification_status": "needs_human",
+                    "reason_code": CUSTOMER_LINK_REQUEST_REASON,
+                })
+                return
             assert shared_supabase is not None
             assert admission is not None
             assert settings.chatwoot_account_id is not None

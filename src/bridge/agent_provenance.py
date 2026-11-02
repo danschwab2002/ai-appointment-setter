@@ -31,7 +31,9 @@ from dataclasses import dataclass
 # `person_activity`.
 # v4 (2c-3b): con varios productos, `person_activity` junta la de cada funnel y
 # `recent_payment_failure` suma `product`.
-CONTEXT_BUILDER_VERSION = "shadow-context-v4"
+# v5 (E-297): con AGENT_CUSTOMER_STATUS_ENABLED suma `customer_status`, los
+# productos que la persona ya compro.
+CONTEXT_BUILDER_VERSION = "shadow-context-v5"
 
 _ACTORES = ("prospect", "agent", "team", "system")
 

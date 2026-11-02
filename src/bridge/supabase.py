@@ -461,6 +461,28 @@ PERSON_ACTIVITY_KINDS = frozenset({
 })
 
 
+# Si la persona ya es cliente (E-297, get_customer_status_v1, migracion
+# 20261103000700): el estado de cada producto y la fuente que la ata a la
+# persona, en el orden de D2 (la etiqueta puesta a mano la suma el bridge).
+CUSTOMER_STATUS_VALUES = frozenset({"cliente", "reembolsada", "contracargo"})
+CUSTOMER_STATUS_SOURCES = frozenset({"link", "telefono", "mail"})
+
+
+@dataclass(frozen=True)
+class CustomerStatus:
+    """Un producto que la persona compro (E-297).
+
+    El funnel es el producto; las horas son las de la primera y la ultima
+    compra vigente. Nada de email, telefono, nombre, transaccion ni payload.
+    """
+
+    funnel_ref: str
+    status: str
+    first_purchase_at: datetime
+    last_purchase_at: datetime
+    source: str
+
+
 @dataclass(frozen=True)
 class PersonActivity:
     """Una cosa que hizo un movil en un funnel en los ultimos 30 dias (2b).
@@ -2913,6 +2935,89 @@ class SupabaseClient:
                 raise _invalid_row_error(operation)
             activities.append(PersonActivity(activity=activity, occurred_at=parsed_at))
         return tuple(activities)
+
+    async def get_customer_status(
+        self,
+        *,
+        tenant_ref: str,
+        funnel_refs: Sequence[str],
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        chatwoot_conversation_id: int,
+        whatsapp_phone: str,
+    ) -> tuple[CustomerStatus, ...]:
+        """Los productos que compro la persona de esta conversacion (E-297).
+
+        Una fila por funnel pedido en el que compro, con su estado y la fuente.
+        Sin compras, una tupla vacia. Una fila que no es la del contrato falla
+        cerrado (``SupabaseError``): el bridge sigue sin el dato.
+        """
+        operation = "customer_status_get"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_customer_status_v1",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": tenant_ref,
+                    "p_funnel_refs": list(funnel_refs),
+                    "p_chatwoot_account_id": chatwoot_account_id,
+                    "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                    "p_chatwoot_conversation_id": chatwoot_conversation_id,
+                    "p_whatsapp_phone": whatsapp_phone,
+                }
+            ),
+        )
+        rejection = _deterministic_rejection(response)
+        if rejection is not None:
+            raise SupabasePermanentError(
+                f"{operation}_rejected: {rejection}", reason=rejection
+            )
+        if response.status_code == 404:
+            # La migracion 20261103000700 no esta aplicada.
+            raise SupabaseRpcMissing(f"{operation}_missing: HTTP 404")
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        wanted = set(funnel_refs)
+        statuses: list[CustomerStatus] = []
+        for row in _response_rows(response, operation=operation):
+            funnel_ref = row.get("funnel_ref")
+            status = row.get("status")
+            source = row.get("source")
+            if (
+                set(row)
+                != {"funnel_ref", "status", "first_purchase_at", "last_purchase_at", "source"}
+                or not isinstance(funnel_ref, str)
+                or funnel_ref not in wanted
+                or status not in CUSTOMER_STATUS_VALUES
+                or source not in CUSTOMER_STATUS_SOURCES
+            ):
+                raise _invalid_row_error(operation)
+            moments: list[datetime] = []
+            for key in ("first_purchase_at", "last_purchase_at"):
+                value = row.get(key)
+                if not isinstance(value, str):
+                    raise _invalid_row_error(operation)
+                try:
+                    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                except ValueError as exc:
+                    raise _invalid_row_error(operation) from exc
+                if parsed.tzinfo is None:
+                    raise _invalid_row_error(operation)
+                moments.append(parsed)
+            if moments[0] > moments[1]:
+                raise _invalid_row_error(operation)
+            statuses.append(
+                CustomerStatus(
+                    funnel_ref=funnel_ref,
+                    status=status,
+                    first_purchase_at=moments[0],
+                    last_purchase_at=moments[1],
+                    source=source,
+                )
+            )
+        if len({item.funnel_ref for item in statuses}) != len(statuses):
+            raise _invalid_row_error(operation)
+        return tuple(statuses)
 
     async def read_handoff_note_checkout_link(
         self,
