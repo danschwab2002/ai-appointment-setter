@@ -67,7 +67,8 @@ const names = readdirSync(join(root, 'supabase/migrations')).filter((name) => na
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Despues va solo la renovacion por respuesta (20261102000100, E-267), que no toca las reservas.
-if (!same(names.slice(position + 1), ['20261102000100_recovery_coupon_by_reply_v1.sql'])) {
+if (!same(names.slice(position + 1), ['20261102000100_recovery_coupon_by_reply_v1.sql',
+  '20261102000200_meta_template_requests_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la renovacion por respuesta`, names.slice(position + 1));
 }
 

@@ -458,7 +458,10 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # conversaciones del comprador. 20261101000100 (el primer contacto nativo, E-247)
     # suma la entrada del formulario y el freno que la reevaluacion llama como service_role,
     # y 20261101000200 (el seguimiento a 24 h nativo, E-251) suma su reserva nativa.
-    assert len(allowlisted) == 176
+    # 20261102000200 (las solicitudes de plantilla, E-268) suma el estado que
+    # registra el sondeo; las del agente y las de la pagina son de sus roles.
+    assert len(allowlisted) == 177
+    assert "record_meta_template_status_v1(jsonb, uuid, text, text, text, text, boolean)" in allowlisted
     assert (
         "read_purchase_agent_pause_conversations_v1(bigint, bigint, text, text, text)"
         in allowlisted
@@ -1747,20 +1750,48 @@ def test_followup_stops_fingerprint_is_before_the_coupon_by_reply() -> None:
         assert marker in compact_fingerprint, marker
 
 
-def test_recovery_coupon_by_reply_fingerprint_is_last() -> None:
+def test_recovery_coupon_by_reply_fingerprint_is_before_the_template_requests() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261102000100 (la respuesta escrita a A2 reactiva el cupon y el
-    # agente lo lee, E-267) es la ultima, con las dos funciones nuevas.
-    fingerprint = sql.split("'20261102000100'", 1)[1].split("select\n    version,", 1)[0]
+    # agente lo lee, E-267), con las dos funciones nuevas, antes de la de
+    # 20261102000200 (las solicitudes de plantilla, E-268).
+    fingerprint = (
+        sql.split("'20261102000100'", 1)[1]
+        .split("select\n    version,", 1)[0]
+        .split("    union all\n    select\n        '20261102000200'", 1)[0]
+    )
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261102000100_recovery_coupon_by_reply_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",3,'recovery_coupon_by_reply')")
+    assert compact_fingerprint.endswith(",3,'recovery_coupon_by_reply'")
     for marker in (
         "to_regprocedure('public.request_recovery_renewal_by_reply_v1(bigint,bigint,bigint,bigint,text,timestamptz)')",
         "to_regprocedure('public.get_recovery_coupon_for_conversation_v1(bigint,bigint,bigint,text)')",
         "andprosecdef",
         "position('public.request_recovery_renewal_v1('indefinition)>0",
         "position('public.recovery_coupon_was_delivered(coupon.id)'indefinition)>0",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_meta_template_requests_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261102000200 (las solicitudes de plantilla de Meta, E-268,
+    # F-146 partes 1 y 2) es la ultima: las tablas, el nombre una vez, el
+    # recorrido y cada funcion solo para su rol.
+    fingerprint = sql.split("'20261102000200'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261102000200_meta_template_requests_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",6,'meta_template_requests')")
+    for marker in (
+        "to_regclass('public.meta_template_requests')",
+        "to_regclass('public.meta_template_request_events')",
+        "indexname='meta_template_requests_name_once'",
+        "tgname='meta_template_requests_validate'",
+        "to_regprocedure('public.save_meta_template_request_draft_v1(jsonb,uuid,integer,jsonb,text,uuid,text,text)')",
+        "has_function_privilege(to_regrole('automation_expert_change'),oid,'EXECUTE')",
+        "has_function_privilege(to_regrole('flow_change_approver'),oid,'EXECUTE')",
+        "to_regprocedure('public.record_meta_template_status_v1(jsonb,uuid,text,text,text,text,boolean)')",
     ):
         assert marker in compact_fingerprint, marker

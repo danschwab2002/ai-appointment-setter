@@ -185,7 +185,9 @@ expected_service_role(signature) as (
         -- 20261025000300: el link de la persona para la nota privada al derivar (F-034, D8).
         ('public.read_handoff_note_checkout_link_v1(uuid, bigint, bigint, timestamp with time zone)'),
         -- 20261025000400: las conversaciones del comprador para pausar al agente (E-100).
-        ('public.read_purchase_agent_pause_conversations_v1(bigint, bigint, text, text, text)')
+        ('public.read_purchase_agent_pause_conversations_v1(bigint, bigint, text, text, text)'),
+        -- 20261102000200: el estado que leyo el sondeo de las solicitudes de plantilla (F-146).
+        ('public.record_meta_template_status_v1(jsonb, uuid, text, text, text, text, boolean)')
 ),
 functions as (
     select

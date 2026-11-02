@@ -1,0 +1,474 @@
+{
+ "_capture": {
+  "origen": "Las fuentes de plantillas de Meta de ATT1 y Maribel del vault del OS (productos/soporte-infoproductores/documentacion/plantillas-meta-att1.json y plantillas-meta-maribel.json, las que subio meta_plantillas.py subir), con lo que contesto Meta de cada una: plantillas-meta-<instancia>.estado.json (lo que guardo el script al subir y al releer la cuenta) y, donde hay, la captura del catalogo de la bandeja de Chatwoot del repo (tests/fixtures/chatwoot_message_templates_inbox_13_* y chatwoot_message_templates_inbox_11_bienvenida_20261026.json, que mandan sobre el .estado.json cuando son mas nuevas).",
+  "captured_at": "2026-11-02T01:45:00Z",
+  "transformacion": "Solo de forma: 'texto' pasa a 'cuerpo', 'boton_url' con 'destino' a un boton checkout o ficha, 'boton_url' con 'url' a url_fija y cada respuesta a un boton respuesta, en el orden de Meta (el link primero). Los textos, nombres, categorias y URLs, tal cual.",
+  "anonimizado": "No hace falta: son definiciones de plantillas de la marca, sin datos de personas.",
+  "lo_que_prueba": "Dos recategorizaciones reales (pedidas UTILITY, aprobadas MARKETING): maribel_retomar_proceso_01 (habla de descuento: el validador avisa) y att1_ficha_vence_manana_01 (no habla de descuento: el validador no lo ve venir). Y lo que el producto no deja crear desde el AE: los datos de la ficha del legado (tienda, vence_ficha, medio, otro_medio) y una de marketing sin la baja."
+ },
+ "plantillas": [
+  {
+   "instancia": "att1",
+   "template": {
+    "nombre": "att1_pago_rechazado_cupon_01",
+    "idioma": "es_MX",
+    "categoria": "MARKETING",
+    "cuerpo": "Hola, {{nombre}}. El pago que intentaste {{cuando}} por {{producto}} no pasó.\n\nTe escribo del equipo de la Dra. Nina: tu *10 % de descuento* sigue activo hasta {{vence}}. En el botón está el pago preparado con tu descuento, y ahí puedes usar otra tarjeta u otro medio.\n\n¿Quieres que te ayude a que pase esta vez?",
+    "botones": [
+     {
+      "tipo": "checkout",
+      "texto": "Usar mi descuento"
+     },
+     {
+      "tipo": "respuesta",
+      "texto": "No más mensajes"
+     }
+    ]
+   },
+   "en_meta": {
+    "status": "APPROVED",
+    "category": "MARKETING",
+    "fuente": "plantillas-meta-att1.estado.json"
+   }
+  },
+  {
+   "instancia": "att1",
+   "template": {
+    "nombre": "att1_pago_rechazado_dos_veces_01",
+    "idioma": "es_MX",
+    "categoria": "UTILITY",
+    "cuerpo": "Hola, {{nombre}}. El pago que intentaste {{cuando}} por {{producto}} no pasó dos veces.\n\nTe escribo del equipo de la Dra. Nina. Para no hacerte pasar por lo mismo otra vez, te conviene pagarlo con otra tarjeta u otro medio de pago de tu país. En el botón está el pago preparado y ahí eliges.\n\n¿Te digo cuáles tienes disponibles?",
+    "botones": [
+     {
+      "tipo": "checkout",
+      "texto": "Completar mi pago"
+     },
+     {
+      "tipo": "respuesta",
+      "texto": "No más mensajes"
+     }
+    ]
+   },
+   "en_meta": {
+    "status": "APPROVED",
+    "category": "UTILITY",
+    "fuente": "plantillas-meta-att1.estado.json"
+   }
+  },
+  {
+   "instancia": "att1",
+   "template": {
+    "nombre": "att1_pago_rechazado_saldo_01",
+    "idioma": "es_MX",
+    "categoria": "MARKETING",
+    "cuerpo": "Hola, {{nombre}}. El pago que intentaste {{cuando}} por {{producto}} no pasó porque la tarjeta no tenía saldo o límite en ese momento.\n\nTe escribo del equipo de la Dra. Nina. Para que te quede más cómodo, te dejé un *10 % de descuento* hasta {{vence}}, con el pago preparado en el botón.\n\nSi hoy no te queda bien, ¿te escribo el día que cobres?",
+    "botones": [
+     {
+      "tipo": "checkout",
+      "texto": "Usar mi descuento"
+     },
+     {
+      "tipo": "respuesta",
+      "texto": "No más mensajes"
+     }
+    ]
+   },
+   "en_meta": {
+    "status": "APPROVED",
+    "category": "MARKETING",
+    "fuente": "plantillas-meta-att1.estado.json"
+   }
+  },
+  {
+   "instancia": "att1",
+   "template": {
+    "nombre": "att1_pago_rechazado_banco_01",
+    "idioma": "es_MX",
+    "categoria": "UTILITY",
+    "cuerpo": "Hola, {{nombre}}. Tu banco no aprobó el pago que intentaste {{cuando}} por {{producto}}.\n\nTe escribo del equipo de la Dra. Nina. Pasa seguido con las compras en línea o internacionales, y muchas veces se resuelve en un minuto desde la app de tu banco. Si tienes otra tarjeta a mano, el pago está preparado en el botón.\n\n¿De qué banco es tu tarjeta? Te digo qué activar.",
+    "botones": [
+     {
+      "tipo": "checkout",
+      "texto": "Completar mi pago"
+     },
+     {
+      "tipo": "respuesta",
+      "texto": "No más mensajes"
+     }
+    ]
+   },
+   "en_meta": {
+    "status": "APPROVED",
+    "category": "UTILITY",
+    "fuente": "plantillas-meta-att1.estado.json"
+   }
+  },
+  {
+   "instancia": "att1",
+   "template": {
+    "nombre": "att1_pago_rechazado_descuento_01",
+    "idioma": "es_MX",
+    "categoria": "MARKETING",
+    "cuerpo": "Hola, {{nombre}}. Tu inscripción a {{producto}} sigue pendiente.\n\nComo ayer el pago no se pudo completar, te dejé un *10 % de descuento* hasta {{vence}}. En el botón está el pago ya preparado, y ahí puedes elegir otra tarjeta u otro medio de pago.\n\n¿Algo te sigue frenando? Respóndeme y lo resolvemos.",
+    "botones": [
+     {
+      "tipo": "checkout",
+      "texto": "Usar mi descuento"
+     },
+     {
+      "tipo": "respuesta",
+      "texto": "No más mensajes"
+     }
+    ]
+   },
+   "en_meta": {
+    "status": "APPROVED",
+    "category": "MARKETING",
+    "fuente": "plantillas-meta-att1.estado.json"
+   }
+  },
+  {
+   "instancia": "att1",
+   "template": {
+    "nombre": "att1_pago_pendiente_01",
+    "idioma": "es_MX",
+    "categoria": "UTILITY",
+    "cuerpo": "Hola, {{nombre}}. Tu pago de {{producto}} con {{medio}} quedó sin terminar.\n\nTe escribo del equipo de la Dra. Nina. Si no te dejó completarlo, en el botón está tu pago preparado para hacerlo con tarjeta o con {{otro_medio}}. El pago pendiente se cancela solo, sin cobrarte nada.\n\n¿Te ayudo a completarlo?",
+    "botones": [
+     {
+      "tipo": "checkout",
+      "texto": "Completar mi pago"
+     },
+     {
+      "tipo": "respuesta",
+      "texto": "No más mensajes"
+     }
+    ]
+   },
+   "en_meta": {
+    "status": "APPROVED",
+    "category": "UTILITY",
+    "fuente": "plantillas-meta-att1.estado.json"
+   }
+  },
+  {
+   "instancia": "att1",
+   "template": {
+    "nombre": "att1_pago_pendiente_cancelado_01",
+    "idioma": "es_MX",
+    "categoria": "UTILITY",
+    "cuerpo": "Hola, {{nombre}}. Tu pago de {{producto}} con {{medio}} no llegó a completarse, así que tu inscripción no se confirmó.\n\nTe escribo del equipo de la Dra. Nina. En el botón está el pago preparado para que lo termines con tarjeta o con {{otro_medio}}.\n\n¿Te ayudo con algo para completarlo?",
+    "botones": [
+     {
+      "tipo": "checkout",
+      "texto": "Completar mi pago"
+     },
+     {
+      "tipo": "respuesta",
+      "texto": "No más mensajes"
+     }
+    ]
+   },
+   "en_meta": {
+    "status": "APPROVED",
+    "category": "UTILITY",
+    "fuente": "plantillas-meta-att1.estado.json"
+   }
+  },
+  {
+   "instancia": "att1",
+   "template": {
+    "nombre": "att1_ficha_efectivo_01",
+    "idioma": "es_MX",
+    "categoria": "UTILITY",
+    "cuerpo": "Hola, {{nombre}}. Te dejo aquí tu ficha para pagar {{producto}} en {{tienda}}, para que la tengas a mano.\n\nTe escribo del equipo de la Dra. Nina. Puedes pagarla en efectivo hasta el {{vence_ficha}}, mostrándola desde tu celular. Cuando se confirma el pago, tu acceso te llega al correo.\n\n¿Qué día te queda bien pasar a pagarla?",
+    "botones": [
+     {
+      "tipo": "ficha",
+      "texto": "Ver mi ficha"
+     },
+     {
+      "tipo": "respuesta",
+      "texto": "No más mensajes"
+     }
+    ]
+   },
+   "en_meta": {
+    "status": "APPROVED",
+    "category": "UTILITY",
+    "fuente": "captura del catalogo de la bandeja 11 (repo, 2026-10-26)"
+   }
+  },
+  {
+   "instancia": "att1",
+   "template": {
+    "nombre": "att1_ficha_vence_manana_01",
+    "idioma": "es_MX",
+    "categoria": "UTILITY",
+    "cuerpo": "Hola, {{nombre}}. Tu ficha de {{tienda}} para {{producto}} vence mañana, {{vence_ficha}}.\n\nSi ya la pagaste, no tienes que hacer nada: la confirmación llega al día siguiente del pago. Si todavía no, ¿te da tiempo de pasar hoy o mañana?",
+    "botones": [
+     {
+      "tipo": "ficha",
+      "texto": "Ver mi ficha"
+     },
+     {
+      "tipo": "respuesta",
+      "texto": "No más mensajes"
+     }
+    ]
+   },
+   "en_meta": {
+    "status": "APPROVED",
+    "category": "MARKETING",
+    "fuente": "plantillas-meta-att1.estado.json"
+   }
+  },
+  {
+   "instancia": "att1",
+   "template": {
+    "nombre": "att1_ficha_vence_hoy_01",
+    "idioma": "es_MX",
+    "categoria": "UTILITY",
+    "cuerpo": "Hola, {{nombre}}. Tu ficha de {{tienda}} para {{producto}} vence hoy.\n\nSi ya la pagaste, no tienes que hacer nada. Si todavía no, ¿alcanzas a pasar hoy?",
+    "botones": [
+     {
+      "tipo": "ficha",
+      "texto": "Ver mi ficha"
+     },
+     {
+      "tipo": "respuesta",
+      "texto": "No más mensajes"
+     }
+    ]
+   },
+   "en_meta": {
+    "status": "APPROVED",
+    "category": "UTILITY",
+    "fuente": "plantillas-meta-att1.estado.json"
+   }
+  },
+  {
+   "instancia": "att1",
+   "template": {
+    "nombre": "att1_ficha_vencida_descuento_01",
+    "idioma": "es_MX",
+    "categoria": "MARKETING",
+    "cuerpo": "Hola, {{nombre}}. Tu ficha de {{tienda}} para {{producto}} venció y no nos llegó el pago. Si la pagaste en los últimos días, respóndeme y lo revisamos.\n\nSi todavía quieres entrar, te dejé un *10 % de descuento*: genera tu ficha nueva desde el botón antes de {{vence}}, y después tienes varios días para pagarla en efectivo o con otro medio.\n\n¿Te ayudo con algo para completarla?",
+    "botones": [
+     {
+      "tipo": "checkout",
+      "texto": "Usar mi descuento"
+     },
+     {
+      "tipo": "respuesta",
+      "texto": "No más mensajes"
+     }
+    ]
+   },
+   "en_meta": {
+    "status": "APPROVED",
+    "category": "MARKETING",
+    "fuente": "plantillas-meta-att1.estado.json"
+   }
+  },
+  {
+   "instancia": "att1",
+   "template": {
+    "nombre": "att1_pago_efectivo_confirmado_01",
+    "idioma": "es_MX",
+    "categoria": "UTILITY",
+    "cuerpo": "Hola, {{nombre}}. Se confirmó tu pago de {{producto}}.\n\nTu acceso te llega al correo con el que compraste, desde Hotmart. Si en unas horas no lo ves, respóndeme aquí y te ayudo.",
+    "botones": []
+   },
+   "en_meta": {
+    "status": "APPROVED",
+    "category": "UTILITY",
+    "fuente": "captura del catalogo de la bandeja 11 (repo, 2026-10-26)"
+   }
+  },
+  {
+   "instancia": "att1",
+   "template": {
+    "nombre": "att1_carrito_descuento_01",
+    "idioma": "es_MX",
+    "categoria": "MARKETING",
+    "cuerpo": "Hola, {{nombre}}: te guardé un *10 % de descuento* para {{producto}}.\n\nTe escribo del equipo de la Dra. Nina porque tu inscripción de {{cuando}} quedó en el último paso. El 10 % es sobre los {{precio}} y vale hasta {{vence}}; ya está aplicado en el botón, con tus datos cargados.\n\n¿Algo te frenó al pagar, o te quedó alguna duda del programa? Respóndeme y te ayudo.",
+    "botones": [
+     {
+      "tipo": "checkout",
+      "texto": "Usar mi descuento"
+     },
+     {
+      "tipo": "respuesta",
+      "texto": "No más mensajes"
+     }
+    ]
+   },
+   "en_meta": {
+    "status": "APPROVED",
+    "category": "MARKETING",
+    "fuente": "plantillas-meta-att1.estado.json"
+   }
+  },
+  {
+   "instancia": "att1",
+   "template": {
+    "nombre": "att1_carrito_dudas_01",
+    "idioma": "es_MX",
+    "categoria": "MARKETING",
+    "cuerpo": "Hola, {{nombre}}. ¿Qué te frenó con {{producto}}?\n\nSi fue el pago, puedes usar otra tarjeta, PayPal o efectivo, y en México también pagar a meses. Si fue una duda: es un programa en línea, a tu ritmo, con clases en video, guías de alimentación, menús y recetas. El acceso es para siempre y tiene 7 días de garantía de Hotmart.\n\nTu 10 % ya venció, pero si me respondes te lo reactivo.",
+    "botones": [
+     {
+      "tipo": "respuesta",
+      "texto": "Quiero mi 10 %"
+     },
+     {
+      "tipo": "respuesta",
+      "texto": "No más mensajes"
+     }
+    ]
+   },
+   "en_meta": {
+    "status": "APPROVED",
+    "category": "MARKETING",
+    "fuente": "plantillas-meta-att1.estado.json"
+   }
+  },
+  {
+   "instancia": "att1",
+   "template": {
+    "nombre": "att1_recordatorio_dia_elegido_01",
+    "idioma": "es_MX",
+    "categoria": "MARKETING",
+    "cuerpo": "Hola, {{nombre}}. Como quedamos, hoy te escribo por tu inscripción a {{producto}}.\n\nTe dejé tu *10 % de descuento* hasta {{vence}}, con el pago ya preparado en el botón.\n\n¿La completamos hoy?",
+    "botones": [
+     {
+      "tipo": "checkout",
+      "texto": "Usar mi descuento"
+     },
+     {
+      "tipo": "respuesta",
+      "texto": "No más mensajes"
+     }
+    ]
+   },
+   "en_meta": {
+    "status": "APPROVED",
+    "category": "MARKETING",
+    "fuente": "plantillas-meta-att1.estado.json"
+   }
+  },
+  {
+   "instancia": "att1",
+   "template": {
+    "nombre": "att1_ultima_renovacion_01",
+    "idioma": "es_MX",
+    "categoria": "MARKETING",
+    "cuerpo": "Hola, {{nombre}}. Te reactivé tu *10 % de descuento* para {{producto}} por última vez, hasta {{vence}}.\n\nEl pago está listo en el botón, con el descuento aplicado. Después de esto no te voy a insistir más con tu inscripción.\n\nSi en algún momento quieres retomarla o tienes una duda, respóndeme aquí.",
+    "botones": [
+     {
+      "tipo": "checkout",
+      "texto": "Usar mi descuento"
+     },
+     {
+      "tipo": "respuesta",
+      "texto": "No más mensajes"
+     }
+    ]
+   },
+   "en_meta": {
+    "status": "APPROVED",
+    "category": "MARKETING",
+    "fuente": "plantillas-meta-att1.estado.json"
+   }
+  },
+  {
+   "instancia": "att1",
+   "template": {
+    "nombre": "att1_bienvenida_01",
+    "idioma": "es_MX",
+    "categoria": "UTILITY",
+    "cuerpo": "Tu inscripción en {{producto}} ha sido confirmada.\n\nTe escribimos del equipo de la Dra. Nina.\n\nAccesos: se enviarán al correo con el que compraste.\n\nPara completar tu perfil y personalizar el programa, ingresa aquí:",
+    "botones": [
+     {
+      "tipo": "url_fija",
+      "texto": "Completar mi perfil",
+      "url": "https://forms.gle/mzopWTpQae8TDBph9"
+     }
+    ],
+    "encabezado": "Notificación"
+   },
+   "en_meta": {
+    "status": "APPROVED",
+    "category": "UTILITY",
+    "fuente": "captura del catalogo de la bandeja 11 (repo, 2026-10-26)"
+   }
+  },
+  {
+   "instancia": "maribel",
+   "template": {
+    "nombre": "maribel_retomar_proceso_01",
+    "idioma": "es_MX",
+    "categoria": "UTILITY",
+    "cuerpo": "Hola {{nombre}}, revisamos tu intento de compra   - Orden de compra *{{producto}}* .\n\nTu inscripción  no se proceso.\nMotivo: Puede que hayas dejado tu compra incompleta por una duda durante el proceso o simplemente porque no pudiste finalizar a tiempo 💛 por eso, para que no pierdas esta oportunidad,   tienes un *10% de descuento* especial para retomar tu compra, da clic en el *botón para redimirlo*\n\nResponde si necesitas ayuda para completar tu compra.",
+    "botones": [
+     {
+      "tipo": "respuesta",
+      "texto": "Retomar proceso"
+     },
+     {
+      "tipo": "respuesta",
+      "texto": "No mas mensajes"
+     }
+    ]
+   },
+   "en_meta": {
+    "status": "APPROVED",
+    "category": "MARKETING",
+    "fuente": "captura del catalogo de la bandeja 13 (repo)"
+   }
+  },
+  {
+   "instancia": "maribel",
+   "template": {
+    "nombre": "maribel_bienvenida_01",
+    "idioma": "es_MX",
+    "categoria": "UTILITY",
+    "cuerpo": "Tu inscripción en {{producto}} ha sido confirmada.\n\nTe escribimos del equipo de El Protocolo.\n\nAccesos: se enviarán al correo con el que compraste, en unos minutos. Revisa también tu carpeta de spam.\n\nPara completar tu formulario, ingresa aquí:",
+    "botones": [
+     {
+      "tipo": "url_fija",
+      "texto": "Completar mi formulario",
+      "url": "https://forms.gle/1ESdBdR2fLYd5Eqt7"
+     }
+    ],
+    "encabezado": "Notificación"
+   },
+   "en_meta": {
+    "status": "APPROVED",
+    "category": "UTILITY",
+    "fuente": "captura del catalogo de la bandeja 13 (repo)"
+   }
+  },
+  {
+   "instancia": "maribel",
+   "template": {
+    "nombre": "maribel_seguimiento_descuento_01",
+    "idioma": "es_MX",
+    "categoria": "MARKETING",
+    "cuerpo": "Hola, {{nombre}}. Soy del equipo de El Protocolo.\n\nQuería retomar nuestra conversación sobre {{producto}}.\n\nPara ayudarte a dar ese paso, te reservamos un *10 % de descuento*. Toca el botón de abajo y tu descuento queda activado al instante.\n\nSi todavía tienes alguna duda, responde a este mensaje y te ayudamos.",
+    "botones": [
+     {
+      "tipo": "checkout",
+      "texto": "Usar mi descuento"
+     }
+    ]
+   },
+   "en_meta": {
+    "status": "PENDING",
+    "category": "MARKETING",
+    "fuente": "plantillas-meta-maribel.estado.json"
+   }
+  }
+ ]
+}

@@ -47,7 +47,10 @@ const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 const names = readdirSync(join(root, 'supabase/migrations')).filter((name) => name.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-if (names.slice(position + 1).length !== 0) fail(`${MIGRATION} es la ultima de la cadena`, names.slice(position + 1));
+// Despues va solo la de las solicitudes de plantilla de Meta (20261102000200, E-268): tablas y funciones nuevas.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261102000200_meta_template_requests_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de las solicitudes de plantilla`, names.slice(position + 1));
+}
 
 // ---------------------------------------------------------------------------
 // 0. La forma de la migracion.
