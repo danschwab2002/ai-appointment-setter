@@ -118,6 +118,8 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
         "20261102000200_meta_template_requests_v1.sql",
         # El barrido del seguimiento a 24 h nativo (20261102000300, E-269).
         "20261102000300_flow_engine_native_silence_sweep_v1.sql",
+        # El reciclado de un telefono de prueba (20261102000400, E-270, F-147 PR 1).
+        "20261102000400_identity_recycle_v1.sql",
     ]
     native = (MIGRATIONS / "20261024000200_flow_engine_native_v1.sql").read_text(encoding="utf-8")
     assert "read_automation_expert_flows_v1" not in native

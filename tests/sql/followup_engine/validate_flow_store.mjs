@@ -678,10 +678,14 @@ check(sameJson(lockTimeouts, [
   // Las de la pagina y del sondeo que bloquean una solicitud de plantilla (20261102000200).
   'approver_approve_meta_template_request_v1', 'approver_begin_meta_template_send_v1',
   'approver_discard_meta_template_request_v1',
-  'approver_flow_cohort_v1', 'approver_pause_flow_v1',
+  'approver_flow_cohort_v1',
+  // Las del reciclado de un telefono de prueba que bloquean (20261102000400).
+  'approver_identity_recycle_apply_v1', 'approver_identity_recycle_undo_v1',
+  'approver_pause_flow_v1',
   'approver_publish_flow_change_v1', 'approver_record_meta_template_sent_v1',
   'operator_approve_flow_change_v1', 'operator_flow_cohort_v1', 'operator_pause_flow_v1',
   'operator_publish_flow_change_v1', 'operator_record_flow_change_validation_v1',
+  'purge_identity_recycles_v1',
   'record_meta_template_request_validation_v1', 'record_meta_template_status_v1',
 ]), '2: lock_timeout de 5 s en las que esperan locks', lockTimeouts);
 

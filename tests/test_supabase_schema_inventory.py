@@ -461,7 +461,10 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261102000200 (las solicitudes de plantilla, E-268) suma el estado que
     # registra el sondeo; las del agente y las de la pagina son de sus roles.
     # 20261102000300 (el barrido del seguimiento nativo, E-269) suma su lectura.
-    assert len(allowlisted) == 178
+    # 20261102000400 (el reciclado de un telefono de prueba, E-270) suma la purga
+    # de su diario; las de la pagina son de flow_change_approver.
+    assert len(allowlisted) == 179
+    assert "purge_identity_recycles_v1()" in allowlisted
     assert "record_meta_template_status_v1(jsonb, uuid, text, text, text, text, boolean)" in allowlisted
     assert (
         "read_purchase_agent_pause_conversations_v1(bigint, bigint, text, text, text)"
@@ -1803,18 +1806,47 @@ def test_meta_template_requests_fingerprint_is_before_the_native_silence_sweep()
         assert marker in compact_fingerprint, marker
 
 
-def test_flow_engine_native_silence_sweep_fingerprint_is_last() -> None:
+def test_flow_engine_native_silence_sweep_fingerprint_is_before_the_identity_recycle() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261102000300 (lo que lee el barrido del seguimiento nativo,
-    # E-269) es la ultima, con su lectura.
-    fingerprint = sql.split("'20261102000300'", 1)[1].split("select\n    version,", 1)[0]
+    # E-269), con su lectura. Despues va solo la de 20261102000400.
+    fingerprint = (
+        sql.split("'20261102000300'", 1)[1]
+        .split("select\n    version,", 1)[0]
+        .split("    union all\n    select\n        '20261102000400'", 1)[0]
+    )
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261102000300_flow_engine_native_silence_sweep_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",1,'flow_engine_native_silence_sweep')")
+    assert compact_fingerprint.endswith(",1,'flow_engine_native_silence_sweep'")
     for marker in (
         "to_regprocedure('public.read_flow_engine_native_silences_v1(jsonb)')",
         "andprosecdef",
         "position('flow_engine_native_silence_sweep_trigger_guard'indefinition)>0",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_identity_recycle_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261102000400 (el reciclado de un telefono de prueba, E-270,
+    # F-147 PR 1) es la ultima: las tablas con RLS, la excepcion en las dos
+    # funciones de inmutabilidad, la pagina solo para su rol (nunca el del
+    # agente), la purga solo para service_role y las ids de prueba para nadie.
+    fingerprint = sql.split("'20261102000400'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261102000400_identity_recycle_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",5,'identity_recycle')")
+    for marker in (
+        "to_regclass('public.identity_recycles')",
+        "to_regclass('public.identity_recycle_rows')",
+        "to_regclass('public.identity_recycle_activity')",
+        "position('identity_recycle_v1:begin'indefinition)>0",
+        "to_regprocedure('public.approver_identity_recycle_apply_v1(jsonb,text,text,text,boolean,text)')",
+        "notcoalesce(has_function_privilege(to_regrole('automation_expert_change'),oid,'EXECUTE'),false)",
+        "has_function_privilege(to_regrole('flow_change_approver'),oid,'EXECUTE')",
+        "to_regprocedure('public.purge_identity_recycles_v1()')",
+        "to_regprocedure('public.test_activity_ids_v1()')",
     ):
         assert marker in compact_fingerprint, marker

@@ -64,32 +64,34 @@ def test_it_is_one_transaction_and_the_last() -> None:
     # La renovacion por respuesta y el cupon del turno (20261102000100, E-267).
     # Las solicitudes de plantilla de Meta (20261102000200, E-268, F-146 partes 1 y 2).
     # El barrido del seguimiento a 24 h nativo (20261102000300, E-269).
-    assert names[-1] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
-    assert names[-2] == "20261102000200_meta_template_requests_v1.sql"
-    assert names[-3] == "20261102000100_recovery_coupon_by_reply_v1.sql"
-    assert names[-4] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
-    assert names[-5] == "20261101000200_flow_engine_native_silence_v1.sql"
+    # El reciclado de un telefono de prueba (20261102000400, E-270, F-147 PR 1).
+    assert names[-1] == "20261102000400_identity_recycle_v1.sql"
+    assert names[-2] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
+    assert names[-3] == "20261102000200_meta_template_requests_v1.sql"
+    assert names[-4] == "20261102000100_recovery_coupon_by_reply_v1.sql"
+    assert names[-5] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
+    assert names[-6] == "20261101000200_flow_engine_native_silence_v1.sql"
     # Antes, el primer contacto nativo (20261101000100, E-247): el disparador intencion.
-    assert names[-6] == "20261101000100_flow_engine_native_intent_v1.sql"
-    assert names[-7] == "20261030000400_portable_purchase_stops_see_our_link_v1.sql"
-    assert names[-8] == "20261030000300_flow_change_list_v1.sql"
-    assert names[-9] == "20261030000200_flow_engine_native_payment_failure_v1.sql"
-    assert names[-10] == "20261030000100_flow_engine_native_legacy_double_case_v1.sql"
-    assert names[-11] == "20261028000400_purchase_by_our_link_counts_v1.sql"
-    assert names[-12] == "20261028000300_pilot_scope_offer_append_v1.sql"
-    assert names[-13] == "20261028000200_flow_engine_native_cart_v1.sql"
-    assert names[-14] == "20261028000100_flow_change_slack_approver_v1.sql"
-    assert names[-15] == "20261026000200_flow_engine_native_offer_in_context_v1.sql"
-    assert names[-16] == "20261026000100_flow_engine_native_template_shape_v1.sql"
-    assert names[-17] == "20261025000400_purchase_agent_pause_v1.sql"
-    assert names[-18] == "20261025000300_handoff_link_note_v1.sql"
-    assert names[-19] == "20261025000200_payment_failure_product_name_btrim.sql"
-    assert names[-24] == MIGRATION.name
-    assert names[-23] == "20261024000400_opted_out_reply_checkout_issuance.sql"
-    assert names[-22] == "20261024000500_flow_engine_native_bridge_v1.sql"
-    assert names[-21] == "20261024000600_flow_change_new_flow_v1.sql"
-    assert names[-20] == "20261025000100_automation_expert_native_reads_v1.sql"
-    assert names[-25] == "20261024000100_portable_hotmart_listen_only_capture.sql"
+    assert names[-7] == "20261101000100_flow_engine_native_intent_v1.sql"
+    assert names[-8] == "20261030000400_portable_purchase_stops_see_our_link_v1.sql"
+    assert names[-9] == "20261030000300_flow_change_list_v1.sql"
+    assert names[-10] == "20261030000200_flow_engine_native_payment_failure_v1.sql"
+    assert names[-11] == "20261030000100_flow_engine_native_legacy_double_case_v1.sql"
+    assert names[-12] == "20261028000400_purchase_by_our_link_counts_v1.sql"
+    assert names[-13] == "20261028000300_pilot_scope_offer_append_v1.sql"
+    assert names[-14] == "20261028000200_flow_engine_native_cart_v1.sql"
+    assert names[-15] == "20261028000100_flow_change_slack_approver_v1.sql"
+    assert names[-16] == "20261026000200_flow_engine_native_offer_in_context_v1.sql"
+    assert names[-17] == "20261026000100_flow_engine_native_template_shape_v1.sql"
+    assert names[-18] == "20261025000400_purchase_agent_pause_v1.sql"
+    assert names[-19] == "20261025000300_handoff_link_note_v1.sql"
+    assert names[-20] == "20261025000200_payment_failure_product_name_btrim.sql"
+    assert names[-25] == MIGRATION.name
+    assert names[-24] == "20261024000400_opted_out_reply_checkout_issuance.sql"
+    assert names[-23] == "20261024000500_flow_engine_native_bridge_v1.sql"
+    assert names[-22] == "20261024000600_flow_change_new_flow_v1.sql"
+    assert names[-21] == "20261025000100_automation_expert_native_reads_v1.sql"
+    assert names[-26] == "20261024000100_portable_hotmart_listen_only_capture.sql"
     # Correrla dos veces aborta, y necesita el camino del motor del carrito.
     assert "flow_engine_native_already_applied" in sql
     assert "flow_engine_motor_missing" in sql
@@ -172,4 +174,5 @@ def test_the_validator_is_in_the_npm_chain() -> None:
         " && node validate_flow_engine_native_silence.mjs"
         " && node validate_followup_stops.mjs && node validate_recovery_coupon_by_reply.mjs"
         " && node validate_meta_template_requests.mjs --check && node validate_flow_engine_native_silence_sweep.mjs"
+        " && node validate_identity_recycle.mjs"
     )
