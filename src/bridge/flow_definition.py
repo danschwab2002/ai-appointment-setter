@@ -26,6 +26,7 @@ import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
+from types import MappingProxyType
 from typing import Any
 from zoneinfo import available_timezones
 
@@ -89,8 +90,24 @@ COUPON_VARIABLES = ("precio", "vence")
 # La que solo vale con un disparador de evento: es la hora del evento (regla 5).
 EVENT_VARIABLES = ("cuando",)
 LINKS = ("checkout", "ficha")
-CONDITION_DATA = ("ventana", "medio_de_pago")
+CONDITION_DATA = ("ventana", "medio_de_pago", "tipo_de_rechazo", "rechazos", "descuento_previo")
 WINDOW_VALUES = ("abierta", "cerrada")
+# Los datos del pago rechazado (esquema 1.4, P-16, E-306): valen solo con el disparador pago_fallido
+# (regla 5) y los llena la base al enviar (flow-engine-v2 §27). tipo_de_rechazo es
+# payment_failure_refusal_kind del ultimo rechazo del recorrido (insufficient_funds es sin_saldo,
+# declined es banco); rechazos, los del recorrido (uno o varios, como payment_failure_count del
+# legado); descuento_previo, si la persona ya recibio de nosotros un descuento antes de este rechazo.
+PAYMENT_FAILURE_CONDITION_DATA = ("tipo_de_rechazo", "rechazos", "descuento_previo")
+CONDITION_VALUES: Mapping[str, tuple[str, ...]] = MappingProxyType({
+    "ventana": WINDOW_VALUES,
+    "tipo_de_rechazo": ("sin_saldo", "banco"),
+    "rechazos": ("uno", "varios"),
+    "descuento_previo": ("si", "no"),
+})
+# La cadena de condiciones (1.4): una condicion como unico paso del si_no de otra, hasta tres niveles, solo
+# con pago_fallido. Es como se lee el orden de las cuatro versiones de ATT1 («si ya tenia el descuento, A;
+# si no, si van dos rechazos, B; si no, si fue sin saldo, C; si no, D»). La mira la regla 7.
+CONDITION_CHAIN_MAX_LEVELS = 3
 REPEAT_UNITS = ("persona", "persona_y_oferta", "conversacion")
 # cohorte (esquema 1.2, flow-engine-v2 §6): solo un flujo nativo, para los contactos de su cohorte.
 FLOW_STATES = ("apagado", "prendido", "pausado", "cohorte")
@@ -420,6 +437,31 @@ def step_type(step: object) -> str | None:
         return None
     types = [kind for kind in STEP_TYPES if kind in step]
     return types[0] if len(types) == 1 else None
+
+
+def condition_chain(step: object) -> tuple[tuple[Mapping[str, Any] | None, object], ...] | None:
+    """Las ramas de una cadena de condiciones (1.4), en el orden en que se eligen; None si no es una condicion.
+
+    Cada rama es ``(condicion, pasos)``: la primera cuya condicion se cumple gana, y la ultima, con
+    ``None``, es el ``si_no`` final (``[]`` si falta). Sigue el ``si_no`` mientras su unico paso sea otra
+    condicion, hasta ``CONDITION_CHAIN_MAX_LEVELS`` niveles; una condicion mas abajo queda como pasos de
+    la ultima rama (la regla 7 la frena). No valida la forma: la mira la regla 1.
+    """
+    if step_type(step) != "condicion":
+        return None
+    branches: list[tuple[Mapping[str, Any] | None, object]] = []
+    current: object = step
+    while True:
+        assert isinstance(current, Mapping)
+        condition = current.get("condicion")
+        branches.append((condition if isinstance(condition, Mapping) else None, current.get("entonces")))
+        rest = current.get("si_no", [])
+        if (len(branches) < CONDITION_CHAIN_MAX_LEVELS and isinstance(rest, list) and len(rest) == 1
+                and step_type(rest[0]) == "condicion"):
+            current = rest[0]
+            continue
+        branches.append((None, rest))
+        return tuple(branches)
 
 
 def depth_of(value: object) -> int:
@@ -1434,8 +1476,8 @@ def _check_condition_step(out: _Collector, step: Mapping[str, Any], segments: tu
             def check_value(value: object, where: tuple[Segment, ...]) -> None:
                 if is_unresolved(value):
                     return
-                if datum == "ventana":
-                    _check_enum(out, value, where, WINDOW_VALUES)
+                if datum in CONDITION_VALUES:
+                    _check_enum(out, value, where, CONDITION_VALUES[datum])
                 elif datum == "medio_de_pago":
                     if not isinstance(value, str) or not _PAYMENT_CODE.fullmatch(value):
                         out.add(INVALID_VALUE, where, reason="Un medio de pago se escribe con el código de Hotmart, como CASHPAYMENT.")

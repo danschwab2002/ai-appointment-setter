@@ -83,6 +83,7 @@ from .flow_definition import (
     parse_items,
     step_type,
     trigger_of,
+    CONDITION_CHAIN_MAX_LEVELS,
     ITEMS_MAX_BYTES,
 )
 from .flow_engine import (
@@ -113,6 +114,8 @@ RULES_VERSION = 1
 
 ACTORS = ("automation_expert", "operador")
 PHASES = ("draft", "publish")
+# El disparador del pago rechazado: el unico con sus datos de condicion y la cadena (1.4, E-306).
+PAYMENT_FAILURE_EVENT = "pago_fallido"
 # El boton del seguimiento con cupon: la URL dinamica sobre el checkout de
 # Hotmart (followup_discount.FOLLOWUP_BUTTON_URL; una prueba fija que son la
 # misma). Se escribe aca para no importar el modulo del barrido.
@@ -177,6 +180,24 @@ MEDIO_DE_PAGO_REQUIRES_FICHA_TRIGGER = _spec(
     "medio_de_pago_requires_ficha_trigger", 5, KIND_FORM,
     "medio_de_pago, como variable o como dato de una condición, va solo con los disparadores de la ficha.",
 )
+# Los datos del pago rechazado (1.4, E-306): como medio_de_pago con la ficha, solo con su disparador.
+TIPO_DE_RECHAZO_REQUIRES_PAYMENT_FAILURE_TRIGGER = _spec(
+    "tipo_de_rechazo_requires_payment_failure_trigger", 5, KIND_FORM,
+    "tipo_de_rechazo, como dato de una condición, va solo con el disparador pago_fallido.",
+)
+RECHAZOS_REQUIRES_PAYMENT_FAILURE_TRIGGER = _spec(
+    "rechazos_requires_payment_failure_trigger", 5, KIND_FORM,
+    "rechazos, como dato de una condición, va solo con el disparador pago_fallido.",
+)
+DESCUENTO_PREVIO_REQUIRES_PAYMENT_FAILURE_TRIGGER = _spec(
+    "descuento_previo_requires_payment_failure_trigger", 5, KIND_FORM,
+    "descuento_previo, como dato de una condición, va solo con el disparador pago_fallido.",
+)
+PAYMENT_FAILURE_DATUM_SPECS = {
+    "tipo_de_rechazo": TIPO_DE_RECHAZO_REQUIRES_PAYMENT_FAILURE_TRIGGER,
+    "rechazos": RECHAZOS_REQUIRES_PAYMENT_FAILURE_TRIGGER,
+    "descuento_previo": DESCUENTO_PREVIO_REQUIRES_PAYMENT_FAILURE_TRIGGER,
+}
 FICHA_LINK_REQUIRES_FICHA_TRIGGER = _spec(
     "ficha_link_requires_ficha_trigger", 5, KIND_FORM,
     "El link ficha va solo con los disparadores de la ficha.",
@@ -205,7 +226,8 @@ TERMINAL_STEP_NOT_LAST = _spec(
 )
 NESTED_CONDITION = _spec(
     "nested_condition", 7, KIND_FORM,
-    "Una condición no puede llevar otra adentro.",
+    "Una condición no puede llevar otra adentro. Con el disparador pago_fallido, sí como único paso del "
+    "si_no de otra, hasta tres niveles (la cadena del pago rechazado).",
 )
 HOUR_INVALID = _spec(
     "hour_invalid", 8, KIND_FORM,
@@ -571,6 +593,8 @@ _VALIDATOR_CODES: tuple[CodeSpec, ...] = (
     TRIGGER_NOT_EXACTLY_ONE, SILENCE_WINDOW_INVALID, PERMISSION_TRIGGER_MISMATCH,
     CONTESTO_A_REQUIRES_CONVERSATION, PURCHASE_EXIT_MISSING, PURCHASE_EXIT_WITH_PURCHASE_TRIGGER,
     FICHA_VENCIDA_REQUIRES_FICHA_TRIGGER, MEDIO_DE_PAGO_REQUIRES_FICHA_TRIGGER,
+    TIPO_DE_RECHAZO_REQUIRES_PAYMENT_FAILURE_TRIGGER, RECHAZOS_REQUIRES_PAYMENT_FAILURE_TRIGGER,
+    DESCUENTO_PREVIO_REQUIRES_PAYMENT_FAILURE_TRIGGER,
     FICHA_LINK_REQUIRES_FICHA_TRIGGER, COUPON_REQUIRES_CHECKOUT_LINK, EVENT_REQUIRES_VENCE,
     SILENCE_FORBIDS_VENCE, CONVERSAR_OUTSIDE_OPEN_WINDOW_BRANCH, TERMINAL_STEP_NOT_LAST,
     NESTED_CONDITION, HOUR_INVALID, WINDOW_NOT_INCREASING, ZONE_INVALID, ZONE_CHANGED,
@@ -1281,6 +1305,7 @@ class _Run:
             ficha: bool | None = None
         else:
             ficha = trigger.kind == "evento" and trigger.event in FICHA_EVENTS
+        payment_failure = None if ficha is None else (trigger is not None and trigger.event == PAYMENT_FAILURE_EVENT)
         reasons = _get(definition, "termina", "si")
         if isinstance(reasons, list) and ficha is not None:
             printed = trigger is not None and trigger.event == "ficha_impresa"
@@ -1305,8 +1330,11 @@ class _Run:
                     elif "cupon" in button and "link" not in button:
                         emitter.add(COUPON_REQUIRES_CHECKOUT_LINK, at + ("boton", "cupon"))
             elif kind == "condicion":
-                if _get(_mapping(step.get("condicion")), "dato") == "medio_de_pago" and ficha is False:
+                datum = _get(_mapping(step.get("condicion")), "dato")
+                if datum == "medio_de_pago" and ficha is False:
                     emitter.add(MEDIO_DE_PAGO_REQUIRES_FICHA_TRIGGER, at + ("condicion", "dato"))
+                elif isinstance(datum, str) and datum in PAYMENT_FAILURE_DATUM_SPECS and payment_failure is False:
+                    emitter.add(PAYMENT_FAILURE_DATUM_SPECS[datum], at + ("condicion", "dato"))
             elif kind == "etiquetar" and trigger is not None and not (
                     trigger.kind == "evento" and trigger.event is None) and not trigger.is_purchase:
                 emitter.add(ETIQUETAR_REQUIRES_PURCHASE_TRIGGER, at + ("etiquetar",))
@@ -1349,13 +1377,17 @@ class _Run:
             emitter.add(SILENCE_FORBIDS_VENCE, ("termina", "vence"))
 
     def _rule7(self, emitter: _Emitter, definition: Mapping[str, Any]) -> None:
+        trigger = trigger_of(definition)
+        chain = trigger is not None and trigger.kind == "evento" and trigger.event == PAYMENT_FAILURE_EVENT
         for step, at, branch, condition, depth, last in _iter_steps(definition.get("pasos"), ("pasos",)):
             kind = step_type(step)
             if kind == "conversar" and not (branch == "entonces" and _is_open_window(condition)):
                 emitter.add(CONVERSAR_OUTSIDE_OPEN_WINDOW_BRANCH, at + ("conversar",))
             if kind in ("conversar", "derivar") and not last:
                 emitter.add(TERMINAL_STEP_NOT_LAST, at + (kind,))
-            if kind == "condicion" and depth > 0:
+            if kind == "condicion" and depth > 0 and not (
+                    chain and branch == "si_no" and last and at[-1] == 0 and depth < CONDITION_CHAIN_MAX_LEVELS):
+                # La cadena del pago rechazado (1.4): otra condicion como unico paso del si_no, hasta tres niveles.
                 emitter.add(NESTED_CONDITION, at + ("condicion",))
         self._rule7_etiquetar(emitter, definition.get("pasos"), ("pasos",), sent=False, labeled=False)
 
