@@ -19,6 +19,7 @@ from bridge.payment_link_template import (
     parse_payment_link_template,
     payment_link_button_suffix,
 )
+from bridge.reply_splitter import MAX_REPLY_PARTS, validate_reply_parts
 from bridge.supabase import SupabaseError
 
 
@@ -57,14 +58,23 @@ async def deliver_checkout_issuance_v2(
     link_coupon_code: str | None = None,
     part_delay_seconds: float = 0.0,
     part_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    preamble_splitter: Callable[[str], Awaitable[tuple[str, ...]]] | None = None,
 ) -> CheckoutDeliveryResult:
     """Reserve a stable URL, authorize at the last boundary, and send once.
 
-    Con ``link_template_name`` el link sale en el boton de esa plantilla, en
-    una segunda parte despues del texto del agente. La autorizacion de la
-    emision va en la parte del link, como siempre, y el cierre de la emision
-    queda atado a ese mensaje. Si la plantilla no esta disponible, el link sale
-    escrito, en un solo mensaje, como antes.
+    Con ``link_template_name`` el link sale siempre en un mensaje propio, el
+    ultimo del lote (E-292, condicion de Dan del 02/11: «mensaje
+    independiente»). Antes van los globos del texto del agente, cortados por
+    ``preamble_splitter`` (el divisor de respuestas de cualquier turno, con su
+    manifiesto por conversacion y mensaje). El mensaje del link es la
+    plantilla con el boton o, si la plantilla no esta disponible, la URL sola.
+    Asi el lote mide lo mismo con plantilla o sin ella, y un reintento que
+    cambia de una a otra no repite ningun globo. La autorizacion de la emision
+    va en el mensaje del link, como siempre, y el cierre de la emision queda
+    atado a ese mensaje.
+
+    Sin ``link_template_name`` nada cambia: el texto y el link salen escritos
+    en un solo mensaje, como antes.
 
     Con ``link_coupon_code`` (``PAYMENT_LINK_COUPON_CODE``) el link que ve la
     persona lleva ``&offDiscount=<codigo codificado>``: el texto, el boton y lo
@@ -153,53 +163,65 @@ async def deliver_checkout_issuance_v2(
     if expected_jid is not None:
         send_args["expected_jid"] = expected_jid
 
-    if link_part is not None:
-        # Primero el texto del agente, sin link y sin autorizar la emision: la
-        # autorizacion cuida al link, que va en la segunda parte.
-        preamble_part = preamble.rstrip()
-        template_content, template_params = link_part
+    if link_template_name is not None:
+        # Primero los globos del texto del agente, sin link y sin autorizar la
+        # emision: la autorizacion cuida al link, que va en el ultimo mensaje.
+        text_parts = await _preamble_parts(preamble, preamble_splitter)
+        part_count = len(text_parts) + 1
         first_args = {
             key: value
             for key, value in send_args.items()
             if key != "pre_send_authorizer"
         }
-        first_args.update(
-            {
-                "content": preamble_part,
-                "part_index": 1,
-                "part_count": 2,
-                "prior_parts": (),
-            }
-        )
-        try:
-            first = await control_client.send_agent_bot_reply(**first_args)
-        except ChatwootReplyDeliveryUnknownError as exc:
-            raise CheckoutDeliveryError("checkout_issuance_delivery_unknown") from exc
-        except (ChatwootProtocolError, httpx.HTTPError) as exc:
-            raise CheckoutDeliveryError("checkout_issuance_send_unconfirmed") from exc
-        first_status = first.get("status")
-        if first_status == "blocked":
-            reason = first.get("reason")
-            return CheckoutDeliveryResult(
-                "blocked", reason if isinstance(reason, str) else "chatwoot_blocked",
-                reservation.issuance_id, None,
+        previous_status: object = None
+        for offset, text_part in enumerate(text_parts):
+            # La misma pausa que entre las partes de una respuesta larga:
+            # Chatwoot manda cada mensaje a WhatsApp desde su cola, y sin pausa
+            # el orden no esta garantizado. En un reintento ya salio.
+            if previous_status == "sent" and part_delay_seconds > 0:
+                await part_sleep(part_delay_seconds)
+            part_args = dict(first_args)
+            part_args.update(
+                {
+                    "content": text_part,
+                    "part_index": offset + 1,
+                    "part_count": part_count,
+                    "prior_parts": text_parts[:offset],
+                }
             )
-        if first_status not in {"sent", "duplicate"}:
-            raise CheckoutDeliveryError("checkout_issuance_invalid_chatwoot_result")
-        # La misma pausa que entre las partes de una respuesta larga: Chatwoot
-        # manda cada mensaje a WhatsApp desde su cola, y sin pausa la plantilla
-        # puede llegar antes que el texto. En un reintento el texto ya salio.
-        if first_status == "sent" and part_delay_seconds > 0:
+            try:
+                sent = await control_client.send_agent_bot_reply(**part_args)
+            except ChatwootReplyDeliveryUnknownError as exc:
+                raise CheckoutDeliveryError("checkout_issuance_delivery_unknown") from exc
+            except (ChatwootProtocolError, httpx.HTTPError) as exc:
+                raise CheckoutDeliveryError("checkout_issuance_send_unconfirmed") from exc
+            previous_status = sent.get("status")
+            if previous_status == "blocked":
+                reason = sent.get("reason")
+                return CheckoutDeliveryResult(
+                    "blocked", reason if isinstance(reason, str) else "chatwoot_blocked",
+                    reservation.issuance_id, None,
+                )
+            if previous_status not in {"sent", "duplicate"}:
+                raise CheckoutDeliveryError("checkout_issuance_invalid_chatwoot_result")
+        if previous_status == "sent" and part_delay_seconds > 0:
             await part_sleep(part_delay_seconds)
         send_args.update(
             {
-                "content": template_content,
-                "part_index": 2,
-                "part_count": 2,
-                "prior_parts": (preamble_part,),
-                "template_params": template_params,
+                "part_index": part_count,
+                "part_count": part_count,
+                "prior_parts": text_parts,
             }
         )
+        if link_part is not None:
+            template_content, template_params = link_part
+            send_args.update(
+                {"content": template_content, "template_params": template_params}
+            )
+        else:
+            # Sin plantilla usable, la URL sola en su propio mensaje: nunca
+            # pegada al texto del agente.
+            send_args["content"] = delivered_url
 
     try:
         result = await control_client.send_agent_bot_reply(**send_args)
@@ -286,6 +308,28 @@ async def deliver_checkout_issuance_v2(
     return CheckoutDeliveryResult(
         outcome, None, reservation.issuance_id, result_message_id
     )
+
+
+async def _preamble_parts(
+    preamble: str,
+    splitter: Callable[[str], Awaitable[tuple[str, ...]]] | None,
+) -> tuple[str, ...]:
+    """Los globos del texto del agente, exactos, o el texto en un solo globo.
+
+    Las partes tienen que reconstruir el texto sin cambiar una letra
+    (``validate_reply_parts``, la misma guarda del camino normal) y dejar
+    lugar para el mensaje del link: como mucho ``MAX_REPLY_PARTS``, porque un
+    lote mide hasta cuatro. Si no, el texto va entero en un globo. Un error de
+    almacenamiento del manifiesto se propaga: el turno se reintenta, como en
+    el camino normal.
+    """
+    cleaned = preamble.rstrip()
+    if splitter is None:
+        return (cleaned,)
+    parts = validate_reply_parts(cleaned, await splitter(cleaned))
+    if parts is None or len(parts) > MAX_REPLY_PARTS:
+        return (cleaned,)
+    return parts
 
 
 async def _resolve_link_template_part(
