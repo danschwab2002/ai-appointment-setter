@@ -80,7 +80,7 @@ const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Despues va solo la de los frenos del seguimiento (20261101000300, E-263), que parcha las dos reservas: la forma
 // de esta se mide antes de aplicarla, y el mundo de abajo corre con la cadena entera.
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql'])) {
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql', '20261102000100_recovery_coupon_by_reply_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de los frenos del seguimiento`, names.slice(position + 1));
 }
 

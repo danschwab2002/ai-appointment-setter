@@ -458,7 +458,7 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # conversaciones del comprador. 20261101000100 (el primer contacto nativo, E-247)
     # suma la entrada del formulario y el freno que la reevaluacion llama como service_role,
     # y 20261101000200 (el seguimiento a 24 h nativo, E-251) suma su reserva nativa.
-    assert len(allowlisted) == 174
+    assert len(allowlisted) == 176
     assert (
         "read_purchase_agent_pause_conversations_v1(bigint, bigint, text, text, text)"
         in allowlisted
@@ -1718,11 +1718,16 @@ def test_flow_engine_native_silence_fingerprint_is_last() -> None:
         assert marker in compact_fingerprint, marker
 
 
-def test_followup_stops_fingerprint_is_last() -> None:
+def test_followup_stops_fingerprint_is_before_the_coupon_by_reply() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261101000300 (los frenos del seguimiento despues de Z y con
-    # una ficha vigente, E-263) es la ultima, con las dos reservas.
-    fingerprint = sql.split("'20261101000300'", 1)[1].split("select\n    version,", 1)[0]
+    # una ficha vigente, E-263), con las dos reservas, antes de la de
+    # 20261102000100 (la renovacion por respuesta, E-267).
+    fingerprint = (
+        sql.split("'20261101000300'", 1)[1]
+        .split("select\n    version,", 1)[0]
+        .split("    union all\n    select\n        '20261102000100'", 1)[0]
+    )
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert (
@@ -1730,7 +1735,7 @@ def test_followup_stops_fingerprint_is_last() -> None:
         in fingerprint
     )
     assert compact_fingerprint.endswith(
-        ",2,'followup_stops_after_last_touch_and_pending_payment')"
+        ",2,'followup_stops_after_last_touch_and_pending_payment'"
     )
     for marker in (
         "to_regprocedure('public.claim_portable_conversation_followup_v1(",
@@ -1738,5 +1743,24 @@ def test_followup_stops_fingerprint_is_last() -> None:
         "position('followup_stops_after_last_touch_and_pending_payment:end'indefinition)>0",
         "position('blocked_after_last_touch'indefinition)>0",
         "position('blocked_pending_payment'indefinition)>0",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_recovery_coupon_by_reply_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261102000100 (la respuesta escrita a A2 reactiva el cupon y el
+    # agente lo lee, E-267) es la ultima, con las dos funciones nuevas.
+    fingerprint = sql.split("'20261102000100'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261102000100_recovery_coupon_by_reply_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",3,'recovery_coupon_by_reply')")
+    for marker in (
+        "to_regprocedure('public.request_recovery_renewal_by_reply_v1(bigint,bigint,bigint,bigint,text,timestamptz)')",
+        "to_regprocedure('public.get_recovery_coupon_for_conversation_v1(bigint,bigint,bigint,text)')",
+        "andprosecdef",
+        "position('public.request_recovery_renewal_v1('indefinition)>0",
+        "position('public.recovery_coupon_was_delivered(coupon.id)'indefinition)>0",
     ):
         assert marker in compact_fingerprint, marker

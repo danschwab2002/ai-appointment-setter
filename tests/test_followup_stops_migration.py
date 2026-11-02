@@ -25,7 +25,9 @@ def _sql() -> str:
 def test_it_is_one_transaction_with_lock_timeout_and_the_last() -> None:
     sql = _sql()
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
-    assert names[-1] == MIGRATION.name
+    # La renovacion por respuesta y el cupon del turno (20261102000100, E-267).
+    assert names[-1] == "20261102000100_recovery_coupon_by_reply_v1.sql"
+    assert names[-2] == MIGRATION.name
     assert sql.count("\nbegin;\n") == 1 and sql.rstrip().endswith("commit;")
     assert "set local lock_timeout = '5s';" in sql
     assert "message = 'followup_stops_already_applied'" in sql

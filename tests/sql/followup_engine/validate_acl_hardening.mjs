@@ -225,6 +225,8 @@ const rows = await db.query(`
       ('_recovery_followup_step(uuid)'),
       ('_recovery_renewal_requested(uuid)'),
       ('request_recovery_renewal_v1(bigint,bigint,bigint,bigint,text,timestamp with time zone)'),
+      ('request_recovery_renewal_by_reply_v1(bigint,bigint,bigint,bigint,text,timestamp with time zone)'),
+      ('get_recovery_coupon_for_conversation_v1(bigint,bigint,bigint,text)'),
       ('record_payment_failure_first_touch_v1(uuid,uuid,text,bigint,text,text,timestamp with time zone)'),
       ('get_payment_failure_followup_context_v1(uuid,text,bigint,timestamp with time zone)'),
       ('read_flow_engine_v1(jsonb,text)'),
@@ -318,7 +320,7 @@ const result = rows.rows[0];
 // that reevaluate_followup_action calls as service_role, and the native
 // followup after the agent's silence (20261101000200) adds its claim.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 174) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 176) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

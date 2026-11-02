@@ -150,6 +150,8 @@ expected_service_role(signature) as (
         ('public._recovery_followup_step(uuid)'),
         ('public._recovery_renewal_requested(uuid)'),
         ('public.request_recovery_renewal_v1(bigint, bigint, bigint, bigint, text, timestamp with time zone)'),
+        ('public.request_recovery_renewal_by_reply_v1(bigint, bigint, bigint, bigint, text, timestamp with time zone)'),
+        ('public.get_recovery_coupon_for_conversation_v1(bigint, bigint, bigint, text)'),
         ('public.record_payment_failure_first_touch_v1(uuid, uuid, text, bigint, text, text, timestamp with time zone)'),
         ('public.get_payment_failure_followup_context_v1(uuid, text, bigint, timestamp with time zone)'),
         ('public.read_flow_engine_v1(jsonb, text)'),
