@@ -393,6 +393,9 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # F-034: el aviso corto al derivar. El texto es fijo y del producto; lo
     # unico por instancia es prenderlo (apagado por defecto: Johanna igual).
     "handoff_notice_enabled",
+    # E-304 (P-11, D12): el mismo aviso, solo cuando deriva a una clienta. Lo
+    # unico por instancia es prenderlo.
+    "customer_handoff_notice_enabled",
     # F-034, D8: al derivar, una nota privada con el ultimo link que recibio
     # la persona. El texto es del producto; por instancia, solo prenderlo.
     "handoff_link_note_enabled",
@@ -934,6 +937,11 @@ class Settings:
     # aviso corto antes de la pausa. Apagado, la derivacion calla como hasta
     # ahora (F-033, 15/10).
     handoff_notice_enabled: bool = False
+    # E-304 (P-11, D12 de Dan, 02/11): el mismo aviso, pero solo cuando la
+    # persona que se deriva es clienta (la entrada trae ``customer_status``).
+    # Con HANDOFF_NOTICE_ENABLED prendido este no agrega nada: ya avisa a
+    # todas. Apagado, todo como antes.
+    customer_handoff_notice_enabled: bool = False
     # F-034, D8 (Dan, 24/10): al derivar, la conversacion recibe una nota
     # privada con el ultimo link que le mandamos a la persona (y su cupon, si
     # vino del carrito). Apagado, la derivacion queda como hasta ahora.
@@ -1726,6 +1734,10 @@ class Settings:
         handoff_notice_enabled = (
             os.getenv("HANDOFF_NOTICE_ENABLED", "false").lower() == "true"
         )
+        customer_handoff_notice_enabled = (
+            os.getenv("CUSTOMER_HANDOFF_NOTICE_ENABLED", "false").strip().lower()
+            == "true"
+        )
         opt_out_confirmation_enabled = (
             os.getenv("OPT_OUT_CONFIRMATION_ENABLED", "false").lower() == "true"
         )
@@ -2188,6 +2200,7 @@ class Settings:
             human_handoff_projection_enabled=human_handoff_projection_enabled,
             human_handoff_admission_enabled=human_handoff_admission_enabled,
             handoff_notice_enabled=handoff_notice_enabled,
+            customer_handoff_notice_enabled=customer_handoff_notice_enabled,
             handoff_link_note_enabled=handoff_link_note_enabled,
             purchase_agent_pause_enabled=purchase_agent_pause_enabled,
             purchase_agent_pause_after_native_welcome_enabled=(
@@ -5317,6 +5330,20 @@ def create_app(
         raise ValueError(
             "HANDOFF_NOTICE_ENABLED requires HUMAN_HANDOFF_ADMISSION_ENABLED"
         )
+    if settings.customer_handoff_notice_enabled:
+        # E-304: el aviso vive en la derivacion del entrante y sabe que es
+        # clienta por customer_status. Sin alguna de las dos no sale nunca, y
+        # un flag prendido que no hace nada no se nota.
+        if not settings.human_handoff_admission_enabled:
+            raise ValueError(
+                "CUSTOMER_HANDOFF_NOTICE_ENABLED requires "
+                "HUMAN_HANDOFF_ADMISSION_ENABLED"
+            )
+        if not settings.agent_customer_status_enabled:
+            raise ValueError(
+                "CUSTOMER_HANDOFF_NOTICE_ENABLED requires "
+                "AGENT_CUSTOMER_STATUS_ENABLED"
+            )
     if (
         settings.handoff_link_note_enabled
         and not settings.human_handoff_admission_enabled
@@ -7612,7 +7639,7 @@ def create_app(
                 shadow_processor is not None
                 and not shadow_processor.has_result(delivery_id=delivery_id)
             )
-        async def send_handoff_notice(proposal: dict[str, object]) -> None:
+        async def send_handoff_notice(proposal: dict[str, object]) -> str:
             # F-034: el aviso sale antes de pedir la derivacion y antes de la
             # etiqueta automation_paused, que bloquea todo envio del agente; y
             # antes de que el worker de la proyeccion asigne la conversacion,
@@ -7629,7 +7656,7 @@ def create_app(
                 or isinstance(conversation_id, bool)
             ):
                 logger.warning("handoff_notice_skipped reason=not_configured")
-                return
+                return "not_configured"
             try:
                 history = await control_client.get_conversation_messages(
                     conversation_id=conversation_id, limit=2000
@@ -7639,7 +7666,7 @@ def create_app(
                         "handoff_notice_skipped reason=already_sent conversation=%s",
                         conversation_id,
                     )
-                    return
+                    return "already_sent"
                 result = await send_scoped_agent_bot_reply(
                     conversation_id=conversation_id,
                     trigger_message_id=message_id,
@@ -7657,7 +7684,7 @@ def create_app(
                     conversation_id,
                     type(exc).__name__,
                 )
-                return
+                return "not_sent"
             status = result.get("status")
             if status in {"sent", "duplicate"}:
                 logger.info(
@@ -7665,12 +7692,13 @@ def create_app(
                     conversation_id,
                     status,
                 )
-            else:
-                logger.info(
-                    "handoff_notice_skipped reason=%s conversation=%s",
-                    result.get("reason", status),
-                    conversation_id,
-                )
+                return str(status)
+            logger.info(
+                "handoff_notice_skipped reason=%s conversation=%s",
+                result.get("reason", status),
+                conversation_id,
+            )
+            return "blocked"
 
         async def write_handoff_link_note(handoff: object) -> None:
             # F-034, D8: despues de la derivacion durable y de la pausa, una
@@ -7743,6 +7771,26 @@ def create_app(
             assert settings.handoff_projection_policy_version is not None
             if settings.handoff_notice_enabled:
                 await send_handoff_notice(proposal)
+            elif (
+                settings.customer_handoff_notice_enabled
+                and context is not None
+                and is_customer_of_anything(context)
+            ):
+                # E-304 (P-11, D12 de Dan, 02/11): a una clienta que se deriva
+                # le llega el mismo aviso fijo (el bridge descarta el reply del
+                # modelo al derivar, F-033), por el mismo camino: una vez por
+                # conversacion, antes de la pausa, con las guardas de envio, y
+                # como respuesta al mensaje que ella acaba de mandar. A quien
+                # no es clienta no le llega nada, como hoy. Con
+                # HANDOFF_NOTICE_ENABLED ya salio arriba: no se repite.
+                notice_outcome = await send_handoff_notice(proposal)
+                logger.info(
+                    "customer_status_handoff_notice outcome=%s reason_code=%s "
+                    "conversation=%s",
+                    notice_outcome,
+                    _agent_marker(proposal.get("reason_code")) or "-",
+                    conversation_id,
+                )
             try:
                 handoff = await request_handoff_for_inbound_proposal(
                     proposal=proposal,

@@ -63,6 +63,9 @@ LOGGED_INFO_EVENTS = frozenset(
         "customer_status_context",
         "customer_status_link_blocked",
         "customer_status_coupon_skipped",
+        # el aviso al derivar a una clienta (bridge.app, E-304): si salio o
+        # por que no, el motivo de la derivacion y el numero de conversacion
+        "customer_status_handoff_notice",
     }
 )
 

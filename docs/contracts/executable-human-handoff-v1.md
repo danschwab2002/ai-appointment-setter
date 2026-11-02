@@ -15,6 +15,7 @@ Todos los efectos permanecen apagados por defecto.
 - `HANDOFF_PROJECTION_POLICY_KEY`
 - `HANDOFF_PROJECTION_POLICY_VERSION`
 - `HANDOFF_NOTICE_ENABLED=false` (F-034, el aviso a la persona; ver abajo)
+- `CUSTOMER_HANDOFF_NOTICE_ENABLED=false` (E-304, P-11 D12, el mismo aviso solo a clientas; ver abajo)
 - `HANDOFF_LINK_NOTE_ENABLED=false` (F-034, D8, la nota privada con el link; ver abajo)
 
 Proyección habilitada exige Supabase, control plane Chatwoot, account/inbox canónicos y worker ID. Admisión habilitada exige además proyección, dispatcher outbound y perímetro Lancemos. Configuración incompleta impide arrancar.
@@ -38,6 +39,28 @@ promete plazo, no da un nombre de persona y no dice que escribe una IA.
 - Un aviso que no sale nunca frena la derivación: queda en el log
   (`handoff_notice_skipped` / `handoff_notice_not_sent`) y la derivación sigue.
 - No hay vuelta automática al agente (D7); la reanudación sigue como está.
+
+### El mismo aviso, solo a clientas (E-304, P-11 D12)
+
+Decisión D12 de Dan (02/11/2026). Con `CUSTOMER_HANDOFF_NOTICE_ENABLED=true`
+(portable; exige `HUMAN_HANDOFF_ADMISSION_ENABLED` y
+`AGENT_CUSTOMER_STATUS_ENABLED`), el aviso de arriba sale **solo** cuando la
+entrada del agente de ese turno trae `customer_status` con algún producto
+(`docs/contracts/customer-status-v1.md`): cualquier estado (`cliente`,
+`reembolsada`, `contracargo`) y también la etiqueta `cliente`. Vale para toda
+derivación del entrante de una clienta, también la de `customer_link_request`
+(D6) y la forzada por salud. A quien no es clienta no le llega nada.
+
+- Mismo texto, misma marca, mismo camino y mismas guardas que el aviso general:
+  una vez por conversación, antes de la pausa, como respuesta al mensaje que la
+  persona acaba de mandar (la ventana de 24 h de WhatsApp está abierta por
+  construcción; ninguno de los dos avisos sale fuera de un turno entrante).
+- Con `HANDOFF_NOTICE_ENABLED=true` este no agrega nada: el general ya avisa a
+  todas y no se repite.
+- Queda en el log revisado `customer_status_handoff_notice outcome=<sent|duplicate|already_sent|blocked|not_sent|not_configured> reason_code=<motivo> conversation=<n>`,
+  sin teléfono ni mail. Un aviso que no sale nunca frena la derivación.
+- Las derivaciones que no leen `customer_status` (el audio que no se pudo
+  transcribir) no lo mandan.
 
 ### Nota privada con el link al derivar (F-034, D8)
 
