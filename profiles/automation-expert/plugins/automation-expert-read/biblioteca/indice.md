@@ -7,6 +7,7 @@ Lo que hay que saber de cada plataforma para entender un pedido y armar un flujo
 | `hotmart` | los eventos que llegan de Hotmart, cuáles disparan un flujo y cuáles solo se guardan, y por qué el producto se reconoce por su ID |
 | `ghl-formularios` | cómo llega el formulario de GHL (la intención con permiso de WhatsApp) y qué mail usa |
 | `chatwoot-whatsapp` | las plantillas aprobadas, su categoría, la ventana de 24 h y las etiquetas |
+| `crear-un-flujo` | cómo se conversa un flujo nuevo con quien no lo trae armado: las rondas cortas, los valores propuestos, la repetición, qué pasa con la conversación y el resumen antes de proponer |
 
 Los eventos, en una línea cada uno:
 

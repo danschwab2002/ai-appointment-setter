@@ -171,6 +171,29 @@ def test_the_soul_knows_what_the_native_engine_runs_today() -> None:
     assert "`flow_key_reserved_for_legacy`" in line
 
 
+def test_the_soul_sends_a_new_flow_through_the_conversation_page() -> None:
+    # E-255 (F-144): quien pide un flujo no llega con el pedido armado. El SOUL ya no corta en cinco
+    # preguntas («No preguntes nada más»): apunta a la página de la biblioteca con las rondas, que
+    # cubre también la repetición (no se cambia con una versión) y qué pasa con la conversación.
+    soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
+    section = soul.split("## Crear un flujo", 1)[1].split("\n## ", 1)[0]
+    assert "`crear-un-flujo`" in section and "No preguntes nada más" not in section
+    page = (PROFILE / "plugins" / "automation-expert-read" / "biblioteca" / "crear-un-flujo.md").read_text(
+        encoding="utf-8")
+    assert page.startswith("# ") and len(page.encode("utf-8")) <= 16 * 1024
+    for topic in ("**Qué quiere lograr.**", "**Qué lo dispara.**", "**A quién le llega.**", "**Qué mensaje.**",
+                  "**Cuándo sale.**", "**Cuándo deja de mandar.**", "**Si se repite.**",
+                  "**Qué pasa con la conversación.**", "**El OK.**"):
+        assert topic in page, topic
+    assert "no se cambia con una versión" in page and "reemplazar el flujo" in page
+    assert "## El resumen antes de proponer" in page and "## Si la plantilla no existe" in page
+    # Lo que el motor corre hoy vive en el SOUL, no se copia acá (envejecería aparte).
+    assert "«Crear un flujo»" in page
+    # Lenguaje de negocio: la página no le enseña al agente a hablar con claves del esquema.
+    for key in ("una_por", "otra_despues_de", "dispara:", "entra:", "ok_del_cliente", "{"):
+        assert key not in page, key
+
+
 def test_the_soul_cuts_a_legacy_flow_in_the_order_of_the_map() -> None:
     # §4 del mapa M16: cohorte, comparar, prender, 24 h a todos y pausar el scope del legado, nunca
     # cerrarlo. El doble caso: con la guarda no sale doble; sin ella, sí puede.
