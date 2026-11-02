@@ -41,6 +41,8 @@ from bridge.chatwoot import ChatwootAssignmentConflictError, ChatwootClient, Cha
 from bridge.hotmart import parse_hotmart_purchase_payload
 from bridge.purchase_agent_pause import (
     PURCHASE_PAUSE_NOTE_MARKER_PREFIX,
+    PURCHASE_PAUSE_PENDING_NOTE_BODY,
+    PURCHASE_PAUSE_PENDING_NOTE_MARKER_PREFIX,
     PurchaseAgentPause,
     purchase_pause_note_body,
     purchase_pause_note_marker,
@@ -208,6 +210,54 @@ def test_a_failed_read_or_conversation_never_raises() -> None:
         )
     ) == "paused"
     assert [call["conversation_id"] for call in chatwoot.paused] == [44]
+
+
+def test_a_failed_pause_still_leaves_the_purchase_note_for_the_team() -> None:
+    # E-283 (P-25): antes la conversacion que no se pudo pausar quedaba sin nota y
+    # el equipo no se enteraba de la compra. Ahora queda la nota pendiente (la de
+    # E-196), una sola vez por compra, y la reanudacion no la toma por una pausa.
+    chatwoot = _PauseChatwoot(fail_on={40})
+    outcome = asyncio.run(
+        _pause(_LookupSupabase(PurchaseAgentPauseLookup("found", (40, 44))), chatwoot).pause_buyer(
+            webhook_event_id=EVENT_ID.upper(), purchase=_purchase()
+        )
+    )
+
+    assert outcome == "paused"
+    assert [call["conversation_id"] for call in chatwoot.paused] == [44]
+    by_conversation = {note["conversation_id"]: note for note in chatwoot.notes}
+    assert set(by_conversation) == {40, 44}
+    pending = by_conversation[40]
+    assert pending["note_body"] == PURCHASE_PAUSE_PENDING_NOTE_BODY
+    assert pending["idempotency_marker"] == (
+        f"{PURCHASE_PAUSE_PENDING_NOTE_MARKER_PREFIX}{EVENT_ID}]"
+    )
+    assert pending["expected_inbox_id"] == 11
+    assert by_conversation[44]["idempotency_marker"] == purchase_pause_note_marker(EVENT_ID)
+    assert purchase_pause_note_present(
+        [{"private": True, "content": f"{pending['note_body']}\n\n{pending['idempotency_marker']}"}]
+    ) is False
+
+
+def test_another_team_keeps_the_pause_and_the_purchase_note() -> None:
+    # La etiqueta ya quedo puesta cuando otro team tiene la conversacion
+    # (pause_purchased_conversation): la pausa vale y lleva la nota de la compra.
+    class _OtherTeam(_PauseChatwoot):
+        async def pause_purchased_conversation(self, **kwargs: object) -> str:
+            raise ChatwootAssignmentConflictError("purchase_pause_other_team")
+
+    chatwoot = _OtherTeam()
+    outcome = asyncio.run(
+        _pause(_LookupSupabase(PurchaseAgentPauseLookup("found", (40,))), chatwoot).pause_buyer(
+            webhook_event_id=EVENT_ID, purchase=_purchase()
+        )
+    )
+
+    assert outcome == "paused"
+    assert [note["idempotency_marker"] for note in chatwoot.notes] == [
+        purchase_pause_note_marker(EVENT_ID)
+    ]
+    assert chatwoot.notes[0]["note_body"].startswith("Compró el ")
 
 
 def test_a_purchase_without_email_or_phone_reads_nothing() -> None:

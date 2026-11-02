@@ -534,6 +534,68 @@ def is_stale_event(
     return abs(current - event_seconds) > max_age_seconds
 
 
+# E-283: hasta cuanto atras se procesa un evento con hottok valido y id nuevo. Hotmart
+# reintenta a los 13, 15 y 30 minutos (log del proxy del 19/09) y una caida del
+# bridge ya duro 15 horas (502 del 16 al 17/09): tres dias cubren un fin de semana.
+HOTMART_LATE_MAX_AGE_SECONDS = 72 * 3600
+
+FRESHNESS_FRESH = "fresh"
+FRESHNESS_LATE = "late"
+FRESHNESS_STALE = "stale"
+
+
+@dataclass(frozen=True)
+class HotmartFreshness:
+    """Que tan viejo llega un evento de Hotmart (E-283).
+
+    ``verdict``: ``fresh`` (dentro de ``max_age_seconds``, en los dos sentidos),
+    ``late`` (del pasado, mas viejo que ``max_age_seconds`` pero dentro de
+    ``late_max_age_seconds``: el reintento de Hotmart, que llega a los 13, 15 y
+    30 minutos) o ``stale`` (mas viejo que eso, o del futuro mas alla de
+    ``max_age_seconds``). ``age_seconds`` es entero y negativo si viene del
+    futuro.
+    """
+
+    verdict: str
+    age_seconds: int
+
+    @property
+    def is_late(self) -> bool:
+        return self.verdict == FRESHNESS_LATE
+
+    @property
+    def is_stale(self) -> bool:
+        return self.verdict == FRESHNESS_STALE
+
+
+def hotmart_event_freshness(
+    *,
+    creation_date: Any,
+    max_age_seconds: int,
+    late_max_age_seconds: int = HOTMART_LATE_MAX_AGE_SECONDS,
+    now: float | None = None,
+) -> HotmartFreshness | None:
+    """La frescura de un evento por su ``creation_date``; ``None`` si no se lee.
+
+    El replay no lo frena esta ventana sino la base: ``webhook_events`` es unica
+    por ``(source, external_event_id)`` y no se purga, asi que el mismo evento
+    reenviado (por Hotmart o por un tercero que lo capturo) sale ``duplicate``.
+    La ventana larga acota cuanto atras se acepta un id nuevo.
+    """
+    event_seconds = _creation_date_to_seconds(creation_date)
+    if event_seconds is None:
+        return None
+    current = now if now is not None else time.time()
+    age = current - event_seconds
+    if abs(age) <= max_age_seconds:
+        verdict = FRESHNESS_FRESH
+    elif 0 < age <= late_max_age_seconds:
+        verdict = FRESHNESS_LATE
+    else:
+        verdict = FRESHNESS_STALE
+    return HotmartFreshness(verdict=verdict, age_seconds=int(age))
+
+
 # ── Payload classification ───────────────────────────────────────────
 
 

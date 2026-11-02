@@ -32,8 +32,16 @@ identidad durable:
 - tipo no soportado → `200 ignored / unsupported_event_type`;
 - versión no soportada → `200 ignored / unsupported_version`;
 - fecha ilegible → `400 {"detail":"invalid_creation_date"}`;
-- fecha fuera de la ventana de frescura —incluido `0`— →
-  `401 {"detail":"stale_webhook"}`;
+- fecha del pasado más vieja que `HOTMART_MAX_AGE_SECONDS` (300 s) y hasta
+  `HOTMART_LATE_MAX_AGE_SECONDS` (72 h, constante de `bridge/hotmart.py`) → se
+  procesa como una fresca y deja `hotmart_event_late event_id event_type
+  age_seconds` en el log (E-283). Es el reintento de Hotmart, que llega a los
+  13, 15 y 30 minutos; el replay del mismo evento lo frena la unicidad por id
+  de la admisión (`duplicate`), no la ventana;
+- fecha más vieja que eso —incluido `0`— o del futuro a más de 300 s →
+  `200 {"status":"ignored","event_id":…,"reason":"stale_webhook"}` y un warning
+  `hotmart_event_stale event_id event_type age_seconds` (hasta la 1.26 era
+  `401 {"detail":"stale_webhook"}`, que Hotmart cuenta como falla del webhook);
 - abandono con fecha fresca pero sin los demás campos procesables →
   `200 ignored / invalid_cart_abandonment_payload`.
 

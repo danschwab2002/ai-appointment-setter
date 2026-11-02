@@ -160,6 +160,9 @@ class PurchaseAgentPause:
             return "no_contact"
         try:
             marker = purchase_pause_note_marker(webhook_event_id)
+            pending_marker = (
+                f"{PURCHASE_PAUSE_PENDING_NOTE_MARKER_PREFIX}{webhook_event_id.lower()}]"
+            )
             body = purchase_pause_note_body(
                 datetime.fromtimestamp(purchase.approved_date_ms / 1000, tz=UTC),
                 time_zone=self.time_zone,
@@ -193,6 +196,10 @@ class PurchaseAgentPause:
                     expected_inbox_id=self.chatwoot_inbox_id,
                     team_id=self.team_id,
                 )
+            except ChatwootAssignmentConflictError:
+                # E-283: la etiqueta ya esta y otro team tiene la conversacion. La
+                # pausa vale, como en la pausa despues de la bienvenida (E-196, M-1).
+                assignment = "other_team"
             except Exception as exc:  # noqa: BLE001 - las demas siguen
                 logger.warning(
                     "purchase_agent_pause_failed event_id=%s conversation=%s "
@@ -200,6 +207,15 @@ class PurchaseAgentPause:
                     webhook_event_id,
                     conversation_id,
                     type(exc).__name__,
+                )
+                # E-283 (P-25): la compra no queda muda en Chatwoot. La nota
+                # pendiente le pide al equipo la etiqueta, una sola vez por compra.
+                await self._leave_pending_note(
+                    webhook_event_id,
+                    conversation_id,
+                    pending_marker,
+                    id_field="event_id",
+                    pending_event="purchase_agent_pause_pending",
                 )
                 continue
             paused += 1
@@ -371,9 +387,18 @@ class PurchaseAgentPause:
         return None
 
     async def _leave_pending_note(
-        self, action_id: str, conversation_id: int, marker: str
+        self,
+        action_id: str,
+        conversation_id: int,
+        marker: str,
+        *,
+        id_field: str = "action_id",
+        pending_event: str = "purchase_agent_pause_after_welcome_pending",
     ) -> None:
-        """The durable trace of a pause that failed: a private note for the team."""
+        """The durable trace of a pause that failed: a private note for the team.
+
+        ``action_id`` is the id of the welcome action, or the purchase event id
+        when ``pause_buyer`` calls it (``id_field="event_id"``, E-283)."""
         try:
             await self.chatwoot.ensure_marked_private_note(
                 conversation_id=conversation_id,
@@ -385,15 +410,17 @@ class PurchaseAgentPause:
         except Exception as exc:  # noqa: BLE001 - queda el log
             noted = False
             logger.warning(
-                "purchase_agent_pause_pending_note_not_sent action_id=%s conversation=%s "
+                "purchase_agent_pause_pending_note_not_sent %s=%s conversation=%s "
                 "error_type=%s",
+                id_field,
                 action_id,
                 conversation_id,
                 type(exc).__name__,
             )
         logger.warning(
-            "purchase_agent_pause_after_welcome_pending action_id=%s conversation=%s "
-            "note=%s",
+            "%s %s=%s conversation=%s note=%s",
+            pending_event,
+            id_field,
             action_id,
             conversation_id,
             noted,

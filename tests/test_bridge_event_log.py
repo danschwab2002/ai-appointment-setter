@@ -273,8 +273,70 @@ def test_nothing_is_installed_when_the_root_already_has_handlers(
 def test_every_reviewed_event_is_a_hotmart_line_present_in_the_code() -> None:
     sources = "\n".join(
         (ROOT / "src" / "bridge" / name).read_text(encoding="utf-8")
-        for name in ("app.py", "worker.py")
+        for name in ("app.py", "worker.py", "purchase_agent_pause.py")
     )
     for name in LOGGED_INFO_EVENTS:
-        assert name.startswith("hotmart_"), name
+        assert name.startswith(("hotmart_", "purchase_agent_")), name
         assert f'"{name} ' in sources, name
+
+
+def test_the_purchase_pause_lines_reach_the_container_log(
+    bare_logging: logging.Logger, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E-283 (P-25): que el agente quedo pausado al comprar, o por que no, se ve en
+    el log. Antes ``purchase_agent_paused`` y ``purchase_agent_pause_skipped``
+    eran info sin revisar y no salian; solo se veian los warnings."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from bridge.purchase_agent_pause import PurchaseAgentPause
+
+    monkeypatch.setattr(logging.getLogger(), "handlers", [])
+    stream = io.StringIO()
+    assert configure_bridge_event_log(stream) is True
+
+    class Lookups:
+        def __init__(self, outcome: str, ids: tuple[int, ...]) -> None:
+            self.result = SimpleNamespace(outcome=outcome, conversation_ids=ids)
+
+        async def read_purchase_agent_pause_conversations(self, **kwargs: object):
+            return self.result
+
+    class Chatwoot:
+        async def pause_purchased_conversation(self, **kwargs: object) -> str:
+            return "team_assigned"
+
+        async def ensure_marked_private_note(self, **kwargs: object) -> bool:
+            return True
+
+    purchase = SimpleNamespace(
+        buyer_email="comprador.prueba@example.test",
+        buyer_phone="5215550000001",
+        approved_date_ms=1_793_033_244_000,
+    )
+
+    def pause(lookups: Lookups) -> PurchaseAgentPause:
+        return PurchaseAgentPause(
+            supabase=lookups,  # type: ignore[arg-type]
+            chatwoot=Chatwoot(),  # type: ignore[arg-type]
+            chatwoot_account_id=2,
+            chatwoot_inbox_id=11,
+            inbound_scope_key="att1-inbound",
+            team_id=3,
+            time_zone="America/Mexico_City",
+        )
+
+    event_id = "00000000-0000-4000-8000-0000000e1220"
+    asyncio.run(pause(Lookups("found", (40,))).pause_buyer(
+        webhook_event_id=event_id, purchase=purchase  # type: ignore[arg-type]
+    ))
+    asyncio.run(pause(Lookups("not_found", ())).pause_buyer(
+        webhook_event_id=event_id, purchase=purchase  # type: ignore[arg-type]
+    ))
+
+    lines = stream.getvalue().splitlines()
+    assert lines == [
+        f"purchase_agent_paused event_id={event_id} conversation=40 assignment=team_assigned",
+        f"purchase_agent_pause_skipped event_id={event_id} reason=not_found",
+    ], lines
+    _assert_no_personal(lines)
