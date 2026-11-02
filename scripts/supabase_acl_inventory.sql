@@ -198,7 +198,9 @@ expected_service_role(signature) as (
         ('public.claim_meta_first_touch_retry_v1(bigint, bigint, text, text, integer, timestamp with time zone)'),
         ('public.settle_meta_first_touch_retry_v1(uuid, text, bigint, text, timestamp with time zone)'),
         ('public.mark_meta_delivery_rejection_notified_v1(uuid, timestamp with time zone)'),
-        ('public.block_meta_first_touch_retry_v1(uuid, text, timestamp with time zone)')
+        ('public.block_meta_first_touch_retry_v1(uuid, text, timestamp with time zone)'),
+        -- 20261103000700: si la persona ya es cliente (E-297).
+        ('public.get_customer_status_v1(text, text[], bigint, bigint, bigint, text)')
 ),
 functions as (
     select

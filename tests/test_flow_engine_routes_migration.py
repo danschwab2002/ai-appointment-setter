@@ -127,6 +127,8 @@ def test_it_is_one_transaction_and_comes_right_after_the_t4b() -> None:
         "20261103000500_meta_delivery_rejections_v1.sql",
         # El historial de la pagina de aprobacion (20261103000600, E-295).
         "20261103000600_flow_approval_history_v1.sql",
+        # Si la persona ya es cliente (20261103000700, E-297).
+        "20261103000700_customer_status_v1.sql",
     ]
 
 

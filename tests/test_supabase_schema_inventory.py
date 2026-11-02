@@ -465,7 +465,9 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # de su diario; las de la pagina son de flow_change_approver.
     # 20261103000500 (los rechazos de Meta, E-284) suma sus seis: registrar,
     # listar, reservar, cerrar y frenar el reintento, y marcar el aviso.
-    assert len(allowlisted) == 185
+    # 20261103000700 (si la persona ya es cliente, E-297) suma su lectura.
+    assert len(allowlisted) == 186
+    assert "get_customer_status_v1(text, text[], bigint, bigint, bigint, text)" in allowlisted
     assert "block_meta_first_touch_retry_v1(uuid, text, timestamp with time zone)" in allowlisted
     assert "purge_identity_recycles_v1()" in allowlisted
     assert "record_meta_template_status_v1(jsonb, uuid, text, text, text, text, boolean)" in allowlisted
@@ -1877,20 +1879,39 @@ def test_meta_delivery_rejections_fingerprint() -> None:
         assert marker in compact_fingerprint, marker
 
 
-def test_flow_approval_history_fingerprint_is_last() -> None:
+def test_flow_approval_history_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261103000600 (el historial de la pagina de aprobacion, E-295)
-    # es la ultima: las dos lecturas solo para flow_change_approver, la lista
-    # sin el para que y la interna de las versiones para nadie de la API.
-    fingerprint = sql.split("'20261103000600'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261103000600 (el historial de la pagina de aprobacion, E-295):
+    # las dos lecturas solo para flow_change_approver, la lista sin el para que
+    # y la interna de las versiones para nadie de la API. Desde E-297 la sigue
+    # la de si la persona ya es cliente.
+    fingerprint = sql.split("'20261103000600'", 1)[1].split("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261103000600_flow_approval_history_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",3,'flow_approval_history')")
+    assert compact_fingerprint.endswith(",3,'flow_approval_history'")
     for marker in (
         "to_regprocedure('public.approver_list_flow_changes_v1(jsonb,text,uuid,integer)')",
         "to_regprocedure('public.approver_read_flow_change_record_v1(jsonb,text,uuid)')",
         "to_regprocedure('public._flow_approval_published_versions(uuid)')",
         "position('p.purpose'indefinition)=0",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_customer_status_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261103000700 (si la persona ya es cliente, E-297) es la
+    # ultima: la lectura solo para service_role, con sus fuentes y los
+    # reembolsos por la transaccion.
+    fingerprint = sql.split("'20261103000700'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261103000700_customer_status_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'customer_status')")
+    for marker in (
+        "to_regprocedure('public.get_customer_status_v1(text,text[],bigint,bigint,bigint,text)')",
+        "position('invalid_customer_status_input'indefinition)>0",
+        "position('PURCHASE_CHARGEBACK'indefinition)>0",
     ):
         assert marker in compact_fingerprint, marker

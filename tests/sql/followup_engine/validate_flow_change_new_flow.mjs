@@ -136,7 +136,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026102500010
   // Los rechazos de Meta (20261103000500, E-284).
   '20261103000500_meta_delivery_rejections_v1.sql',
   // El historial de la pagina de aprobacion (20261103000600, E-295): dos lecturas del rol de la pagina.
-  '20261103000600_flow_approval_history_v1.sql'])) {
+  '20261103000600_flow_approval_history_v1.sql',
+  // Si la persona ya es cliente (20261103000700, E-297): una lectura de service_role.
+  '20261103000700_customer_status_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de las lecturas nativas del AE`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(

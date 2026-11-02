@@ -138,6 +138,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261103000500",
         # El historial de la pagina de aprobacion (E-295): dos lecturas del rol de la pagina.
         "20261103000600",
+        # Si la persona ya es cliente (20261103000700, E-297).
+        "20261103000700",
     ]
 
     sql = _sql()

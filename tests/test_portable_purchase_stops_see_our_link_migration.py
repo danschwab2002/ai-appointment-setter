@@ -36,19 +36,21 @@ def test_it_is_one_transaction_and_the_last() -> None:
     # El reciclado de un telefono de prueba (20261102000400, E-270, F-147 PR 1).
     # Los rechazos de Meta y el unico reintento del 131049 (20261103000500, E-284).
     # El historial de la pagina de aprobacion (20261103000600, E-295).
-    assert names[-1] == "20261103000600_flow_approval_history_v1.sql"
-    assert names[-2] == "20261103000500_meta_delivery_rejections_v1.sql"
-    assert names[-3] == "20261102000400_identity_recycle_v1.sql"
-    assert names[-4] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
-    assert names[-5] == "20261102000200_meta_template_requests_v1.sql"
-    assert names[-6] == "20261102000100_recovery_coupon_by_reply_v1.sql"
-    assert names[-7] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
+    # Si la persona ya es cliente (20261103000700, E-297).
+    assert names[-1] == "20261103000700_customer_status_v1.sql"
+    assert names[-2] == "20261103000600_flow_approval_history_v1.sql"
+    assert names[-3] == "20261103000500_meta_delivery_rejections_v1.sql"
+    assert names[-4] == "20261102000400_identity_recycle_v1.sql"
+    assert names[-5] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
+    assert names[-6] == "20261102000200_meta_template_requests_v1.sql"
+    assert names[-7] == "20261102000100_recovery_coupon_by_reply_v1.sql"
+    assert names[-8] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
     # Antes, el seguimiento a 24 h nativo (20261101000200, E-251).
-    assert names[-8] == "20261101000200_flow_engine_native_silence_v1.sql"
+    assert names[-9] == "20261101000200_flow_engine_native_silence_v1.sql"
     # Antes, el primer contacto nativo (20261101000100, E-247): el disparador intencion.
-    assert names[-9] == "20261101000100_flow_engine_native_intent_v1.sql"
-    assert names[-10] == MIGRATION.name
-    assert names[-11] == "20261030000300_flow_change_list_v1.sql"
+    assert names[-10] == "20261101000100_flow_engine_native_intent_v1.sql"
+    assert names[-11] == MIGRATION.name
+    assert names[-12] == "20261030000300_flow_change_list_v1.sql"
 
 
 def test_it_creates_only_the_third_source_and_patches_the_two_stops() -> None:
