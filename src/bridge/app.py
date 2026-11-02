@@ -134,6 +134,7 @@ from bridge.opt_out_confirmation import (
     validate_opt_out_confirmation_text,
 )
 from bridge import automation_expert_chatwoot, flow_approval, flow_change_api
+from bridge import template_request, template_request_api
 from bridge.automation_expert_read import (
     CHATWOOT_MAX_MESSAGES_PER_CONVERSATION,
     CHATWOOT_READ_TIMEOUT_SECONDS,
@@ -398,6 +399,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # instancia sale del manifiesto, y la lista de aprobadores, de la
     # configuracion de la instancia.
     "flow_approval_enabled",
+    # F-146 (template-request-v1): las solicitudes de plantilla del Automation
+    # Expert. El idioma, el producto y los destinos de los botones salen del
+    # manifiesto.
+    "meta_templates_enabled",
     # El bridge del motor de flujos (flow-engine-v1, seccion 8): la instancia
     # sale del manifiesto, y lo que ejecuta cada flujo, de su ruta en la base.
     "flow_engine_enabled",
@@ -977,6 +982,9 @@ class Settings:
     flow_approval_slack_client_secret: str | None = None
     flow_approval_session_secret: str | None = None
     flow_change_approver_db_key: str | None = None
+    # F-146 (template-request-v1, partes 1 y 2): el agente redacta y valida
+    # solicitudes de plantilla. Apagado, las rutas no existen. Nada llama a Meta.
+    meta_templates_enabled: bool = False
     # flow-engine-v1, seccion 8: el bridge del motor de flujos (la T2.4).
     # Apagado, el bridge no lee nada del motor y hace exactamente lo de hoy.
     flow_engine_enabled: bool = False
@@ -2341,6 +2349,9 @@ class Settings:
             ),
             flow_change_approver_db_key=(
                 os.getenv("FLOW_CHANGE_APPROVER_DB_KEY", "").strip() or None
+            ),
+            meta_templates_enabled=(
+                os.getenv("META_TEMPLATES_ENABLED", "false").lower() == "true"
             ),
             flow_engine_enabled=(
                 os.getenv("FLOW_ENGINE_ENABLED", "false").lower() == "true"
@@ -3999,6 +4010,7 @@ def create_app(
     audio_transcriber: AudioTranscriber | None = None,
     flow_change_store: flow_change_api.FlowChangeStore | None = None,
     automation_expert_chatwoot_client: automation_expert_chatwoot.ScopedChatwoot | None = None,
+    template_request_store: template_request_api.TemplateRequestStore | None = None,
     flow_approval_store: flow_approval.ApprovalStore | None = None,
     flow_approval_oidc: flow_approval.SlackIdTokenClient | None = None,
 ) -> FastAPI:
@@ -4077,6 +4089,8 @@ def create_app(
             instance_readiness["automation_expert_chatwoot"] = "enabled"
         if settings.flow_approval_enabled:
             instance_readiness["flow_approval"] = "enabled"
+        if settings.meta_templates_enabled:
+            instance_readiness["meta_templates"] = "enabled"
         ghl_adapter_risk = _ghl_adapter_risk_readiness(settings.instance_manifest)
         if ghl_adapter_risk is not None:
             instance_readiness["ghl_adapter_risk"] = ghl_adapter_risk
@@ -4374,6 +4388,8 @@ def create_app(
     # flow-change-cycle-v1 1.9.0: la pagina de aprobacion exige su app de
     # Slack, la lista, el secreto de la sesion y el JWT de su rol.
     flow_approval.check_settings(settings)
+    # F-146: las solicitudes de plantilla exigen las rutas del agente y la pagina.
+    template_request_api.check_settings(settings)
     pilot_fields = (
         (settings.pilot_scope_key, "LANCEMOS_PILOT_SCOPE_KEY"),
         (settings.pilot_scope_version, "LANCEMOS_PILOT_SCOPE_VERSION"),
@@ -8571,6 +8587,23 @@ def create_app(
             time_zone=change_manifest.time_zone,
             inbox_id=change_manifest.chatwoot_inbox_id,
         )
+        if settings.meta_templates_enabled:
+            # F-146 (template-request-v1): el agente redacta y valida una
+            # solicitud de plantilla; nunca la aprueba ni la manda. Con el flag
+            # apagado las rutas no existen y dan 404.
+            template_request_api.register_template_request_routes(
+                app,
+                token=settings.automation_expert_change_token,
+                store=template_request_store or template_request_api.TemplateRequestStore(
+                    base_url=settings.supabase_base_url or "",
+                    db_key=settings.automation_expert_change_db_key or "",
+                ),
+                chatwoot=control_client,
+                tenant_ref=change_manifest.tenant_ref,
+                ally_ref=change_manifest.ally_ref,
+                inbox_id=change_manifest.chatwoot_inbox_id,
+                template_context=template_request.context_from_manifest(change_manifest),
+            )
 
     if settings.automation_expert_chatwoot_enabled:
         # automation-expert-chatwoot-v1 (F-143): su propio cliente, con la lista

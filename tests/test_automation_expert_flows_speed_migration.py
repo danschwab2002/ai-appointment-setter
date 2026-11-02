@@ -117,6 +117,8 @@ def test_it_is_one_transaction_and_comes_before_the_motor() -> None:
         "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql",
         # La renovacion por respuesta y el cupon del turno (20261102000100, E-267).
         "20261102000100_recovery_coupon_by_reply_v1.sql",
+        # Las solicitudes de plantilla de Meta (20261102000200, E-268, F-146 partes 1 y 2).
+        "20261102000200_meta_template_requests_v1.sql",
     ]
     for later in names[position + 1:]:
         if later != reads:

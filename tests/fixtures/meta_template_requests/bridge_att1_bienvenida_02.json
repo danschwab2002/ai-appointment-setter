@@ -1,0 +1,84 @@
+{
+ "_que_es": "La salida de template_request.py (parse_template, check, meta_request y bubble) para att1_bienvenida_02: el texto real de att1_bienvenida_01 con el numero siguiente. La regenera tests/test_template_request.py y la registra validate_meta_template_requests.mjs.",
+ "draft": {
+  "botones": [
+   {
+    "texto": "Completar mi perfil",
+    "tipo": "url_fija",
+    "url": "https://forms.gle/mzopWTpQae8TDBph9"
+   }
+  ],
+  "categoria": "UTILITY",
+  "cuerpo": "Tu inscripción en {{producto}} ha sido confirmada.\n\nTe escribimos del equipo de la Dra. Nina.\n\nAccesos: se enviarán al correo con el que compraste.\n\nPara completar tu perfil y personalizar el programa, ingresa aquí:",
+  "encabezado": "Notificación",
+  "idioma": "es_MX",
+  "nombre": "att1_bienvenida_02",
+  "variables": [
+   "producto"
+  ]
+ },
+ "meta_request": {
+  "category": "UTILITY",
+  "components": [
+   {
+    "format": "TEXT",
+    "text": "Notificación",
+    "type": "HEADER"
+   },
+   {
+    "example": {
+     "body_text": [
+      [
+       "Alimenta tu Tiroides"
+      ]
+     ]
+    },
+    "text": "Tu inscripción en {{1}} ha sido confirmada.\n\nTe escribimos del equipo de la Dra. Nina.\n\nAccesos: se enviarán al correo con el que compraste.\n\nPara completar tu perfil y personalizar el programa, ingresa aquí:",
+    "type": "BODY"
+   },
+   {
+    "buttons": [
+     {
+      "text": "Completar mi perfil",
+      "type": "URL",
+      "url": "https://forms.gle/mzopWTpQae8TDBph9"
+     }
+    ],
+    "type": "BUTTONS"
+   }
+  ],
+  "language": "es_MX",
+  "name": "att1_bienvenida_02",
+  "parameter_format": "POSITIONAL"
+ },
+ "preview": {
+  "burbuja": {
+   "al_aprobar": "Se manda a Meta. Nadie recibe nada todavia. Cuando Meta conteste se avisa, y el flujo se aprueba aparte.",
+   "botones": [
+    {
+     "link": "https://forms.gle/mzopWTpQae8TDBph9",
+     "texto": "Completar mi perfil",
+     "tipo": "url_fija"
+    }
+   ],
+   "categoria": "UTILITY",
+   "categoria_explicada": "Utilidad: sobre algo que la persona ya hizo (su compra, su pago, su turno). Si Meta entiende que vende, la aprueba como marketing y un flujo que la pide de utilidad no la puede usar.",
+   "cuerpo": "Tu inscripción en [producto] ha sido confirmada.\n\nTe escribimos del equipo de la Dra. Nina.\n\nAccesos: se enviarán al correo con el que compraste.\n\nPara completar tu perfil y personalizar el programa, ingresa aquí:",
+   "cuerpo_con_ejemplo": "Tu inscripción en Alimenta tu Tiroides ha sido confirmada.\n\nTe escribimos del equipo de la Dra. Nina.\n\nAccesos: se enviarán al correo con el que compraste.\n\nPara completar tu perfil y personalizar el programa, ingresa aquí:",
+   "encabezado": "Notificación",
+   "pie": null
+  },
+  "catalog_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+ },
+ "purpose": "la bienvenida de la compra con el formulario del perfil",
+ "result": {
+  "blocks": [],
+  "warnings": []
+ },
+ "validator": {
+  "contract": "template-request-v1",
+  "git_sha": "069e602e",
+  "product_version": "v1.25.0",
+  "rules_version": 1
+ }
+}

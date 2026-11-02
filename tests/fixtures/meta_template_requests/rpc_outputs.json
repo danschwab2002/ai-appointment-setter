@@ -1,0 +1,704 @@
+{
+  "_capture": {
+    "source": "tests/sql/followup_engine/validate_meta_template_requests.mjs --emit-fixture",
+    "migration": "20261102000200_meta_template_requests_v1.sql",
+    "note": "la salida real de las RPC del agente sobre la cadena de migraciones en PGlite, datos sinteticos; uuid, horas y huella normalizados"
+  },
+  "saved": {
+    "ok": true,
+    "status": "borrador",
+    "revision": 1,
+    "request_id": "00000000-0000-4000-8000-000000000001"
+  },
+  "recorded": {
+    "ok": true,
+    "status": "validada",
+    "expires_at": "2026-11-02T12:00:00.000000+00:00",
+    "fingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  },
+  "got": {
+    "draft": {
+      "cuerpo": "Tu inscripción en {{producto}} ha sido confirmada.\n\nTe escribimos del equipo de la Dra. Nina.\n\nAccesos: se enviarán al correo con el que compraste.\n\nPara completar tu perfil y personalizar el programa, ingresa aquí:",
+      "idioma": "es_MX",
+      "nombre": "att1_bienvenida_02",
+      "botones": [
+        {
+          "url": "https://forms.gle/mzopWTpQae8TDBph9",
+          "tipo": "url_fija",
+          "texto": "Completar mi perfil"
+        }
+      ],
+      "categoria": "UTILITY",
+      "variables": [
+        "producto"
+      ],
+      "encabezado": "Notificación"
+    },
+    "events": [
+      {
+        "actor_kind": "automation_expert",
+        "created_at": "2026-11-02T12:00:00.000000+00:00",
+        "event_type": "meta_template_validated",
+        "reason_code": "meta_template_validated"
+      },
+      {
+        "actor_kind": "automation_expert",
+        "created_at": "2026-11-02T12:00:00.000000+00:00",
+        "event_type": "meta_template_draft_saved",
+        "reason_code": "meta_template_draft_saved"
+      },
+      {
+        "actor_kind": "automation_expert",
+        "created_at": "2026-11-02T12:00:00.000000+00:00",
+        "event_type": "meta_template_validation_blocked",
+        "reason_code": "meta_template_validation_blocked"
+      },
+      {
+        "actor_kind": "automation_expert",
+        "created_at": "2026-11-02T12:00:00.000000+00:00",
+        "event_type": "meta_template_draft_saved",
+        "reason_code": "meta_template_draft_saved"
+      },
+      {
+        "actor_kind": "automation_expert",
+        "created_at": "2026-11-02T12:00:00.000000+00:00",
+        "event_type": "meta_template_draft_saved",
+        "reason_code": "meta_template_draft_saved"
+      }
+    ],
+    "status": "validada",
+    "purpose": "la bienvenida de la compra con el formulario del perfil",
+    "sent_at": null,
+    "language": "es_MX",
+    "revision": 3,
+    "closed_at": null,
+    "created_at": "2026-11-02T12:00:00.000000+00:00",
+    "expires_at": "2026-11-02T12:00:00.000000+00:00",
+    "request_id": "00000000-0000-4000-8000-000000000001",
+    "validation": {
+      "result": {
+        "blocks": [],
+        "warnings": []
+      },
+      "preview": {
+        "burbuja": {
+          "pie": null,
+          "cuerpo": "Tu inscripción en [producto] ha sido confirmada.\n\nTe escribimos del equipo de la Dra. Nina.\n\nAccesos: se enviarán al correo con el que compraste.\n\nPara completar tu perfil y personalizar el programa, ingresa aquí:",
+          "botones": [
+            {
+              "link": "https://forms.gle/mzopWTpQae8TDBph9",
+              "tipo": "url_fija",
+              "texto": "Completar mi perfil"
+            }
+          ],
+          "categoria": "UTILITY",
+          "al_aprobar": "Se manda a Meta. Nadie recibe nada todavia. Cuando Meta conteste se avisa, y el flujo se aprueba aparte.",
+          "encabezado": "Notificación",
+          "cuerpo_con_ejemplo": "Tu inscripción en Alimenta tu Tiroides ha sido confirmada.\n\nTe escribimos del equipo de la Dra. Nina.\n\nAccesos: se enviarán al correo con el que compraste.\n\nPara completar tu perfil y personalizar el programa, ingresa aquí:",
+          "categoria_explicada": "Utilidad: sobre algo que la persona ya hizo (su compra, su pago, su turno). Si Meta entiende que vende, la aprueba como marketing y un flujo que la pide de utilidad no la puede usar."
+        },
+        "catalog_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "validator": {
+        "git_sha": "069e602e",
+        "contract": "template-request-v1",
+        "rules_version": 1,
+        "product_version": "v1.25.0"
+      },
+      "meta_request": {
+        "name": "att1_bienvenida_02",
+        "category": "UTILITY",
+        "language": "es_MX",
+        "components": [
+          {
+            "text": "Notificación",
+            "type": "HEADER",
+            "format": "TEXT"
+          },
+          {
+            "text": "Tu inscripción en {{1}} ha sido confirmada.\n\nTe escribimos del equipo de la Dra. Nina.\n\nAccesos: se enviarán al correo con el que compraste.\n\nPara completar tu perfil y personalizar el programa, ingresa aquí:",
+            "type": "BODY",
+            "example": {
+              "body_text": [
+                [
+                  "Alimenta tu Tiroides"
+                ]
+              ]
+            }
+          },
+          {
+            "type": "BUTTONS",
+            "buttons": [
+              {
+                "url": "https://forms.gle/mzopWTpQae8TDBph9",
+                "text": "Completar mi perfil",
+                "type": "URL"
+              }
+            ]
+          }
+        ],
+        "parameter_format": "POSITIONAL"
+      }
+    },
+    "approved_at": null,
+    "fingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "meta_status": null,
+    "proposal_id": "00000000-0000-4000-8000-000000000002",
+    "step_pointer": "/items/0/definicion/pasos/0",
+    "validated_at": "2026-11-02T12:00:00.000000+00:00",
+    "in_catalog_at": null,
+    "meta_category": null,
+    "recategorized": false,
+    "send_attempts": 0,
+    "template_name": "att1_bienvenida_02",
+    "closed_by_kind": null,
+    "last_send_error": null,
+    "approved_by_kind": null,
+    "effective_status": "validada",
+    "meta_answered_at": null,
+    "meta_template_id": null,
+    "category_requested": "UTILITY",
+    "meta_rejected_reason": null
+  },
+  "listed_open": {
+    "open": 1,
+    "requests": [
+      {
+        "status": "borrador",
+        "purpose": "la bienvenida de la compra con el formulario del perfil",
+        "sent_at": null,
+        "language": "es_MX",
+        "revision": 1,
+        "closed_at": null,
+        "variables": [
+          "producto"
+        ],
+        "created_at": "2026-11-02T12:00:00.000000+00:00",
+        "expires_at": null,
+        "last_event": {
+          "actor_kind": "automation_expert",
+          "created_at": "2026-11-02T12:00:00.000000+00:00",
+          "event_type": "meta_template_draft_saved",
+          "reason_code": "meta_template_draft_saved"
+        },
+        "request_id": "00000000-0000-4000-8000-000000000003",
+        "approved_at": null,
+        "meta_status": null,
+        "proposal_id": null,
+        "step_pointer": null,
+        "in_catalog_at": null,
+        "meta_category": null,
+        "recategorized": false,
+        "template_name": "att1_vence_01",
+        "effective_status": "borrador",
+        "category_requested": "MARKETING",
+        "meta_rejected_reason": null
+      },
+      {
+        "status": "sin_respuesta_de_meta",
+        "purpose": "la bienvenida de la compra con el formulario del perfil",
+        "sent_at": "2026-11-02T12:00:00.000000+00:00",
+        "language": "es_MX",
+        "revision": 1,
+        "closed_at": null,
+        "variables": [
+          "producto"
+        ],
+        "created_at": "2026-11-02T12:00:00.000000+00:00",
+        "expires_at": "2026-11-02T12:00:00.000000+00:00",
+        "last_event": {
+          "actor_kind": "sistema",
+          "created_at": "2026-11-02T12:00:00.000000+00:00",
+          "event_type": "meta_template_no_answer",
+          "reason_code": "meta_template_no_answer"
+        },
+        "request_id": "00000000-0000-4000-8000-000000000004",
+        "approved_at": "2026-11-02T12:00:00.000000+00:00",
+        "meta_status": "PENDING",
+        "proposal_id": null,
+        "step_pointer": null,
+        "in_catalog_at": null,
+        "meta_category": "UTILITY",
+        "recategorized": false,
+        "template_name": "att1_tercera_01",
+        "effective_status": "sin_respuesta_de_meta",
+        "category_requested": "UTILITY",
+        "meta_rejected_reason": null
+      }
+    ],
+    "open_limit": 10,
+    "database_at": "2026-11-02T12:00:00.000000+00:00"
+  },
+  "listed_all": {
+    "open": 1,
+    "requests": [
+      {
+        "status": "borrador",
+        "purpose": "la bienvenida de la compra con el formulario del perfil",
+        "sent_at": null,
+        "language": "es_MX",
+        "revision": 1,
+        "closed_at": null,
+        "variables": [
+          "producto"
+        ],
+        "created_at": "2026-11-02T12:00:00.000000+00:00",
+        "expires_at": null,
+        "last_event": {
+          "actor_kind": "automation_expert",
+          "created_at": "2026-11-02T12:00:00.000000+00:00",
+          "event_type": "meta_template_draft_saved",
+          "reason_code": "meta_template_draft_saved"
+        },
+        "request_id": "00000000-0000-4000-8000-000000000003",
+        "approved_at": null,
+        "meta_status": null,
+        "proposal_id": null,
+        "step_pointer": null,
+        "in_catalog_at": null,
+        "meta_category": null,
+        "recategorized": false,
+        "template_name": "att1_vence_01",
+        "effective_status": "borrador",
+        "category_requested": "MARKETING",
+        "meta_rejected_reason": null
+      },
+      {
+        "status": "vencida",
+        "purpose": "la bienvenida de la compra con el formulario del perfil",
+        "sent_at": null,
+        "language": "es_MX",
+        "revision": 1,
+        "closed_at": "2026-11-02T12:00:00.000000+00:00",
+        "variables": [
+          "producto"
+        ],
+        "created_at": "2026-11-02T12:00:00.000000+00:00",
+        "expires_at": "2026-11-02T12:00:00.000000+00:00",
+        "last_event": {
+          "actor_kind": "sistema",
+          "created_at": "2026-11-02T12:00:00.000000+00:00",
+          "event_type": "meta_template_expired",
+          "reason_code": "meta_template_request_expired"
+        },
+        "request_id": "00000000-0000-4000-8000-000000000005",
+        "approved_at": null,
+        "meta_status": null,
+        "proposal_id": null,
+        "step_pointer": null,
+        "in_catalog_at": null,
+        "meta_category": null,
+        "recategorized": false,
+        "template_name": "att1_vence_01",
+        "effective_status": "vencida",
+        "category_requested": "MARKETING",
+        "meta_rejected_reason": null
+      },
+      {
+        "status": "sin_respuesta_de_meta",
+        "purpose": "la bienvenida de la compra con el formulario del perfil",
+        "sent_at": "2026-11-02T12:00:00.000000+00:00",
+        "language": "es_MX",
+        "revision": 1,
+        "closed_at": null,
+        "variables": [
+          "producto"
+        ],
+        "created_at": "2026-11-02T12:00:00.000000+00:00",
+        "expires_at": "2026-11-02T12:00:00.000000+00:00",
+        "last_event": {
+          "actor_kind": "sistema",
+          "created_at": "2026-11-02T12:00:00.000000+00:00",
+          "event_type": "meta_template_no_answer",
+          "reason_code": "meta_template_no_answer"
+        },
+        "request_id": "00000000-0000-4000-8000-000000000004",
+        "approved_at": "2026-11-02T12:00:00.000000+00:00",
+        "meta_status": "PENDING",
+        "proposal_id": null,
+        "step_pointer": null,
+        "in_catalog_at": null,
+        "meta_category": "UTILITY",
+        "recategorized": false,
+        "template_name": "att1_tercera_01",
+        "effective_status": "sin_respuesta_de_meta",
+        "category_requested": "UTILITY",
+        "meta_rejected_reason": null
+      },
+      {
+        "status": "rechazada",
+        "purpose": "la bienvenida de la compra con el formulario del perfil",
+        "sent_at": "2026-11-02T12:00:00.000000+00:00",
+        "language": "es_MX",
+        "revision": 1,
+        "closed_at": "2026-11-02T12:00:00.000000+00:00",
+        "variables": [
+          "producto"
+        ],
+        "created_at": "2026-11-02T12:00:00.000000+00:00",
+        "expires_at": "2026-11-02T12:00:00.000000+00:00",
+        "last_event": {
+          "actor_kind": "sistema",
+          "created_at": "2026-11-02T12:00:00.000000+00:00",
+          "event_type": "meta_template_rejected_by_meta",
+          "reason_code": "meta_template_rejected_by_meta"
+        },
+        "request_id": "00000000-0000-4000-8000-000000000006",
+        "approved_at": "2026-11-02T12:00:00.000000+00:00",
+        "meta_status": "REJECTED",
+        "proposal_id": null,
+        "step_pointer": null,
+        "in_catalog_at": null,
+        "meta_category": "UTILITY",
+        "recategorized": false,
+        "template_name": "att1_segunda_01",
+        "effective_status": "rechazada",
+        "category_requested": "UTILITY",
+        "meta_rejected_reason": "INVALID_FORMAT"
+      },
+      {
+        "status": "descartada",
+        "purpose": "la bienvenida de la compra con el formulario del perfil",
+        "sent_at": null,
+        "language": "es_MX",
+        "revision": 1,
+        "closed_at": "2026-11-02T12:00:00.000000+00:00",
+        "variables": [
+          "producto"
+        ],
+        "created_at": "2026-11-02T12:00:00.000000+00:00",
+        "expires_at": null,
+        "last_event": {
+          "actor_kind": "slack",
+          "created_at": "2026-11-02T12:00:00.000000+00:00",
+          "event_type": "meta_template_discarded",
+          "reason_code": "meta_template_discarded"
+        },
+        "request_id": "00000000-0000-4000-8000-000000000007",
+        "approved_at": null,
+        "meta_status": null,
+        "proposal_id": null,
+        "step_pointer": null,
+        "in_catalog_at": null,
+        "meta_category": null,
+        "recategorized": false,
+        "template_name": "att1_tope_00",
+        "effective_status": "descartada",
+        "category_requested": "UTILITY",
+        "meta_rejected_reason": null
+      },
+      {
+        "status": "descartada",
+        "purpose": "la bienvenida de la compra con el formulario del perfil",
+        "sent_at": null,
+        "language": "es_MX",
+        "revision": 1,
+        "closed_at": "2026-11-02T12:00:00.000000+00:00",
+        "variables": [
+          "producto"
+        ],
+        "created_at": "2026-11-02T12:00:00.000000+00:00",
+        "expires_at": null,
+        "last_event": {
+          "actor_kind": "slack",
+          "created_at": "2026-11-02T12:00:00.000000+00:00",
+          "event_type": "meta_template_discarded",
+          "reason_code": "meta_template_discarded"
+        },
+        "request_id": "00000000-0000-4000-8000-000000000008",
+        "approved_at": null,
+        "meta_status": null,
+        "proposal_id": null,
+        "step_pointer": null,
+        "in_catalog_at": null,
+        "meta_category": null,
+        "recategorized": false,
+        "template_name": "att1_tope_09",
+        "effective_status": "descartada",
+        "category_requested": "UTILITY",
+        "meta_rejected_reason": null
+      },
+      {
+        "status": "descartada",
+        "purpose": "la bienvenida de la compra con el formulario del perfil",
+        "sent_at": null,
+        "language": "es_MX",
+        "revision": 1,
+        "closed_at": "2026-11-02T12:00:00.000000+00:00",
+        "variables": [
+          "producto"
+        ],
+        "created_at": "2026-11-02T12:00:00.000000+00:00",
+        "expires_at": null,
+        "last_event": {
+          "actor_kind": "slack",
+          "created_at": "2026-11-02T12:00:00.000000+00:00",
+          "event_type": "meta_template_discarded",
+          "reason_code": "meta_template_discarded"
+        },
+        "request_id": "00000000-0000-4000-8000-000000000009",
+        "approved_at": null,
+        "meta_status": null,
+        "proposal_id": null,
+        "step_pointer": null,
+        "in_catalog_at": null,
+        "meta_category": null,
+        "recategorized": false,
+        "template_name": "att1_tope_08",
+        "effective_status": "descartada",
+        "category_requested": "UTILITY",
+        "meta_rejected_reason": null
+      },
+      {
+        "status": "descartada",
+        "purpose": "la bienvenida de la compra con el formulario del perfil",
+        "sent_at": null,
+        "language": "es_MX",
+        "revision": 1,
+        "closed_at": "2026-11-02T12:00:00.000000+00:00",
+        "variables": [
+          "producto"
+        ],
+        "created_at": "2026-11-02T12:00:00.000000+00:00",
+        "expires_at": null,
+        "last_event": {
+          "actor_kind": "slack",
+          "created_at": "2026-11-02T12:00:00.000000+00:00",
+          "event_type": "meta_template_discarded",
+          "reason_code": "meta_template_discarded"
+        },
+        "request_id": "00000000-0000-4000-8000-000000000010",
+        "approved_at": null,
+        "meta_status": null,
+        "proposal_id": null,
+        "step_pointer": null,
+        "in_catalog_at": null,
+        "meta_category": null,
+        "recategorized": false,
+        "template_name": "att1_tope_07",
+        "effective_status": "descartada",
+        "category_requested": "UTILITY",
+        "meta_rejected_reason": null
+      },
+      {
+        "status": "descartada",
+        "purpose": "la bienvenida de la compra con el formulario del perfil",
+        "sent_at": null,
+        "language": "es_MX",
+        "revision": 1,
+        "closed_at": "2026-11-02T12:00:00.000000+00:00",
+        "variables": [
+          "producto"
+        ],
+        "created_at": "2026-11-02T12:00:00.000000+00:00",
+        "expires_at": null,
+        "last_event": {
+          "actor_kind": "slack",
+          "created_at": "2026-11-02T12:00:00.000000+00:00",
+          "event_type": "meta_template_discarded",
+          "reason_code": "meta_template_discarded"
+        },
+        "request_id": "00000000-0000-4000-8000-000000000011",
+        "approved_at": null,
+        "meta_status": null,
+        "proposal_id": null,
+        "step_pointer": null,
+        "in_catalog_at": null,
+        "meta_category": null,
+        "recategorized": false,
+        "template_name": "att1_tope_06",
+        "effective_status": "descartada",
+        "category_requested": "UTILITY",
+        "meta_rejected_reason": null
+      },
+      {
+        "status": "descartada",
+        "purpose": "la bienvenida de la compra con el formulario del perfil",
+        "sent_at": null,
+        "language": "es_MX",
+        "revision": 1,
+        "closed_at": "2026-11-02T12:00:00.000000+00:00",
+        "variables": [
+          "producto"
+        ],
+        "created_at": "2026-11-02T12:00:00.000000+00:00",
+        "expires_at": null,
+        "last_event": {
+          "actor_kind": "slack",
+          "created_at": "2026-11-02T12:00:00.000000+00:00",
+          "event_type": "meta_template_discarded",
+          "reason_code": "meta_template_discarded"
+        },
+        "request_id": "00000000-0000-4000-8000-000000000012",
+        "approved_at": null,
+        "meta_status": null,
+        "proposal_id": null,
+        "step_pointer": null,
+        "in_catalog_at": null,
+        "meta_category": null,
+        "recategorized": false,
+        "template_name": "att1_tope_05",
+        "effective_status": "descartada",
+        "category_requested": "UTILITY",
+        "meta_rejected_reason": null
+      },
+      {
+        "status": "descartada",
+        "purpose": "la bienvenida de la compra con el formulario del perfil",
+        "sent_at": null,
+        "language": "es_MX",
+        "revision": 1,
+        "closed_at": "2026-11-02T12:00:00.000000+00:00",
+        "variables": [
+          "producto"
+        ],
+        "created_at": "2026-11-02T12:00:00.000000+00:00",
+        "expires_at": null,
+        "last_event": {
+          "actor_kind": "slack",
+          "created_at": "2026-11-02T12:00:00.000000+00:00",
+          "event_type": "meta_template_discarded",
+          "reason_code": "meta_template_discarded"
+        },
+        "request_id": "00000000-0000-4000-8000-000000000013",
+        "approved_at": null,
+        "meta_status": null,
+        "proposal_id": null,
+        "step_pointer": null,
+        "in_catalog_at": null,
+        "meta_category": null,
+        "recategorized": false,
+        "template_name": "att1_tope_04",
+        "effective_status": "descartada",
+        "category_requested": "UTILITY",
+        "meta_rejected_reason": null
+      },
+      {
+        "status": "descartada",
+        "purpose": "la bienvenida de la compra con el formulario del perfil",
+        "sent_at": null,
+        "language": "es_MX",
+        "revision": 1,
+        "closed_at": "2026-11-02T12:00:00.000000+00:00",
+        "variables": [
+          "producto"
+        ],
+        "created_at": "2026-11-02T12:00:00.000000+00:00",
+        "expires_at": null,
+        "last_event": {
+          "actor_kind": "slack",
+          "created_at": "2026-11-02T12:00:00.000000+00:00",
+          "event_type": "meta_template_discarded",
+          "reason_code": "meta_template_discarded"
+        },
+        "request_id": "00000000-0000-4000-8000-000000000014",
+        "approved_at": null,
+        "meta_status": null,
+        "proposal_id": null,
+        "step_pointer": null,
+        "in_catalog_at": null,
+        "meta_category": null,
+        "recategorized": false,
+        "template_name": "att1_tope_03",
+        "effective_status": "descartada",
+        "category_requested": "UTILITY",
+        "meta_rejected_reason": null
+      },
+      {
+        "status": "descartada",
+        "purpose": "la bienvenida de la compra con el formulario del perfil",
+        "sent_at": null,
+        "language": "es_MX",
+        "revision": 1,
+        "closed_at": "2026-11-02T12:00:00.000000+00:00",
+        "variables": [
+          "producto"
+        ],
+        "created_at": "2026-11-02T12:00:00.000000+00:00",
+        "expires_at": null,
+        "last_event": {
+          "actor_kind": "slack",
+          "created_at": "2026-11-02T12:00:00.000000+00:00",
+          "event_type": "meta_template_discarded",
+          "reason_code": "meta_template_discarded"
+        },
+        "request_id": "00000000-0000-4000-8000-000000000015",
+        "approved_at": null,
+        "meta_status": null,
+        "proposal_id": null,
+        "step_pointer": null,
+        "in_catalog_at": null,
+        "meta_category": null,
+        "recategorized": false,
+        "template_name": "att1_tope_02",
+        "effective_status": "descartada",
+        "category_requested": "UTILITY",
+        "meta_rejected_reason": null
+      },
+      {
+        "status": "descartada",
+        "purpose": "la bienvenida de la compra con el formulario del perfil",
+        "sent_at": null,
+        "language": "es_MX",
+        "revision": 1,
+        "closed_at": "2026-11-02T12:00:00.000000+00:00",
+        "variables": [
+          "producto"
+        ],
+        "created_at": "2026-11-02T12:00:00.000000+00:00",
+        "expires_at": null,
+        "last_event": {
+          "actor_kind": "slack",
+          "created_at": "2026-11-02T12:00:00.000000+00:00",
+          "event_type": "meta_template_discarded",
+          "reason_code": "meta_template_discarded"
+        },
+        "request_id": "00000000-0000-4000-8000-000000000016",
+        "approved_at": null,
+        "meta_status": null,
+        "proposal_id": null,
+        "step_pointer": null,
+        "in_catalog_at": null,
+        "meta_category": null,
+        "recategorized": false,
+        "template_name": "att1_tope_01",
+        "effective_status": "descartada",
+        "category_requested": "UTILITY",
+        "meta_rejected_reason": null
+      },
+      {
+        "status": "en_catalogo",
+        "purpose": "la bienvenida de la compra con el formulario del perfil",
+        "sent_at": "2026-11-02T12:00:00.000000+00:00",
+        "language": "es_MX",
+        "revision": 3,
+        "closed_at": "2026-11-02T12:00:00.000000+00:00",
+        "variables": [
+          "producto"
+        ],
+        "created_at": "2026-11-02T12:00:00.000000+00:00",
+        "expires_at": "2026-11-02T12:00:00.000000+00:00",
+        "last_event": {
+          "actor_kind": "sistema",
+          "created_at": "2026-11-02T12:00:00.000000+00:00",
+          "event_type": "meta_template_in_catalog",
+          "reason_code": "meta_template_in_catalog"
+        },
+        "request_id": "00000000-0000-4000-8000-000000000001",
+        "approved_at": "2026-11-02T12:00:00.000000+00:00",
+        "meta_status": "APPROVED",
+        "proposal_id": "00000000-0000-4000-8000-000000000002",
+        "step_pointer": "/items/0/definicion/pasos/0",
+        "in_catalog_at": "2026-11-02T12:00:00.000000+00:00",
+        "meta_category": "MARKETING",
+        "recategorized": true,
+        "template_name": "att1_bienvenida_02",
+        "effective_status": "en_catalogo",
+        "category_requested": "UTILITY",
+        "meta_rejected_reason": null
+      }
+    ],
+    "open_limit": 10,
+    "database_at": "2026-11-02T12:00:00.000000+00:00"
+  }
+}

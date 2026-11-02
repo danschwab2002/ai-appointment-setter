@@ -1,0 +1,153 @@
+{
+ "_que_es": "Mas salidas de template_request.py para el validador de PGlite (validate_meta_template_requests.mjs): las regenera tests/test_template_request.py.",
+ "cases": [
+  {
+   "draft": {
+    "botones": [
+     {
+      "texto": "Usar mi descuento",
+      "tipo": "checkout"
+     },
+     {
+      "texto": "No más mensajes",
+      "tipo": "respuesta"
+     }
+    ],
+    "categoria": "MARKETING",
+    "cuerpo": "Hola, {{nombre}}. Tu {{producto}} vale hasta {{vence}}, con el pago listo para ti.",
+    "idioma": "es_MX",
+    "nombre": "att1_carrito_aviso_02",
+    "pie": "Equipo de la Dra. Nina",
+    "variables": [
+     "nombre",
+     "producto",
+     "vence"
+    ]
+   },
+   "meta_request": {
+    "category": "MARKETING",
+    "components": [
+     {
+      "example": {
+       "body_text": [
+        [
+         "María",
+         "Alimenta tu Tiroides",
+         "mañana"
+        ]
+       ]
+      },
+      "text": "Hola, {{1}}. Tu {{2}} vale hasta {{3}}, con el pago listo para ti.",
+      "type": "BODY"
+     },
+     {
+      "text": "Equipo de la Dra. Nina",
+      "type": "FOOTER"
+     },
+     {
+      "buttons": [
+       {
+        "example": [
+         "https://pay.hotmart.com/D98014973Y?off=gopi6lh7&sck=ejemplo"
+        ],
+        "text": "Usar mi descuento",
+        "type": "URL",
+        "url": "https://pay.hotmart.com/{{1}}"
+       },
+       {
+        "text": "No más mensajes",
+        "type": "QUICK_REPLY"
+       }
+      ],
+      "type": "BUTTONS"
+     }
+    ],
+    "language": "es_MX",
+    "name": "att1_carrito_aviso_02",
+    "parameter_format": "POSITIONAL"
+   },
+   "result": {
+    "blocks": [],
+    "warnings": [
+     {
+      "code": "template_url_and_quick_replies",
+      "path": "/botones",
+      "reason": "Un link con respuestas rapidas no se ve en WhatsApp de escritorio."
+     }
+    ]
+   }
+  },
+  {
+   "draft": {
+    "botones": [
+     {
+      "medio": "CASHPAYMENT",
+      "texto": "Ver mi ficha",
+      "tipo": "ficha"
+     },
+     {
+      "texto": "No más mensajes",
+      "tipo": "respuesta"
+     }
+    ],
+    "categoria": "UTILITY",
+    "cuerpo": "Hola, {{nombre}}. Te dejo tu ficha para pagar {{producto}} en {{medio_de_pago}}, para tenerla.",
+    "idioma": "es_MX",
+    "nombre": "att1_ficha_aviso_01",
+    "variables": [
+     "nombre",
+     "producto",
+     "medio_de_pago"
+    ]
+   },
+   "meta_request": {
+    "category": "UTILITY",
+    "components": [
+     {
+      "example": {
+       "body_text": [
+        [
+         "María",
+         "Alimenta tu Tiroides",
+         "OXXO"
+        ]
+       ]
+      },
+      "text": "Hola, {{1}}. Te dejo tu ficha para pagar {{2}} en {{3}}, para tenerla.",
+      "type": "BODY"
+     },
+     {
+      "buttons": [
+       {
+        "example": [
+         "https://customer-local-latam.ebanx.com/print/oxxo?hash=0123456789abcdef0123456789abcdef0123456789abcdef"
+        ],
+        "text": "Ver mi ficha",
+        "type": "URL",
+        "url": "https://customer-local-latam.ebanx.com/print/oxxo?hash={{1}}"
+       },
+       {
+        "text": "No más mensajes",
+        "type": "QUICK_REPLY"
+       }
+      ],
+      "type": "BUTTONS"
+     }
+    ],
+    "language": "es_MX",
+    "name": "att1_ficha_aviso_01",
+    "parameter_format": "POSITIONAL"
+   },
+   "result": {
+    "blocks": [],
+    "warnings": [
+     {
+      "code": "template_url_and_quick_replies",
+      "path": "/botones",
+      "reason": "Un link con respuestas rapidas no se ve en WhatsApp de escritorio."
+     }
+    ]
+   }
+  }
+ ]
+}

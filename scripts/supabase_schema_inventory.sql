@@ -6289,6 +6289,70 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'recovery_coupon_by_reply'
+    union all
+    select
+        '20261102000200',
+        '20261102000200_meta_template_requests_v1.sql',
+        -- Las solicitudes de plantilla de Meta (E-268, F-146 partes 1 y 2): las
+        -- dos tablas, con RLS ...
+        (
+            select count(*) = 2
+            from pg_class c
+            where c.oid in (to_regclass('public.meta_template_requests'),
+                            to_regclass('public.meta_template_request_events'))
+              and c.relrowsecurity
+        )::int
+        -- ... un nombre con su idioma una sola vez y el recorrido de estados ...
+        + exists(select 1 from indexes where indexname = 'meta_template_requests_name_once')::int
+        + exists(select 1 from triggers where tgname = 'meta_template_requests_validate')::int
+        -- ... las cuatro del agente: security definer, search_path fijo y solo
+        -- su rol (los roles solo se nombran adentro de to_regrole) ...
+        + (
+            select count(*) = 4
+            from functions
+            where oid in (
+                to_regprocedure('public.save_meta_template_request_draft_v1(jsonb,uuid,integer,jsonb,text,uuid,text,text)'),
+                to_regprocedure('public.record_meta_template_request_validation_v1(jsonb,uuid,integer,jsonb,jsonb,jsonb,jsonb,text)'),
+                to_regprocedure('public.get_meta_template_request_v1(jsonb,uuid)'),
+                to_regprocedure('public.list_meta_template_requests_v1(jsonb,boolean,integer)')
+            )
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+              and coalesce(has_function_privilege(to_regrole('automation_expert_change'), oid, 'EXECUTE'), false)
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+        )::int
+        -- ... las cinco de la pagina, solo para su rol ...
+        + (
+            select count(*) = 5
+            from functions
+            where oid in (
+                to_regprocedure('public.approver_get_meta_template_request_v1(jsonb,text,uuid)'),
+                to_regprocedure('public.approver_approve_meta_template_request_v1(jsonb,text,uuid,text)'),
+                to_regprocedure('public.approver_discard_meta_template_request_v1(jsonb,text,uuid,text)'),
+                to_regprocedure('public.approver_begin_meta_template_send_v1(jsonb,text,uuid,text,integer)'),
+                to_regprocedure('public.approver_record_meta_template_sent_v1(jsonb,text,uuid,text,text,text,text)')
+            )
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+              and coalesce(has_function_privilege(to_regrole('flow_change_approver'), oid, 'EXECUTE'), false)
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+        )::int
+        -- ... y la del sondeo, solo para service_role.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.record_meta_template_status_v1(jsonb,uuid,text,text,text,text,boolean)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        6,
+        'meta_template_requests'
 )
 select
     version,

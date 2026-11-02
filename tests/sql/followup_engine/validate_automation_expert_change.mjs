@@ -134,13 +134,18 @@ const executable = (await db.query(`select p.proname || '(' || oidvectortypes(p.
 // propuestas (20261030000300, E-208, flow-change-cycle-v1 1.10.0).
 require(JSON.stringify(executable) === JSON.stringify([
   'get_flow_change_proposal_v1(jsonb, uuid)',
+  // Las cuatro de las solicitudes de plantilla (20261102000200, E-268, template-request-v1).
+  'get_meta_template_request_v1(jsonb, uuid)',
   'list_flow_changes_v1(jsonb, boolean, integer)',
+  'list_meta_template_requests_v1(jsonb, boolean, integer)',
   'read_flow_engine_history_v1(jsonb, text, timestamp with time zone)',
   'read_flow_engine_native_trigger_counts_v1(jsonb, text, text, timestamp with time zone)',
   'read_flow_engine_v1(jsonb, text)',
   'read_flow_store_v1(jsonb)',
   'record_flow_change_validation_v1(jsonb, uuid, integer, jsonb, jsonb, jsonb, jsonb, text)',
+  'record_meta_template_request_validation_v1(jsonb, uuid, integer, jsonb, jsonb, jsonb, jsonb, text)',
   'save_flow_change_draft_v1(jsonb, uuid, integer, jsonb, jsonb, text, text)',
+  'save_meta_template_request_draft_v1(jsonb, uuid, integer, jsonb, text, uuid, text, text)',
 ]), `the role executes: ${JSON.stringify(executable)}`);
 for (const signature of WRAPPERS) {
   const row = await one(`select has_function_privilege('anon', $1::regprocedure, 'execute') a,
