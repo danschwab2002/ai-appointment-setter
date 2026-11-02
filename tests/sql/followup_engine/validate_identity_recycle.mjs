@@ -81,7 +81,10 @@ const tableNames = async (db) => (await db.query(`select c.relname from pg_class
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`${MIGRATION} no esta en la cadena`);
-if (names.slice(position + 1).length !== 0) fail(`${MIGRATION} es la ultima de la cadena`, names.slice(position + 1));
+// Despues va solo la de los rechazos de Meta (20261103000500, E-284), que no toca el reciclado.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261103000500_meta_delivery_rejections_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de los rechazos de Meta`, names.slice(position + 1));
+}
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(
   /create extension if not exists pgcrypto;/gi, '-- pgcrypto is built into PGlite'));
 {

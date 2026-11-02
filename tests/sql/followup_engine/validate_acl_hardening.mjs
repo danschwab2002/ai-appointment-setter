@@ -257,7 +257,13 @@ const rows = await db.query(`
       ('read_handoff_note_checkout_link_v1(uuid,bigint,bigint,timestamp with time zone)'),
       ('read_purchase_agent_pause_conversations_v1(bigint,bigint,text,text,text)'),
       ('purge_identity_recycles_v1()'),
-      ('record_meta_template_status_v1(jsonb,uuid,text,text,text,text,boolean)')
+      ('record_meta_template_status_v1(jsonb,uuid,text,text,text,text,boolean)'),
+      ('record_meta_delivery_rejection_v1(bigint,bigint,bigint,bigint,text,text,text,timestamp with time zone,bigint,boolean,timestamp with time zone)'),
+      ('list_due_meta_first_touch_retries_v1(bigint,integer,integer,timestamp with time zone)'),
+      ('claim_meta_first_touch_retry_v1(bigint,bigint,text,text,integer,timestamp with time zone)'),
+      ('settle_meta_first_touch_retry_v1(uuid,text,bigint,text,timestamp with time zone)'),
+      ('mark_meta_delivery_rejection_notified_v1(uuid,timestamp with time zone)'),
+      ('block_meta_first_touch_retry_v1(uuid,text,timestamp with time zone)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -324,8 +330,10 @@ const result = rows.rows[0];
 // followup after the agent's silence (20261101000200) adds its claim.
 // The Meta template requests (20261102000200) add the status the poller records.
 // The recycle of a test phone (20261102000400) adds the purge of its journal.
+// The Meta rejections (20261103000500, E-284) add six: record, list due,
+// claim, settle and block the retry, and mark the 131026 notice.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 179) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 185) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

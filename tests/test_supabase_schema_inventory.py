@@ -463,7 +463,10 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261102000300 (el barrido del seguimiento nativo, E-269) suma su lectura.
     # 20261102000400 (el reciclado de un telefono de prueba, E-270) suma la purga
     # de su diario; las de la pagina son de flow_change_approver.
-    assert len(allowlisted) == 179
+    # 20261103000500 (los rechazos de Meta, E-284) suma sus seis: registrar,
+    # listar, reservar, cerrar y frenar el reintento, y marcar el aviso.
+    assert len(allowlisted) == 185
+    assert "block_meta_first_touch_retry_v1(uuid, text, timestamp with time zone)" in allowlisted
     assert "purge_identity_recycles_v1()" in allowlisted
     assert "record_meta_template_status_v1(jsonb, uuid, text, text, text, text, boolean)" in allowlisted
     assert (
@@ -1827,17 +1830,18 @@ def test_flow_engine_native_silence_sweep_fingerprint_is_before_the_identity_rec
         assert marker in compact_fingerprint, marker
 
 
-def test_identity_recycle_fingerprint_is_last() -> None:
+def test_identity_recycle_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261102000400 (el reciclado de un telefono de prueba, E-270,
-    # F-147 PR 1) es la ultima: las tablas con RLS, la excepcion en las dos
-    # funciones de inmutabilidad, la pagina solo para su rol (nunca el del
-    # agente), la purga solo para service_role y las ids de prueba para nadie.
-    fingerprint = sql.split("'20261102000400'", 1)[1].split("select\n    version,", 1)[0]
+    # F-147 PR 1): las tablas con RLS, la excepcion en las dos funciones de
+    # inmutabilidad, la pagina solo para su rol (nunca el del agente), la purga
+    # solo para service_role y las ids de prueba para nadie. Desde E-284 la
+    # sigue la de los rechazos de Meta.
+    fingerprint = sql.split("'20261102000400'", 1)[1].split("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261102000400_identity_recycle_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",5,'identity_recycle')")
+    assert compact_fingerprint.endswith(",5,'identity_recycle'")
     for marker in (
         "to_regclass('public.identity_recycles')",
         "to_regclass('public.identity_recycle_rows')",
@@ -1848,5 +1852,25 @@ def test_identity_recycle_fingerprint_is_last() -> None:
         "has_function_privilege(to_regrole('flow_change_approver'),oid,'EXECUTE')",
         "to_regprocedure('public.purge_identity_recycles_v1()')",
         "to_regprocedure('public.test_activity_ids_v1()')",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_meta_delivery_rejections_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261103000500 (los rechazos de Meta y el unico reintento del
+    # 131049, E-284) es la ultima: la tabla con RLS y sin lectura para la API,
+    # las seis funciones solo para service_role, el cierre del 131026 y la vista.
+    fingerprint = sql.split("'20261103000500'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261103000500_meta_delivery_rejections_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",4,'meta_delivery_rejections')")
+    for marker in (
+        "to_regclass('public.meta_delivery_rejections')",
+        "selectcount(*)=6",
+        "to_regprocedure('public.block_meta_first_touch_retry_v1(uuid,text,timestamptz)')",
+        "position('meta_131026_unreachable'indefinition)>0",
+        "to_regclass('public.meta_delivery_rejection_counts_v1')",
     ):
         assert marker in compact_fingerprint, marker

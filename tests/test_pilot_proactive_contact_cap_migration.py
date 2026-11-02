@@ -133,6 +133,9 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         # El barrido del seguimiento a 24 h nativo (E-269).
         "20261102000300",
         "20261102000400",
+        # Los rechazos de Meta y el unico reintento del 131049 (E-284): no
+        # tocan la puerta comun.
+        "20261103000500",
     ]
 
     sql = _sql()

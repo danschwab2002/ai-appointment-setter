@@ -123,6 +123,8 @@ def test_it_is_one_transaction_and_comes_before_the_motor() -> None:
         "20261102000300_flow_engine_native_silence_sweep_v1.sql",
         # El reciclado de un telefono de prueba (20261102000400, E-270, F-147 PR 1).
         "20261102000400_identity_recycle_v1.sql",
+        # Los rechazos de Meta (20261103000500, E-284).
+        "20261103000500_meta_delivery_rejections_v1.sql",
     ]
     for later in names[position + 1:]:
         if later != reads:

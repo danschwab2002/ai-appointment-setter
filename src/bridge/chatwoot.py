@@ -37,6 +37,12 @@ _AGENT_DECISION_MARKER_RE = re.compile(r"[a-z][a-z0-9_]{0,63}")
 # toque de recuperacion (a quien compro no le corresponde el 10 %).
 FLOW_ENGINE_PURCHASE_WELCOME_MARKER = "flow_engine_purchase_welcome"
 
+# La marca del unico reintento de un primer contacto que Meta rechazo con
+# 131049 (E-284): el id del mensaje rechazado. Va junto a
+# ``recovery_first_touch_hash``; el registro de rechazos la lee para no
+# reintentar nunca un reintento.
+FIRST_TOUCH_RETRY_MARKER = "recovery_first_touch_retry_of"
+
 # Los estados de una conversacion en Chatwoot 4.13 (enum ``status``).
 _CONVERSATION_STATUSES = frozenset({"open", "resolved", "pending", "snoozed"})
 
@@ -2590,6 +2596,7 @@ class ChatwootClient:
         delivery_id: str,
         template_params: dict[str, object] | None = None,
         purchase_welcome: bool = False,
+        retry_of_message_id: int | None = None,
     ) -> dict[str, object]:
         """Send the first outbound message to a conversation via AgentBot.
 
@@ -2600,9 +2607,23 @@ class ChatwootClient:
         ``entra.permiso: compra``. Suma ``flow_engine_purchase_welcome: true``
         a ``content_attributes``, junto a ``recovery_first_touch_hash``. La
         validacion de la respuesta sigue siendo la del hash.
+
+        ``retry_of_message_id`` (E-284): el unico reintento de un primer
+        contacto que Meta rechazo con 131049. Suma
+        ``recovery_first_touch_retry_of`` (el id del mensaje rechazado) a
+        ``content_attributes``: el registro de rechazos lo reconoce como
+        reintento y nunca lo vuelve a reintentar. Sin el, el cuerpo es el de
+        siempre.
         """
         if not isinstance(purchase_welcome, bool):
             raise ValueError("invalid purchase_welcome")
+        if retry_of_message_id is not None and (
+            not isinstance(retry_of_message_id, int)
+            or isinstance(retry_of_message_id, bool)
+            or retry_of_message_id <= 0
+            or purchase_welcome
+        ):
+            raise ValueError("invalid retry_of_message_id")
         if (
             self._agent_bot_access_token is None
             or self._agent_bot_id is None
@@ -2624,6 +2645,11 @@ class ChatwootClient:
             "content_attributes": {
                 "recovery_first_touch_hash": reply_hash,
                 **({FLOW_ENGINE_PURCHASE_WELCOME_MARKER: True} if purchase_welcome else {}),
+                **(
+                    {FIRST_TOUCH_RETRY_MARKER: retry_of_message_id}
+                    if retry_of_message_id is not None
+                    else {}
+                ),
             },
         }
         if template_params is not None:
@@ -2989,6 +3015,33 @@ class ChatwootClient:
                 if not reached_end:
                     raise ChatwootProtocolError("conversation_scan_incomplete")
         return collected
+
+    async def get_conversation_with_messages(
+        self,
+        *,
+        conversation_id: int,
+        expected_inbox_id: int,
+        messages_limit: int = 30,
+    ) -> dict[str, object]:
+        """El detalle de una conversacion (GET show) y su historial.
+
+        Lo mismo que trae cada item de ``list_recent_conversations_with_messages``,
+        para una sola: ``{"conversation": <show>, "messages": [...]}``. El show
+        trae el ultimo mensaje con ``additional_attributes.template_params``,
+        que la API de mensajes no devuelve.
+        """
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"api_access_token": self._access_token},
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            return await self._conversation_with_messages(
+                client,
+                conversation_id=conversation_id,
+                expected_inbox_id=expected_inbox_id,
+                messages_limit=messages_limit,
+            )
 
     async def _conversation_with_messages(
         self,

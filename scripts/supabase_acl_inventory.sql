@@ -191,7 +191,14 @@ expected_service_role(signature) as (
         -- 20261102000200: el estado que leyo el sondeo de las solicitudes de plantilla (F-146).
         -- 20261102000400: la purga del diario de los reciclados de telefonos de prueba (F-147).
         ('public.purge_identity_recycles_v1()'),
-        ('public.record_meta_template_status_v1(jsonb, uuid, text, text, text, text, boolean)')
+        ('public.record_meta_template_status_v1(jsonb, uuid, text, text, text, text, boolean)'),
+        -- 20261103000500: los rechazos de Meta y el unico reintento del 131049 (E-284).
+        ('public.record_meta_delivery_rejection_v1(bigint, bigint, bigint, bigint, text, text, text, timestamp with time zone, bigint, boolean, timestamp with time zone)'),
+        ('public.list_due_meta_first_touch_retries_v1(bigint, integer, integer, timestamp with time zone)'),
+        ('public.claim_meta_first_touch_retry_v1(bigint, bigint, text, text, integer, timestamp with time zone)'),
+        ('public.settle_meta_first_touch_retry_v1(uuid, text, bigint, text, timestamp with time zone)'),
+        ('public.mark_meta_delivery_rejection_notified_v1(uuid, timestamp with time zone)'),
+        ('public.block_meta_first_touch_retry_v1(uuid, text, timestamp with time zone)')
 ),
 functions as (
     select

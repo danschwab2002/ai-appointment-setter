@@ -51,7 +51,9 @@ if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // seguimiento nativo (20261102000300, E-269): tablas y funciones nuevas.
 if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261102000200_meta_template_requests_v1.sql', '20261102000300_flow_engine_native_silence_sweep_v1.sql',
   // El reciclado de un telefono de prueba (20261102000400, E-270).
-  '20261102000400_identity_recycle_v1.sql'])) {
+  '20261102000400_identity_recycle_v1.sql',
+  // Los rechazos de Meta (20261103000500, E-284).
+  '20261103000500_meta_delivery_rejections_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de las solicitudes de plantilla`, names.slice(position + 1));
 }
 
