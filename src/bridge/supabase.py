@@ -2284,6 +2284,52 @@ def _recovery_coupon_rejection(response: httpx.Response) -> str | None:
     return None
 
 
+# ── Rechazos de Meta (meta-delivery-rejections-v1, E-284) ─────────────
+
+META_DELIVERY_TOUCH_KINDS = frozenset({
+    "first_touch", "first_touch_retry", "purchase_welcome",
+    "followup", "reactivation", "coupon_followup",
+})
+META_DELIVERY_RECORD_OUTCOMES = frozenset({"recorded", "replayed"})
+META_DELIVERY_RETRY_STATUSES = frozenset({"none", "claimed", "sent", "failed", "blocked"})
+META_DELIVERY_UNREACHABLE_OUTCOMES = frozenset({"case_closed", "case_already_closed", "no_case"})
+# Lo que puede contestar claim_meta_first_touch_retry_v1: claimed reserva; el
+# resto no manda nada (los blocked_* y purchase_already_approved ya quedaron
+# escritos en la base como blocked, para siempre).
+META_FIRST_TOUCH_RETRY_CLAIM_OUTCOMES = frozenset({
+    "claimed", "not_found", "not_eligible", "already_attempted", "too_early",
+    "blocked_too_late", "blocked_conversation", "blocked_pending_handoff",
+    "blocked_contact", "blocked_opt_out", "purchase_already_approved",
+    "blocked_case_closed",
+})
+
+
+@dataclass(frozen=True)
+class MetaDeliveryRejectionRecord:
+    """Lo que la base hizo con un mensaje que Meta rechazo."""
+
+    outcome: str
+    rejection_id: str
+    retry_status: str
+    unreachable_outcome: str | None
+    needs_team_notice: bool
+
+
+@dataclass(frozen=True)
+class DueMetaFirstTouchRetry:
+    """Un primer contacto con 131049 de entre 24 h y el techo, sin reintento."""
+
+    rejection_id: str
+    external_conversation_id: int
+    chatwoot_message_id: int
+
+
+@dataclass(frozen=True)
+class MetaFirstTouchRetryClaim:
+    outcome: str
+    rejection_id: str | None
+
+
 # ── Client ───────────────────────────────────────────────────────────
 
 
@@ -9768,3 +9814,201 @@ class SupabaseClient:
         return RecoveryCheckoutAuthorization(
             outcome, returned, _required_string(row, "status", operation=operation)
         )
+
+    # ── Rechazos de Meta (meta-delivery-rejections-v1, E-284) ─────────
+
+    async def _meta_delivery_rpc(
+        self, function: str, payload: dict[str, object], *, operation: str
+    ) -> list[dict[str, Any]]:
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{function}",
+            content=json.dumps(payload, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        return _response_rows(response, operation=operation)
+
+    async def record_meta_delivery_rejection(
+        self,
+        *,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        external_conversation_id: int,
+        chatwoot_message_id: int,
+        touch_kind: str,
+        meta_error_code: str | None,
+        template_name: str | None,
+        message_created_at: str,
+        retry_of_message_id: int | None,
+        close_unreachable: bool,
+        now: str,
+    ) -> MetaDeliveryRejectionRecord:
+        """Registrar un mensaje nuestro que Meta rechazo (idempotente)."""
+        operation = "meta_delivery_rejection_record"
+        if touch_kind not in META_DELIVERY_TOUCH_KINDS or type(close_unreachable) is not bool:
+            raise ValueError("invalid meta delivery rejection")
+        rows = await self._meta_delivery_rpc(
+            "record_meta_delivery_rejection_v1",
+            {
+                "p_chatwoot_account_id": chatwoot_account_id,
+                "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                "p_external_conversation_id": external_conversation_id,
+                "p_chatwoot_message_id": chatwoot_message_id,
+                "p_touch_kind": touch_kind,
+                "p_meta_error_code": meta_error_code,
+                "p_template_name": template_name,
+                "p_message_created_at": message_created_at,
+                "p_retry_of_message_id": retry_of_message_id,
+                "p_close_unreachable": close_unreachable,
+                "p_now": now,
+            },
+            operation=operation,
+        )
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        return MetaDeliveryRejectionRecord(
+            outcome=_required_enum(
+                row, "outcome", set(META_DELIVERY_RECORD_OUTCOMES), operation=operation
+            ),
+            rejection_id=_required_uuid(row, "rejection_id", operation=operation),
+            retry_status=_required_enum(
+                row, "retry_status", set(META_DELIVERY_RETRY_STATUSES), operation=operation
+            ),
+            unreachable_outcome=_optional_enum(
+                row,
+                "unreachable_outcome",
+                set(META_DELIVERY_UNREACHABLE_OUTCOMES),
+                operation=operation,
+            ),
+            needs_team_notice=_required_bool(row, "needs_team_notice", operation=operation),
+        )
+
+    async def list_due_meta_first_touch_retries(
+        self,
+        *,
+        chatwoot_inbox_id: int,
+        max_age_seconds: int,
+        limit: int,
+        now: str,
+    ) -> list[DueMetaFirstTouchRetry]:
+        """Los primeros contactos con 131049 que ya pueden reintentarse."""
+        operation = "meta_first_touch_retry_list"
+        rows = await self._meta_delivery_rpc(
+            "list_due_meta_first_touch_retries_v1",
+            {
+                "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                "p_max_age_seconds": max_age_seconds,
+                "p_limit": limit,
+                "p_now": now,
+            },
+            operation=operation,
+        )
+        return [
+            DueMetaFirstTouchRetry(
+                rejection_id=_required_uuid(row, "rejection_id", operation=operation),
+                external_conversation_id=_required_positive_int(
+                    row, "external_conversation_id", operation=operation
+                ),
+                chatwoot_message_id=_required_positive_int(
+                    row, "chatwoot_message_id", operation=operation
+                ),
+            )
+            for row in rows
+        ]
+
+    async def claim_meta_first_touch_retry(
+        self,
+        *,
+        chatwoot_inbox_id: int,
+        chatwoot_message_id: int,
+        external_user_id: str,
+        contact_email: str | None,
+        max_age_seconds: int,
+        now: str,
+    ) -> MetaFirstTouchRetryClaim:
+        """Reservar el unico reintento con las barreras de la base."""
+        operation = "meta_first_touch_retry_claim"
+        rows = await self._meta_delivery_rpc(
+            "claim_meta_first_touch_retry_v1",
+            {
+                "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                "p_chatwoot_message_id": chatwoot_message_id,
+                "p_external_user_id": external_user_id,
+                "p_contact_email": contact_email,
+                "p_max_age_seconds": max_age_seconds,
+                "p_now": now,
+            },
+            operation=operation,
+        )
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        outcome = _required_enum(
+            row, "outcome", set(META_FIRST_TOUCH_RETRY_CLAIM_OUTCOMES), operation=operation
+        )
+        rejection_id = (
+            None
+            if row.get("rejection_id") is None
+            else _required_uuid(row, "rejection_id", operation=operation)
+        )
+        if outcome == "claimed" and rejection_id is None:
+            raise _invalid_row_error(operation)
+        return MetaFirstTouchRetryClaim(outcome=outcome, rejection_id=rejection_id)
+
+    async def settle_meta_first_touch_retry(
+        self,
+        *,
+        rejection_id: str,
+        status: str,
+        retry_message_id: int | None,
+        failure_reason: str | None,
+        now: str,
+    ) -> str:
+        """Cerrar la reserva del reintento. Devuelve settled o not_found."""
+        operation = "meta_first_touch_retry_settle"
+        rows = await self._meta_delivery_rpc(
+            "settle_meta_first_touch_retry_v1",
+            {
+                "p_rejection_id": rejection_id,
+                "p_status": status,
+                "p_retry_message_id": retry_message_id,
+                "p_failure_reason": failure_reason,
+                "p_now": now,
+            },
+            operation=operation,
+        )
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return _required_enum(rows[0], "outcome", {"settled", "not_found"}, operation=operation)
+
+    async def mark_meta_delivery_rejection_notified(
+        self, *, rejection_id: str, now: str
+    ) -> str:
+        """Marcar el aviso al equipo de un 131026. marked, replayed o not_found."""
+        operation = "meta_delivery_rejection_notified"
+        rows = await self._meta_delivery_rpc(
+            "mark_meta_delivery_rejection_notified_v1",
+            {"p_rejection_id": rejection_id, "p_now": now},
+            operation=operation,
+        )
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return _required_enum(
+            rows[0], "outcome", {"marked", "replayed", "not_found"}, operation=operation
+        )
+
+    async def block_meta_first_touch_retry(
+        self, *, rejection_id: str, reason: str, now: str
+    ) -> str:
+        """Frenar el reintento por lo que vio el bridge (``bridge_<motivo>``)."""
+        operation = "meta_first_touch_retry_block"
+        rows = await self._meta_delivery_rpc(
+            "block_meta_first_touch_retry_v1",
+            {"p_rejection_id": rejection_id, "p_reason": reason, "p_now": now},
+            operation=operation,
+        )
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return _required_enum(rows[0], "outcome", {"blocked", "not_found"}, operation=operation)

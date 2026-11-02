@@ -49,6 +49,14 @@ LOGGED_INFO_EVENTS = frozenset(
         "purchase_agent_pause_skipped",
         "purchase_agent_paused_after_welcome",
         "purchase_agent_pause_after_welcome_skipped",
+        # los rechazos de Meta (bridge.meta_delivery, E-284): codigo, tipo de
+        # toque, plantilla y numero de conversacion o de mensaje; nunca el
+        # telefono ni el texto
+        "meta_delivery_scan",
+        "meta_delivery_rejected",
+        "meta_first_touch_retry",
+        "meta_first_touch_retry_skipped",
+        "meta_delivery_notice_already_admitted",
     }
 )
 

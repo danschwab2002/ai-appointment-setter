@@ -70,7 +70,9 @@ if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 if (!same(names.slice(position + 1), ['20261102000100_recovery_coupon_by_reply_v1.sql',
   '20261102000200_meta_template_requests_v1.sql', '20261102000300_flow_engine_native_silence_sweep_v1.sql',
   // El reciclado de un telefono de prueba (20261102000400, E-270).
-  '20261102000400_identity_recycle_v1.sql'])) {
+  '20261102000400_identity_recycle_v1.sql',
+  // Los rechazos de Meta (20261103000500, E-284).
+  '20261103000500_meta_delivery_rejections_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la renovacion por respuesta`, names.slice(position + 1));
 }
 

@@ -273,10 +273,10 @@ def test_nothing_is_installed_when_the_root_already_has_handlers(
 def test_every_reviewed_event_is_a_hotmart_line_present_in_the_code() -> None:
     sources = "\n".join(
         (ROOT / "src" / "bridge" / name).read_text(encoding="utf-8")
-        for name in ("app.py", "worker.py", "purchase_agent_pause.py")
+        for name in ("app.py", "worker.py", "purchase_agent_pause.py", "meta_delivery.py")
     )
     for name in LOGGED_INFO_EVENTS:
-        assert name.startswith(("hotmart_", "purchase_agent_")), name
+        assert name.startswith(("hotmart_", "purchase_agent_", "meta_")), name
         assert f'"{name} ' in sources, name
 
 

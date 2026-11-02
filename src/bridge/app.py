@@ -116,6 +116,12 @@ from bridge.ghl_precheckout_adapter import (
     translate_ghl_form_submission,
 )
 from bridge.lead_precheckout import LeadPrecheckoutSubmission, parse_lead_precheckout
+from bridge.meta_delivery import (
+    DEFAULT_RETRY_MAX_AGE_SECONDS as META_RETRY_MAX_AGE_SECONDS,
+    MetaDeliveryRejectionSweeper,
+    RetryConfig as MetaFirstTouchRetryConfig,
+    parse_retry_templates as parse_meta_retry_templates,
+)
 from bridge.messaging import (
     ChatwootMessageSender,
     FinalMetaEffectGate,
@@ -292,6 +298,13 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # de [plantillas].descuento y [hotmart] del manifiesto. Con el binding v1
     # (COMMERCIAL_ALLY_CONFIG_PATH) no arranca: _validate_conversation_followup.
     "conversation_followup_enabled",
+    # E-284: los rechazos de Meta (registrar), el unico reintento del 131049 del
+    # primer contacto y el cierre con aviso del 131026. Las reglas son del
+    # producto; por instancia, prenderlas y la lista de plantillas que se
+    # reintentan (META_FIRST_TOUCH_RETRY_TEMPLATES).
+    "meta_delivery_rejections_enabled",
+    "meta_first_touch_retry_enabled",
+    "meta_unreachable_close_enabled",
     "hermes_shadow_enabled",
     "automated_replies_enabled",
     "reply_splitter_enabled",
@@ -713,6 +726,18 @@ class Settings:
     # flag prendido es obligatorio: (0, 24) es a cualquier hora, escrito a
     # proposito. None = sin horario (Johanna).
     conversation_followup_send_hours: tuple[int, int] | None = None
+    # E-284 (meta-delivery-rejections-v1): el barrido que registra lo que Meta
+    # rechazo (META_DELIVERY_REJECTIONS_ENABLED), el unico reintento del 131049
+    # del primer contacto (META_FIRST_TOUCH_RETRY_ENABLED, solo las plantillas de
+    # META_FIRST_TOUCH_RETRY_TEMPLATES, en META_FIRST_TOUCH_RETRY_SEND_HOURS o,
+    # sin ella, CONVERSATION_FOLLOWUP_SEND_HOURS) y el cierre con aviso del
+    # 131026 (META_UNREACHABLE_CLOSE_ENABLED). Todo apagado por defecto.
+    meta_delivery_rejections_enabled: bool = False
+    meta_first_touch_retry_enabled: bool = False
+    meta_unreachable_close_enabled: bool = False
+    meta_first_touch_retry_templates: frozenset[str] = frozenset()
+    meta_first_touch_retry_send_hours: tuple[int, int] | None = None
+    meta_delivery_scan_interval_seconds: float = 600.0
     hermes_shadow_enabled: bool = False
     hermes_api_base_url: str | None = None
     hermes_api_key: str | None = None
@@ -1641,6 +1666,30 @@ class Settings:
         conversation_followup_send_hours = _parse_followup_send_hours(
             os.environ.get("CONVERSATION_FOLLOWUP_SEND_HOURS", "")
         )
+        meta_delivery_flags: dict[str, bool] = {}
+        for meta_flag in (
+            "META_DELIVERY_REJECTIONS_ENABLED",
+            "META_FIRST_TOUCH_RETRY_ENABLED",
+            "META_UNREACHABLE_CLOSE_ENABLED",
+        ):
+            meta_flag_value = os.environ.get(meta_flag, "false").strip().lower()
+            if meta_flag_value not in {"true", "false"}:
+                raise ValueError(f"{meta_flag} must be true or false")
+            meta_delivery_flags[meta_flag] = meta_flag_value == "true"
+        meta_retry_templates_raw = os.environ.get(
+            "META_FIRST_TOUCH_RETRY_TEMPLATES", ""
+        ).strip()
+        meta_first_touch_retry_templates = (
+            parse_meta_retry_templates(meta_retry_templates_raw)
+            if meta_retry_templates_raw
+            else frozenset()
+        )
+        meta_first_touch_retry_send_hours = _parse_followup_send_hours(
+            os.environ.get("META_FIRST_TOUCH_RETRY_SEND_HOURS", "")
+        )
+        meta_delivery_scan_interval_seconds = float(
+            os.environ.get("META_DELIVERY_SCAN_INTERVAL_SECONDS", "600")
+        )
         opt_out_projection_worker_id = (
             os.getenv("CHATWOOT_OPT_OUT_PROJECTION_WORKER_ID", "").strip() or None
         )
@@ -1863,6 +1912,18 @@ class Settings:
             conversation_followup_max_pages=conversation_followup_max_pages,
             conversation_followup_only_phone=conversation_followup_only_phone,
             conversation_followup_send_hours=conversation_followup_send_hours,
+            meta_delivery_rejections_enabled=meta_delivery_flags[
+                "META_DELIVERY_REJECTIONS_ENABLED"
+            ],
+            meta_first_touch_retry_enabled=meta_delivery_flags[
+                "META_FIRST_TOUCH_RETRY_ENABLED"
+            ],
+            meta_unreachable_close_enabled=meta_delivery_flags[
+                "META_UNREACHABLE_CLOSE_ENABLED"
+            ],
+            meta_first_touch_retry_templates=meta_first_touch_retry_templates,
+            meta_first_touch_retry_send_hours=meta_first_touch_retry_send_hours,
+            meta_delivery_scan_interval_seconds=meta_delivery_scan_interval_seconds,
             hermes_shadow_enabled=shadow_enabled,
             hermes_api_base_url=hermes_api_base_url,
             hermes_api_key=hermes_api_key,
@@ -3530,6 +3591,61 @@ def _payment_slip_step_templates(
     return tuple(steps)
 
 
+def _meta_first_touch_retry_send_hours(settings: Settings) -> tuple[int, int] | None:
+    """El horario del reintento: el suyo o, sin el, el del seguimiento con cupon."""
+    return (
+        settings.meta_first_touch_retry_send_hours
+        or settings.conversation_followup_send_hours
+    )
+
+
+def _validate_meta_delivery(settings: Settings) -> None:
+    """Las guardas de arranque de los rechazos de Meta (E-284).
+
+    El reintento y el cierre del 131026 viven adentro del barrido que registra:
+    sin el no corren. El reintento es un efecto externo (una plantilla de
+    marketing otra vez): exige el manifiesto (la zona del horario), el efecto
+    final de Meta abierto, la lista de plantillas y un horario.
+    """
+    if (
+        settings.meta_first_touch_retry_enabled
+        or settings.meta_unreachable_close_enabled
+    ) and not settings.meta_delivery_rejections_enabled:
+        raise ValueError(
+            "META_FIRST_TOUCH_RETRY_ENABLED and META_UNREACHABLE_CLOSE_ENABLED "
+            "require META_DELIVERY_REJECTIONS_ENABLED"
+        )
+    if not (
+        math.isfinite(settings.meta_delivery_scan_interval_seconds)
+        and 60 <= settings.meta_delivery_scan_interval_seconds <= 3600
+    ):
+        raise ValueError("META_DELIVERY_SCAN_INTERVAL_SECONDS must be 60-3600")
+    if settings.meta_first_touch_retry_send_hours is not None and not (
+        _followup_send_hours_in_range(settings.meta_first_touch_retry_send_hours)
+    ):
+        raise ValueError(_FOLLOWUP_SEND_HOURS_ERROR)
+    if not settings.meta_first_touch_retry_enabled:
+        return
+    if settings.instance_manifest is None:
+        raise ValueError(
+            "META_FIRST_TOUCH_RETRY_ENABLED requires an instance manifest"
+        )
+    if not settings.meta_final_effect_enabled:
+        raise ValueError(
+            "META_FIRST_TOUCH_RETRY_ENABLED requires META_FINAL_EFFECT_ENABLED"
+        )
+    if not settings.meta_first_touch_retry_templates:
+        raise ValueError(
+            "META_FIRST_TOUCH_RETRY_ENABLED requires "
+            "META_FIRST_TOUCH_RETRY_TEMPLATES"
+        )
+    if _meta_first_touch_retry_send_hours(settings) is None:
+        raise ValueError(
+            "META_FIRST_TOUCH_RETRY_ENABLED requires "
+            "META_FIRST_TOUCH_RETRY_SEND_HOURS or CONVERSATION_FOLLOWUP_SEND_HOURS"
+        )
+
+
 def _validate_conversation_followup(
     settings: Settings, *, explicit_manifest_runtime: bool
 ) -> None:
@@ -4567,6 +4683,7 @@ def create_app(
     _validate_conversation_followup(
         settings, explicit_manifest_runtime=explicit_manifest_runtime
     )
+    _validate_meta_delivery(settings)
     # Mandar un cupon es un efecto externo irreversible: sin plantilla, sin
     # cupon, sin producto, sin el AgentBot que la emite y sin la admision de
     # Corte B (el link sale del caso comercial que abre esa admision), el
@@ -5795,6 +5912,7 @@ def create_app(
         None
     )
     conversation_followup_sweeper: ConversationFollowupSweeper | None = None
+    meta_delivery_sweeper: MetaDeliveryRejectionSweeper | None = None
     # El barrido nativo del seguimiento a 24 h (P22-3 de M16, E-269): lo arma
     # el motor (FLOW_ENGINE_ENABLED) con Chatwoot; sin un silencio nativo
     # publicado no arma ningun barredor.
@@ -5850,6 +5968,8 @@ def create_app(
                 await conversation_reactivation_sweeper.start()
             if conversation_followup_sweeper is not None:
                 await conversation_followup_sweeper.start()
+            if meta_delivery_sweeper is not None:
+                await meta_delivery_sweeper.start()
             if native_silence_sweepers is not None:
                 await native_silence_sweepers.start()
             if flow_engine_divergence_notifier is not None:
@@ -5871,6 +5991,7 @@ def create_app(
                     "native_silence_sweepers",
                     native_silence_sweepers,
                 ),
+                ("meta_delivery_sweeper", meta_delivery_sweeper),
                 (
                     "conversation_followup_sweeper",
                     conversation_followup_sweeper,
@@ -5930,6 +6051,7 @@ def create_app(
         conversation_reactivation_sweeper
     )
     app.state.conversation_followup_sweeper = conversation_followup_sweeper
+    app.state.meta_delivery_sweeper = meta_delivery_sweeper
     app.state.native_silence_sweepers = native_silence_sweepers
 
     # Con manifiesto, el mismo movil puede estar guardado con la otra forma
@@ -8297,6 +8419,51 @@ def create_app(
             app.state.conversation_followup_sweeper = (
                 conversation_followup_sweeper
             )
+        if settings.meta_delivery_rejections_enabled:
+            # E-284: lo que Meta rechazo despues de que Chatwoot lo acepto. Lee
+            # Chatwoot con el cliente de control y escribe solo en la base; el
+            # reintento manda con el AgentBot del mismo cliente.
+            if (
+                not isinstance(control_client, ChatwootClient)
+                or settings.chatwoot_account_id is None
+                or settings.chatwoot_inbox_id is None
+                or shared_supabase is None
+            ):
+                raise ValueError(
+                    "META_DELIVERY_REJECTIONS_ENABLED requires the Chatwoot "
+                    "control client, canonical ids and Supabase"
+                )
+            meta_retry_config: MetaFirstTouchRetryConfig | None = None
+            if settings.meta_first_touch_retry_enabled:
+                meta_retry_hours = _meta_first_touch_retry_send_hours(settings)
+                assert meta_retry_hours is not None
+                assert settings.instance_manifest is not None
+                meta_retry_config = MetaFirstTouchRetryConfig(
+                    allowed_templates=settings.meta_first_touch_retry_templates,
+                    send_hours=meta_retry_hours,
+                    time_zone=ZoneInfo(settings.instance_manifest.time_zone),
+                    gate=FinalMetaEffectGate(
+                        enabled=settings.meta_final_effect_enabled,
+                        evidence_dir=settings.meta_final_effect_evidence_dir,
+                    ),
+                    max_age_seconds=META_RETRY_MAX_AGE_SECONDS,
+                )
+            meta_delivery_sweeper = MetaDeliveryRejectionSweeper(
+                chatwoot=control_client,
+                supabase=shared_supabase,
+                account_id=settings.chatwoot_account_id,
+                inbox_id=settings.chatwoot_inbox_id,
+                close_unreachable=settings.meta_unreachable_close_enabled,
+                # El aviso del 131026 sale por el conector de Slack de la
+                # aliada, el mismo productor que MOT-002. Sin conector, se
+                # registra y /ready lo cuenta (notice_without_slack).
+                producer=(
+                    slack_runtime.producer if slack_runtime is not None else None
+                ),
+                retry=meta_retry_config,
+                scan_interval_seconds=settings.meta_delivery_scan_interval_seconds,
+            )
+            app.state.meta_delivery_sweeper = meta_delivery_sweeper
         if (
             flow_engine_runtime is not None
             and isinstance(control_client, ChatwootClient)
@@ -9285,6 +9452,22 @@ def create_app(
                             _followup_send_hours_text(followup_send_hours)
                         ),
                     }
+        if meta_delivery_sweeper is not None:
+            # E-284: el barrido de los rechazos de Meta. Un barrido caido no
+            # tumba el bridge: se publica. Sin numeros ni nombres.
+            stalled_monitor_readiness = {
+                **stalled_monitor_readiness,
+                "meta_delivery_rejections": meta_delivery_sweeper.last_scan_state,
+                "meta_delivery_rejections_last_scan": (
+                    meta_delivery_sweeper.last_scan_summary
+                ),
+                "meta_first_touch_retry": (
+                    "enabled" if meta_delivery_sweeper.retry_enabled else "disabled"
+                ),
+                "meta_unreachable_close": (
+                    "enabled" if meta_delivery_sweeper.close_unreachable else "disabled"
+                ),
+            }
         if native_silence_sweepers is not None:
             # El barrido nativo del seguimiento (E-269): de lo que ya esta en
             # memoria, sin numeros ni nombres. Ninguna clave da 503.

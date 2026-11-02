@@ -6432,6 +6432,48 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         5,
         'identity_recycle'
+    union all
+    select
+        '20261103000500',
+        '20261103000500_meta_delivery_rejections_v1.sql',
+        -- Los rechazos de Meta y el unico reintento del 131049 (E-284): la
+        -- tabla, con RLS y sin lectura para la API ...
+        (
+            select count(*) = 1
+            from pg_class c
+            where c.oid = to_regclass('public.meta_delivery_rejections')
+              and c.relrowsecurity
+              and not has_table_privilege('anon', c.oid, 'SELECT')
+              and not has_table_privilege('authenticated', c.oid, 'SELECT')
+        )::int
+        -- ... las seis funciones, solo para service_role ...
+        + (
+            select count(*) = 6
+            from functions
+            where oid in (
+                to_regprocedure('public.record_meta_delivery_rejection_v1(bigint,bigint,bigint,bigint,text,text,text,timestamptz,bigint,boolean,timestamptz)'),
+                to_regprocedure('public.list_due_meta_first_touch_retries_v1(bigint,integer,integer,timestamptz)'),
+                to_regprocedure('public.claim_meta_first_touch_retry_v1(bigint,bigint,text,text,integer,timestamptz)'),
+                to_regprocedure('public.settle_meta_first_touch_retry_v1(uuid,text,bigint,text,timestamptz)'),
+                to_regprocedure('public.mark_meta_delivery_rejection_notified_v1(uuid,timestamptz)'),
+                to_regprocedure('public.block_meta_first_touch_retry_v1(uuid,text,timestamptz)')
+            )
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- ... el cierre del 131026 adentro del registro ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.record_meta_delivery_rejection_v1(bigint,bigint,bigint,bigint,text,text,text,timestamptz,bigint,boolean,timestamptz)')
+              and position('meta_131026_unreachable' in definition) > 0
+        )::int
+        -- ... y la vista para contar por plantilla.
+        + (to_regclass('public.meta_delivery_rejection_counts_v1') is not null)::int,
+        4,
+        'meta_delivery_rejections'
 )
 select
     version,

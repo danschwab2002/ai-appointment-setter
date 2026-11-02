@@ -505,6 +505,11 @@ def verify_effective_acls(harness: PostgresHarness) -> None:
                      -- predicado sobre human_handoff_requests (no reserva
                      -- sobre una derivacion sin atender); solo lee esa tabla.
                      'claim_flow_engine_silence_v1',
+                     -- La reserva del unico reintento del 131049 (migracion
+                     -- 20261103000500, E-284): el mismo predicado sobre
+                     -- human_handoff_requests (no reintenta sobre una
+                     -- derivacion sin atender); solo lee esa tabla.
+                     'claim_meta_first_touch_retry_v1',
                      -- Las lecturas del Automation Expert (migracion
                      -- 20261015000200): atan un lead a la instancia por la
                      -- bandeja de su derivacion y muestran cuando se derivo

@@ -61,7 +61,7 @@ const names = readdirSync(join(root, 'supabase/migrations')).filter((name) => na
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Despues va solo el reciclado de un telefono de prueba (20261102000400, E-270).
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261102000400_identity_recycle_v1.sql'])) {
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261102000400_identity_recycle_v1.sql', '20261103000500_meta_delivery_rejections_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo el reciclado`, names.slice(position + 1));
 }
 
