@@ -40,15 +40,15 @@ def _flows_body(reader: FakeReader) -> dict[str, object]:
     return response.json()
 
 
-def test_the_contract_is_1_3_0() -> None:
-    # 1.3.0 (E-208): la ficha del legado, business_flows y el motor v1, sobre lo de la 1.2.0.
-    assert CONTRACT_VERSION == "1.3.0"
+def test_the_contract_is_1_4_0() -> None:
+    # 1.4.0 (F-151): el permiso de WhatsApp declarado, sobre la 1.3.0 (E-208: la ficha del legado, business_flows y el motor v1).
+    assert CONTRACT_VERSION == "1.4.0"
 
 
 def test_list_flows_shows_the_native_flow_with_its_cohort_and_sales() -> None:
     reader = _reader()
     body = _flows_body(reader)
-    assert body["contract_version"] == "1.3.0"
+    assert body["contract_version"] == "1.4.0"
     assert body["source"] == "mixed"
     flows = {flow["flow_key"]: flow for flow in body["data"]["flows"]}
     # Los cinco de siempre siguen, y la bienvenida se suma.
@@ -221,7 +221,7 @@ def _tools():  # el modulo del plugin, sin Hermes
 def test_read_library_gives_the_index_and_each_page() -> None:
     tools = _tools()
     index = json.loads(tools.read_library({}))
-    assert index["tema"] == "indice" and index["topics"] == ["hotmart", "ghl-formularios", "chatwoot-whatsapp"]
+    assert index["tema"] == "indice" and index["topics"] == ["hotmart", "ghl-formularios", "chatwoot-whatsapp", "crear-un-flujo"]
     for topic in index["topics"]:
         page = json.loads(tools.read_library({"tema": topic}))
         assert page["tema"] == topic and page["page"].startswith("# ")
@@ -238,7 +238,7 @@ def test_the_library_matches_the_code() -> None:
     from bridge.flow_definition import EVENTS
 
     pages = {path.stem: path.read_text(encoding="utf-8") for path in (READ_PLUGIN / "biblioteca").glob("*.md")}
-    assert set(pages) == {"indice", "hotmart", "ghl-formularios", "chatwoot-whatsapp"}
+    assert set(pages) == {"indice", "hotmart", "ghl-formularios", "chatwoot-whatsapp", "crear-un-flujo"}
     text = "\n".join(pages.values())
     events = set(re.findall(r"`(PURCHASE_[A-Z_]+)`", text))
     known = {hotmart.EVENT_CART_ABANDONMENT, hotmart.EVENT_PURCHASE_APPROVED, hotmart.EVENT_PURCHASE_CANCELED,

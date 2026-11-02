@@ -13,7 +13,9 @@ LIST_FLOWS = {
         "ejecuta hoy (`executor`: legado, nativo, nativo_en_cohorte, los dos, motor_v1 o "
         "nadie), por qué scope sigue el legado y qué nativos lo hacen, con un `summary` para "
         "contarlo. Un flujo del legado con ruta del motor v1 trae `engine_v1`: su ruta, sus "
-        "divergencias y sus rechazos. Con flow_key devuelve uno solo. Solo lee."
+        "divergencias y sus rechazos. `client_ok` es el permiso de WhatsApp de la aliada "
+        "declarado para la instancia ({quien, medio, fecha}, la forma de ok_del_cliente), o "
+        "null si no está declarado. Con flow_key devuelve uno solo. Solo lee."
     ),
     "parameters": {
         "type": "object",
@@ -107,14 +109,16 @@ READ_LIBRARY = {
         "línea); con tema, la página: hotmart (los eventos y el producto por ID), ghl-formularios "
         "(cómo llega el formulario con permiso de WhatsApp) o chatwoot-whatsapp (plantillas, "
         "categorías, la ventana de 24 h y las etiquetas). Usala antes de armar un flujo nuevo para "
-        "saber si el evento existe y llega. No trae nada de la instancia ni de una persona. Solo lee."
+        "saber si el evento existe y llega. crear-un-flujo es cómo se conversa un flujo nuevo con "
+        "quien no lo trae armado: las rondas, los valores propuestos y el resumen antes de proponer. "
+        "No trae nada de la instancia ni de una persona. Solo lee."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "tema": {
                 "type": "string",
-                "enum": ["hotmart", "ghl-formularios", "chatwoot-whatsapp"],
+                "enum": ["hotmart", "ghl-formularios", "chatwoot-whatsapp", "crear-un-flujo"],
                 "description": "El tema; sin tema, el índice.",
             }
         },

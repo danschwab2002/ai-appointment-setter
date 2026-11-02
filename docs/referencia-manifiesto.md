@@ -70,6 +70,15 @@ Reglas: al menos una oferta, códigos sin repetir y una sola oferta por landing.
 |---|---|
 | `inbound.scope_key` / `scope_version` | El alcance con el que se admiten mensajes entrantes. Cambiar la versión obliga a registrar el alcance nuevo en la base |
 | `consentimiento.copy_version` | Versión del texto de consentimiento de contacto por WhatsApp que ve la persona en el formulario |
+| `consentimiento.ok_del_cliente` | Opcional (desde F-151). El permiso de WhatsApp de la aliada para los flujos con permiso de compra, `{ quien = "…", medio = "…", fecha = "AAAA-MM-DD" }`: quién lo dio, por qué medio y desde qué fecha. El Automation Expert lo lee en `list_flows` (`client_ok`) y lo copia a cada flujo nuevo que lo exige, en vez de preguntarlo cada vez. Las mismas reglas que el `ok_del_cliente` de una propuesta: `quien` y `medio` de hasta 120 caracteres, y una fecha que existe; si no se cumplen, el bridge no arranca. Sin el campo, el agente lo busca en la última propuesta publicada o lo pregunta |
+
+Ejemplo (el de Maribel, 01/11):
+
+```toml
+[consentimiento]
+copy_version = "maribel-whatsapp-contact-v1"
+ok_del_cliente = { quien = "los clientes de Maribel al llenar el formulario de la landing", medio = "checkbox de consentimiento de WhatsApp del formulario de la landing", fecha = "2026-09-01" }
+```
 
 ## `[plantillas]`
 

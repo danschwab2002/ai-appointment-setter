@@ -29,6 +29,7 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .commercial_ally import CommercialAllyConfig, OfferLanding
+from .flow_definition import check_client_ok
 from .payment_slip import (
     PAYMENT_SLIP_TEMPLATE_PARAMETERS,
     PaymentSlipMethod,
@@ -318,6 +319,11 @@ class InstanceManifest:
     # se le puede mandar, con su tienda, su vencimiento y la base del boton.
     # Vacia = ningun medio habilitado.
     payment_slip_methods: tuple[PaymentSlipMethod, ...] = ()
+    # El permiso de WhatsApp de la aliada para los flujos con permiso de compra
+    # ([consentimiento].ok_del_cliente, F-151): quien lo dio, por que medio y desde
+    # cuando, con la forma de ok_del_cliente de un item. None = no esta declarado:
+    # el Automation Expert lo busca en la ultima propuesta publicada o lo pregunta.
+    client_ok: Mapping[str, str] | None = None
 
     def flow_enabled(self, flow: str) -> bool:
         """Si ``flow`` esta prendido; un flujo opcional sin declarar, no."""
@@ -558,7 +564,8 @@ class InstanceManifest:
         _exact_keys("inbound", inbound, {"scope_key", "scope_version"})
 
         consentimiento = _table(payload, "consentimiento")
-        _exact_keys("consentimiento", consentimiento, {"copy_version"})
+        _exact_keys("consentimiento", consentimiento, {"copy_version"}, {"ok_del_cliente"})
+        client_ok = _client_ok(consentimiento.get("ok_del_cliente"))
 
         templates = _templates(_table(payload, "plantillas"))
 
@@ -636,6 +643,7 @@ class InstanceManifest:
             ghl_form_landings=ghl_form_landings,
             products=products,
             payment_slip_methods=payment_slip_methods,
+            client_ok=client_ok,
         )
         for flow, enabled in manifest.flows.items():
             blockers = manifest.flow_blockers(flow)
@@ -832,6 +840,30 @@ def _exact_keys(
         raise ManifestError(f"{where}: faltan {', '.join(missing)}")
     if extra:
         raise ManifestError(f"{where}: claves no soportadas {', '.join(extra)}")
+
+
+def _client_ok(value: object) -> Mapping[str, str] | None:
+    """``[consentimiento].ok_del_cliente`` (F-151), opcional: ``{quien, medio, fecha}``.
+
+    Las mismas reglas que el ``ok_del_cliente`` de un item (``check_client_ok``):
+    el bridge no lo pone en ninguna propuesta, lo muestra ``list_flows`` y el
+    agente lo copia, asi que uno que la base rechazaria no carga. La fecha va
+    entre comillas (AAAA-MM-DD); una fecha TOML sin comillas tambien se acepta.
+    """
+    if value is None:
+        return None
+    if isinstance(value, Mapping) and isinstance(value.get("fecha"), date) \
+            and not isinstance(value.get("fecha"), datetime):
+        value = {**value, "fecha": value["fecha"].isoformat()}
+    findings = check_client_ok(value, path=())
+    if findings:
+        detail = "; ".join(
+            f"{finding.code} en ok_del_cliente{finding.path}" for finding in findings)
+        raise ManifestError(
+            "consentimiento.ok_del_cliente es {quien, medio, fecha}: quien y medio, texto de hasta 120 "
+            f"caracteres; fecha, AAAA-MM-DD ({detail})")
+    assert isinstance(value, Mapping)
+    return MappingProxyType({key: str(value[key]) for key in ("quien", "medio", "fecha")})
 
 
 def _table(payload: Mapping[str, Any], key: str) -> Mapping[str, Any]:

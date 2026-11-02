@@ -398,7 +398,7 @@ def test_the_flows_route_answers_business_flows_and_the_engine_v1() -> None:
     response = _client(reader_).get("/internal/automation-expert/v1/flows", headers=AUTH)
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["contract_version"] == "1.3.0"
+    assert body["contract_version"] == "1.4.0"
     business = {entry["business"]: entry for entry in body["data"]["business_flows"]}
     # El manifiesto de ATT1 de las pruebas tiene todo apagado: nadie manda por el legado.
     assert business["carrito"]["executor"] == "nadie"

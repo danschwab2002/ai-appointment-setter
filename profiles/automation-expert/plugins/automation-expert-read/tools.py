@@ -320,7 +320,8 @@ def draw_flow(params: dict[str, object], **kwargs: object) -> str:
 # La biblioteca (automation-expert-read-v1 1.2.0, el PR 5 del hito 4): paginas
 # fijas que viajan con el plugin, sin red. El indice lista los temas.
 LIBRARY_DIR = Path(__file__).resolve().parent / "biblioteca"
-LIBRARY_TOPICS = ("hotmart", "ghl-formularios", "chatwoot-whatsapp")
+# crear-un-flujo (E-255, F-144): como se conversa un flujo nuevo con quien no lo trae armado.
+LIBRARY_TOPICS = ("hotmart", "ghl-formularios", "chatwoot-whatsapp", "crear-un-flujo")
 LIBRARY_MAX_BYTES = 16 * 1024
 
 

@@ -8680,6 +8680,18 @@ def create_app(
                     gap for gap in gaps
                     if gap["scope"] in ("instance", f"flow:{flow_key}")
                 ]
+            # 1.4.0 (F-151): el permiso de WhatsApp declarado en el manifiesto
+            # ([consentimiento].ok_del_cliente), con la forma exacta del
+            # ok_del_cliente de un item para que el agente lo copie. null = no
+            # esta declarado.
+            data = {
+                **data,
+                "client_ok": (
+                    dict(expert_manifest.client_ok)
+                    if expert_manifest.client_ok is not None
+                    else None
+                ),
+            }
             body = automation_expert_envelope(
                 expert_instance,
                 data=data,
