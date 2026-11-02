@@ -1317,18 +1317,24 @@ def test_rejects_invalid_creation_date(tmp_path) -> None:
     assert response.json()["detail"] == "invalid_creation_date"
 
 
-def test_rejects_stale_webhook(tmp_path) -> None:
+def test_ignores_stale_webhook(tmp_path) -> None:
+    # E-283: mas viejo que la ventana de reintentos (72 h) es un descarte con 200,
+    # no un 401; lo de 300 s a 72 h se procesa (tests/test_hotmart_late_delivery.py).
     app = create_app(
         _hotmart_settings(capture_dir=tmp_path, hotmart_max_age_seconds=60)
     )
     payload = {
         **EXAMPLE_PAYLOAD,
-        "creation_date": int((time.time() - 120) * 1000),
+        "creation_date": int((time.time() - 73 * 3600) * 1000),
     }
     raw = json.dumps(payload).encode()
     response = _post_hotmart(app, raw)
-    assert response.status_code == 401
-    assert response.json()["detail"] == "stale_webhook"
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ignored",
+        "event_id": EXAMPLE_PAYLOAD["id"],
+        "reason": "stale_webhook",
+    }
 
 
 # ── Supabase persistence (with mock transport) ─────────────────────

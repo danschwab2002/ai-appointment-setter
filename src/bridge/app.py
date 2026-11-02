@@ -91,7 +91,7 @@ from bridge.hotmart import (
     EVENT_PURCHASE_CANCELED,
     PAYMENT_SLIP_EVENT_TYPES,
     classify_hotmart_event,
-    is_stale_event,
+    hotmart_event_freshness,
     parse_hotmart_purchase_payload,
     parse_hotmart_payment_failure_payload,
     parse_hotmart_payment_slip_payload,
@@ -11223,16 +11223,38 @@ def create_app(
         assert event_type is not None
 
         event_obj = payload if isinstance(payload, dict) else {}
-        stale = is_stale_event(
+        freshness = hotmart_event_freshness(
             creation_date=event_obj.get("creation_date"),
             max_age_seconds=settings.hotmart_max_age_seconds,
         )
-        if stale is None:
+        if freshness is None:
             raise HTTPException(
                 status_code=400, detail="invalid_creation_date"
             )
-        if stale:
-            raise HTTPException(status_code=401, detail="stale_webhook")
+        if freshness.is_stale:
+            # E-283: antes era 401, sin rastro, y Hotmart lo contaba como falla
+            # del webhook (sumadas, lo desactiva). El hottok ya es valido: es un
+            # descarte deliberado, con el id, el tipo y la edad en el log.
+            logger.warning(
+                "hotmart_event_stale event_id=%s event_type=%s age_seconds=%s",
+                *hotmart_log_fields(event_id, event_type),
+                freshness.age_seconds,
+            )
+            response.status_code = status.HTTP_200_OK
+            return {
+                "status": "ignored",
+                "event_id": event_id,
+                "reason": "stale_webhook",
+            }
+        if freshness.is_late:
+            # E-283: el reintento de Hotmart (13, 15 y 30 min despues) o una
+            # caida del bridge. Sigue el camino de siempre: la admision es
+            # unica por id, asi que un replay sale duplicate.
+            logger.info(
+                "hotmart_event_late event_id=%s event_type=%s age_seconds=%s",
+                *hotmart_log_fields(event_id, event_type),
+                freshness.age_seconds,
+            )
 
         if shared_supabase is None:
             raise HTTPException(

@@ -134,14 +134,26 @@ def test_without_the_payment_failure_flow_the_slip_is_ignored_as_before() -> Non
     assert supabase.slip_calls == []
 
 
-def test_a_stale_slip_is_refused_like_any_event() -> None:
+def test_a_late_slip_is_admitted_and_a_stale_one_ignored_like_any_event() -> None:
+    # E-283: el reintento de una ficha que dio 503 llega una hora tarde y entra;
+    # una de mas de 72 h se descarta con 200 (antes, las dos eran 401).
     supabase = _SlipSupabase()
-    payload = _slip()
-    payload["creation_date"] = int((time.time() - 3600) * 1000)
+    late = _slip()
+    late["creation_date"] = int((time.time() - 3600) * 1000)
 
-    response = _post(_app(supabase), payload)
+    response = _post(_app(supabase), late)
 
-    assert response.status_code == 401
+    assert response.status_code == 202
+    assert len(supabase.slip_calls) == 1
+
+    supabase = _SlipSupabase()
+    stale = _slip()
+    stale["creation_date"] = int((time.time() - 73 * 3600) * 1000)
+
+    response = _post(_app(supabase), stale)
+
+    assert response.status_code == 200
+    assert response.json()["reason"] == "stale_webhook"
     assert supabase.slip_calls == []
 
 
