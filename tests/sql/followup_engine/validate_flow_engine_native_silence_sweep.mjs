@@ -65,7 +65,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026110200040
   // El historial de la pagina de aprobacion (20261103000600, E-295): dos lecturas del rol de la pagina.
   '20261103000600_flow_approval_history_v1.sql',
   // Si la persona ya es cliente (20261103000700, E-297): una lectura de service_role.
-  '20261103000700_customer_status_v1.sql'])) {
+  '20261103000700_customer_status_v1.sql',
+  // Las cuatro ramas del pago rechazado nativo (20261103000900, E-306).
+  '20261103000900_flow_engine_native_payment_failure_branches_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo el reciclado`, names.slice(position + 1));
 }
 

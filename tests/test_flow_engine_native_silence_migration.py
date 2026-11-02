@@ -45,15 +45,17 @@ def test_it_is_one_transaction_with_lock_timeout_and_the_last() -> None:
     # Los rechazos de Meta y el unico reintento del 131049 (20261103000500, E-284).
     # El historial de la pagina de aprobacion (20261103000600, E-295).
     # Si la persona ya es cliente (20261103000700, E-297).
-    assert names[-1] == "20261103000700_customer_status_v1.sql"
-    assert names[-2] == "20261103000600_flow_approval_history_v1.sql"
-    assert names[-3] == "20261103000500_meta_delivery_rejections_v1.sql"
-    assert names[-4] == "20261102000400_identity_recycle_v1.sql"
-    assert names[-5] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
-    assert names[-6] == "20261102000200_meta_template_requests_v1.sql"
-    assert names[-7] == "20261102000100_recovery_coupon_by_reply_v1.sql"
-    assert names[-8] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
-    assert names[-9] == MIGRATION.name
+    # Las cuatro ramas del pago rechazado nativo (20261103000900, E-306).
+    assert names[-1] == "20261103000900_flow_engine_native_payment_failure_branches_v1.sql"
+    assert names[-2] == "20261103000700_customer_status_v1.sql"
+    assert names[-3] == "20261103000600_flow_approval_history_v1.sql"
+    assert names[-4] == "20261103000500_meta_delivery_rejections_v1.sql"
+    assert names[-5] == "20261102000400_identity_recycle_v1.sql"
+    assert names[-6] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
+    assert names[-7] == "20261102000200_meta_template_requests_v1.sql"
+    assert names[-8] == "20261102000100_recovery_coupon_by_reply_v1.sql"
+    assert names[-9] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
+    assert names[-10] == MIGRATION.name
     assert sql.count("\nbegin;\n") == 1 and sql.rstrip().endswith("commit;")
     assert "set local lock_timeout = '5s';" in sql
     assert "message = 'flow_engine_native_silence_already_applied'" in sql
@@ -105,5 +107,5 @@ def test_the_validator_is_the_last_of_the_npm_chain() -> None:
     assert chain.rstrip().endswith(
         " && node validate_flow_engine_native_silence.mjs && node validate_followup_stops.mjs && node validate_recovery_coupon_by_reply.mjs"
         " && node validate_meta_template_requests.mjs --check && node validate_flow_engine_native_silence_sweep.mjs"
-        " && node validate_identity_recycle.mjs && node validate_meta_delivery_rejections.mjs && node validate_flow_approval_history.mjs && node validate_customer_status.mjs"
+        " && node validate_identity_recycle.mjs && node validate_meta_delivery_rejections.mjs && node validate_flow_approval_history.mjs && node validate_customer_status.mjs && node validate_flow_engine_native_payment_failure_branches.mjs --check"
     )

@@ -120,7 +120,9 @@ if (JSON.stringify(names.slice(names.indexOf(MIGRATION) + 1)) !== JSON.stringify
   // El historial de la pagina de aprobacion (20261103000600, E-295): dos lecturas del rol de la pagina.
   '20261103000600_flow_approval_history_v1.sql',
   // Si la persona ya es cliente (20261103000700, E-297): una lectura de service_role.
-  '20261103000700_customer_status_v1.sql'])) {
+  '20261103000700_customer_status_v1.sql',
+  // Las cuatro ramas del pago rechazado nativo (20261103000900, E-306).
+  '20261103000900_flow_engine_native_payment_failure_branches_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la del seguimiento a 24 h nativo`, names.slice(-3));
 }
 if (maribel.name !== 'maribel_retomar_proceso_01') fail('el fixture no es la plantilla de Maribel');
