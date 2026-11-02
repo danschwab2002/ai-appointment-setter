@@ -40,10 +40,12 @@ def test_it_is_one_transaction_with_lock_timeout_and_the_last() -> None:
     # vigente (20261101000300, E-263), que parchan las dos reservas.
     # La renovacion por respuesta y el cupon del turno (20261102000100, E-267).
     # Las solicitudes de plantilla de Meta (20261102000200, E-268, F-146 partes 1 y 2).
-    assert names[-1] == "20261102000200_meta_template_requests_v1.sql"
-    assert names[-2] == "20261102000100_recovery_coupon_by_reply_v1.sql"
-    assert names[-3] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
-    assert names[-4] == MIGRATION.name
+    # El barrido del seguimiento a 24 h nativo (20261102000300, E-269).
+    assert names[-1] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
+    assert names[-2] == "20261102000200_meta_template_requests_v1.sql"
+    assert names[-3] == "20261102000100_recovery_coupon_by_reply_v1.sql"
+    assert names[-4] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
+    assert names[-5] == MIGRATION.name
     assert sql.count("\nbegin;\n") == 1 and sql.rstrip().endswith("commit;")
     assert "set local lock_timeout = '5s';" in sql
     assert "message = 'flow_engine_native_silence_already_applied'" in sql
@@ -94,5 +96,5 @@ def test_the_validator_is_the_last_of_the_npm_chain() -> None:
     # Despues va solo el de los frenos del seguimiento (20261101000300, E-263).
     assert chain.rstrip().endswith(
         " && node validate_flow_engine_native_silence.mjs && node validate_followup_stops.mjs && node validate_recovery_coupon_by_reply.mjs"
-        " && node validate_meta_template_requests.mjs --check"
+        " && node validate_meta_template_requests.mjs --check && node validate_flow_engine_native_silence_sweep.mjs"
     )

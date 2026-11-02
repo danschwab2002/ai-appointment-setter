@@ -45,12 +45,14 @@ from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from bridge.business_auto_reply import TEMPLATE_MARKERS
+from bridge.flow_schedule import Franja, is_open
 from bridge.chatwoot import ChatwootProtocolError
 from bridge.checkout_issuance import generate_issuance_ulid
 from bridge.lead_decline import LEAD_DECLINED, detect_lead_decline
 from bridge.lead_first_name import resolve_greeting_name, template_greeting_name_is_safe
 from bridge.phones import equivalent_whatsapp_phones, same_whatsapp_phone
 from bridge.reactivation import _last_conversational_message, _scan_summary
+from bridge.supabase import NativeSilenceRun
 
 
 logger = logging.getLogger(__name__)
@@ -95,6 +97,11 @@ REGIME_PAYMENT_FAILED = "payment_failed"
 # El modo de un solo telefono: las candidatas de otro telefono no se releen ni
 # se reservan, solo se cuentan con este motivo.
 HELD_ONLY_PHONE = "held_only_phone"
+# El barrido nativo en cohorte (P22-3 de M16): las candidatas de una
+# conversacion que no es de un contacto de la cohorte no se releen ni se
+# reservan, solo se cuentan con este motivo (la reserva las frenaria igual, con
+# blocked_out_of_cohort, despues de releer la conversacion en Chatwoot).
+HELD_OUT_OF_COHORT = "held_out_of_cohort"
 # El resumen de un barrido que cayo fuera del horario de envio: no leyo el
 # catalogo ni Chatwoot.
 OUTSIDE_SEND_HOURS = "outside_send_hours"
@@ -618,9 +625,15 @@ def _followup_scan_summary(
     abrir: si quedan fuera de los primeros, van al final y ``other_reasons`` no
     las cuenta.
     """
-    held = motivos[HELD_ONLY_PHONE]
     shown = {motivo for motivo, _ in motivos.most_common(_SUMMARY_TOP_REASONS)}
-    if held == 0 or HELD_ONLY_PHONE in shown:
+    # Lo retenido (el telefono de prueba, o la cohorte del barrido nativo) va
+    # siempre a la vista: es lo que se mira antes de abrir.
+    pinned = [
+        held
+        for held in (HELD_ONLY_PHONE, HELD_OUT_OF_COHORT)
+        if motivos[held] > 0 and held not in shown
+    ]
+    if not pinned:
         return _scan_summary(
             scanned=scanned, sent=sent, motivos=motivos, top=_SUMMARY_TOP_REASONS
         )
@@ -628,15 +641,12 @@ def _followup_scan_summary(
         {
             motivo: cuenta
             for motivo, cuenta in motivos.items()
-            if motivo != HELD_ONLY_PHONE
+            if motivo not in pinned
         }
     )
-    return (
-        _scan_summary(
-            scanned=scanned, sent=sent, motivos=rest, top=_SUMMARY_TOP_REASONS
-        )
-        + f" {HELD_ONLY_PHONE}={held}"
-    )
+    return _scan_summary(
+        scanned=scanned, sent=sent, motivos=rest, top=_SUMMARY_TOP_REASONS
+    ) + "".join(f" {held}={motivos[held]}" for held in pinned)
 
 
 class ConversationFollowupSweeper:
@@ -665,6 +675,22 @@ class ConversationFollowupSweeper:
       forma canonica, asi que 52... y 521... son el mismo), y el resto de las
       candidatas se cuenta como ``held_only_phone``: una cota superior, ver
       ``run_once``.
+
+    Cinco mas existen para el barrido nativo (P22-3 de M16, E-269: un silencio
+    nativo del agente publicado, ``native_silence.NativeSilenceSweepers``). Sus
+    defaults dejan el barredor del legado como estaba.
+
+    * ``native_run``: la reserva va por claim_flow_engine_silence_v1 con el
+      flujo, la version y su sha256 (exige ``phone_equivalence``).
+    * ``send_window``: el horario de la definicion, una franja con minutos
+      (``flow_schedule``: la hora de fin entra entera). Excluye ``send_hours``.
+    * ``conversation_statuses``: ``dispara.silencio.conversaciones``, en los
+      estados de Chatwoot.
+    * ``only_conversation_ids``: en cohorte, las conversaciones de sus
+      contactos. Las demas candidatas se cuentan como ``held_out_of_cohort``,
+      sin releer ni reservar.
+    * ``log_prefix``: el prefijo de cada linea del log, para que el nativo y el
+      legado se cuenten por separado.
     """
 
     def __init__(
@@ -690,6 +716,11 @@ class ConversationFollowupSweeper:
         refuse_unsafe_greeting: bool = False,
         phone_equivalence: bool = False,
         external_user_id_resolver: Callable[..., Awaitable[str]] | None = None,
+        native_run: NativeSilenceRun | None = None,
+        send_window: Franja | None = None,
+        conversation_statuses: tuple[str, ...] = FOLLOWUP_CONVERSATION_STATUSES,
+        only_conversation_ids: frozenset[int] | None = None,
+        log_prefix: str = "conversation_followup",
         clock: Callable[[], float] = time.time,
         ulid_factory: Callable[[], str] = generate_issuance_ulid,
     ) -> None:
@@ -732,6 +763,30 @@ class ConversationFollowupSweeper:
                 external_user_id_resolver is not None
                 and not callable(external_user_id_resolver)
             )
+            # El nativo solo corre con manifiesto: la reserva nativa es la
+            # portable derivada.
+            or (
+                native_run is not None
+                and (not isinstance(native_run, NativeSilenceRun) or not phone_equivalence)
+            )
+            or (send_window is not None and not isinstance(send_window, Franja))
+            or (send_window is not None and send_hours is not None)
+            or not isinstance(conversation_statuses, tuple)
+            or not conversation_statuses
+            or len(set(conversation_statuses)) != len(conversation_statuses)
+            or not set(conversation_statuses) <= set(FOLLOWUP_CONVERSATION_STATUSES)
+            or (
+                only_conversation_ids is not None
+                and (
+                    not isinstance(only_conversation_ids, frozenset)
+                    or any(
+                        not isinstance(item, int) or isinstance(item, bool) or item <= 0
+                        for item in only_conversation_ids
+                    )
+                )
+            )
+            or not isinstance(log_prefix, str)
+            or re.fullmatch(r"[a-z][a-z0-9_]{0,63}", log_prefix) is None
         ):
             raise ValueError("invalid conversation followup configuration")
         self._chatwoot = chatwoot
@@ -754,6 +809,11 @@ class ConversationFollowupSweeper:
         self._refuse_unsafe_greeting = refuse_unsafe_greeting
         self._phone_equivalence = phone_equivalence
         self._external_user_id_resolver = external_user_id_resolver
+        self._native_run = native_run
+        self._send_window = send_window
+        self._conversation_statuses = conversation_statuses
+        self._only_conversation_ids = only_conversation_ids
+        self._log_prefix = log_prefix
         self._clock = clock
         self._ulid_factory = ulid_factory
         self._task: asyncio.Task[None] | None = None
@@ -789,6 +849,16 @@ class ConversationFollowupSweeper:
         return self._only_phone
 
     @property
+    def native_run(self) -> NativeSilenceRun | None:
+        """El flujo, la version y el sha256 del barrido nativo, o ``None``."""
+        return self._native_run
+
+    @property
+    def only_conversation_ids(self) -> frozenset[int] | None:
+        """En cohorte, las conversaciones de sus contactos, o ``None``."""
+        return self._only_conversation_ids
+
+    @property
     def send_hours(self) -> tuple[int, int] | None:
         """``(inicio, fin)`` en horas locales de la zona del barredor, o ``None``."""
         return self._send_hours
@@ -820,11 +890,37 @@ class ConversationFollowupSweeper:
             self._has_completed_scan = False
             self._task = asyncio.create_task(self._run())
 
-    async def stop(self) -> None:
+    def set_only_conversation_ids(self, conversation_ids: frozenset[int]) -> None:
+        """La cohorte nueva del barrido nativo, sin parar el barredor.
+
+        La toma el proximo barrido (o el que esta corriendo, en la candidata
+        siguiente): rearmar el barredor por un miembro nuevo cancelaria un
+        envio en vuelo, y esa persona quedaria con la reserva tomada y sin
+        cupon.
+        """
+        if self._only_conversation_ids is None or not isinstance(conversation_ids, frozenset) or any(
+            not isinstance(item, int) or isinstance(item, bool) or item <= 0 for item in conversation_ids
+        ):
+            raise ValueError("invalid conversation followup configuration")
+        self._only_conversation_ids = conversation_ids
+
+    async def stop(self, *, drain_seconds: float | None = None) -> None:
+        """Parar el barredor.
+
+        Con ``drain_seconds`` (el barrido nativo, al cambiar de version o al
+        pausarse) primero espera hasta ese tiempo a que termine el barrido en
+        curso: cancelar entre la reserva y el envio deja la reserva tomada y a
+        la persona sin cupon. Si no termina a tiempo, cancela, como siempre.
+        """
         if self._task is None:
             self._last_scan_state = "stopped"
             return
         self._stopping.set()
+        if drain_seconds is not None and drain_seconds > 0:
+            try:
+                await asyncio.wait_for(asyncio.shield(self._task), timeout=drain_seconds)
+            except (TimeoutError, asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
         self._task.cancel()
         try:
             await self._task
@@ -835,7 +931,9 @@ class ConversationFollowupSweeper:
 
     async def run_once(self) -> int:
         """Un barrido completo. Devuelve cuantos seguimientos salieron."""
-        if self._send_hours is not None and not self._inside_send_hours():
+        if (
+            self._send_hours is not None or self._send_window is not None
+        ) and not self._inside_send_hours():
             # Fuera del horario no se lee nada, ni el catalogo ni Chatwoot: el
             # barrido no falla, espera. Con la ventana por defecto (de 24 a
             # 72 h) toda candidata cruza al menos un horario abierto. Lo que se
@@ -845,7 +943,7 @@ class ConversationFollowupSweeper:
             self._has_completed_scan = True
             self._last_scan_state = "healthy"
             self._last_scan_summary = OUTSIDE_SEND_HOURS
-            logger.info("conversation_followup_scan %s", self._last_scan_summary)
+            logger.info(f"{self._log_prefix}_scan %s", self._last_scan_summary)
             return 0
         inbox_payload = await self._chatwoot.get_inbox(inbox_id=self._inbox_id)
         template = parse_followup_template(
@@ -859,7 +957,7 @@ class ConversationFollowupSweeper:
         # 72 h no puede recibir el seguimiento y no se lee.
         conversations = await self._chatwoot.list_recent_conversations_with_messages(
             expected_inbox_id=self._inbox_id,
-            statuses=FOLLOWUP_CONVERSATION_STATUSES,
+            statuses=self._conversation_statuses,
             active_since_epoch=(
                 now_epoch - self._max_inbound_age_seconds - LISTING_MARGIN_SECONDS
             ),
@@ -870,6 +968,9 @@ class ConversationFollowupSweeper:
         motivos: Counter[str] = Counter()
         for entry in conversations:
             if sent >= self._max_sends_per_scan:
+                break
+            if self._stopping.is_set():
+                # Parando: el envio en vuelo ya termino; no se arranca otro.
                 break
             details = entry.get("conversation")
             messages = entry.get("messages")
@@ -904,6 +1005,14 @@ class ConversationFollowupSweeper:
                 # salido.
                 motivos[HELD_ONLY_PHONE] += 1
                 continue
+            if (
+                self._only_conversation_ids is not None
+                and decision.candidate.conversation_id not in self._only_conversation_ids
+            ):
+                # La cohorte del barrido nativo: como el telefono de prueba,
+                # la candidata no se relee ni se reserva, solo se cuenta.
+                motivos[HELD_OUT_OF_COHORT] += 1
+                continue
             if await self._follow_up(decision.candidate, template):
                 sent += 1
             else:
@@ -919,7 +1028,7 @@ class ConversationFollowupSweeper:
         self._last_scan_summary = _followup_scan_summary(
             scanned=len(conversations), sent=sent, motivos=motivos
         )
-        logger.info("conversation_followup_scan %s", self._last_scan_summary)
+        logger.info(f"{self._log_prefix}_scan %s", self._last_scan_summary)
         return sent
 
     def _log_stop(self, conversation_id: object, reason: str) -> None:
@@ -937,13 +1046,19 @@ class ConversationFollowupSweeper:
             return
         self._stops_logged.add(key)
         logger.info(
-            "conversation_followup_stopped reason=%s conversation=%s",
+            f"{self._log_prefix}_stopped reason=%s conversation=%s",
             reason,
             conversation_id,
         )
 
     def _inside_send_hours(self) -> bool:
-        """Si la hora local del reloj del barredor cae en [inicio, fin)."""
+        """Si la hora local del reloj del barredor cae en [inicio, fin).
+
+        Con ``send_window`` (el nativo), la franja de la definicion: de inicio a
+        fin, los dos minutos incluidos (``flow_schedule.is_open``).
+        """
+        if self._send_window is not None:
+            return is_open(self._send_window, datetime.fromtimestamp(self._clock(), UTC))
         assert self._send_hours is not None and self._time_zone is not None
         start, end = self._send_hours
         hour = datetime.fromtimestamp(self._clock(), self._time_zone).hour
@@ -982,7 +1097,7 @@ class ConversationFollowupSweeper:
             self._last_attempt_failed = True
             self._last_outcome = "recheck_failed"
             logger.warning(
-                "conversation_followup_recheck_failed conversation=%s error_type=%s",
+                f"{self._log_prefix}_recheck_failed conversation=%s error_type=%s",
                 candidate.conversation_id,
                 type(exc).__name__,
             )
@@ -1001,7 +1116,7 @@ class ConversationFollowupSweeper:
             # barrido lo vuelve a contar. El log nunca lleva el nombre.
             self._last_outcome = "greeting_name_refused"
             logger.warning(
-                "conversation_followup_name_refused conversation=%s source=%s",
+                f"{self._log_prefix}_name_refused conversation=%s source=%s",
                 candidate.conversation_id,
                 greeting.source,
             )
@@ -1046,12 +1161,14 @@ class ConversationFollowupSweeper:
                 # Sin manifiesto la kwarg no va: la llamada de Johanna queda
                 # identica.
                 **({"phone_equivalence": True} if self._phone_equivalence else {}),
+                # El nativo suma su flujo: la reserva es claim_flow_engine_silence_v1.
+                **({"native_run": self._native_run} if self._native_run is not None else {}),
             )
         except Exception as exc:
             self._last_attempt_failed = True
             self._last_outcome = "claim_failed"
             logger.warning(
-                "conversation_followup_claim_failed conversation=%s error_type=%s",
+                f"{self._log_prefix}_claim_failed conversation=%s error_type=%s",
                 candidate.conversation_id,
                 type(exc).__name__,
             )
@@ -1139,7 +1256,7 @@ class ConversationFollowupSweeper:
                 command_key, status="failed", failure_reason=type(exc).__name__
             )
             logger.warning(
-                "conversation_followup_send_failed conversation=%s error_type=%s",
+                f"{self._log_prefix}_send_failed conversation=%s error_type=%s",
                 candidate.conversation_id,
                 type(exc).__name__,
             )
@@ -1172,7 +1289,7 @@ class ConversationFollowupSweeper:
         )
         await self._settle(command_key, status="sent", provider_message_id=message_id)
         logger.info(
-            "conversation_followup_sent conversation=%s regime=%s age_seconds=%s greeting=%s",
+            f"{self._log_prefix}_sent conversation=%s regime=%s age_seconds=%s greeting=%s",
             candidate.conversation_id,
             candidate.regime,
             candidate.inbound_age_seconds,
@@ -1187,7 +1304,7 @@ class ConversationFollowupSweeper:
         self._last_attempt_failed = True
         self._last_outcome = "identity_lookup_failed"
         logger.warning(
-            "conversation_followup_identity_lookup_failed conversation=%s "
+            f"{self._log_prefix}_identity_lookup_failed conversation=%s "
             "error_type=%s",
             candidate.conversation_id,
             error_type,
@@ -1213,7 +1330,7 @@ class ConversationFollowupSweeper:
         except Exception:
             # La emision queda 'request_started', que tambien bloquea un
             # reenvio. Es el lado seguro.
-            logger.warning("conversation_followup_issuance_finalize_failed status=%s", status)
+            logger.warning(f"{self._log_prefix}_issuance_finalize_failed status=%s", status)
 
     async def _settle(
         self,
@@ -1233,7 +1350,7 @@ class ConversationFollowupSweeper:
         except Exception:
             # Perder el cierre deja la fila en 'claimed', que bloquea un
             # reenvio. Es el lado seguro.
-            logger.warning("conversation_followup_settle_failed status=%s", status)
+            logger.warning(f"{self._log_prefix}_settle_failed status=%s", status)
 
     async def _run(self) -> None:
         while not self._stopping.is_set():
@@ -1242,7 +1359,7 @@ class ConversationFollowupSweeper:
             except Exception as exc:
                 self._last_scan_state = "error"
                 logger.warning(
-                    "conversation_followup_scan_failed error_type=%s",
+                    f"{self._log_prefix}_scan_failed error_type=%s",
                     type(exc).__name__,
                 )
             try:

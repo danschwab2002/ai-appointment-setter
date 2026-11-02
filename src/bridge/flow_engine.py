@@ -290,9 +290,9 @@ NATIVE_SILENCE_TRIGGER = "silencio:agente"
 # (``followup_discount.ConversationFollowupSweeper``), que manda en el momento del barrido. Un solo envio,
 # sin espera; la plantilla con las variables del paso, de entre nombre y producto; el boton del checkout
 # con un cupon fijo (``boton: {link: checkout, cupon: <codigo>}``: ``parse_followup_template`` exige ese
-# boton y ninguno mas); y las salidas compra y contesta. El motor que lo ejecuta (la reserva y el barrido
-# nativos) son P22-2 y P22-3: hasta que esten, la base no abre un silencio nativo (``motor_nativo:disparador``
-# en ``_flow_engine_native_unsupported``).
+# boton y ninguno mas); y las salidas compra y contesta. Lo ejecutan la reserva nativa de la base
+# (``claim_flow_engine_silence_v1``, P22-2, 20261101000200) y el barrido nativo del bridge
+# (``native_silence.NativeSilenceSweepers``, P22-3, E-269), con la ventana de 24 a 72 h del legado.
 ENGINE_CAPABILITIES_NATIVE_SILENCE = EngineCapabilities(
     triggers=frozenset({"silencio:agente"}),
     step_types=frozenset({"plantilla"}),
@@ -305,6 +305,9 @@ ENGINE_CAPABILITIES_NATIVE_SILENCE = EngineCapabilities(
 )
 # Las variables del seguimiento, en su orden: las que manda el barrido (FollowupTemplate.params).
 FOLLOWUP_VARIABLES = ("nombre", "producto")
+# La ventana del silencio nativo, en minutos (P22-3, E-269): la del barrido del legado, de 24 a 72 h.
+NATIVE_SILENCE_MIN_MINUTES = 24 * 60
+NATIVE_SILENCE_MAX_MINUTES = 72 * 60
 # El permiso con el que entra cada disparador nativo (``_flow_engine_native_unsupported``, 20261028000200):
 # la compra con ``compra`` (la regla 17: una sola plantilla de utilidad) y el carrito con ``formulario``
 # (la intencion con consentimiento que la admision portable correlaciono con ese carrito), y el pago
@@ -390,6 +393,19 @@ def _native_silence_not_supported(definition: Mapping[str, Any], add: Callable[[
     entry = definition.get("entra")
     if not isinstance(entry, Mapping) or entry.get("contesto_a") != ANY_TEMPLATE:
         add(f"{NOT_SUPPORTED}:contesto_a")
+    # La ventana del silencio que ejecuta el barrido nativo (P22-3, E-269): la del legado, de 24 a 72 h
+    # (followup_discount.py, DEFAULT_MIN/MAX_INBOUND_AGE_SECONDS), con desde antes que hasta, y las
+    # conversaciones escritas. Menos de 24 h manda dentro de la ventana de servicio, contra la regla de 24 h
+    # de silencio; mas de 72 h le escribe al historico el dia que se prende (decision de Dan, 2026-09-28).
+    trigger = definition.get("dispara")
+    silence = trigger.get("silencio") if isinstance(trigger, Mapping) else None
+    since = parse_duration(silence.get("desde")) if isinstance(silence, Mapping) else None
+    until = parse_duration(silence.get("hasta")) if isinstance(silence, Mapping) else None
+    states = silence.get("conversaciones") if isinstance(silence, Mapping) else None
+    if since is None or until is None \
+            or not NATIVE_SILENCE_MIN_MINUTES <= since < until <= NATIVE_SILENCE_MAX_MINUTES \
+            or not isinstance(states, list) or not states:
+        add(f"{NOT_SUPPORTED}:silencio_ventana")
     # El barrido corta siempre con la compra (la reserva) y con la respuesta (la relectura, _still_waiting):
     # la definicion lo tiene que decir.
     ends = definition.get("termina")

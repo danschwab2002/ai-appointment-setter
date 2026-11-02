@@ -47,8 +47,9 @@ const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 const names = readdirSync(join(root, 'supabase/migrations')).filter((name) => name.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-// Despues va solo la de las solicitudes de plantilla de Meta (20261102000200, E-268): tablas y funciones nuevas.
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261102000200_meta_template_requests_v1.sql'])) {
+// Despues van la de las solicitudes de plantilla de Meta (20261102000200, E-268) y la del barrido del
+// seguimiento nativo (20261102000300, E-269): tablas y funciones nuevas.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261102000200_meta_template_requests_v1.sql', '20261102000300_flow_engine_native_silence_sweep_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de las solicitudes de plantilla`, names.slice(position + 1));
 }
 

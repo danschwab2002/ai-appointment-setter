@@ -78,11 +78,15 @@ const MIGRATIONS = readdirSync(join(root, 'supabase/migrations'))
 // barrera del legado: sin la portable aborta con 55000
 // flow_engine_native_silence_missing. 20261101000300 (los frenos del
 // seguimiento, E-263) parcha las dos reservas: sin ellas aborta con 55000
-// followup_stops_function_missing.
+// followup_stops_function_missing. 20261102000300 (lo que lee el barrido del
+// seguimiento nativo, E-269) exige la reserva nativa y el silencio en el
+// disparador de 20261101000200: sin ellos aborta con 55000
+// flow_engine_native_silence_sweep_missing.
 const DERIVED_FROM_MIGRATION = [
   '20261010000100_portable_conversation_followup_claim.sql',
   '20261101000200_flow_engine_native_silence_v1.sql',
   '20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql',
+  '20261102000300_flow_engine_native_silence_sweep_v1.sql',
 ];
 for (const name of DERIVED_FROM_MIGRATION) {
   if (!MIGRATIONS.includes(name) || name <= MIGRATION) {

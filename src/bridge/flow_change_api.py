@@ -56,7 +56,7 @@ from fastapi.responses import JSONResponse
 
 from .flow_change_operator import OperatorInputError, validate_proposal, world_from_store
 from .flow_change_preview import template_view
-from .flow_change_simulation import native_flow_counts_request
+from .flow_change_simulation import native_flow_counts_request, simulation_trigger
 from .flow_definition import (
     InstanceView,
     ProposalItemsInvalid,
@@ -262,7 +262,8 @@ async def _simulation_inputs(store: FlowChangeStore, instance: Mapping[str, str]
         if len(items) != 1:
             return {"simulation_unavailable": "simulation_new_flow_mixed"}
         definition = new_flows[0].get("definicion")
-        trigger = (definition.get("dispara") or {}).get("evento") if isinstance(definition, Mapping) else None
+        # Su evento, o el silencio del agente (P22-3, E-269), que se cuenta con la vara del legado.
+        trigger = simulation_trigger(definition)
         if not isinstance(trigger, str):
             return {"simulation_unavailable": "simulation_new_flow_counts_invalid"}
         try:

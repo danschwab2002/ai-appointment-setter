@@ -247,7 +247,7 @@ def _sharing_the_event(world: FlowWorld | None, product: str, trigger: object) -
     found = []
     for flow in world.flows:
         definition = flow.active_definition
-        event = ((definition or {}).get("dispara") or {}).get("evento") if isinstance(definition, Mapping) else None
+        event = simulation_trigger(definition)
         if flow.native and flow.product_ref == product and flow.state in ("prendido", "cohorte") \
                 and event == trigger:
             found.append({"flujo": f"{flow.product_ref}/{flow.flow_key}", "estado": flow.state})
@@ -275,7 +275,7 @@ def build_new_flow_simulation(counts: Any, items: Sequence[ProposalItem], *,
                 or counts.get("contract") != NEW_FLOW_COUNTS_CONTRACT:
             raise _Failed(NEW_FLOW_COUNTS_INVALID)
         item = items[0]
-        trigger = ((item.definicion or {}).get("dispara") or {}).get("evento")
+        trigger = simulation_trigger(item.definicion)
         if counts.get("product_ref") != item.producto or counts.get("trigger") != trigger:
             raise _Failed(NEW_FLOW_COUNTS_INVALID)
         events, people = _count(counts.get("events")), _count(counts.get("people"))
@@ -313,7 +313,33 @@ NATIVE_ITEM_TYPES = frozenset({"prender", "apagar"})
 
 
 def _event_of(definition: object) -> object:
-    return ((definition.get("dispara") or {}).get("evento")) if isinstance(definition, Mapping) else None
+    """Lo que cuenta la simulacion de un flujo nativo: su evento, o ``silencio`` (P22-3, E-269).
+
+    Un silencio en que lo ultimo lo dijo el agente (el seguimiento a 24 h nativo) se cuenta con la vara del
+    legado: los seguimientos que salieron en la ventana (``read_flow_engine_native_trigger_counts_v1`` con
+    ``p_trigger = silencio``, 20261101000200). La gemela, sin importar el bridge, esta en
+    ``scripts/flow_change_operator.py`` (``_simulation_trigger``).
+    """
+    return simulation_trigger(definition)
+
+
+SILENCE_COUNTS_TRIGGER = "silencio"
+
+
+def simulation_trigger(definition: object) -> str | None:
+    """El ``p_trigger`` de la lectura de conteos para una definicion: su evento, ``silencio`` o None."""
+    if not isinstance(definition, Mapping):
+        return None
+    trigger = definition.get("dispara")
+    if not isinstance(trigger, Mapping):
+        return None
+    event = trigger.get("evento")
+    if isinstance(event, str):
+        return event
+    silence = trigger.get("silencio")
+    if set(trigger) == {"silencio"} and isinstance(silence, Mapping) and silence.get("lo_ultimo") == "agente":
+        return SILENCE_COUNTS_TRIGGER
+    return None
 
 
 def native_flow_counts_request(store: Any, items: Any) -> dict[str, Any] | None:

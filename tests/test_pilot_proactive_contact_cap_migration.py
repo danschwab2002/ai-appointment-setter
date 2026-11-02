@@ -130,6 +130,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         # La renovacion por respuesta y el cupon del turno (E-267).
         "20261102000100",
         "20261102000200",
+        # El barrido del seguimiento a 24 h nativo (E-269).
+        "20261102000300",
     ]
 
     sql = _sql()

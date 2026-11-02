@@ -40,6 +40,11 @@ FLOW_KEYS = {
     # E-252 (flow-engine-v2 2.13.0): si el formulario entra por la RPC que lo rutea al nativo. El de
     # esta prueba no: off.
     "flow_engine_native_intent",
+    # E-269 (flow-engine-v2 2.14.0): el barrido nativo del seguimiento a 24 h, de lo que ya leyo el
+    # refresco (en memoria: /ready no llama a la base).
+    "flow_engine_native_silence_read", "flow_engine_native_silence_running", "flow_engine_native_silence_cohort",
+    "flow_engine_native_silence_scan", "flow_engine_native_silence_last_scan",
+    "flow_engine_native_silence_refused",
 }
 
 
@@ -123,6 +128,9 @@ def test_on_before_the_first_read_it_is_pending(tmp_path: Path) -> None:
     assert payload["flow_engine_native_queue_pending"] == "unknown"
     assert payload["flow_engine_cart_touches"] == "enabled"
     assert payload["flow_engine_native_intent"] == "off"
+    assert payload["flow_engine_native_silence_read"] == "pending"
+    assert payload["flow_engine_native_silence_running"] == "0"
+    assert payload["flow_engine_native_silence_scan"] == "none"
     # /ready no lee las rutas: eso es del lote.
     assert "routes" not in authority.calls
 
@@ -161,3 +169,58 @@ def test_the_route_in_motor_is_counted(tmp_path: Path) -> None:
     payload = _ready(app).json()
     assert payload["flow_engine_routes_motor"] == "1"
     assert payload["flow_engine_routes_legado"] == "0"
+
+
+def test_the_native_silence_sweep_is_built_by_the_engine_with_the_manifest_options(tmp_path: Path) -> None:
+    # E-269: lo arma FLOW_ENGINE_ENABLED (no CONVERSATION_FOLLOWUP_ENABLED, que aca esta apagado), con
+    # el producto del manifiesto de ATT1 y lo demas de la definicion publicada.
+    from test_flow_engine_native_silence_sweep import _changed, _silence
+
+    from bridge.app import allowed_phone_from_jid
+
+    from bridge.followup_discount import ConversationFollowupSweeper
+
+    class _WithSilence(_ReadyAuthority):
+        async def read_flow_engine_native_silences(self, instance: object) -> tuple[Any, ...]:
+            self.calls.append("silences")
+            assert instance == {"tenant_ref": "lancemos", "ally_ref": "att1"}
+            definition = _changed(("dispara", "silencio", "desde"), "30h")
+            definition["dispara"]["silencio"]["conversaciones"] = ["abierta"]
+            return (_silence(definition),)
+
+    off = _app(tmp_path, _ReadyAuthority(), flow_engine_enabled=False)
+    assert off.state.native_silence_sweepers is None
+    authority = _WithSilence()
+    app = _app(tmp_path, authority)
+    sweepers = app.state.native_silence_sweepers
+    assert app.state.conversation_followup_sweeper is None
+    assert sweepers is not None and sweepers.sweepers == ()
+
+    async def refresh_and_stop() -> ConversationFollowupSweeper:
+        await sweepers.refresh_once()
+        [sweeper] = sweepers.sweepers
+        await sweepers.stop()
+        return sweeper
+
+    sweeper = asyncio.run(refresh_and_stop())
+    assert sweeper.native_run is not None and sweeper.native_run.version == 1
+    assert sweeper.only_conversation_ids == frozenset({21})
+    assert sweeper._product_name == "Alimenta tu Tiroides"
+    assert (sweeper._template_name, sweeper._coupon_code) == ("att1_seguimiento_descuento_01", "TIROIDES10")
+    assert sweeper._phone_equivalence is True and sweeper._refuse_unsafe_greeting is True
+    assert sweeper._external_user_id_resolver is not None
+    assert sweeper._log_prefix == "flow_engine_silence"
+    assert sweeper.send_hours is None and sweeper._send_window is not None
+    # La ventana y las conversaciones de la definicion, y el alcance del legado (ALLOWED_WHATSAPP_JID).
+    assert (sweeper._min_inbound_age_seconds, sweeper._max_inbound_age_seconds) == (108_000, 259_200)
+    assert sweeper._conversation_statuses == ("open",)
+    expected_scope = engine_settings(tmp_path)
+    assert sweeper._allowed_phone == (
+        None if expected_scope.chatwoot_scoped_inbound_senders_enabled
+        else allowed_phone_from_jid(expected_scope.allowed_jid)
+    )
+    reads = authority.calls.count("silences")
+    payload = _ready(app).json()
+    # /ready no lee los silencios: sale de lo que el refresco ya leyo.
+    assert authority.calls.count("silences") == reads == 1
+    assert payload["flow_engine_native_silence_read"] == "ok"
