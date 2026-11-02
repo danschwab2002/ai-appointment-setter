@@ -6252,6 +6252,43 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'followup_stops_after_last_touch_and_pending_payment'
+    union all
+    select
+        '20261102000100',
+        '20261102000100_recovery_coupon_by_reply_v1.sql',
+        -- La respuesta escrita a A2 reactiva el cupon como el boton, y el
+        -- agente lee el cupon vigente (E-267): las dos funciones nuevas,
+        -- definer y solo de service_role ...
+        (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public.request_recovery_renewal_by_reply_v1(bigint,bigint,bigint,bigint,text,timestamptz)'),
+                to_regprocedure('public.get_recovery_coupon_for_conversation_v1(bigint,bigint,bigint,text)')
+            )
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- ... la renovacion delega en la del boton ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.request_recovery_renewal_by_reply_v1(bigint,bigint,bigint,bigint,text,timestamptz)')
+              and position('public.request_recovery_renewal_v1(' in definition) > 0
+              and position('reply_before_last_touch' in definition) > 0
+        )::int
+        -- ... y la lectura cuenta solo un cupon que salio en un mensaje nuestro.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_recovery_coupon_for_conversation_v1(bigint,bigint,bigint,text)')
+              and position('public.recovery_coupon_was_delivered(coupon.id)' in definition) > 0
+              and position('renewal_in_progress' in definition) > 0
+        )::int,
+        3,
+        'recovery_coupon_by_reply'
 )
 select
     version,

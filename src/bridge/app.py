@@ -236,6 +236,11 @@ from bridge.payment_failure_variant import (
     PaymentFailurePlanningConfig,
     PaymentFailureVariantsConfig,
 )
+from bridge.recovery_coupon_reply import (
+    RECOVERY_COUPON_CONTEXT_KEY,
+    recovery_coupon_context,
+    reply_may_renew,
+)
 from bridge.recovery_coupons import RecoveryCouponWorker
 from bridge.event_log import configure_bridge_event_log, hotmart_log_fields
 from bridge.flow_engine_runtime import (
@@ -325,6 +330,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # A2 y Z del carrito, despues de A1 (contrato portable-cart-followups-v1);
     # las plantillas son del runtime y los pasos, de la politica de la instancia.
     "recovery_cart_followups_enabled",
+    # E-267: la respuesta escrita a A2 reactiva el cupon como el boton, y el
+    # agente recibe el cupon vigente de la persona. La regla es del producto;
+    # por instancia, solo prenderlo (con el conocimiento que usa el dato).
+    "recovery_coupon_by_reply_enabled",
     "hotmart_purchase_worker_enabled",
     "lead_precheckout_enabled",
     # El adaptador de GHL traduce el formulario a lead.precheckout y lo manda
@@ -812,6 +821,11 @@ class Settings:
     recovery_cart_followups_enabled: bool = False
     recovery_cart_second_touch_template_name: str | None = None
     recovery_cart_last_touch_template_name: str | None = None
+    # E-267 (bridge/recovery_coupon_reply.py, migracion 20261102000100): una
+    # respuesta escrita despues de A2 pide la misma renovacion que «Quiero mi
+    # 10 %», y la entrada del agente trae ``recovery_coupon``. Apagado, todo
+    # como antes: ni se llama a la base.
+    recovery_coupon_by_reply_enabled: bool = False
     precheckout_form_enabled: bool = False
     precheckout_form_token: str | None = None
     precheckout_max_age_seconds: int = 300
@@ -1434,6 +1448,10 @@ class Settings:
         recovery_cart_last_touch_template_name = (
             os.getenv("RECOVERY_CART_LAST_TOUCH_TEMPLATE_NAME", "").strip() or None
         )
+        recovery_coupon_by_reply_enabled = (
+            os.getenv("RECOVERY_COUPON_BY_REPLY_ENABLED", "false").strip().lower()
+            == "true"
+        )
         hotmart_api_credentials_file_value = (
             os.getenv("HOTMART_API_CREDENTIALS_FILE", "").strip()
         )
@@ -2014,6 +2032,7 @@ class Settings:
             recovery_cart_last_touch_template_name=(
                 recovery_cart_last_touch_template_name
             ),
+            recovery_coupon_by_reply_enabled=recovery_coupon_by_reply_enabled,
             precheckout_form_enabled=precheckout_form_enabled,
             precheckout_form_token=precheckout_form_token,
             precheckout_max_age_seconds=precheckout_max_age_seconds,
@@ -3227,6 +3246,28 @@ def _validate_payment_failure_own_scope(settings: Settings) -> None:
         )
 
 
+def _validate_recovery_coupon_by_reply(settings: Settings) -> None:
+    """E-267: la renovacion por respuesta y el cupon en la entrada del agente.
+
+    Solo encima de Z del carrito (lo que la respuesta adelanta) y con
+    manifiesto (la identidad del entrante resuelta como la del formulario, y
+    las RPC por cuenta e inbox de Chatwoot). Apagado no se lee nada.
+    """
+    if not settings.recovery_coupon_by_reply_enabled:
+        return
+    flag = "RECOVERY_COUPON_BY_REPLY_ENABLED"
+    if not settings.recovery_cart_followups_enabled:
+        raise ValueError(f"{flag} requires RECOVERY_CART_FOLLOWUPS_ENABLED")
+    if settings.recovery_cart_last_touch_template_name is None:
+        raise ValueError(f"{flag} requires RECOVERY_CART_LAST_TOUCH_TEMPLATE_NAME")
+    # Z misma exige el worker del cupon (_cart_followup_config); aca no se
+    # repite: sin Z pendiente la base no adelanta nada.
+    if settings.instance_manifest is None:
+        raise ValueError(f"{flag} requires an instance manifest")
+    if settings.chatwoot_account_id is None or settings.chatwoot_inbox_id is None:
+        raise ValueError(f"{flag} requires CHATWOOT_ACCOUNT_ID and CHATWOOT_INBOX_ID")
+
+
 def _validate_payment_failure_followup(settings: Settings) -> None:
     """B2 o Z del pago rechazado: solo encima de B1 en variantes.
 
@@ -4356,6 +4397,7 @@ def create_app(
     _validate_payment_slip_first_contact(settings)
     _validate_payment_failure_own_scope(settings)
     _validate_payment_failure_followup(settings)
+    _validate_recovery_coupon_by_reply(settings)
     _validate_flow_engine(settings)
     _validate_flow_engine_native_intent(settings)
     waba_template = _waba_template_config(settings)
@@ -5946,6 +5988,92 @@ def create_app(
         )
         return outcome in {"advanced", "already_requested"}
 
+    async def recovery_coupon_turn(
+        *,
+        context: dict[str, object],
+        history: object,
+        conversation_id: int,
+        external_user_id: str,
+        phone: str,
+        current_message: dict[str, object] | None,
+        prior_opt_out: bool,
+    ) -> None:
+        """E-267: la respuesta escrita a A2 y el cupon en la entrada del agente.
+
+        Primero, si lo que escribio la persona desde nuestra ultima plantilla
+        no es una baja ni un «no» claro (``reply_may_renew``), pide la misma
+        renovacion que «Quiero mi 10 %»: la base adelanta Z solo si hay uno
+        pendiente y el mensaje es posterior a A2. Despues lee el cupon que el
+        agente puede nombrar y lo deja en ``recovery_coupon``. Las dos fallan
+        abiertas: sin la base el agente contesta como antes (y Z, sin el
+        pedido, se cancela por la respuesta como hasta hoy).
+        """
+        assert shared_supabase is not None
+        assert settings.chatwoot_account_id is not None
+        assert settings.chatwoot_inbox_id is not None
+        message_ref = (
+            current_message.get("_message_ref") if current_message is not None else None
+        )
+        created_at = (
+            current_message.get("_created_at") if current_message is not None else None
+        )
+        if (
+            not prior_opt_out
+            and isinstance(message_ref, str)
+            and message_ref.isdigit()
+            # La normalizacion guarda el created_at de Chatwoot como texto.
+            and isinstance(created_at, str)
+            and created_at.isdigit()
+            and int(created_at) > 0
+            and isinstance(history, list)
+            and reply_may_renew(history)
+        ):
+            try:
+                renewal = await shared_supabase.request_cart_renewal_by_reply(
+                    chatwoot_account_id=settings.chatwoot_account_id,
+                    chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                    chatwoot_conversation_id=conversation_id,
+                    chatwoot_message_id=int(message_ref),
+                    external_user_id=external_user_id,
+                    occurred_at=datetime.fromtimestamp(int(created_at), tz=UTC).isoformat(),
+                )
+            except SupabaseError as exc:
+                logger.warning(
+                    "cart_renewal_by_reply_failed error=%s conversation=%s",
+                    type(exc).__name__,
+                    conversation_id,
+                )
+            else:
+                logger.info(
+                    "cart_renewal_by_reply outcome=%s conversation=%s",
+                    renewal,
+                    conversation_id,
+                )
+        try:
+            coupon = await shared_supabase.get_recovery_coupon_for_conversation(
+                chatwoot_account_id=settings.chatwoot_account_id,
+                chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                chatwoot_conversation_id=conversation_id,
+                external_user_id=external_user_id,
+            )
+        except SupabaseError as exc:
+            logger.warning(
+                "recovery_coupon_lookup_failed error=%s conversation=%s",
+                type(exc).__name__,
+                conversation_id,
+            )
+            return
+        turn = recovery_coupon_context(coupon, now=datetime.now(UTC), phone=phone)
+        if turn is None:
+            return
+        context[RECOVERY_COUPON_CONTEXT_KEY] = turn
+        # El estado y la conversacion, nunca el codigo.
+        logger.info(
+            "recovery_coupon_context state=%s conversation=%s",
+            turn["state"],
+            conversation_id,
+        )
+
     async def batch_has_explicit_opt_out(
         *,
         payload: dict[str, object],
@@ -6490,6 +6618,21 @@ def create_app(
             # Only the stop and the opt-out were asked for: the agent does
             # not run.
             return CanonicalWorkResult(proposal=None)
+        if (
+            settings.recovery_coupon_by_reply_enabled
+            and whatsapp_inbound_equivalence
+            and shared_supabase is not None
+        ):
+            # E-267: antes del agente, para que su entrada ya sepa del cupon.
+            await recovery_coupon_turn(
+                context=context,
+                history=history,
+                conversation_id=conversation_id,
+                external_user_id=external_user_id,
+                phone=inbound_wa_id,
+                current_message=normalized[-1] if normalized else None,
+                prior_opt_out=prior_opt_out,
+            )
         first_batch_index = min(
             (message_indexes[message_ref] for message_ref in expected_refs),
             default=current_index,

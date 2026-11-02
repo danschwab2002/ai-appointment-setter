@@ -1,0 +1,77 @@
+"""La renovacion por respuesta y el cupon del turno en la base (20261102000100, E-267), leidos como texto.
+
+Lo que hacen lo prueba ``tests/sql/followup_engine/validate_recovery_coupon_by_reply.mjs``
+con las RPC reales sobre la cadena entera; aca, la forma de la migracion y que
+el bridge conoce lo que contesta.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+from bridge.supabase import CART_RENEWAL_BY_REPLY_OUTCOMES, RECOVERY_COUPON_TURN_STATES
+
+ROOT = Path(__file__).resolve().parents[1]
+MIGRATIONS = ROOT / "supabase" / "migrations"
+MIGRATION = MIGRATIONS / "20261102000100_recovery_coupon_by_reply_v1.sql"
+PACKAGE = ROOT / "tests" / "sql" / "followup_engine" / "package.json"
+
+
+def _sql() -> str:
+    return MIGRATION.read_text(encoding="utf-8")
+
+
+def test_it_is_one_transaction_with_lock_timeout_and_the_last() -> None:
+    sql = _sql()
+    names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
+    assert names[-1] == MIGRATION.name
+    assert sql.count("\nbegin;\n") == 1 and sql.rstrip().endswith("commit;")
+    assert "set local lock_timeout = '5s';" in sql
+    assert "message = 'recovery_coupon_by_reply_already_applied'" in sql
+    assert "message = 'unexpected_request_recovery_renewal_definition'" in sql
+
+
+def test_it_only_creates_the_two_functions() -> None:
+    code = re.sub(r"--[^\n]*", "", _sql())
+    assert re.findall(r"create (?:or replace )?function ([\w.]+)", code) == [
+        "public.request_recovery_renewal_by_reply_v1",
+        "public.get_recovery_coupon_for_conversation_v1",
+    ]
+    # Ninguna sentencia que escriba (lo que la guarda busca en la definicion
+    # vigente va entre comillas y no cuenta).
+    statements = code.lower()
+    for forbidden in ("create or replace", "alter table", "create table", "execute replace("):
+        assert forbidden not in statements, forbidden
+    assert re.findall(r"\n\s*(insert into|update public\.|delete from)", statements) == []
+
+
+def test_the_renewal_delegates_in_the_one_of_the_button() -> None:
+    code = re.sub(r"--[^\n]*", "", _sql())
+    body = code.split("function public.request_recovery_renewal_by_reply_v1(", 1)[1].split("$function$;", 1)[0]
+    assert "from public.request_recovery_renewal_v1(" in body
+    assert "action.step_key = 'cart_last_touch'" in body
+    assert "action.created_at > p_occurred_at" in body
+
+
+def test_every_outcome_and_state_is_known_to_the_bridge() -> None:
+    sql = _sql()
+    assert set(re.findall(r"select '([a-z_]+)'::text;", sql)) <= CART_RENEWAL_BY_REPLY_OUTCOMES
+    assert "reply_before_last_touch" in CART_RENEWAL_BY_REPLY_OUTCOMES
+    # Lo que la delegada contesta (la del boton) tambien.
+    assert {"advanced", "already_requested", "no_pending_last_touch"} <= CART_RENEWAL_BY_REPLY_OUTCOMES
+    assert set(re.findall(r"select '([a-z_]+)'::text, ", sql)) == RECOVERY_COUPON_TURN_STATES
+
+
+def test_it_never_seeds_a_third_coupon() -> None:
+    code = re.sub(r"--[^\n]*", "", _sql()).lower()
+    assert "recovery_coupons (" not in code
+    assert "claim_due_recovery_coupons" not in code
+
+
+def test_the_validator_is_the_last_of_the_npm_chain() -> None:
+    chain = json.loads(PACKAGE.read_text(encoding="utf-8"))["scripts"]["test"]
+    assert chain.rstrip().endswith(
+        " && node validate_followup_stops.mjs && node validate_recovery_coupon_by_reply.mjs"
+    )

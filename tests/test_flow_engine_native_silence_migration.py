@@ -38,8 +38,10 @@ def test_it_is_one_transaction_with_lock_timeout_and_the_last() -> None:
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
     # Despues van los frenos del seguimiento despues de Z y con una ficha
     # vigente (20261101000300, E-263), que parchan las dos reservas.
-    assert names[-1] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
-    assert names[-2] == MIGRATION.name
+    # La renovacion por respuesta y el cupon del turno (20261102000100, E-267).
+    assert names[-1] == "20261102000100_recovery_coupon_by_reply_v1.sql"
+    assert names[-2] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
+    assert names[-3] == MIGRATION.name
     assert sql.count("\nbegin;\n") == 1 and sql.rstrip().endswith("commit;")
     assert "set local lock_timeout = '5s';" in sql
     assert "message = 'flow_engine_native_silence_already_applied'" in sql
@@ -89,5 +91,5 @@ def test_the_validator_is_the_last_of_the_npm_chain() -> None:
     chain = json.loads(PACKAGE.read_text(encoding="utf-8"))["scripts"]["test"]
     # Despues va solo el de los frenos del seguimiento (20261101000300, E-263).
     assert chain.rstrip().endswith(
-        " && node validate_flow_engine_native_silence.mjs && node validate_followup_stops.mjs"
+        " && node validate_flow_engine_native_silence.mjs && node validate_followup_stops.mjs && node validate_recovery_coupon_by_reply.mjs"
     )

@@ -59,6 +59,20 @@ con `max_automatic_messages = 3` y `expires_after = '5 days'`.
 - Con la Z marcada como pedida, la reevaluación no la cancela por la respuesta (`prospect_replied`). Cualquier otra causa la corta igual: la compra, la baja o la derivación.
 - El cupón 2 lo crea el worker de cupones cuando Z entra en su ventana, igual que el de A1. Hotmart lo aplica unos 5 minutos después de creado, así que una Z adelantada sale entre 5 y 20 minutos después del botón.
 
+## La respuesta escrita a A2 y el cupón del turno (E-267, migración `20261102000100`)
+
+Con `RECOVERY_COUPON_BY_REPLY_ENABLED=true` (apagado por defecto; exige `RECOVERY_CART_FOLLOWUPS_ENABLED`, la plantilla de Z y manifiesto), A2 cumple «si me respondes te lo reactivo» también para quien contesta escribiendo, no solo con el botón. Lo hace el bridge en el turno del agente (`bridge/recovery_coupon_reply.py`), antes de llamar al modelo:
+
+- **Qué cuenta como respuesta.** Lo que escribió la persona después de nuestra última plantilla, en el historial de Chatwoot. No cuenta si ahí hay una baja (`opt_out`) o un «no» claro (`lead_decline`, cada mensaje leído como primera respuesta), ni si la persona se había dado de baja antes y escribió por su cuenta.
+- **La renovación.** Llama a `request_recovery_renewal_by_reply_v1` con el mensaje y su `created_at`. La base delega en `request_recovery_renewal_v1` (el mismo lock, la misma fila en `recovery_renewal_requests` y el mismo `advanced`/`already_requested`/`no_pending_last_touch`), con un límite más: si el Z pendiente se creó después del mensaje, el mensaje contestaba a A1 y da `reply_before_last_touch` sin escribir nada. Con `advanced`, Z sale con el cupón 2 como con el botón, y la reevaluación ya no la cancela por la respuesta. A diferencia del botón, **el agente contesta igual**: un texto puede traer una pregunta.
+- **El cupón en la entrada del agente.** `get_recovery_coupon_for_conversation_v1` devuelve, como mucho, una fila, y el bridge la pone en `recovery_coupon`:
+  - `{"state": "valid", "code", "discount_percent", "expires_at" (UTC), "expires_local" (la hora del país del número, con el formato de A1 y Z), "last_renewal" (true si es el cupón 2)}`: un cupón personal vigente que la persona **ya recibió** en un mensaje nuestro (el 1 en A1, por `recovery_coupon_was_delivered`; el 2 en el paso con `coupon_ordinal` 2, por su link aceptado por Chatwoot). Uno sembrado que todavía no salió no cuenta.
+  - `{"state": "renewal_in_progress", "coupon_arrives_in_our_next_message": true}`: pidió la renovación y Z todavía no salió.
+  - Sin la clave: ningún cupón vigente entregado ni renovación en camino. El agente trabaja como antes.
+- **Falla abierta.** Si la base no contesta, el agente responde sin el dato (y Z, sin el pedido, se cancela por la respuesta como hasta hoy). El log lleva el estado y la conversación, nunca el código.
+- Nada siembra un cupón nuevo: siguen siendo dos por caso (regla 7 del 2026-10-17). Johanna (sin manifiesto) no arranca con el flag; Maribel no tiene A2 ni Z, y su seguimiento con cupón (`followup_discount`, un código fijo) no lee nada de esto.
+- **El conocimiento cambia junto.** El dato sirve si el conocimiento de la instancia le dice al agente qué hacer con `recovery_coupon`; se prende con ese conocimiento, no antes. `TIROIDES10` se retira de Hotmart después (D6 de E-261).
+
 ## La base (migración `20261019000600`)
 
 - `_recovery_followup_step(action)`: el paso de la política de un `no_reply_review`. Solo `service_role`.
@@ -73,4 +87,4 @@ Ninguna política publicada antes de esta migración tiene las marcas: nada camb
 
 ## Qué lo corta
 
-Lo mismo que A1: la compra de cualquier oferta del producto (20261019000300), la baja (incluido «No más mensajes»), la derivación, la pérdida del consentimiento y la respuesta de la persona después del toque anterior, salvo «Quiero mi 10 %». Cuenta en los topes del scope del carrito: cada envío es un arranque.
+Lo mismo que A1: la compra de cualquier oferta del producto (20261019000300), la baja (incluido «No más mensajes»), la derivación, la pérdida del consentimiento y la respuesta de la persona después del toque anterior, salvo «Quiero mi 10 %» (y, con `RECOVERY_COUPON_BY_REPLY_ENABLED`, una respuesta escrita a A2 que no sea una baja ni un «no» claro). Cuenta en los topes del scope del carrito: cada envío es un arranque.

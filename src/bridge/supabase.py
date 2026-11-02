@@ -2167,6 +2167,30 @@ class RecoveryCouponForCase:
     verified_at: datetime | None
 
 
+# E-267 (20261102000100): el cupon personal que el agente puede nombrar en su
+# turno. ``valid``: uno que la persona ya recibio en un mensaje nuestro y no
+# vencio (code, discount, expires_at y ordinal). ``renewal_in_progress``: pidio
+# la renovacion (boton o respuesta) y Z todavia no salio (sin codigo).
+RECOVERY_COUPON_TURN_STATES = frozenset({"valid", "renewal_in_progress"})
+
+
+@dataclass(frozen=True)
+class RecoveryCouponForConversation:
+    state: str
+    code: str | None
+    discount: Decimal | None
+    expires_at: datetime | None
+    ordinal: int
+
+
+# Lo que contesta la renovacion por respuesta escrita (20261102000100): las de
+# la renovacion del boton mas reply_before_last_touch (el mensaje contestaba a
+# A1, no a A2: Z nacio despues).
+CART_RENEWAL_BY_REPLY_OUTCOMES = frozenset({
+    "advanced", "already_requested", "no_pending_last_touch", "reply_before_last_touch",
+})
+
+
 RECOVERY_CHECKOUT_RESERVE_OUTCOMES = frozenset({
     "reserved", "request_started_replay", "already_accepted", "delivery_unknown",
     "blocked_attempt", "blocked_case", "blocked_contact", "blocked_identity",
@@ -7607,6 +7631,119 @@ class SupabaseClient:
             "outcome",
             {"advanced", "already_requested", "no_pending_last_touch"},
             operation=operation,
+        )
+
+    async def request_cart_renewal_by_reply(
+        self,
+        *,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        chatwoot_conversation_id: int,
+        chatwoot_message_id: int,
+        external_user_id: str,
+        occurred_at: str,
+    ) -> str:
+        """A written reply after A2: the same renewal as «Quiero mi 10 %».
+
+        E-267 (20261102000100). Same outcomes as ``request_cart_renewal`` plus
+        ``reply_before_last_touch``: the pending Z was created after the
+        message, so the message answered A1 and nothing moves. Whether the
+        text is an opt-out or a clear no is decided by the bridge before
+        calling: the base does not read text.
+        """
+        operation = "request_recovery_renewal_by_reply_v1"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps(
+                {
+                    "p_chatwoot_account_id": chatwoot_account_id,
+                    "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                    "p_chatwoot_conversation_id": chatwoot_conversation_id,
+                    "p_chatwoot_message_id": chatwoot_message_id,
+                    "p_external_user_id": external_user_id,
+                    "p_occurred_at": occurred_at,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return _required_enum(
+            rows[0], "outcome", set(CART_RENEWAL_BY_REPLY_OUTCOMES), operation=operation
+        )
+
+    async def get_recovery_coupon_for_conversation(
+        self,
+        *,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        chatwoot_conversation_id: int,
+        external_user_id: str,
+    ) -> RecoveryCouponForConversation | None:
+        """The personal coupon the agent may name in this turn, or None.
+
+        E-267 (20261102000100): at most one row. ``valid`` carries the code,
+        the discount (a fraction, 0.1 = 10 %), the expiry and the ordinal;
+        ``renewal_in_progress`` carries none of them. None: no delivered
+        coupon is valid and no renewal is on its way (the agent works as
+        before).
+        """
+        operation = "get_recovery_coupon_for_conversation_v1"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps(
+                {
+                    "p_chatwoot_account_id": chatwoot_account_id,
+                    "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                    "p_chatwoot_conversation_id": chatwoot_conversation_id,
+                    "p_external_user_id": external_user_id,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) > 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        if not rows:
+            return None
+        row = rows[0]
+        state = _required_enum(
+            row, "state", set(RECOVERY_COUPON_TURN_STATES), operation=operation
+        )
+        ordinal = row.get("ordinal")
+        if not isinstance(ordinal, int) or isinstance(ordinal, bool) or ordinal not in (1, 2):
+            raise _invalid_row_error(operation)
+        if state == "renewal_in_progress":
+            if any(row.get(key) is not None for key in ("code", "discount", "expires_at")):
+                raise _invalid_row_error(operation)
+            return RecoveryCouponForConversation(
+                state=state, code=None, discount=None, expires_at=None, ordinal=ordinal
+            )
+        code = _required_string(row, "code", operation=operation)
+        if _RECOVERY_COUPON_CODE_RE.fullmatch(code) is None:
+            raise _invalid_row_error(operation)
+        raw_discount = row.get("discount")
+        if isinstance(raw_discount, bool) or not isinstance(raw_discount, (int, float, str)):
+            raise _invalid_row_error(operation)
+        try:
+            discount = Decimal(str(raw_discount))
+        except InvalidOperation as exc:
+            raise _invalid_row_error(operation) from exc
+        if not discount.is_finite() or not (Decimal(0) < discount < Decimal("0.99")):
+            raise _invalid_row_error(operation)
+        return RecoveryCouponForConversation(
+            state=state,
+            code=code,
+            discount=discount,
+            expires_at=_required_aware_timestamp(row, "expires_at", operation=operation),
+            ordinal=ordinal,
         )
     async def has_chatwoot_opt_out_stop(
         self,
