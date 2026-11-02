@@ -27,8 +27,9 @@ from typing import TextIO
 
 BRIDGE_LOGGER = "bridge"
 
-# Las lineas info que salen al log. Todas del webhook de Hotmart y de su worker:
-# lo que Hotmart manda y el bridge no usa, o lo que hizo con un evento.
+# Las lineas info que salen al log. Del webhook de Hotmart y de su worker: lo que
+# Hotmart manda y el bridge no usa, o lo que hizo con un evento. Y la pausa al
+# comprar: ids de evento, accion y conversacion, asignacion y motivo.
 LOGGED_INFO_EVENTS = frozenset(
     {
         # el webhook (bridge.app)
@@ -38,9 +39,16 @@ LOGGED_INFO_EVENTS = frozenset(
         "hotmart_event_rejected",
         "hotmart_listen_only_capture_skipped",
         "hotmart_listen_only_captured",
+        "hotmart_event_late",
+        "hotmart_payment_slip_admitted",
         # el worker (bridge.worker)
         "hotmart_event_not_planned",
         "hotmart_purchase_processed",
+        # la pausa al comprar (bridge.purchase_agent_pause y bridge.worker, E-283)
+        "purchase_agent_paused",
+        "purchase_agent_pause_skipped",
+        "purchase_agent_paused_after_welcome",
+        "purchase_agent_pause_after_welcome_skipped",
     }
 )
 
