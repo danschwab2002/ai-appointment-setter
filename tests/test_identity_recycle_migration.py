@@ -28,13 +28,15 @@ def test_it_is_one_transaction_with_lock_timeout_the_last_and_does_not_run_twice
     # Si la persona ya es cliente (20261103000700, E-297).
     # Las cuatro ramas del pago rechazado nativo (20261103000900, E-306).
     # El aviso de derivaciones sin atender (20261103001000, E-309).
-    assert names[-1] == "20261103001000_handoff_wait_alerts_v1.sql"
-    assert names[-2] == "20261103000900_flow_engine_native_payment_failure_branches_v1.sql"
-    assert names[-3] == "20261103000700_customer_status_v1.sql"
-    assert names[-4] == "20261103000600_flow_approval_history_v1.sql"
-    assert names[-5] == "20261103000500_meta_delivery_rejections_v1.sql"
-    assert names[-6] == MIGRATION.name
-    assert names[-7] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
+    # La etiqueta de un segmento en un flujo nativo (20261103001300, E-316): un reemplazo contado en la forma nativa.
+    assert names[-1] == "20261103001300_flow_engine_native_segment_label_v1.sql"
+    assert names[-2] == "20261103001000_handoff_wait_alerts_v1.sql"
+    assert names[-3] == "20261103000900_flow_engine_native_payment_failure_branches_v1.sql"
+    assert names[-4] == "20261103000700_customer_status_v1.sql"
+    assert names[-5] == "20261103000600_flow_approval_history_v1.sql"
+    assert names[-6] == "20261103000500_meta_delivery_rejections_v1.sql"
+    assert names[-7] == MIGRATION.name
+    assert names[-8] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
     assert sql.count("\nbegin;\n") == 1 and sql.rstrip().endswith("commit;")
     assert "set local lock_timeout = '5s';" in sql
     assert "message = 'identity_recycle_already_applied'" in sql
@@ -75,4 +77,4 @@ def test_each_role_gets_only_its_functions_and_never_the_agent() -> None:
 def test_the_validator_is_the_last_of_the_npm_chain() -> None:
     chain = json.loads(PACKAGE.read_text(encoding="utf-8"))["scripts"]["test"]
     assert chain.rstrip().endswith(" && node validate_flow_engine_native_silence_sweep.mjs"
-                                   " && node validate_identity_recycle.mjs && node validate_meta_delivery_rejections.mjs && node validate_flow_approval_history.mjs && node validate_customer_status.mjs && node validate_flow_engine_native_payment_failure_branches.mjs --check && node validate_handoff_wait_alerts.mjs")
+                                   " && node validate_identity_recycle.mjs && node validate_meta_delivery_rejections.mjs && node validate_flow_approval_history.mjs && node validate_customer_status.mjs && node validate_flow_engine_native_payment_failure_branches.mjs --check && node validate_handoff_wait_alerts.mjs && node validate_flow_engine_native_segment_label.mjs")

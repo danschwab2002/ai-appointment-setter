@@ -779,6 +779,7 @@ class ChatwootMessageSender:
         recipient: FirstTouchRecipient | None = None,
         template_params: dict[str, object] | None = None,
         purchase_welcome: bool = False,
+        before_send: Callable[[int], Awaitable[object]] | None = None,
     ) -> FirstTouchResult:
         """Send the first template; ``greeting_name`` fills ``{{1}}`` when given.
 
@@ -801,6 +802,12 @@ class ChatwootMessageSender:
         ``entra.permiso: compra``. Llega a ``send_first_message`` y marca el
         mensaje para que no cuente como toque de recuperacion (el cupon del
         link del agente). Apagado no cambia nada de lo que sale.
+
+        ``before_send`` (E-316, segment-labels-v1): corre con la conversacion ya
+        elegida o creada, justo antes de la plantilla. Es la etiqueta de un
+        segmento que pone el motor nativo, para que la conversacion ya la tenga
+        cuando la persona conteste. Falla blanda, como ``on_conversation_opened``:
+        si lanza, la plantilla sale igual. Sin el, nada cambia.
         """
         normalized = normalize_phone(phone)
         if normalized is None:
@@ -935,6 +942,8 @@ class ChatwootMessageSender:
                     contact_id=contact_id,
                     source_id=source_id,
                 )
+            if before_send is not None:
+                await self._before_first_message(before_send, conversation_id)
             welcome_kwargs: dict[str, object] = (
                 {"purchase_welcome": True} if purchase_welcome is True else {}
             )
@@ -1052,6 +1061,17 @@ class ChatwootMessageSender:
         chosen = open_conversations[0].conversation_id
         logger.info("first_touch_reuses_open_conversation conversation=%s", chosen)
         return chosen
+
+    async def _before_first_message(
+        self, before_send: Callable[[int], Awaitable[object]], conversation_id: int
+    ) -> None:
+        try:
+            await before_send(conversation_id)
+        except Exception:
+            # La etiqueta del segmento no frena la plantilla (E-316).
+            logger.warning(
+                "first_touch_before_send_failed conversation=%s", conversation_id
+            )
 
     async def _conversation_opened(self, conversation_id: int) -> None:
         if self._on_conversation_opened is None:

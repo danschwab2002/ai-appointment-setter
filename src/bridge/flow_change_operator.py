@@ -23,7 +23,8 @@ Subcomandos (``python -m bridge.flow_change_operator <subcomando>``):
 
 La entrada de ``validar``::
 
-    {"instance": {"tenant_ref", "ally_ref", "products": [...], "time_zone"},
+    {"instance": {"tenant_ref", "ally_ref", "products": [...], "time_zone",
+                  "segment_labels": [{"etiqueta", "estado"}]?},
      "store": {"flows": [{"flow_id", "product_ref", "flow_key", "state",
                           "active_version", "generation",
                           "versions": {"<n>": <definicion>}}]},
@@ -88,12 +89,21 @@ def instance_from_input(value: object) -> InstanceView:
     products = data.get("products")
     if not isinstance(products, list):
         raise OperatorInputError("operator_instance_invalid")
+    # E-316 (segment-labels-v1): las etiquetas de segmento que acepta etiquetar, con su estado. Opcional:
+    # sin la clave, solo cliente, como antes.
+    raw_segments = data.get("segment_labels", [])
+    if not isinstance(raw_segments, list) or not all(
+        isinstance(entry, Mapping) and isinstance(entry.get("etiqueta"), str)
+        and isinstance(entry.get("estado"), str) for entry in raw_segments
+    ):
+        raise OperatorInputError("operator_instance_invalid")
     try:
         return InstanceView(
             tenant_ref=data.get("tenant_ref"),  # type: ignore[arg-type]
             ally_ref=data.get("ally_ref"),  # type: ignore[arg-type]
             products=frozenset(products),
             time_zone=data.get("time_zone"),
+            segment_labels=tuple((entry["etiqueta"], entry["estado"]) for entry in raw_segments),
         )
     except (TypeError, ValueError) as error:
         raise OperatorInputError("operator_instance_invalid") from error

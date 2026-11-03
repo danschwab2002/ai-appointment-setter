@@ -1647,8 +1647,12 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
                                   oidc: SlackIdTokenClient, chatwoot: Any = None, inbox_id: int | None = None,
                                   time_zone: str | None = None, producer: Any = None,
                                   environ: Mapping[str, str] | None = None,
-                                  clock: Callable[[], datetime] | None = None) -> None:
+                                  clock: Callable[[], datetime] | None = None,
+                                  segment_labels: Callable[[], list[dict[str, str]]] | None = None) -> None:
     """Las rutas de la pagina. Solo se llama con el flag prendido.
+
+    ``segment_labels`` (E-316, segment-labels-v1): las etiquetas de segmento que acepta etiquetar,
+    con su estado al revalidar. Sin el, solo cliente, como antes.
 
     ``chatwoot`` e ``inbox_id`` dan el catalogo de plantillas para revalidar al
     publicar (sin ellos, publicar contesta ``template_catalog_unavailable``);
@@ -2022,7 +2026,9 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
             raise StoreUnavailable()
         return validate_proposal({
             "simulation_unavailable": "publish_revalidation",
-            "instance": {**instance, "products": sorted(products), "time_zone": time_zone},
+            "instance": {**instance, "products": sorted(products), "time_zone": time_zone,
+                         # E-316: las etiquetas de segmento que acepta etiquetar, con su estado de ahora.
+                         "segment_labels": segment_labels() if segment_labels is not None else []},
             "store": snapshot,
             "proposal": {"id": proposal_id, "revision": found.get("revision"), "items": found.get("items"),
                          "draft_base": found.get("draft_base"), "purpose": found.get("purpose"),

@@ -124,6 +124,8 @@ def test_it_is_one_transaction_and_comes_before_the_flow_engine_routes() -> None
         "20261103000900_flow_engine_native_payment_failure_branches_v1.sql",
         # El aviso de derivaciones sin atender (20261103001000, E-309).
         "20261103001000_handoff_wait_alerts_v1.sql",
+        # La etiqueta de un segmento en un flujo nativo (20261103001300, E-316): un reemplazo contado en la forma nativa.
+        "20261103001300_flow_engine_native_segment_label_v1.sql",
     ]
 
 

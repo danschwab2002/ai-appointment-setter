@@ -41,14 +41,15 @@ def _flows_body(reader: FakeReader) -> dict[str, object]:
 
 
 def test_the_contract_is_1_4_0() -> None:
-    # 1.4.0 (F-151): el permiso de WhatsApp declarado, sobre la 1.3.0 (E-208: la ficha del legado, business_flows y el motor v1).
-    assert CONTRACT_VERSION == "1.4.0"
+    # 1.5.0 (E-316): los segmentos y las etiquetas de etiquetar, sobre la 1.4.0 (F-151: el permiso de WhatsApp
+    # declarado) y la 1.3.0 (E-208: la ficha del legado, business_flows y el motor v1).
+    assert CONTRACT_VERSION == "1.5.0"
 
 
 def test_list_flows_shows_the_native_flow_with_its_cohort_and_sales() -> None:
     reader = _reader()
     body = _flows_body(reader)
-    assert body["contract_version"] == "1.4.0"
+    assert body["contract_version"] == "1.5.0"
     assert body["source"] == "mixed"
     flows = {flow["flow_key"]: flow for flow in body["data"]["flows"]}
     # Los cinco de siempre siguen, y la bienvenida se suma.

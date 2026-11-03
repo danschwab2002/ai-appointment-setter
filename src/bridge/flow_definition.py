@@ -61,6 +61,8 @@ ANY_TEMPLATE = "cualquier_plantilla"
 PERSONAL_COUPONS_PER_PATH = 2
 # El codigo de Hotmart del medio de pago (CASHPAYMENT, MERCADO_PAGO...).
 _PAYMENT_CODE = re.compile(r"[A-Z][A-Z0-9_]{1,39}")
+# La etiqueta de Chatwoot de un segmento, como la valida el manifiesto (_CHATWOOT_LABEL).
+_SEGMENT_LABEL = re.compile(r"[a-z0-9][a-z0-9_-]{0,254}")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _REF = re.compile(r"[a-z0-9][a-z0-9-]{0,127}")
 # Las formas que exige _flow_change_findings_are_valid: el codigo con la forma
@@ -115,6 +117,10 @@ COHORT = "cohorte"
 # etiquetar (esquema 1.2, D4): la etiqueta cliente y una nota privada; lo ejecuta solo el motor nativo.
 STEP_TYPES = ("esperar", "plantilla", "conversar", "condicion", "derivar", "etiquetar")
 LABELS = ("cliente",)
+# La etiqueta de un segmento (E-316, PR-C, segment-labels-v1): ademas de cliente, la de cada
+# [[agente.segmentos]] con macro, si la instancia la pasa en InstanceView.segment_labels. La pone el motor
+# nativo antes del primer envio, con cualquier disparador. Sus estados, calculados por quien arma la vista.
+SEGMENT_LABEL_STATES = ("por_empezar", "vigente", "vencido", "sin_vigencia")
 # nuevo (ciclo 1.7.0, flow-engine-v2 §7): crea un flujo nativo y lo publica en cohorte. No lleva flow_id.
 ITEM_TYPES = ("version", "volver", "prender", "apagar", "nuevo")
 # Ciclo 1.8.0: el unico valor de la clave a de un prender.
@@ -723,6 +729,9 @@ class InstanceView:
     ally_ref: str
     products: frozenset[str]
     time_zone: str | None = None
+    # E-316: las etiquetas de segmento que puede poner etiquetar, cada una con su estado a la hora de
+    # armar la vista (el validador no mira el reloj). Vacio: solo cliente, como antes.
+    segment_labels: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.tenant_ref, str) or not _REF.fullmatch(self.tenant_ref):
@@ -735,6 +744,24 @@ class InstanceView:
             raise ValueError("instance_products_invalid")
         if self.time_zone is not None and not isinstance(self.time_zone, str):
             raise ValueError("instance_time_zone_invalid")
+        if not isinstance(self.segment_labels, tuple) or not all(
+            isinstance(entry, tuple) and len(entry) == 2
+            and isinstance(entry[0], str) and _SEGMENT_LABEL.fullmatch(entry[0]) is not None
+            and entry[0] not in LABELS and not entry[0].startswith("automation_")
+            and entry[1] in SEGMENT_LABEL_STATES
+            for entry in self.segment_labels
+        ) or len({entry[0] for entry in self.segment_labels}) != len(self.segment_labels):
+            raise ValueError("instance_segment_labels_invalid")
+
+    @property
+    def segment_label_states(self) -> Mapping[str, str]:
+        """La etiqueta de cada segmento que etiquetar puede poner, con su estado."""
+        return MappingProxyType(dict(self.segment_labels))
+
+    @property
+    def labels(self) -> tuple[str, ...]:
+        """Lo que etiquetar acepta en esta instancia: cliente y las de sus segmentos."""
+        return LABELS + tuple(label for label, _ in self.segment_labels)
 
     @property
     def single_product(self) -> str | None:
@@ -1206,9 +1233,11 @@ def as_published(definition: Mapping[str, Any], version: int) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 class _Collector:
-    def __init__(self, base: Sequence[Segment]) -> None:
+    def __init__(self, base: Sequence[Segment], labels: Sequence[str] = LABELS) -> None:
         self.base = tuple(base)
         self.findings: list[Finding] = []
+        # Lo que acepta etiquetar (E-316): cliente y, con la instancia, sus segmentos.
+        self.labels = tuple(labels)
 
     def add(self, spec: CodeSpec, segments: Sequence[Segment], *, reason: str | None = None) -> None:
         self.findings.append(spec.at(finding_path(self.base + tuple(segments)), reason=reason))
@@ -1257,7 +1286,7 @@ def _check_keys(out: _Collector, value: Mapping[str, Any], segments: tuple[Segme
 
 
 def check_definition(definition: object, *, published: bool = False,
-                     path: Sequence[Segment] = ()) -> tuple[Finding, ...]:
+                     path: Sequence[Segment] = (), labels: Sequence[str] = LABELS) -> tuple[Finding, ...]:
     """La regla 1 sobre una definicion ya normalizada, mas los textos sin identificadores.
 
     ``published`` acepta ``version`` y ``estado: publicada`` (el destino de un
@@ -1265,7 +1294,7 @@ def check_definition(definition: object, *, published: bool = False,
     regla propia queda para esa regla: el disparador (2), las horas y la zona
     del horario (8) y los numeros de los topes (9).
     """
-    out = _Collector(path)
+    out = _Collector(path, labels)
     if not isinstance(definition, Mapping):
         out.add(INVALID_VALUE, (), reason="Una definición es un objeto.")
         return tuple(out.findings)
@@ -1418,7 +1447,7 @@ def _check_step(out: _Collector, step: object, segments: tuple[Segment, ...]) ->
     elif kind == "derivar":
         _check_text(out, value, segments + ("derivar",), None, "La nota")
     elif kind == "etiquetar":
-        _check_enum(out, value, segments + ("etiquetar",), LABELS)
+        _check_enum(out, value, segments + ("etiquetar",), out.labels)
     else:
         _check_condition_step(out, step, segments)
 
@@ -1967,7 +1996,7 @@ def normalize_definition(
               other_schedules=other_schedules, catalog=catalog).run()
     normalized = _ordered(normalized)
     findings = list(out.findings)
-    findings.extend(check_definition(normalized, path=path))
+    findings.extend(check_definition(normalized, path=path, labels=instance.labels))
     return NormalizedDefinition(definition=normalized, findings=tuple(_dedupe(findings)))
 
 

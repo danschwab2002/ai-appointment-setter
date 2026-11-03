@@ -44,8 +44,8 @@ import json
 import logging
 import os
 import re
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -369,6 +369,8 @@ class _Context:
     time_zone: str | None
     inbox_id: int
     git_sha: str
+    # E-316 (segment-labels-v1): las etiquetas de segmento que acepta etiquetar, con su estado de ahora.
+    segment_labels: Callable[[], list[dict[str, str]]] = field(default=lambda: [])
 
 
 def _instance_view(context: _Context, store: Mapping[str, Any]) -> InstanceView:
@@ -376,7 +378,9 @@ def _instance_view(context: _Context, store: Mapping[str, Any]) -> InstanceView:
     if not isinstance(products, list) or not products:
         raise StoreUnavailable()
     return InstanceView(tenant_ref=context.instance["tenant_ref"], ally_ref=context.instance["ally_ref"],
-                        products=frozenset(products), time_zone=context.time_zone)
+                        products=frozenset(products), time_zone=context.time_zone,
+                        segment_labels=tuple((entry["etiqueta"], entry["estado"])
+                                             for entry in context.segment_labels()))
 
 
 def _finding(finding: Mapping[str, Any]) -> dict[str, Any]:
@@ -468,10 +472,16 @@ def _proposal_id(value: str) -> str:
 
 def register_flow_change_routes(app: FastAPI, *, token: str, store: FlowChangeStore, chatwoot: Any,
                                 tenant_ref: str, ally_ref: str, time_zone: str | None, inbox_id: int,
-                                git_sha: str | None = None) -> None:
-    """Las rutas, detras del flag (lo mira quien llama: con el flag apagado no existen)."""
+                                git_sha: str | None = None,
+                                segment_labels: Callable[[], list[dict[str, str]]] | None = None) -> None:
+    """Las rutas, detras del flag (lo mira quien llama: con el flag apagado no existen).
+
+    ``segment_labels`` (E-316): las etiquetas de segmento que acepta etiquetar, con su estado al
+    validar. Sin el, solo cliente, como antes.
+    """
     context = _Context(instance={"tenant_ref": tenant_ref, "ally_ref": ally_ref}, time_zone=time_zone,
-                       inbox_id=inbox_id, git_sha=git_sha or os.getenv("GIT_SHA", "") or "unknown")
+                       inbox_id=inbox_id, git_sha=git_sha or os.getenv("GIT_SHA", "") or "unknown",
+                       **({"segment_labels": segment_labels} if segment_labels is not None else {}))
     slots = asyncio.Semaphore(2)
 
     @app.exception_handler(EntryRefused)
@@ -651,7 +661,9 @@ def register_flow_change_routes(app: FastAPI, *, token: str, store: FlowChangeSt
                 out = validate_proposal({
                     **simulation_inputs,
                     "instance": {**context.instance, "products": sorted(view.products),
-                                 "time_zone": context.time_zone},
+                                 "time_zone": context.time_zone,
+                                 "segment_labels": [{"etiqueta": label, "estado": state}
+                                                    for label, state in view.segment_labels]},
                     "store": snapshot,
                     "proposal": {"id": checked, "revision": proposal.get("revision"),
                                  "items": proposal.get("items"), "draft_base": proposal.get("draft_base"),

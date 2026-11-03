@@ -32,7 +32,9 @@ from zoneinfo import ZoneInfo
 CONTRACT = "automation-expert-read-v1"
 # 1.3.0 (E-208, M16 P5 y P8): la ficha del legado, quien ejecuta cada flujo de
 # negocio (business_flows) y las rutas, divergencias y rechazos del motor v1.
-CONTRACT_VERSION = "1.4.0"
+# 1.5.0 (E-316, segment-labels-v1): con FLOW_ENGINE_SEGMENT_LABELS_ENABLED, los
+# segmentos de la instancia y las etiquetas que acepta etiquetar.
+CONTRACT_VERSION = "1.5.0"
 # Las claves del legado que la lectura proyecta desde read_automation_expert_flows_v1.
 # Un flujo nativo nunca usa una (D1 del mapa M16): la lectura de los nativos las
 # rechaza, y desde E-207 la base no las deja publicar (flow_key_reserved_for_legacy,

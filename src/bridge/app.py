@@ -271,6 +271,10 @@ from bridge.recovery_coupon_reply import (
     reply_may_renew,
 )
 from bridge.recovery_coupons import RecoveryCouponWorker
+from bridge.segment_labels import (
+    automation_expert_segments,
+    segment_labels_setup as _segment_labels_setup,
+)
 from bridge.customer_status import (
     CUSTOMER_LINK_REQUEST_REASON,
     CUSTOMER_STATUS_CONTEXT_KEY,
@@ -467,6 +471,13 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # motor nativo o al legado. Lo especifico (los flujos de intencion) es de la
     # base; por instancia, solo prenderlo.
     "flow_engine_native_intent_enabled",
+    # E-316 (segment-labels-v1): la etiqueta de un segmento antes del primer
+    # turno del agente, la que pone el motor nativo antes del primer envio y la
+    # que se hereda de otra conversacion del contacto. Lo especifico (que
+    # segmentos, con que macro) es de [[agente.segmentos]]; por instancia, solo
+    # prenderlo.
+    "flow_engine_segment_labels_enabled",
+    "segment_label_inheritance_enabled",
     "slack_connector_projection_enabled",
     "correlation_preresolution_enabled",
     # Transcribir un audio no depende del aliado: la key y el host de Chatwoot
@@ -1095,6 +1106,15 @@ class Settings:
     # decide en la base si es del motor nativo (un flujo de intencion) o del
     # legado. Apagado (ATT1), el formulario sigue por el codigo de hoy.
     flow_engine_native_intent_enabled: bool = False
+    # E-316 (segment-labels-v1, PR-C de los segmentos): el paso etiquetar de un
+    # flujo nativo acepta la etiqueta de cada [[agente.segmentos]] con macro, con
+    # cualquier disparador, y el motor la pone antes del primer envio. Apagado, el
+    # validador acepta solo cliente y el worker no lee nada nuevo.
+    flow_engine_segment_labels_enabled: bool = False
+    # E-316: en el primer turno que el bridge ve de una conversacion sin etiqueta
+    # de segmento, le hereda la de otra conversacion del mismo contacto (una
+    # lectura de Chatwoot por conversacion, nunca por turno). Apagado, nada.
+    segment_label_inheritance_enabled: bool = False
     slack_connector_projection_enabled: bool = False
     slack_connector_base_url: str | None = None
     slack_connector_bearer_token: str | None = None
@@ -2564,6 +2584,14 @@ class Settings:
             ),
             flow_engine_native_intent_enabled=(
                 os.getenv("FLOW_ENGINE_NATIVE_INTENT_ENABLED", "false").lower()
+                == "true"
+            ),
+            flow_engine_segment_labels_enabled=(
+                os.getenv("FLOW_ENGINE_SEGMENT_LABELS_ENABLED", "false").strip().lower()
+                == "true"
+            ),
+            segment_label_inheritance_enabled=(
+                os.getenv("SEGMENT_LABEL_INHERITANCE_ENABLED", "false").strip().lower()
                 == "true"
             ),
         )
@@ -5209,6 +5237,12 @@ def create_app(
             macro_id=settings.chatwoot_client_label_macro_id,
         )
 
+    # E-316 (segment-labels-v1): las etiquetas de segmento, con el macro de cada
+    # [[agente.segmentos]] (macro_etiqueta). Sin los dos flags, nada.
+    segment_labels_setup = _segment_labels_setup(settings, control_client)
+    native_segment_labels = segment_labels_setup.native
+    segment_label_inheritance = segment_labels_setup.inheritance
+
     async def label_products(
         conversation_id: int, keys: Iterable[str | None], *, source: str
     ) -> None:
@@ -6114,6 +6148,7 @@ def create_app(
         durable_dispatcher = DurableDispatcher(
             flow_engine_enabled=settings.flow_engine_enabled,
             native_client_labeler=native_client_labeler,
+            native_segment_labels=native_segment_labels,
             purchase_pause_after_native_welcome=(
                 purchase_agent_pause
                 if settings.purchase_agent_pause_after_native_welcome_enabled
@@ -7980,6 +8015,12 @@ def create_app(
                 )
                 if recent_failure is not None:
                     context["recent_payment_failure"] = recent_failure
+            if segment_label_inheritance is not None:
+                # E-316: la etiqueta de segmento de otra conversacion del
+                # contacto, antes de que se lean las etiquetas del turno.
+                payload = await segment_label_inheritance.apply(
+                    payload, conversation_id=conversation_id
+                )
             if agent_products:
                 context["products"] = agent_products
                 person_activity = await _person_activity_context(
@@ -9486,6 +9527,7 @@ def create_app(
             ally_ref=change_manifest.ally_ref,
             time_zone=change_manifest.time_zone,
             inbox_id=change_manifest.chatwoot_inbox_id,
+            segment_labels=lambda: segment_labels_setup.validator_labels(datetime.now(UTC)),
         )
         if settings.meta_templates_enabled:
             # F-146 (template-request-v1): el agente redacta y valida una
@@ -9553,6 +9595,7 @@ def create_app(
             inbox_id=settings.instance_manifest.chatwoot_inbox_id,
             time_zone=settings.instance_manifest.time_zone,
             producer=slack_runtime.producer if slack_runtime is not None else None,
+            segment_labels=lambda: segment_labels_setup.validator_labels(datetime.now(UTC)),
         )
 
     if settings.automation_expert_read_enabled:
@@ -9768,6 +9811,19 @@ def create_app(
                     else None
                 ),
             }
+            # 1.5.0 (E-316, segment-labels-v1): los segmentos de la instancia y
+            # las etiquetas que puede poner etiquetar. Solo con
+            # FLOW_ENGINE_SEGMENT_LABELS_ENABLED; apagado, la respuesta es la
+            # de siempre.
+            if segment_labels_setup.validator_enabled:
+                data = {
+                    **data,
+                    **automation_expert_segments(
+                        segment_labels_setup.segments,
+                        data.get("flows") or [],  # type: ignore[arg-type]
+                        now=datetime.now(UTC),
+                    ),
+                }
             body = automation_expert_envelope(
                 expert_instance,
                 data=data,
