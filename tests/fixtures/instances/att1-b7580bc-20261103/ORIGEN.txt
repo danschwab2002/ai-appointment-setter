@@ -1,0 +1,8 @@
+Copia de solo lectura de danschwab2002/setter-instancia-att1 en el commit b7580bc41f32dc6ba56d3efc0b5a2f20b7b435d1,
+bajada por la API de GitHub el 2026-11-03 (UTC) para las pruebas de setter segmento chequear (E-312, diseno E-310 §3).
+Archivos sin tocar: instancia.toml, conocimiento/knowledge-v13.toml (la version anterior, para probar que cambiar el base invalida el sha),
+conocimiento/knowledge-v14.toml (render 29.091 bytes, sha256 0914acdb1baf...),
+conocimiento/prueba/casos.json, evidencia/2026-10-10-catalogo-plantillas-canal-10.json y flujos/publicados/.
+Ninguno trae datos personales ni secretos (el cupon de los botones del catalogo ya venia tapado).
+Lo unico agregado es conocimiento/segmentos/, que lo escriben las pruebas en una copia temporal: el segmento
+de ejemplo vive en tests/fixtures/segments/ y es ficticio (no es la oferta de Black November).

@@ -1,0 +1,65 @@
+{
+  "esquema": "flujos-publicados/v1",
+  "leido_en": "2026-11-02T15:56:39Z",
+  "flujos": [
+    {
+      "producto": "att1",
+      "flujo": "bienvenida",
+      "estado": "prendido",
+      "version_activa": 1,
+      "ejecutor": "motor",
+      "legacy_kind": null,
+      "versiones": [
+        {
+          "version": 1,
+          "esquema": "setter-flujo/v1",
+          "sha256": "a72c65f62d67983fea9e9ba7a8dd89f0aa5d92d5ae8afbbf46f53f96da1921bb",
+          "publicada": "2026-10-26T15:40:17.473909+00:00",
+          "archivo": "publicados/att1/bienvenida/v1.json"
+        }
+      ]
+    },
+    {
+      "producto": "att1",
+      "flujo": "carrito",
+      "estado": "prendido",
+      "version_activa": 1,
+      "ejecutor": "motor",
+      "legacy_kind": "carrito",
+      "versiones": [
+        {
+          "version": 1,
+          "esquema": "setter-flujo/v1",
+          "sha256": "6a832561bb8e1c57f81792ae0e71f68db9f5013e75c974bf52695c6fd88218b7",
+          "publicada": "2026-10-22T00:12:30.685762+00:00",
+          "archivo": "publicados/att1/carrito/v1.json"
+        },
+        {
+          "version": 2,
+          "esquema": "setter-flujo/v1",
+          "sha256": "b2ff93f2692b3108566acd3c5a03a1e83554835b7a3ca512dd34109bfeb92f29",
+          "publicada": "2026-10-22T19:43:19.915432+00:00",
+          "archivo": "publicados/att1/carrito/v2.json"
+        }
+      ]
+    },
+    {
+      "producto": "att1",
+      "flujo": "pago_fallido",
+      "estado": "apagado",
+      "version_activa": null,
+      "ejecutor": null,
+      "legacy_kind": null,
+      "versiones": []
+    },
+    {
+      "producto": "att1",
+      "flujo": "precheckout",
+      "estado": "apagado",
+      "version_activa": null,
+      "ejecutor": null,
+      "legacy_kind": null,
+      "versiones": []
+    }
+  ]
+}

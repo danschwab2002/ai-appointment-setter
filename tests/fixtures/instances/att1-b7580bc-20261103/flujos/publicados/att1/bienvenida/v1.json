@@ -1,0 +1,45 @@
+{
+  "entra": {
+    "permiso": "compra",
+    "contesto_a": []
+  },
+  "flujo": "bienvenida",
+  "pasos": [
+    {
+      "idioma": "es_MX",
+      "plantilla": "att1_bienvenida_01",
+      "variables": [
+        "producto"
+      ]
+    },
+    {
+      "etiquetar": "cliente"
+    }
+  ],
+  "topes": {
+    "bolsa": "att1-bienvenida",
+    "total": "sin_tope",
+    "por_dia": "sin_tope",
+    "repeticion": {
+      "una_por": "persona",
+      "otra_despues_de": "nunca"
+    }
+  },
+  "estado": "publicada",
+  "nombre": "Bienvenida att1",
+  "dispara": {
+    "evento": "compra"
+  },
+  "esquema": "setter-flujo/v1",
+  "horario": "siempre",
+  "termina": {
+    "si": [],
+    "vence": "1d"
+  },
+  "version": 1,
+  "producto": "att1",
+  "prioridad": {
+    "le_gana_a": [],
+    "no_arranca_mientras": []
+  }
+}

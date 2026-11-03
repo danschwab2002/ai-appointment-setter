@@ -1,0 +1,70 @@
+# Segmento de EJEMPLO para las pruebas de setter segmento chequear (E-312). Es ficticio: precio, cupon,
+# fechas y bono son inventados para probar el chequeo y NO son la oferta de Black November de ATT1.
+# Las fuentes de sus pruebas son las reales de ATT1 (tests/fixtures/instances/att1-b7580bc-20261103). Trae
+# respuestas en [[preguntas_del_alta]] para probar que el juez las recibe; si estan bien o no lo decide el juez.
+
+[cabecera]
+segment_version = 1
+estado = "borrador"
+ally_ref = "att1"
+clave = "campana-ejemplo"
+
+[vigencia]
+desde = 2026-11-20T00:00:00-06:00
+hasta = 2026-12-01T00:00:00-06:00
+
+[instruccion]
+texto = "Ejemplo ficticio para las pruebas. A quien pregunte por la campaña, cuéntale el precio de campaña y que se aplica con el cupón en la página de pago."
+
+[oferta]
+producto = "alimenta-tu-tiroides"
+precio = "37"
+moneda = "USD"
+precio_antes = "47"
+cupon = "EJEMPLO37"
+incluye = ["Una clase extra, «Clase de ejemplo de campaña», que existe solo en la campaña."]
+garantia = "7 días, la garantía de Hotmart."
+reemplaza = ["precio"]
+
+[asesoramiento]
+items = [
+  "A quien duda entre comprar ahora o después: el precio de campaña es USD 37 en lugar de USD 47 y vale hasta el 30 de noviembre.",
+]
+
+[se_puede_decir]
+items = ["El precio de campaña se aplica con el código EJEMPLO37 en el campo del cupón de la página de pago."]
+
+[[faq]]
+pregunta = "¿Se combina con el cupón del carrito?"
+respuesta = "No: en la campaña vale solo el código EJEMPLO37; no se suma al TIROIDES10."
+fuente = "ejemplo ficticio de las pruebas"
+
+[[preguntas_del_alta]]
+pregunta = "[alta-07] ¿Qué medios de pago hay en la campaña, y hay meses sin intereses?"
+respuesta = "Los mismos del conocimiento base, sin meses sin intereses."
+fuente = "ejemplo ficticio de las pruebas"
+
+[[preguntas_del_alta]]
+pregunta = "[alta-09] ¿La campaña aplica a quien ya es clienta? ¿Qué se le dice?"
+respuesta = "No aplica a quien ya compró el programa."
+fuente = "ejemplo ficticio de las pruebas"
+
+[[preguntas_del_alta]]
+pregunta = "[alta-10] ¿Qué se le dice a quien escribe después de que termina la campaña?"
+respuesta = "Que la campaña terminó y el precio es el de siempre."
+fuente = "ejemplo ficticio de las pruebas"
+
+[[preguntas_del_alta]]
+pregunta = "[alta-12] ¿Quién entra al segmento: qué flujo o qué acción del equipo pone la etiqueta?"
+respuesta = "El equipo, con un macro de Chatwoot."
+fuente = "ejemplo ficticio de las pruebas"
+
+[[preguntas_del_alta]]
+pregunta = "[c-base-promesa-precio-102f8a93] ¿Confirman que, para quien está en la campaña, vale el precio del segmento?"
+respuesta = "Sí: para quien está en la campaña vale el precio del segmento."
+fuente = "ejemplo ficticio de las pruebas"
+
+[[preguntas_del_alta]]
+pregunta = "[c-base-promesa-urgencia-82ee430e] ¿Puede el agente decir hasta cuándo vale la campaña si se lo preguntan?"
+respuesta = "Sí, si se lo preguntan, sin usarlo para apurar."
+fuente = "ejemplo ficticio de las pruebas"
