@@ -120,10 +120,11 @@ __all__ = [
     "parity_report_v3", "step_finals", "step_timings",
 ]
 
-# R - E <= 5 minutos (P#2): un lease del despachador (worker.py:739). Con 15, un
+# R - E <= 5 minutos (P#2): un lease del despachador (DurableDispatcher.lease_duration,
+# worker.py). Con 15, un
 # error de hasta 12 pasaba sin verse.
 TOLERANCE = timedelta(minutes=5)
-# El lease del despachador (worker.py:739). Una accion con un arranque rechazado
+# El lease del despachador (DurableDispatcher.lease_duration, worker.py). Una accion con un arranque rechazado
 # se vuelve a tomar recien cuando vence su lease (claim_due_followup_actions,
 # 20260803000100_followup_engine_v1.sql:2614).
 LEASE = timedelta(minutes=5)
@@ -156,7 +157,8 @@ OPEN_ACTION_STATUSES = frozenset({"pending", "deferred", "retryable_failed"})
 OPEN_CASE_STATUSES = frozenset({"grace_period", "active", "paused"})
 # Los hechos observados que explican pasar la tolerancia: un intento anterior
 # que termino asi (los resultados de followup_delivery_attempts,
-# 20260803000100:310-313). El reintento a un minuto es worker.py:959.
+# 20260803000100:310-313). El reintento a un minuto es
+# DurableDispatcher._finalize_pre_request_failure (worker.py).
 EXPLAINING_OUTCOMES: Mapping[str, str] = MappingProxyType({
     "failed_before_request": "reintento_tras_fallo_antes_del_pedido",
     "rejected": "rechazo_de_meta",
@@ -190,8 +192,10 @@ _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 _NAME = re.compile(r"[a-z][a-z0-9_]{2,59}")
 # Los 25 casos que la cadena genera (§3.2, legacy_recovery_cases.json).
 _GENERATED_CASE = re.compile(r"G(?:[1-9]|1[0-9]|2[0-5])")
-# archivo:linea o archivo:inicio-fin, con la ruta desde la raiz del repo.
-_CITATION = re.compile(r"[A-Za-z0-9_.][A-Za-z0-9_./-]*\.[a-z]{1,5}:[1-9][0-9]*(?:-[1-9][0-9]*)?")
+# archivo:linea o archivo:inicio-fin, con la ruta desde la raiz del repo, o archivo#marca (el
+# bloque entre ``# flow-parity: <marca>`` y ``# flow-parity-fin: <marca>``; E-318).
+_CITATION = re.compile(
+    r"[A-Za-z0-9_.][A-Za-z0-9_./-]*\.[a-z]{1,5}(?::[1-9][0-9]*(?:-[1-9][0-9]*)?|#[a-z][a-z0-9_]{2,59})")
 _MAX_STEPS = 10_000
 
 
@@ -210,7 +214,7 @@ class FlowException:
     name: str                       # ^[a-z][a-z0-9_]{2,59}$, unico
     legacy_kinds: frozenset[str]    # a que flujos de hoy se aplica
     layer: str                      # "plan" | "puerta" | "despacho" | "sql"
-    cita: str                       # archivo:linea del comportamiento de hoy
+    cita: str                       # archivo#marca (codigo) o archivo:lineas (migracion)
     descripcion: str
     # Los pasos (step_key) por los que la aplica el codigo de hoy: el bridge elige por el paso y la
     # base por su coupon_ordinal. Con pasos, la tiene solo un flujo de esos legacy_kinds cuyo plan
@@ -231,6 +235,14 @@ _CON_PRIMER_CONTACTO = frozenset({"carrito", "pago_fallido", "precheckout"})
 # 4, 4b, 4c, 5, 5b y 6. Las de capa sql y despacho las aplica codigo que el
 # motor reusa, asi que las hereda todo flujo del motor (§2.8). Las citas son de
 # 7c0a61b.
+#
+# La forma de una cita (E-318, 2026-11-03). Al codigo Python se cita por marca:
+# ``src/bridge/app.py#a1_cupon_por_flag`` es el bloque entre las lineas
+# ``# flow-parity: a1_cupon_por_flag`` y ``# flow-parity-fin: a1_cupon_por_flag`` de
+# ese archivo, y la marca lleva el nombre de la excepcion. Asi un PR que mueve
+# codigo arriba no rompe la cita, y uno que borra la marca o saca la logica de
+# entre las dos lineas la pone en rojo (tests/test_flow_engine_exceptions.py).
+# A una migracion se la cita por lineas: una migracion aplicada no se edita.
 #
 # Despues, las de los varios toques (T2.1, 2026-10-21; las citas son de b163669):
 # lo que hacen hoy A1, A2 y Z del carrito y el seguimiento del pago rechazado y
@@ -279,7 +291,7 @@ EXCEPTIONS_V1: tuple[FlowException, ...] = (
     ),
     FlowException(
         "nombre_inseguro_cierra", _CON_PRIMER_CONTACTO, "despacho",
-        "src/bridge/worker.py:1568-1584",
+        "src/bridge/worker.py#nombre_inseguro_cierra",
         "El nombre que no pasa el filtro cierra la accion sin reintento (D1).",
     ),
     FlowException(
@@ -295,21 +307,21 @@ EXCEPTIONS_V1: tuple[FlowException, ...] = (
     ),
     FlowException(
         "a1_espera_al_cupon", _CARRITO, "despacho",
-        "src/bridge/cart_first_touch.py:130-139",
+        "src/bridge/cart_first_touch.py#a1_espera_al_cupon",
         "A1 espera unos minutos a que el cupon 1 este valid; si no llega a tiempo, o murio, sale la"
         " plantilla de hoy, sin descuento (la del manifiesto). A1 no se pierde por el cupon.",
         step_keys=frozenset({"first_contact"}),
     ),
     FlowException(
         "a1_cupon_por_flag", _CARRITO, "despacho",
-        "src/bridge/app.py:5880-5881",
+        "src/bridge/app.py#a1_cupon_por_flag",
         "Que A1 lleve el cupon personal lo decide RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED, no la"
         " politica: el primer paso no tiene coupon_ordinal.",
         step_keys=frozenset({"first_contact"}),
     ),
     FlowException(
         "toque_con_cupon_cierra_sin_cupon", _CARRITO_PAGO, "despacho",
-        "src/bridge/cart_followups.py:215-230",
+        "src/bridge/cart_followups.py#toque_con_cupon_cierra_sin_cupon",
         "Un toque siguiente con cupon (Z del carrito, y B2 o Z del pago rechazado, que la reusan) espera"
         " al cupon 2 y, si no esta valid a tiempo o murio, cierra sin mensaje: no hay toque sin el"
         " descuento que promete.",
@@ -331,7 +343,7 @@ EXCEPTIONS_V1: tuple[FlowException, ...] = (
     ),
     FlowException(
         "boton_con_off_discount", _CARRITO_PAGO, "despacho",
-        "src/bridge/cart_followups.py:277-279",
+        "src/bridge/cart_followups.py#boton_con_off_discount",
         "El boton de un toque con cupon es nuestro link emitido mas &offDiscount=<codigo>: el cupon"
         " va en el boton, no en la definicion.",
         step_keys=frozenset({"first_contact", "cart_last_touch", "payment_failure_followup"}),
@@ -744,7 +756,8 @@ def _fact_of(last: Mapping[str, Any], where: str) -> tuple[str, datetime] | None
     """El hecho que deja el ultimo intento de un tramo sin pedido, y desde cuando explica la demora.
 
     Un fallo, un incierto o un rechazo explican hasta el reintento que pidieron
-    (``finalized_next_attempt_at``; el de un fallo es a 1 minuto, worker.py:959)
+    (``finalized_next_attempt_at``; el de un fallo es a 1 minuto,
+    ``DurableDispatcher._finalize_pre_request_failure``)
     o, sin el, hasta el comienzo del intento. Un arranque rechazado (reservado,
     sin resultado) explica hasta que vence su lease: recien ahi se vuelve a tomar
     la accion.
@@ -1325,8 +1338,8 @@ def parity_report(capture: Capture, named: Sequence[Mapping[str, Any]], *,
 # R - E <= 5 minutos salvo un hecho observado. Ademas de los de la T1, el
 # cupon que se espera: un intento ``failed_before_request`` con
 # ``recovery_coupon_not_ready`` es la excepcion ``a1_espera_al_cupon`` en A1
-# (cart_first_touch.py:130-139) y ``toque_con_cupon_cierra_sin_cupon`` en Z
-# (cart_followups.py:215-230); como todo hecho, explica hasta el reintento que
+# (cart_first_touch.py#a1_espera_al_cupon) y ``toque_con_cupon_cierra_sin_cupon`` en Z
+# (cart_followups.py#toque_con_cupon_cierra_sin_cupon); como todo hecho, explica hasta el reintento que
 # pidio. Las diferencias de P3 llevan como ``ref`` el uuid de la accion: un
 # disparo tiene hasta tres pasos.
 #
@@ -1355,8 +1368,8 @@ def parity_report(capture: Capture, named: Sequence[Mapping[str, Any]], *,
 DIFFERENCE_KINDS_V3 = DIFFERENCE_KINDS + ("final_sin_motivo", "censo_no_cierra", "paso_no_creado")
 FIRST_STEP = "first_contact"
 LAST_TOUCH_STEP = "cart_last_touch"
-# El cupon que todavia no esta valid: el intento se difiere (worker.py:992-1030,
-# con el retry_after del paso).
+# El cupon que todavia no esta valid: el intento se difiere
+# (DurableDispatcher._finalize_pre_request_failure, worker.py, con el retry_after del paso).
 COUPON_NOT_READY = "recovery_coupon_not_ready"
 COUPON_WAIT_BY_STEP: Mapping[str, str] = MappingProxyType({
     FIRST_STEP: "a1_espera_al_cupon",
@@ -1535,11 +1548,11 @@ def _step_start(capture: CaptureV3, case: Mapping[str, Any], action: Mapping[str
 
 
 # Cuanto pide reintentar el despachador despues de un fallo antes del pedido, por paso
-# (worker.py:992-1030, _finalize_pre_request_failure: retry_after o, sin el, 1 minuto). El cupon que
-# todavia no esta valid difiere 5 minutos en A1 (cart_first_touch.py:56-58, CartDiscountConfig) y 8 en
-# Z (cart_followups.py:96-98, CartFollowupConfig), y solo en los primeros ``defer_attempts`` (2)
-# intentos; despues A1 sale sin descuento y Z cierra sin mensaje (cart_first_touch.py:130-139,
-# cart_followups.py:215-230).
+# (DurableDispatcher._finalize_pre_request_failure, worker.py: retry_after o, sin el, 1 minuto). El
+# cupon que todavia no esta valid difiere 5 minutos en A1 (CartDiscountConfig.defer_delay,
+# cart_first_touch.py) y 8 en Z (CartFollowupConfig.defer_delay, cart_followups.py), y solo en los
+# primeros ``defer_attempts`` (2) intentos; despues A1 sale sin descuento y Z cierra sin mensaje
+# (cart_first_touch.py#a1_espera_al_cupon, cart_followups.py#toque_con_cupon_cierra_sin_cupon).
 COUPON_RETRY_BY_STEP: Mapping[str, timedelta] = MappingProxyType({
     FIRST_STEP: timedelta(minutes=5),
     LAST_TOUCH_STEP: timedelta(minutes=8),

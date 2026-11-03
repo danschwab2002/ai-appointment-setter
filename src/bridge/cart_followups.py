@@ -212,6 +212,7 @@ async def compose_cart_last_touch(
         recovery_case_id=action.recovery_case_id,  # type: ignore[attr-defined]
         ordinal=CART_RENEWAL_COUPON_ORDINAL,
     )
+    # flow-parity: toque_con_cupon_cierra_sin_cupon
     if coupon is None or coupon.status != "valid" or coupon.expires_at <= at:
         if coupon is not None and coupon.status in _COUPON_DEAD:
             return CartDiscountStop(
@@ -228,6 +229,7 @@ async def compose_cart_last_touch(
         return CartDiscountStop(
             reason=CART_LAST_TOUCH_COUPON_NOT_READY_IN_TIME, retryable=False
         )
+    # flow-parity-fin: toque_con_cupon_cierra_sin_cupon
     values = {
         "nombre": _clean(buyer_name),
         "producto": _clean(product_name),
@@ -275,7 +277,9 @@ async def compose_cart_last_touch(
     assert reservation.issuance_id is not None
     assert reservation.checkout_url_final is not None
     try:
+        # flow-parity: boton_con_off_discount
         suffix = followup_button_suffix(reservation.checkout_url_final, coupon.code)
+        # flow-parity-fin: boton_con_off_discount
         processed = approved.processed_params(ordered, button_suffix=suffix)
     except (ValueError, ApprovedTemplateError) as exc:
         return CartDiscountStop(

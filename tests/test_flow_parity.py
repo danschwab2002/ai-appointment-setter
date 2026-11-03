@@ -572,6 +572,7 @@ def test_a_cart_cut_before_e_is_not_a_p3_difference() -> None:
     ({"cita": "src/bridge/worker.py:1055-1071"}, "caso_y_cita"),
     ({"caso": "G26"}, "caso_invalido"),
     ({"caso": None, "cita": "worker.py"}, "cita_invalida"),
+    ({"caso": None, "cita": "src/bridge/worker.py#Nombre-Inseguro"}, "cita_invalida"),
     ({"clase": "—"}, "clase_invalida"),
     ({"nombre": "Lo-En-Curso"}, "nombre_invalido"),
     ({"disparo": "carrito-1"}, "disparo_sin_uuid"),
@@ -589,6 +590,14 @@ def test_a_named_difference_without_its_case_or_its_citation_explains_nothing(
     kinds = sorted(item["diferencia"] for item in report.unexplained)
     assert kinds == sorted(["elegible_sin_envio", f"nombrada_invalida:{reason}"])
     assert report.named_total == 0
+
+
+@pytest.mark.parametrize("cita", ["src/bridge/worker.py#nombre_inseguro_cierra", "src/bridge/worker.py:706"])
+def test_a_named_difference_cites_by_anchor_or_by_line(cita: str) -> None:
+    # E-318: la cita de una diferencia con nombre acepta la marca, como las de EXCEPTIONS_V1.
+    entry = {"disparo": uid(1), "diferencia": "elegible_sin_envio", "clase": "C",
+             "nombre": "lo_en_curso_sigue", "cita": cita}
+    assert flow_parity._named_problem(entry) is None
 
 
 def test_a_named_difference_that_the_parity_does_not_see_is_reported() -> None:

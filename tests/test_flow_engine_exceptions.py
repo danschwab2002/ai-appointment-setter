@@ -12,7 +12,12 @@ T3. Esta prueba fija:
 * que ningun ``legacy_kind`` queda fuera de ``TEMPLATE_SLOTS``
   (``src/bridge/instance_manifest.py:69``);
 * que cada cita apunta a un archivo del repo, a lineas que existen, y que en
-  esas lineas esta el comportamiento que nombra (una marca de texto por cita).
+  esas lineas esta el comportamiento que nombra (una marca de texto por cita);
+* que al codigo Python se lo cita por marca y no por numero de linea (E-318):
+  ``archivo#nombre`` es el bloque entre ``# flow-parity: nombre`` y
+  ``# flow-parity-fin: nombre``. Mover codigo arriba no rompe la cita; borrar la
+  marca, duplicarla o sacar la logica de entre las dos lineas, si. A una
+  migracion se la sigue citando por lineas: una migracion aplicada no se edita.
 """
 
 from __future__ import annotations
@@ -75,13 +80,36 @@ MARKS = {
 }
 
 _NAME = re.compile(r"[a-z][a-z0-9_]{2,59}")
-_CITATION = re.compile(r"(?P<path>[^:]+):(?P<start>[1-9][0-9]*)(?:-(?P<end>[1-9][0-9]*))?")
+_CITATION = re.compile(r"(?P<path>[^:#]+):(?P<start>[1-9][0-9]*)(?:-(?P<end>[1-9][0-9]*))?")
+_ANCHORED = re.compile(r"(?P<path>[^:#]+\.py)#(?P<anchor>[a-z][a-z0-9_]{2,59})")
+# Lo unico que se cita por lineas: una migracion aplicada no se edita, sus lineas no se mueven.
+_BY_LINES = re.compile(r"supabase/migrations/[0-9]{14}_[a-z0-9_]+\.sql")
+_START = re.compile(r"\s*# flow-parity: (?P<anchor>[a-z][a-z0-9_]{2,59})\s*")
+_END = re.compile(r"\s*# flow-parity-fin: (?P<anchor>[a-z][a-z0-9_]{2,59})\s*")
 LAYERS = {"plan", "puerta", "despacho", "sql"}
 
 
+def _anchored_block(lines: list[str], anchor: str, where: str) -> list[str]:
+    """Las lineas entre ``# flow-parity: <anchor>`` y ``# flow-parity-fin: <anchor>``, sin las marcas."""
+    starts = [i for i, line in enumerate(lines) if (m := _START.fullmatch(line)) and m["anchor"] == anchor]
+    ends = [i for i, line in enumerate(lines) if (m := _END.fullmatch(line)) and m["anchor"] == anchor]
+    assert len(starts) == 1, f"{where}: la marca de inicio aparece {len(starts)} veces"
+    assert len(ends) == 1, f"{where}: la marca de fin aparece {len(ends)} veces"
+    [start], [end] = starts, ends
+    assert start + 1 < end, f"{where}: el bloque marcado esta vacio o al reves"
+    return lines[start + 1:end]
+
+
 def _cited_lines(exception: FlowException) -> list[str]:
+    if anchored := _ANCHORED.fullmatch(exception.cita):
+        # La marca lleva el nombre de la excepcion: una cita no puede tomar prestado el bloque de otra.
+        assert anchored["anchor"] == exception.name, exception.cita
+        source = ROOT / anchored["path"]
+        assert source.is_file(), exception.cita
+        return _anchored_block(source.read_text(encoding="utf-8").splitlines(), anchored["anchor"], exception.cita)
     match = _CITATION.fullmatch(exception.cita)
     assert match, exception.cita
+    assert _BY_LINES.fullmatch(match["path"]), f"{exception.cita}: al codigo se lo cita por marca, no por linea"
     source = ROOT / match["path"]
     assert source.is_file(), exception.cita
     lines = source.read_text(encoding="utf-8").splitlines()
@@ -162,10 +190,69 @@ def test_the_unsafe_name_is_backed_by_d1_of_the_dispatcher() -> None:
     from bridge.lead_first_name import template_greeting_name_is_safe
 
     [unsafe] = [exception for exception in EXCEPTIONS_V1 if exception.name == "nombre_inseguro_cierra"]
-    assert unsafe.cita == "src/bridge/worker.py:1568-1584"
+    assert unsafe.cita == "src/bridge/worker.py#nombre_inseguro_cierra"
     assert "template_greeting_name_is_safe(name_value)" in _cited_lines(unsafe)[0]
     [names] = [mark.args[1] for mark in d1.pytestmark if mark.name == "parametrize" and mark.args[0] == "name"]
     values = [name.values[0] if hasattr(name, "values") else name for name in names]
     assert values and not any(template_greeting_name_is_safe(value) for value in values)
     # Y el filtro no rechaza todo: un nombre de verdad pasa.
     assert template_greeting_name_is_safe("Maria")
+
+
+def _source_anchors() -> dict[str, list[str]]:
+    # Cada marca de inicio o de fin que hay en src/, con el archivo en que esta.
+    found: dict[str, list[str]] = {}
+    for path in sorted((ROOT / "src").rglob("*.py")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if m := (_START.fullmatch(line) or _END.fullmatch(line)):
+                found.setdefault(m["anchor"], []).append(path.relative_to(ROOT).as_posix())
+    return found
+
+
+def test_every_anchor_in_the_code_is_cited_and_every_anchored_citation_has_its_pair() -> None:
+    # Una marca que ninguna excepcion cita es una cita que se borro sin limpiar el codigo (o una
+    # excepcion renombrada): queda colgando y engana al que lee. Cada marca va en un solo archivo,
+    # una vez de inicio y una de fin.
+    cited = {
+        anchored["anchor"]: anchored["path"]
+        for exception in EXCEPTIONS_V1 if (anchored := _ANCHORED.fullmatch(exception.cita))}
+    found = _source_anchors()
+    assert set(found) == set(cited)
+    assert {anchor: paths for anchor, paths in found.items()} == {
+        anchor: [path, path] for anchor, path in cited.items()}
+
+
+def test_no_python_code_is_cited_by_line_number() -> None:
+    # El mal que arreglo E-318: una cita por linea a app.py se rompia con cualquier PR que tocara
+    # app.py mas arriba. Ninguna cita de excepcion, y ningun comentario de flow_parity.py, nombra
+    # un archivo .py con un numero de linea.
+    assert not [exception.cita for exception in EXCEPTIONS_V1 if re.search(r"\.py:[0-9]", exception.cita)]
+    source = (ROOT / "src" / "bridge" / "flow_parity.py").read_text(encoding="utf-8")
+    assert not re.findall(r"[A-Za-z_]+\.py:[0-9]+", source)
+
+
+@pytest.mark.parametrize(("lines", "problem"), [
+    (["# flow-parity: a1_cupon_por_flag", "x = 1"], "la marca de fin aparece 0 veces"),
+    (["x = 1", "# flow-parity-fin: a1_cupon_por_flag"], "la marca de inicio aparece 0 veces"),
+    (["# flow-parity: a1_cupon_por_flag", "# flow-parity-fin: a1_cupon_por_flag"], "vacio o al reves"),
+    (["# flow-parity-fin: a1_cupon_por_flag", "x = 1", "# flow-parity: a1_cupon_por_flag"], "vacio o al reves"),
+    (["# flow-parity: a1_cupon_por_flag", "x = 1", "# flow-parity-fin: a1_cupon_por_flag",
+      "    # flow-parity: a1_cupon_por_flag"], "la marca de inicio aparece 2 veces"),
+])
+def test_a_broken_anchor_is_red(lines: list[str], problem: str) -> None:
+    with pytest.raises(AssertionError, match=problem):
+        _anchored_block(lines, "a1_cupon_por_flag", "app.py#a1_cupon_por_flag")
+
+
+def test_moving_the_logic_out_of_the_anchor_is_red() -> None:
+    # Las marcas se quedan pero la linea que hace lo que la excepcion nombra se va de entre las dos:
+    # el bloque sigue existiendo y ya no la tiene.
+    name = "toque_con_cupon_cierra_sin_cupon"
+    [touch] = [exception for exception in EXCEPTIONS_V1 if exception.name == name]
+    lines = (ROOT / "src" / "bridge" / "cart_followups.py").read_text(encoding="utf-8").splitlines()
+    assert MARKS[name] in "\n".join(_anchored_block(lines, name, touch.cita))
+    [doing] = [i for i, line in enumerate(lines) if MARKS[name] in line]
+    end = next(i for i, line in enumerate(lines) if (m := _END.fullmatch(line)) and m["anchor"] == name)
+    moved = lines[:doing] + lines[doing + 1:end + 1] + [lines[doing]] + lines[end + 1:]
+    block = _anchored_block(moved, name, touch.cita)
+    assert block and MARKS[name] not in "\n".join(block)

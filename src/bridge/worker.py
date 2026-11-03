@@ -1565,6 +1565,7 @@ class DurableDispatcher:
                 action.action_id,
                 greeting.source,
             )
+        # flow-parity: nombre_inseguro_cierra
         if "nombre" in declared and not template_greeting_name_is_safe(name_value):
             # The name is unverified input (the public form, Hotmart) and the
             # full name is the last resort of the greeting, or the value itself
@@ -1582,6 +1583,7 @@ class DurableDispatcher:
                 failure_reason=APPROVED_TEMPLATE_PARAMETERS_MISSING,
                 retryable=False,
             )
+        # flow-parity-fin: nombre_inseguro_cierra
         if step_key == PAYMENT_FAILURE_FOLLOWUP_STEP:
             return await self._compose_payment_failure_followup_proposal(
                 action=action,

@@ -127,6 +127,7 @@ async def compose_cart_discount_first_touch(
         recovery_case_id=action.recovery_case_id,  # type: ignore[attr-defined]
         ordinal=1,
     )
+    # flow-parity: a1_espera_al_cupon
     if coupon is None or coupon.status != "valid" or coupon.expires_at <= at:
         if coupon is not None and coupon.status in _COUPON_DEAD:
             return CartDiscountFallback(f"recovery_coupon_{coupon.status}")
@@ -137,6 +138,7 @@ async def compose_cart_discount_first_touch(
         ):
             return CartDiscountDefer(retry_after=config.defer_delay)
         return CartDiscountFallback("recovery_coupon_not_ready_in_time")
+    # flow-parity-fin: a1_espera_al_cupon
     try:
         values = cart_discount_values(
             buyer_name=buyer_name,
