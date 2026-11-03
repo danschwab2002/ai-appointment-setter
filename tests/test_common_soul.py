@@ -78,6 +78,12 @@ def test_invariant_sections_are_identical_to_johanna(heading: str) -> None:
 # - El 2026-10-24 (F-036, D9 y D10): la entrada suma `opted_out_contact`, quien
 #   se dio de baja y escribio por su cuenta. Johanna no lo recibe: el bridge
 #   solo lo manda con manifiesto.
+# - El 2026-11-02 (E-301, P-11, D11 de Dan): la ruta «Es cliente» y la entrada
+#   `customer_status` (el bridge la manda con AGENT_CUSTOMER_STATUS_ENABLED). La
+#   regla «si dice que ya compro» de «Cuando no pedirlo» queda absorbida por la
+#   ruta, y para que entre bajo el corte se acortaron, sin cambiar la regla, la
+#   entrada (`payment_link_action` remite a «Enlace de pago», que ya lo dice) y
+#   la descripcion de `recent_payment_failure` y de `person_activity`.
 _DIFFERENCES: dict[str, list[tuple[str, str]]] = {
     "### 1. Inbound regular": [
         (
@@ -117,9 +123,7 @@ Al derivar, indicá que ese detalle requiere revisión humana sin prometer plazo
         (
             """- Si la persona dice que ya compró, que le cobraron o que su pago falló, seguí
   la ruta de compra fallida o derivá; no le mandes un enlace nuevo.""",
-            """- Si la persona dice que ya compró o que le cobraron, no le mandes un enlace
-  nuevo: respondé con lo aprobado o derivá. Si su pago falló, seguí la ruta de
-  compra fallida; ahí el enlace sirve para volver a intentarlo.""",
+            """- Si ya compró ese producto, según `customer_status` o ella: “Es cliente”.""",
         ),
         (
             """- Si junto con el enlace pide un descuento, una cuota, una excepción o una
@@ -147,26 +151,24 @@ sistema puede enviar el enlace de pago cuando lo pidas con
 `agent_must_not_include_url: true` significan que el enlace lo agrega el
 sistema y que tu `reply` no debe contener ninguna URL. Si no viene, el envío
 del enlace está deshabilitado.""",
-            """Puede incluir además `payment_link_action` (ver “Enlace de pago”): con
-`enabled: true` podés pedir el enlace, que agrega el sistema, y tu `reply` no
-lleva ninguna URL. Si no viene, el envío del enlace está deshabilitado.
+            """Puede incluir además `payment_link_action`: ver “Enlace de pago”.
 
 Puede incluir además `recent_payment_failure`: el último pago rechazado de este
-número en la última semana, según la plataforma de pago. Trae `failed_at`
-(ISO 8601, UTC), `payment_method` (el código de la plataforma, como
-`CREDIT_CARD` o `PAYPAL`), `installments`, `refusal_reason` (el texto del medio
-de pago, a veces en otro idioma; puede faltar) y `checkout_country` (código ISO
-del país). Usalo en la ruta de compra fallida. Podés decir con qué medio intentó
-pagar, pero no cites el texto del rechazo ni los códigos. Si no viene, no sabés
-si hubo un pago rechazado.
+número en la última semana. Trae `failed_at`, `payment_method` (`CREDIT_CARD`,
+`PAYPAL`…), `installments`, `refusal_reason` (texto del medio, puede faltar) y
+`checkout_country` (ISO). Usalo en la ruta de compra fallida: podés decir el
+medio, pero no cites el rechazo ni los códigos. Si no viene, no sabés si hubo
+un pago rechazado.
 
-Si la aliada declara productos, trae `products`: `key` y `name` de cada uno,
-como aparece en el bloque («# Producto: …»). Puede traer `person_activity`: lo
-que hizo este número en 30 días, de lo más viejo a lo más nuevo, con `activity`
-(`form`, `cart`: pago sin terminar, `payment_rejected`, `payment_slip_printed`:
-ficha de efectivo, `payment_slip_expired`, `purchase`), `product` y `at`. Usalo
-para saber de qué producto habla, sin recitarle la lista. Si no viene, no sabés
-qué hizo.
+Si la aliada declara productos, trae `products` (`key` y `name`, como en
+«# Producto: …») y puede traer `person_activity`: lo que hizo este número en 30
+días, con `activity` (`form`, `cart`, `payment_rejected`, `payment_slip_printed`,
+`payment_slip_expired`, `purchase`), `product` y `at`. Usalo para saber de qué
+producto habla, sin recitárselo.
+
+Puede traer `customer_status`: lo que compró, con `product`, `status`
+(`cliente`, `reembolsada`, `contracargo`), `since` y `source`. Si no viene, no
+sabés si compró.
 
 Con `opted_out_contact: true`, la persona pidió no recibir mensajes y escribió
 por su cuenta: contestá normal, sin ofrecer seguimiento ni pedir permiso para
@@ -441,3 +443,55 @@ def test_the_agent_never_confirms_an_opt_out_and_points_to_the_phrase_the_system
     style = _section(COMMON, "## Estilo")
     assert "Nunca prometas dejar de escribir ni confirmes una baja" in style
     assert "«No más mensajes», o derivá con `handoff`." in style
+
+
+# --- La ruta «Es cliente» (E-301, P-11; decisiones de Dan del 2026-11-02) -------
+
+CUSTOMER = _section(COMMON, "### 4. Es cliente")
+
+
+def test_the_customer_route_exists_and_wins_over_buying() -> None:
+    # D11: la ruta reemplaza la regla de «si dice que ya compro»; manda sobre lo de comprar.
+    assert "## Los motivos conversacionales" in COMMON
+    assert "Manda sobre “Lo de comprar se resuelve”." in CUSTOMER
+    assert "- Si ya compró ese producto, según `customer_status` o ella: “Es cliente”." in DONT_ASK_FOR_LINK
+    assert "Si la persona dice que ya compró o que le cobraron" not in COMMON
+
+
+@pytest.mark.parametrize(
+    ("decision", "rule"),
+    [
+        ("D6, D4: a una clienta no se le vende ni su enlace ni descuento",
+         "- `cliente`: no se lo vendas, ni su enlace, descuento o seguimiento; atendela\n"
+         "  como soporte con el bloque (acceso, contenido, formato, canal de dudas)."),
+        ("D4: reembolsada o contracargo", "- `reembolsada`: sin venta ni descuento; si quiere comprar, derivá.\n"
+         "  `contracargo`: derivá siempre."),
+        ("D5: otro producto, el enlace solo si lo pide",
+         "- Otro producto: contestá y pedí su enlace sólo si ella lo pide, sin descuento."),
+        ("D7: dice que compro y no figura", "- Dice que compró y no figura: no le pidas el mail ni un enlace; contestá el\n"
+         "  acceso con lo aprobado y, si no se resuelve, derivá."),
+    ],
+)
+def test_the_customer_route_carries_dans_decisions(decision: str, rule: str) -> None:
+    assert rule in CUSTOMER, decision
+
+
+def test_the_customer_statuses_are_the_ones_the_base_returns() -> None:
+    # La entrada nombra los tres estados de get_customer_status_v1 (migracion 20261103000700).
+    from bridge.customer_status import CUSTOMER_STATUS_CONTEXT_KEY
+
+    entry = _section(COMMON, "## Entrada")
+    assert f"Puede traer `{CUSTOMER_STATUS_CONTEXT_KEY}`" in entry
+    migration = next((ROOT / "supabase" / "migrations").glob("20261103000700_*.sql")).read_text(encoding="utf-8")
+    for status in ("cliente", "reembolsada", "contracargo"):
+        assert f"`{status}`" in entry
+        assert f"'{status}'" in migration
+
+
+def test_the_customer_route_does_not_write_the_handoff_notice() -> None:
+    # D12 lo cumple el bridge: con decision=handoff el reply del modelo no sale
+    # (F-033); a la persona le llega solo el aviso fijo de handoff_notice.
+    from bridge.handoff_notice import HANDOFF_NOTICE_TEXT
+
+    assert HANDOFF_NOTICE_TEXT not in COMMON
+    assert "te escriben por acá" not in COMMON
