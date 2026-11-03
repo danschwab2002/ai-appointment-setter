@@ -68,6 +68,12 @@ from bridge.followup_discount import (
 from bridge.reactivation import ConversationReactivationSweeper
 from bridge.commercial_ally import CommercialAllyConfig, JOHANNA_COMMERCIAL_ALLY
 from bridge.commercial_knowledge import CommercialKnowledge
+from bridge.segment_knowledge import (
+    SEGMENT_CONTEXT_KEY,
+    SegmentCatalog,
+    TurnSegment,
+    load_segment_catalog,
+)
 from bridge.instance_manifest import (
     GHL_RISK_GATED_FLOWS,
     INTENT_PERMISSION_FLOWS,
@@ -372,6 +378,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # del link y del cupon de lo que ya compro. La regla es del producto; por
     # instancia, solo prenderlo.
     "agent_customer_status_enabled",
+    # E-311: los segmentos por etiqueta (conocimiento extra mientras la
+    # conversacion tiene la etiqueta y el segmento esta vigente). La regla es
+    # del producto; lo de cada aliada son sus [[agente.segmentos]].
+    "agent_segments_enabled",
     "hotmart_purchase_worker_enabled",
     "lead_precheckout_enabled",
     # El adaptador de GHL traduce el formulario a lead.precheckout y lo manda
@@ -899,6 +909,14 @@ class Settings:
     # compro) y el bridge no le manda el link ni el cupon de lo que ya tiene.
     # Apagado, todo como antes: ni se llama a la base.
     agent_customer_status_enabled: bool = False
+    # E-311 (bridge/segment_knowledge.py, contrato segment-knowledge-v1): con la
+    # etiqueta de un segmento vigente, el agente recibe su conocimiento como un
+    # `system` aparte despues del base. Apagado, el pedido a Hermes es el de
+    # siempre, byte a byte.
+    agent_segments_enabled: bool = False
+    # Los segmentos aprobados de [[agente.segmentos]], cargados al arrancar con
+    # el flag prendido. None con el flag apagado.
+    agent_segment_catalog: SegmentCatalog | None = None
     precheckout_form_enabled: bool = False
     precheckout_form_token: str | None = None
     precheckout_max_age_seconds: int = 300
@@ -1537,6 +1555,23 @@ class Settings:
             os.getenv("AGENT_CUSTOMER_STATUS_ENABLED", "false").strip().lower()
             == "true"
         )
+        agent_segments_enabled = (
+            os.getenv("AGENT_SEGMENTS_ENABLED", "false").strip().lower() == "true"
+        )
+        agent_segment_catalog: SegmentCatalog | None = None
+        if agent_segments_enabled:
+            # Los segmentos van despues del conocimiento base y se miden contra
+            # el: sin manifiesto o sin conocimiento no hay donde apilarlos.
+            if instance_manifest is None or commercial_knowledge is None:
+                raise ValueError(
+                    "AGENT_SEGMENTS_ENABLED requires INSTANCE_MANIFEST_PATH and "
+                    "COMMERCIAL_KNOWLEDGE_ENABLED"
+                )
+            agent_segment_catalog = load_segment_catalog(
+                instance_manifest,
+                Path(str(instance_manifest_path)).parent,
+                commercial_knowledge,
+            )
         hotmart_api_credentials_file_value = (
             os.getenv("HOTMART_API_CREDENTIALS_FILE", "").strip()
         )
@@ -2187,6 +2222,8 @@ class Settings:
             ),
             recovery_coupon_by_reply_enabled=recovery_coupon_by_reply_enabled,
             agent_customer_status_enabled=agent_customer_status_enabled,
+            agent_segments_enabled=agent_segments_enabled,
+            agent_segment_catalog=agent_segment_catalog,
             precheckout_form_enabled=precheckout_form_enabled,
             precheckout_form_token=precheckout_form_token,
             precheckout_max_age_seconds=precheckout_max_age_seconds,
@@ -3442,6 +3479,78 @@ def _validate_agent_customer_status(settings: Settings) -> None:
         raise ValueError(f"{flag} requires CHATWOOT_ACCOUNT_ID and CHATWOOT_INBOX_ID")
 
 
+def _segment_context(
+    catalog: SegmentCatalog,
+    *,
+    payload: dict[str, object],
+    conversation_id: object,
+    now: datetime | None = None,
+) -> list[dict[str, object]]:
+    """La entrada ``segments`` del turno (E-311) y sus logs.
+
+    Las etiquetas salen de ``conversation.labels`` del webhook, como la de
+    ``cliente`` (``customer_status.conversation_labels``): vienen en cada
+    mensaje, sin importar quien las puso. Un segmento etiquetado que no va
+    (vencido, por empezar, por el tope del turno) deja su log y no se manda.
+    """
+    selection = catalog.select(
+        labels=conversation_labels(payload), now=now or datetime.now(UTC)
+    )
+    for key, version, reason in selection.skipped:
+        if reason in ("not_started", "expired"):
+            logger.info(
+                "segment_inactive key=%s version=%s reason=%s conversation=%s",
+                key,
+                version,
+                reason,
+                conversation_id,
+            )
+        else:
+            logger.warning(
+                "segment_dropped_%s key=%s version=%s conversation=%s",
+                reason,
+                key,
+                version,
+                conversation_id,
+            )
+    for segment in selection.active:
+        logger.info(
+            "segment_context key=%s version=%s sha256=%s conversation=%s",
+            segment.key,
+            segment.version,
+            segment.sha256[:12],
+            conversation_id,
+        )
+    return selection.context_entries()
+
+
+def _validate_agent_segments(settings: Settings) -> None:
+    """E-311: los segmentos, solo con manifiesto y conocimiento base.
+
+    Con el flag, el catalogo tiene que estar cargado contra el mismo
+    conocimiento que viaja como `system` (los topes del turno se miden contra
+    el). Sin el flag no puede haber catalogo: no se carga nada a medias.
+    """
+    flag = "AGENT_SEGMENTS_ENABLED"
+    catalog = settings.agent_segment_catalog
+    if not settings.agent_segments_enabled:
+        if catalog is not None:
+            raise ValueError(f"the segment catalog requires {flag}")
+        return
+    if settings.instance_manifest is None:
+        raise ValueError(f"{flag} requires an instance manifest")
+    knowledge = settings.commercial_knowledge
+    if knowledge is None:
+        raise ValueError(f"{flag} requires COMMERCIAL_KNOWLEDGE_ENABLED")
+    if catalog is None:
+        raise ValueError(f"{flag} requires the segment catalog of the instance")
+    if catalog.base_bytes != len(knowledge.render().encode("utf-8")):
+        raise ValueError("the segment catalog was measured against another knowledge")
+    declared = sorted(segment.key for segment in settings.instance_manifest.agent_segments)
+    if sorted(segment.key for segment in catalog.segments) != declared:
+        raise ValueError("the segment catalog is not the one the manifest declares")
+
+
 def _validate_payment_failure_followup(settings: Settings) -> None:
     """B2 o Z del pago rechazado: solo encima de B1 en variantes.
 
@@ -4390,6 +4499,11 @@ def create_app(
         explicit_manifest_runtime
         or settings.commercial_ally_config != JOHANNA_COMMERCIAL_ALLY
     )
+    # Los segmentos por etiqueta (E-311): None con el flag apagado, y entonces
+    # ni se leen las etiquetas para esto.
+    segment_catalog = (
+        settings.agent_segment_catalog if settings.agent_segments_enabled else None
+    )
     # Un binding por producto (paso 2c): el principal es el que ya carga el
     # bridge; con un solo producto es la unica ruta.
     commercial_ally_routes = ProductRoutes.build(
@@ -4685,6 +4799,7 @@ def create_app(
     _validate_payment_failure_followup(settings)
     _validate_recovery_coupon_by_reply(settings)
     _validate_agent_customer_status(settings)
+    _validate_agent_segments(settings)
     _validate_flow_engine(settings)
     _validate_flow_engine_native_intent(settings)
     waba_template = _waba_template_config(settings)
@@ -7021,6 +7136,13 @@ def create_app(
             (message_indexes[message_ref] for message_ref in expected_refs),
             default=current_index,
         )
+        # E-311: cuantas respuestas del agente hubo antes de este turno (desde el
+        # ultimo /nuevo). Solo se usa si va un segmento: dice si llego tarde.
+        agent_replies_before = sum(
+            1
+            for message in _history_after_latest_reset(normalized[:first_batch_index])
+            if message["actor"] == "assistant"
+        )
         normalized = normalized[max(0, first_batch_index - 19) :]
         normalized = _history_after_latest_reset(normalized)
         public_messages = [
@@ -7045,9 +7167,37 @@ def create_app(
                 ),
                 prior_opt_out=prior_opt_out,
             )
+        # Los segmentos del turno (E-311): los que nombra la entrada, como
+        # `system` aparte despues del base. Sin ninguno, la llamada es la de
+        # siempre (un procesador sin `extra_system` sigue sirviendo).
+        segment_blocks = (
+            tuple(
+                TurnSegment(segment=block, agent_replies_before=agent_replies_before)
+                for block in segment_catalog.blocks_for(
+                    enriched_context.get(SEGMENT_CONTEXT_KEY)
+                )
+            )
+            if segment_catalog is not None
+            else ()
+        )
+        for block in segment_blocks:
+            if block.activated_late:
+                # La etiqueta tiene que estar antes del primer turno del agente
+                # (Dan, 03/11): un turno con el segmento y respuestas del agente
+                # antes se ve en el log, y en la procedencia se mide si fue el
+                # primero de la conversacion con el segmento.
+                logger.warning(
+                    "segment_after_agent_replies key=%s version=%s "
+                    "agent_replies_before=%s conversation=%s",
+                    block.key,
+                    block.version,
+                    block.agent_replies_before,
+                    conversation_id,
+                )
         await shadow_processor.run(
             delivery_id=delivery_id,
             context=enriched_context,
+            **({"extra_system": segment_blocks} if segment_blocks else {}),
         )
         return CanonicalWorkResult(
             proposal=shadow_processor.get_completed_proposal(delivery_id=delivery_id),
@@ -7739,6 +7889,14 @@ def create_app(
                 )
                 if customer_status is not None:
                     context[CUSTOMER_STATUS_CONTEXT_KEY] = customer_status
+            if segment_catalog is not None:
+                segment_entries = _segment_context(
+                    segment_catalog,
+                    payload=payload,
+                    conversation_id=conversation_id,
+                )
+                if segment_entries:
+                    context[SEGMENT_CONTEXT_KEY] = segment_entries
             completed_proposal = (
                 shadow_processor.get_completed_proposal(delivery_id=delivery_id)
                 if shadow_processor is not None
@@ -9940,6 +10098,14 @@ def create_app(
             **commercial_ally_readiness,
             **instance_readiness,
         }
+        if segment_catalog is not None:
+            # Cada segmento como clave:vN:sha:estado (por_empezar, vigente,
+            # vencido), calculado ahora. Solo con el flag: apagado, /ready no
+            # cambia.
+            commercial_ally_readiness = {
+                **commercial_ally_readiness,
+                "agent_segments": segment_catalog.readiness(datetime.now(UTC)),
+            }
         if product_labelers:
             # La etiqueta de producto no responde 503: no atiende a nadie, y un
             # macro que no sirve apaga solo el etiquetado. Se publica y se ve:

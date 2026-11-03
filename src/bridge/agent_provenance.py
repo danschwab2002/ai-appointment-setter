@@ -33,7 +33,9 @@ from dataclasses import dataclass
 # `recent_payment_failure` suma `product`.
 # v5 (E-297): con AGENT_CUSTOMER_STATUS_ENABLED suma `customer_status`, los
 # productos que la persona ya compro.
-CONTEXT_BUILDER_VERSION = "shadow-context-v5"
+# v6 (E-311): con AGENT_SEGMENTS_ENABLED suma `segments`, los segmentos vigentes
+# por etiqueta que fueron en el turno como `system` aparte.
+CONTEXT_BUILDER_VERSION = "shadow-context-v6"
 
 _ACTORES = ("prospect", "agent", "team", "system")
 
@@ -141,15 +143,23 @@ def build_turn(
     outcome: str,
     model_requested: str,
     model_answered: str | None,
+    segments: tuple[dict[str, object], ...] = (),
 ) -> AgentTurn:
+    """``segments``: clave, version y sha256 de cada segmento que fue como `system`.
+
+    Solo cuando hubo alguno: sin segmentos, `context_added` es el de siempre.
+    """
     digest = context_digest(context)
+    added = context_added(context)
+    if segments:
+        added["segments"] = [dict(segment) for segment in segments]
     return AgentTurn(
         external_conversation_id=external_conversation_id(context),
         turn_digest=turn_digest(
             delivery_id=delivery_id, attempt=attempt, context_digest_value=digest
         ),
         context_digest=digest,
-        context_added=context_added(context),
+        context_added=added,
         outcome=outcome,
         model_requested=model_requested,
         model_answered=model_answered,

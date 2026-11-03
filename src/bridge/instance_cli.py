@@ -13,10 +13,17 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Sequence
 
 from .commercial_knowledge import CommercialKnowledge, KnowledgeError
+from .segment_knowledge import (
+    STATE_EXPIRED,
+    SegmentError,
+    build_catalog,
+    load_declared_segment,
+)
 from .instance_manifest import (
     FLOWS,
     GHL_RISK_GATED_FLOWS,
@@ -27,8 +34,12 @@ from .instance_manifest import (
 MANIFEST_FILE = "instancia.toml"
 
 
-def validate_instance(directory: Path) -> dict[str, Any]:
-    """Valida una carpeta de instancia y devuelve el informe; no lanza por datos invalidos."""
+def validate_instance(directory: Path, *, now: datetime | None = None) -> dict[str, Any]:
+    """Valida una carpeta de instancia y devuelve el informe; no lanza por datos invalidos.
+
+    ``now`` es la hora contra la que se dice el estado de cada segmento (por
+    defecto, ahora).
+    """
 
     report: dict[str, Any] = {"instancia": str(directory), "valida": False, "errores": [], "avisos": []}
     manifest_path = directory / MANIFEST_FILE
@@ -145,6 +156,11 @@ def validate_instance(directory: Path) -> dict[str, Any]:
         report["avisos"].append(
             "el conocimiento esta en borrador: el agente no puede responder hasta que se apruebe"
         )
+    if manifest.agent_segments:
+        # Solo cuando estan: sin [[agente.segmentos]], el reporte no cambia.
+        _validate_segments(
+            directory, manifest, knowledge, report, now=now or datetime.now(UTC)
+        )
     if manifest.flows["inbound"] and not knowledge.approved:
         report["errores"].append("flujos.inbound esta prendido con el conocimiento en borrador")
     for flow, state in flows.items():
@@ -186,6 +202,72 @@ def validate_instance(directory: Path) -> dict[str, Any]:
         )
     report["valida"] = not report["errores"]
     return report
+
+
+def _validate_segments(
+    directory: Path,
+    manifest: InstanceManifest,
+    knowledge: CommercialKnowledge,
+    report: dict[str, Any],
+    *,
+    now: datetime,
+) -> None:
+    """Los segmentos del agente (E-311): cada archivo, y que entren juntos en el turno.
+
+    Carga tambien los borradores, para revisarlos. El chequeo del alta (las
+    contradicciones y los huecos, ``setter segmento chequear``) no corre aca
+    todavia: llega con PR-B.
+    """
+    loaded = []
+    entries: list[dict[str, Any]] = []
+    for declaration in manifest.agent_segments:
+        try:
+            segment = load_declared_segment(
+                declaration,
+                instance_dir=directory,
+                manifest=manifest,
+                base=knowledge,
+                require_approved=False,
+            )
+        except SegmentError as exc:
+            report["errores"].append(f"segmento {declaration.key}: {exc}")
+            continue
+        loaded.append(segment)
+        state = segment.state_at(now)
+        entries.append(
+            {
+                "clave": segment.key,
+                "etiqueta": segment.label,
+                "prioridad": segment.priority,
+                "archivo": segment.knowledge_path,
+                "version": segment.version,
+                "estado": segment.knowledge.status,
+                "vigencia": {
+                    "desde": segment.knowledge.valid_from.isoformat(),
+                    "hasta": segment.knowledge.valid_until.isoformat(),
+                    "ahora": state,
+                },
+                "chequeo_sha": segment.knowledge.check_sha,
+                "sha256": segment.sha256,
+                "bytes": segment.rendered_bytes,
+            }
+        )
+        if not segment.knowledge.approved:
+            report["avisos"].append(
+                f"el segmento {segment.key} esta en borrador: con AGENT_SEGMENTS_ENABLED "
+                "el bridge no arranca hasta que se apruebe"
+            )
+        if state == STATE_EXPIRED:
+            report["avisos"].append(
+                f"el segmento {segment.key} ya vencio: el bloque no va mas; sacalo del "
+                "manifiesto en el PR de instancia siguiente"
+            )
+    report["segmentos"] = entries
+    if len(loaded) == len(manifest.agent_segments):
+        try:
+            build_catalog(loaded, base_bytes=len(knowledge.render().encode("utf-8")))
+        except SegmentError as exc:
+            report["errores"].append(f"segmentos: {exc}")
 
 
 def _print_human(report: dict[str, Any]) -> None:
@@ -232,6 +314,12 @@ def _print_human(report: dict[str, Any]) -> None:
         print(
             f"  conocimiento v{knowledge['version']} ({knowledge['estado']}), "
             f"{knowledge['bytes']} bytes, sha256 {knowledge['sha256'][:12]}"
+        )
+    for segment in report.get("segmentos", []):
+        print(
+            f"  segmento {segment['clave']} v{segment['version']} ({segment['estado']}, "
+            f"{segment['vigencia']['ahora']}), etiqueta {segment['etiqueta']}, prioridad "
+            f"{segment['prioridad']}, {segment['bytes']} bytes, sha256 {segment['sha256'][:12]}"
         )
     for warning in report["avisos"]:
         print(f"AVISO: {warning}")

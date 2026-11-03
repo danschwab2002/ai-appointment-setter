@@ -71,6 +71,12 @@ LOGGED_INFO_EVENTS = frozenset(
         # conversacion, el motivo y las horas de espera; nunca el telefono
         "handoff_wait_scan",
         "handoff_wait_alert_admitted",
+        # los segmentos por etiqueta (bridge.app, E-311): clave, version, sha
+        # corto y numero de conversacion de cada segmento que fue, y por que no
+        # fue uno etiquetado (vencido o por empezar). Los recortes por tope son
+        # warning y salen siempre.
+        "segment_context",
+        "segment_inactive",
     }
 )
 
