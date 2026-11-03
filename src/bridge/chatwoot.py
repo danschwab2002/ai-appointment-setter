@@ -2903,8 +2903,15 @@ class ChatwootClient:
         active_since_epoch: int,
         max_pages: int = 5,
         messages_limit: int = 30,
+        include_messages: bool = True,
     ) -> list[dict[str, object]]:
         """Listar las conversaciones con actividad reciente, con su historial.
+
+        Con ``include_messages=False`` cada item es ``{"conversation": <item del
+        listado>}`` (id, estado, etiquetas, ``last_activity_at``), sin pedir el
+        show ni los mensajes: lo usa el aviso de derivaciones sin atender
+        (``bridge.handoff_wait_alerts``), que lee el historial solo de las
+        conversaciones que pueden avisar.
 
         Pide cada estado por separado, ordenado por ``last_activity_at``
         descendente (explicito: no depende del default de Chatwoot), y corta en
@@ -2940,6 +2947,7 @@ class ChatwootClient:
             or not isinstance(messages_limit, int)
             or isinstance(messages_limit, bool)
             or messages_limit <= 0
+            or type(include_messages) is not bool
         ):
             raise ValueError("invalid recent conversation scan configuration")
         path = f"/api/v1/accounts/{self._account_id}/conversations"
@@ -3001,6 +3009,9 @@ class ChatwootClient:
                         if conversation_id in seen_conversations:
                             continue
                         seen_conversations.add(conversation_id)
+                        if not include_messages:
+                            collected.append({"conversation": conversation})
+                            continue
                         collected.append(
                             await self._conversation_with_messages(
                                 client,

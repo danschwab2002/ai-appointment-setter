@@ -116,6 +116,13 @@ from bridge.ghl_precheckout_adapter import (
     translate_ghl_form_submission,
 )
 from bridge.lead_precheckout import LeadPrecheckoutSubmission, parse_lead_precheckout
+from bridge.handoff_wait_alerts import (
+    BusinessCalendar as HandoffWaitBusinessCalendar,
+    HandoffWaitAlertSweeper,
+    business_days_text as handoff_wait_business_days_text,
+    parse_business_days as parse_handoff_wait_business_days,
+    parse_business_hours as parse_handoff_wait_business_hours,
+)
 from bridge.meta_delivery import (
     DEFAULT_RETRY_MAX_AGE_SECONDS as META_RETRY_MAX_AGE_SECONDS,
     MetaDeliveryRejectionSweeper,
@@ -314,6 +321,9 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "meta_delivery_rejections_enabled",
     "meta_first_touch_retry_enabled",
     "meta_unreachable_close_enabled",
+    # E-309: el aviso por Slack de las derivaciones sin atender. Por instancia,
+    # prenderlo y el calendario del equipo (dias, horario y umbral).
+    "handoff_wait_alerts_enabled",
     "hermes_shadow_enabled",
     "automated_replies_enabled",
     "reply_splitter_enabled",
@@ -754,6 +764,17 @@ class Settings:
     meta_first_touch_retry_templates: frozenset[str] = frozenset()
     meta_first_touch_retry_send_hours: tuple[int, int] | None = None
     meta_delivery_scan_interval_seconds: float = 600.0
+    # E-309 (handoff-wait-alerts-v1): el aviso por Slack de una derivacion que
+    # lleva N horas habiles sin respuesta, de la ventana de 24 h que se cierra en
+    # 2 h y de la conversacion pausada donde la persona volvio a escribir
+    # (HANDOFF_WAIT_ALERTS_ENABLED, apagado por defecto). Las horas habiles se
+    # cuentan con los dias y el horario de abajo, en la zona del manifiesto.
+    handoff_wait_alerts_enabled: bool = False
+    handoff_wait_alert_after_business_hours: int = 2
+    handoff_wait_alert_business_hours: tuple[int, int] = (9, 18)
+    handoff_wait_alert_business_days: frozenset[int] = frozenset({1, 2, 3, 4, 5})
+    handoff_wait_alert_max_age_hours: int = 168
+    handoff_wait_alert_interval_seconds: float = 600.0
     hermes_shadow_enabled: bool = False
     hermes_api_base_url: str | None = None
     hermes_api_key: str | None = None
@@ -1720,6 +1741,26 @@ class Settings:
         meta_delivery_scan_interval_seconds = float(
             os.environ.get("META_DELIVERY_SCAN_INTERVAL_SECONDS", "600")
         )
+        handoff_wait_alerts_raw = (
+            os.environ.get("HANDOFF_WAIT_ALERTS_ENABLED", "false").strip().lower()
+        )
+        if handoff_wait_alerts_raw not in {"true", "false"}:
+            raise ValueError("HANDOFF_WAIT_ALERTS_ENABLED must be true or false")
+        handoff_wait_alert_after_business_hours = _parse_positive_int_env(
+            "HANDOFF_WAIT_ALERT_AFTER_BUSINESS_HOURS", 2
+        )
+        handoff_wait_alert_business_hours = parse_handoff_wait_business_hours(
+            os.environ.get("HANDOFF_WAIT_ALERT_BUSINESS_HOURS", "")
+        )
+        handoff_wait_alert_business_days = parse_handoff_wait_business_days(
+            os.environ.get("HANDOFF_WAIT_ALERT_BUSINESS_DAYS", "")
+        )
+        handoff_wait_alert_max_age_hours = _parse_positive_int_env(
+            "HANDOFF_WAIT_ALERT_MAX_AGE_HOURS", 168
+        )
+        handoff_wait_alert_interval_seconds = float(
+            os.environ.get("HANDOFF_WAIT_ALERT_INTERVAL_SECONDS", "600")
+        )
         opt_out_projection_worker_id = (
             os.getenv("CHATWOOT_OPT_OUT_PROJECTION_WORKER_ID", "").strip() or None
         )
@@ -1958,6 +1999,14 @@ class Settings:
             meta_first_touch_retry_templates=meta_first_touch_retry_templates,
             meta_first_touch_retry_send_hours=meta_first_touch_retry_send_hours,
             meta_delivery_scan_interval_seconds=meta_delivery_scan_interval_seconds,
+            handoff_wait_alerts_enabled=handoff_wait_alerts_raw == "true",
+            handoff_wait_alert_after_business_hours=(
+                handoff_wait_alert_after_business_hours
+            ),
+            handoff_wait_alert_business_hours=handoff_wait_alert_business_hours,
+            handoff_wait_alert_business_days=handoff_wait_alert_business_days,
+            handoff_wait_alert_max_age_hours=handoff_wait_alert_max_age_hours,
+            handoff_wait_alert_interval_seconds=handoff_wait_alert_interval_seconds,
             hermes_shadow_enabled=shadow_enabled,
             hermes_api_base_url=hermes_api_base_url,
             hermes_api_key=hermes_api_key,
@@ -3651,6 +3700,58 @@ def _meta_first_touch_retry_send_hours(settings: Settings) -> tuple[int, int] | 
     )
 
 
+def _parse_positive_int_env(name: str, default: int) -> int:
+    """Una variable de entero positivo; vacia o ausente es el default."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    if not raw.isdigit() or int(raw) <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return int(raw)
+
+
+def _validate_handoff_wait_alerts(settings: Settings) -> None:
+    """Las guardas de arranque del aviso de derivaciones sin atender (E-309).
+
+    Los rangos se miran con el flag prendido o apagado, para que un valor
+    imposible no espere a que alguien lo prenda. Prendido, exige el manifiesto
+    (la zona en que se cuentan las horas habiles); el conector de Slack (que
+    arma SLACK_CONNECTOR_PROJECTION_ENABLED) lo exige create_app al armar el
+    barredor: sin canal no hay a quien avisar.
+    """
+    if not (
+        isinstance(settings.handoff_wait_alert_after_business_hours, int)
+        and 1 <= settings.handoff_wait_alert_after_business_hours <= 72
+    ):
+        raise ValueError("HANDOFF_WAIT_ALERT_AFTER_BUSINESS_HOURS must be 1-72")
+    if not (
+        isinstance(settings.handoff_wait_alert_max_age_hours, int)
+        and 24 <= settings.handoff_wait_alert_max_age_hours <= 720
+    ):
+        raise ValueError("HANDOFF_WAIT_ALERT_MAX_AGE_HOURS must be 24-720")
+    if not (
+        math.isfinite(settings.handoff_wait_alert_interval_seconds)
+        and 60 <= settings.handoff_wait_alert_interval_seconds <= 3600
+    ):
+        raise ValueError("HANDOFF_WAIT_ALERT_INTERVAL_SECONDS must be 60-3600")
+    start, end = settings.handoff_wait_alert_business_hours
+    days = settings.handoff_wait_alert_business_days
+    if (
+        not 0 <= start < end <= 24
+        or not isinstance(days, frozenset)
+        or not days
+        or not days <= frozenset(range(1, 8))
+    ):
+        raise ValueError(
+            "HANDOFF_WAIT_ALERT_BUSINESS_HOURS and HANDOFF_WAIT_ALERT_BUSINESS_DAYS "
+            "must describe at least one business hour"
+        )
+    if not settings.handoff_wait_alerts_enabled:
+        return
+    if settings.instance_manifest is None:
+        raise ValueError("HANDOFF_WAIT_ALERTS_ENABLED requires an instance manifest")
+
+
 def _validate_meta_delivery(settings: Settings) -> None:
     """Las guardas de arranque de los rechazos de Meta (E-284).
 
@@ -4737,6 +4838,7 @@ def create_app(
         settings, explicit_manifest_runtime=explicit_manifest_runtime
     )
     _validate_meta_delivery(settings)
+    _validate_handoff_wait_alerts(settings)
     # Mandar un cupon es un efecto externo irreversible: sin plantilla, sin
     # cupon, sin producto, sin el AgentBot que la emite y sin la admision de
     # Corte B (el link sale del caso comercial que abre esa admision), el
@@ -5980,6 +6082,7 @@ def create_app(
     )
     conversation_followup_sweeper: ConversationFollowupSweeper | None = None
     meta_delivery_sweeper: MetaDeliveryRejectionSweeper | None = None
+    handoff_wait_alert_sweeper: HandoffWaitAlertSweeper | None = None
     # El barrido nativo del seguimiento a 24 h (P22-3 de M16, E-269): lo arma
     # el motor (FLOW_ENGINE_ENABLED) con Chatwoot; sin un silencio nativo
     # publicado no arma ningun barredor.
@@ -6037,6 +6140,8 @@ def create_app(
                 await conversation_followup_sweeper.start()
             if meta_delivery_sweeper is not None:
                 await meta_delivery_sweeper.start()
+            if handoff_wait_alert_sweeper is not None:
+                await handoff_wait_alert_sweeper.start()
             if native_silence_sweepers is not None:
                 await native_silence_sweepers.start()
             if flow_engine_divergence_notifier is not None:
@@ -6058,6 +6163,7 @@ def create_app(
                     "native_silence_sweepers",
                     native_silence_sweepers,
                 ),
+                ("handoff_wait_alert_sweeper", handoff_wait_alert_sweeper),
                 ("meta_delivery_sweeper", meta_delivery_sweeper),
                 (
                     "conversation_followup_sweeper",
@@ -6119,6 +6225,7 @@ def create_app(
     )
     app.state.conversation_followup_sweeper = conversation_followup_sweeper
     app.state.meta_delivery_sweeper = meta_delivery_sweeper
+    app.state.handoff_wait_alert_sweeper = handoff_wait_alert_sweeper
     app.state.native_silence_sweepers = native_silence_sweepers
 
     # Con manifiesto, el mismo movil puede estar guardado con la otra forma
@@ -8708,6 +8815,42 @@ def create_app(
                 scan_interval_seconds=settings.meta_delivery_scan_interval_seconds,
             )
             app.state.meta_delivery_sweeper = meta_delivery_sweeper
+        if settings.handoff_wait_alerts_enabled:
+            # E-309: las derivaciones sin atender, la ventana de 24 h que se
+            # cierra y la conversacion pausada donde la persona volvio a
+            # escribir. Lee la base y Chatwoot con el cliente de control y solo
+            # escribe en el conector de Slack de la aliada.
+            if (
+                not isinstance(control_client, ChatwootClient)
+                or settings.chatwoot_account_id is None
+                or settings.chatwoot_inbox_id is None
+                or shared_supabase is None
+                or slack_runtime is None
+                or settings.instance_manifest is None
+            ):
+                raise ValueError(
+                    "HANDOFF_WAIT_ALERTS_ENABLED requires the Chatwoot control "
+                    "client, canonical ids, Supabase and the Slack connector "
+                    "(SLACK_CONNECTOR_PROJECTION_ENABLED)"
+                )
+            start_hour, end_hour = settings.handoff_wait_alert_business_hours
+            handoff_wait_alert_sweeper = HandoffWaitAlertSweeper(
+                chatwoot=control_client,
+                supabase=shared_supabase,
+                producer=slack_runtime.producer,
+                account_id=settings.chatwoot_account_id,
+                inbox_id=settings.chatwoot_inbox_id,
+                calendar=HandoffWaitBusinessCalendar(
+                    time_zone=ZoneInfo(settings.instance_manifest.time_zone),
+                    weekdays=settings.handoff_wait_alert_business_days,
+                    start_hour=start_hour,
+                    end_hour=end_hour,
+                ),
+                after_business_hours=settings.handoff_wait_alert_after_business_hours,
+                max_age_hours=settings.handoff_wait_alert_max_age_hours,
+                scan_interval_seconds=settings.handoff_wait_alert_interval_seconds,
+            )
+            app.state.handoff_wait_alert_sweeper = handoff_wait_alert_sweeper
         if (
             flow_engine_runtime is not None
             and isinstance(control_client, ChatwootClient)
@@ -9710,6 +9853,22 @@ def create_app(
                 ),
                 "meta_unreachable_close": (
                     "enabled" if meta_delivery_sweeper.close_unreachable else "disabled"
+                ),
+            }
+        if handoff_wait_alert_sweeper is not None:
+            # E-309: el aviso de derivaciones sin atender. Un barrido caido no
+            # tumba el bridge: se publica. Sin numeros de persona.
+            wait_calendar = handoff_wait_alert_sweeper.calendar
+            stalled_monitor_readiness = {
+                **stalled_monitor_readiness,
+                "handoff_wait_alerts": handoff_wait_alert_sweeper.last_scan_state,
+                "handoff_wait_alerts_last_scan": (
+                    handoff_wait_alert_sweeper.last_scan_summary
+                ),
+                "handoff_wait_alerts_calendar": (
+                    f"{handoff_wait_alert_sweeper.after_business_hours}h "
+                    f"{handoff_wait_business_days_text(wait_calendar.weekdays)} "
+                    f"{wait_calendar.start_hour:02d}-{wait_calendar.end_hour:02d}"
                 ),
             }
         if native_silence_sweepers is not None:

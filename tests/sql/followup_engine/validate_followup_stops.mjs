@@ -78,7 +78,9 @@ if (!same(names.slice(position + 1), ['20261102000100_recovery_coupon_by_reply_v
   // Si la persona ya es cliente (20261103000700, E-297): una lectura de service_role.
   '20261103000700_customer_status_v1.sql',
   // Las cuatro ramas del pago rechazado nativo (20261103000900, E-306).
-  '20261103000900_flow_engine_native_payment_failure_branches_v1.sql'])) {
+  '20261103000900_flow_engine_native_payment_failure_branches_v1.sql',
+  // El aviso de derivaciones sin atender (20261103001000, E-309): una lectura de service_role.
+  '20261103001000_handoff_wait_alerts_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la renovacion por respuesta`, names.slice(position + 1));
 }
 

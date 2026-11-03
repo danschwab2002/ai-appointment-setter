@@ -466,7 +466,12 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261103000500 (los rechazos de Meta, E-284) suma sus seis: registrar,
     # listar, reservar, cerrar y frenar el reintento, y marcar el aviso.
     # 20261103000700 (si la persona ya es cliente, E-297) suma su lectura.
-    assert len(allowlisted) == 188
+    # 20261103001000 (el aviso de derivaciones sin atender, E-309) suma su lectura.
+    assert len(allowlisted) == 189
+    assert (
+        "list_unattended_human_handoffs_v1(bigint, bigint, timestamp with time zone, integer)"
+        in allowlisted
+    )
     assert "get_customer_status_v1(text, text[], bigint, bigint, bigint, text)" in allowlisted
     # 20261103000900 (las ramas del pago rechazado nativo, E-306): los datos y el registro.
     assert ("get_flow_engine_native_payment_failure_context_v1(uuid, text, bigint, timestamp with time zone)"
@@ -1922,16 +1927,34 @@ def test_customer_status_fingerprint_is_last() -> None:
         assert marker in compact_fingerprint, marker
 
 
+def test_handoff_wait_alerts_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261103001000 (el aviso de derivaciones sin atender, E-309) es
+    # la ultima: la lectura solo para service_role y que mira solo las
+    # derivaciones sin atender.
+    fingerprint = sql.split("'20261103001000'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261103001000_handoff_wait_alerts_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'handoff_wait_alerts')")
+    assert (
+        "to_regprocedure('public.list_unattended_human_handoffs_v1(bigint,bigint,timestamptz,integer)')"
+        in compact_fingerprint
+    )
+    assert "position('attended_atisnull'indefinition)>0" in compact_fingerprint
+
+
 def test_payment_failure_branches_fingerprint_is_last() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261103000900 (las ramas del pago rechazado nativo, E-306) es
-    # la ultima: los datos y el registro solo para service_role, el contexto con
-    # sus ramas, y la forma, el compilador y la reserva del link con su marca.
-    fingerprint = sql.split("'20261103000900'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261103000900 (las ramas del pago rechazado nativo, E-306) fue
+    # la ultima hasta E-309: los datos y el registro solo para service_role, el
+    # contexto con sus ramas, y la forma, el compilador y la reserva del link con
+    # su marca. Desde E-309 la sigue la del aviso de derivaciones sin atender.
+    fingerprint = sql.split("'20261103000900'", 1)[1].split("\n    union all\n", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261103000900_flow_engine_native_payment_failure_branches_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",3,'flow_engine_native_payment_failure_branches')")
+    assert compact_fingerprint.endswith(",3,'flow_engine_native_payment_failure_branches'")
     for marker in (
         "to_regprocedure('public.record_flow_engine_native_branch_v1(uuid,uuid,text,bigint,integer,timestamptz)')",
         "position('flow_engine_native_payment_failure_branches'indefinition)>0",

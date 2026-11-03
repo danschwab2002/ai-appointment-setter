@@ -176,7 +176,7 @@ def test_the_migration_only_opens_the_append_and_is_one_transaction() -> None:
     assert re.sub(r"\s+", " ", without_append) == re.sub(r"\s+", " ", body)
     names = sorted(path.name for path in MIGRATION.parent.glob("*.sql"))
     # Despues va la compra con nuestro link (20261028000400, E-169).
-    assert names[-17] == MIGRATION.name
+    assert names[-18] == MIGRATION.name
     # El doble caso del carrito (20261030000100, E-204): la admision nativa y el planificador del carrito.
     # El pago rechazado nativo (20261030000200, E-207): el disparador pago_fallido del motor nativo.
     # La lista de las propuestas del AE (20261030000300, E-208): una lectura nueva.
@@ -191,23 +191,25 @@ def test_the_migration_only_opens_the_append_and_is_one_transaction() -> None:
     # El historial de la pagina de aprobacion (20261103000600, E-295).
     # Si la persona ya es cliente (20261103000700, E-297).
     # Las cuatro ramas del pago rechazado nativo (20261103000900, E-306).
-    assert names[-1] == "20261103000900_flow_engine_native_payment_failure_branches_v1.sql"
-    assert names[-2] == "20261103000700_customer_status_v1.sql"
-    assert names[-3] == "20261103000600_flow_approval_history_v1.sql"
-    assert names[-4] == "20261103000500_meta_delivery_rejections_v1.sql"
-    assert names[-5] == "20261102000400_identity_recycle_v1.sql"
-    assert names[-6] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
-    assert names[-7] == "20261102000200_meta_template_requests_v1.sql"
-    assert names[-8] == "20261102000100_recovery_coupon_by_reply_v1.sql"
-    assert names[-9] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
-    assert names[-10] == "20261101000200_flow_engine_native_silence_v1.sql"
+    # El aviso de derivaciones sin atender (20261103001000, E-309).
+    assert names[-1] == "20261103001000_handoff_wait_alerts_v1.sql"
+    assert names[-2] == "20261103000900_flow_engine_native_payment_failure_branches_v1.sql"
+    assert names[-3] == "20261103000700_customer_status_v1.sql"
+    assert names[-4] == "20261103000600_flow_approval_history_v1.sql"
+    assert names[-5] == "20261103000500_meta_delivery_rejections_v1.sql"
+    assert names[-6] == "20261102000400_identity_recycle_v1.sql"
+    assert names[-7] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
+    assert names[-8] == "20261102000200_meta_template_requests_v1.sql"
+    assert names[-9] == "20261102000100_recovery_coupon_by_reply_v1.sql"
+    assert names[-10] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
+    assert names[-11] == "20261101000200_flow_engine_native_silence_v1.sql"
     # Antes, el primer contacto nativo (20261101000100, E-247): el disparador intencion.
-    assert names[-11] == "20261101000100_flow_engine_native_intent_v1.sql"
-    assert names[-12] == "20261030000400_portable_purchase_stops_see_our_link_v1.sql"
-    assert names[-13] == "20261030000300_flow_change_list_v1.sql"
-    assert names[-14] == "20261030000200_flow_engine_native_payment_failure_v1.sql"
-    assert names[-15] == "20261030000100_flow_engine_native_legacy_double_case_v1.sql"
-    assert names[-16] == "20261028000400_purchase_by_our_link_counts_v1.sql"
+    assert names[-12] == "20261101000100_flow_engine_native_intent_v1.sql"
+    assert names[-13] == "20261030000400_portable_purchase_stops_see_our_link_v1.sql"
+    assert names[-14] == "20261030000300_flow_change_list_v1.sql"
+    assert names[-15] == "20261030000200_flow_engine_native_payment_failure_v1.sql"
+    assert names[-16] == "20261030000100_flow_engine_native_legacy_double_case_v1.sql"
+    assert names[-17] == "20261028000400_purchase_by_our_link_counts_v1.sql"
 
 
 def test_the_read_sql_reads_and_never_writes() -> None:
