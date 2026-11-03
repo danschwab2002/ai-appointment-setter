@@ -144,6 +144,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261103000900",
         # El aviso de derivaciones sin atender (20261103001000, E-309).
         "20261103001000",
+        # La etiqueta de un segmento en un flujo nativo (20261103001300, E-316).
+        "20261103001300",
     ]
 
     sql = _sql()

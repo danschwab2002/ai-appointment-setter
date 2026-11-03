@@ -75,6 +75,12 @@ INBOX_11: dict[str, Any] = json.loads(
 )
 CATALOG = TemplateCatalog.from_inbox_payload(INBOX_11)
 INSTANCE = InstanceView("lancemos", "att1", frozenset({"att1"}), "America/Mexico_City")
+# E-316 (segment-labels-v1): la instancia con un segmento que etiquetar puede poner. La etiqueta es un
+# ejemplo; el estado lo calcula quien arma la vista.
+SEGMENT_INSTANCE = InstanceView("lancemos", "att1", frozenset({"att1"}), "America/Mexico_City",
+                                segment_labels=(("black-november", "vigente"),))
+EXPIRED_SEGMENT_INSTANCE = InstanceView("lancemos", "att1", frozenset({"att1"}), "America/Mexico_City",
+                                        segment_labels=(("black-november", "vencido"),))
 KEYS = ("carrito", "pago_fallido", "precheckout", "descuento", "reactivacion", "ficha", "activacion")
 BLOCK_OF = {"carrito": "1", "pago_fallido": "2", "precheckout": "3", "descuento": "4",
             "reactivacion": "5a", "ficha": "6", "activacion": "7"}
@@ -709,6 +715,19 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
         lambda: run_new(welcome(pasos=[{"etiquetar": "cliente"}, copy.deepcopy(CONFIRMED_STEP)])),
         lambda: run_new(),
     ),
+    # E-316: la etiqueta de un segmento va antes de la plantilla (la pone el motor antes del envio).
+    "etiquetar_segment_not_before_template": (
+        lambda: run_new(welcome(pasos=[copy.deepcopy(CONFIRMED_STEP), {"etiquetar": "black-november"}]),
+                        instance=SEGMENT_INSTANCE),
+        lambda: run_new(welcome(pasos=[{"etiquetar": "black-november"}, copy.deepcopy(CONFIRMED_STEP)]),
+                        instance=SEGMENT_INSTANCE),
+    ),
+    "segment_label_outside_window": (
+        lambda: run_new(welcome(pasos=[{"etiquetar": "black-november"}, copy.deepcopy(CONFIRMED_STEP)]),
+                        instance=EXPIRED_SEGMENT_INSTANCE),
+        lambda: run_new(welcome(pasos=[{"etiquetar": "black-november"}, copy.deepcopy(CONFIRMED_STEP)]),
+                        instance=SEGMENT_INSTANCE),
+    ),
     "motor_nativo:disparador": (
         # La ficha: el motor nativo arranca con la compra, desde E-161 con el carrito y desde E-207 con
         # el pago rechazado.
@@ -801,10 +820,10 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
             "descuento_previo_requires_payment_failure_trigger",
             "ficha_link_requires_ficha_trigger", "coupon_requires_checkout_link",
             "variable_needs_personal_coupon", "variable_needs_event_trigger",
-            "etiquetar_requires_purchase_trigger"},
+            "etiquetar_requires_purchase_trigger", "segment_label_outside_window"},
         6: {"event_requires_vence", "silence_forbids_vence"},
         7: {"conversar_outside_open_window_branch", "terminal_step_not_last", "nested_condition",
-            "etiquetar_not_after_template"},
+            "etiquetar_not_after_template", "etiquetar_segment_not_before_template"},
         8: {"hour_invalid", "window_not_increasing", "zone_invalid", "zone_changed", "pool_zone_mismatch"},
         9: {"cap_invalid", "daily_cap_exceeds_total"},
         10: {"unknown_flow_reference", "mutual_le_gana_a", "product_not_declared", "product_required",
@@ -833,7 +852,7 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         "template_variable_count_mismatch", "template_button_mismatch", "template_catalog_unavailable",
         "purchase_permission_requires_single_utility_send", "coupon_personal_limit",
         "variable_needs_personal_coupon", "variable_needs_event_trigger",
-        "etiquetar_requires_purchase_trigger",
+        "etiquetar_requires_purchase_trigger", "segment_label_outside_window",
     }
     assert {code for code, pairs in fv.CODE_RULES.items() if any(k == "todavia_no" for _, k in pairs)} == {
         "coupon_change_not_supported", "engine_not_supported:more_sends_than_steps",

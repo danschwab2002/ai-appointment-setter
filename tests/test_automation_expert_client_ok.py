@@ -68,7 +68,7 @@ def test_an_ok_the_database_would_reject_does_not_load(ok: object) -> None:
 
 def test_list_flows_says_null_when_it_is_not_declared() -> None:
     body = _flows_body(_reader())
-    assert body["contract_version"] == "1.4.0"
+    assert body["contract_version"] == "1.5.0"
     assert body["data"]["client_ok"] is None
 
 

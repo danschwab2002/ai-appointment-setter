@@ -93,7 +93,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026110100030
   // Las cuatro ramas del pago rechazado nativo (20261103000900, E-306).
   '20261103000900_flow_engine_native_payment_failure_branches_v1.sql',
   // El aviso de derivaciones sin atender (20261103001000, E-309): una lectura de service_role.
-  '20261103001000_handoff_wait_alerts_v1.sql'])) {
+  '20261103001000_handoff_wait_alerts_v1.sql',
+  // La etiqueta de un segmento en un flujo nativo (20261103001300, E-316): un reemplazo contado en la forma nativa.
+  '20261103001300_flow_engine_native_segment_label_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de los frenos del seguimiento`, names.slice(position + 1));
 }
 
@@ -479,7 +481,9 @@ const unsupportedOf = async (definition) => one(await sql(
     'una por conversacion': { ...cart, topes: { ...cart.topes, repeticion: { una_por: 'conversacion', otra_despues_de: 'nunca' } } },
     'otra_despues_de invalido': { ...cart, topes: { ...cart.topes, repeticion: { una_por: 'persona', otra_despues_de: 'pronto' } } },
     'prioridad que no es lista': { ...cart, prioridad: { le_gana_a: [], no_arranca_mientras: 'pago_rechazado' } },
-    'etiquetar con carrito': { ...cart, pasos: [cart.pasos[0], { etiquetar: 'clienta' }] },
+    // La etiqueta cliente con el carrito sigue cerrada; desde 20261103001300 (E-316) la de un segmento se abre
+    // (la que estaba aca, 'clienta', no es la de cliente: con la migracion se abria y el caso dejaba de probar).
+    'etiquetar con carrito': { ...cart, pasos: [cart.pasos[0], { etiquetar: 'cliente' }] },
     'compra con formulario': { ...cart, dispara: { evento: 'compra' }, entra: { permiso: 'formulario', contesto_a: [] } },
   };
   const readSynthetic = async () => {

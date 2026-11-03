@@ -444,6 +444,22 @@ ETIQUETAR_NOT_AFTER_TEMPLATE = _spec(
     "etiquetar va después de una plantilla, y hay uno solo por camino.",
     alternative="Ponerlo después del envío, una sola vez.",
 )
+# La etiqueta de un segmento (E-316, PR-C, segment-labels-v1). La pone el motor antes del primer envio,
+# para que la conversacion ya la tenga cuando la persona contesta: con cualquier disparador (la 5 de arriba
+# es solo de cliente), arriba de todo y antes de la plantilla (7), y dentro de la vigencia del segmento (5).
+# Van en la 5 y la 7 porque la base acepta reglas de 1 a 17.
+ETIQUETAR_SEGMENT_NOT_BEFORE_TEMPLATE = _spec(
+    "etiquetar_segment_not_before_template", 7, KIND_FORM,
+    "La etiqueta de un segmento la pone el motor antes del primer envío: va arriba de todo, antes de la "
+    "plantilla y fuera de las condiciones, y hay una sola etiqueta por camino.",
+    alternative="Poner etiquetar con el segmento como primer paso, o antes de la plantilla, una sola vez.",
+)
+SEGMENT_LABEL_OUTSIDE_WINDOW = _spec(
+    "segment_label_outside_window", 5, KIND_PROTECTION,
+    "Ese segmento ya venció: el motor no le pone su etiqueta a nadie, y el agente ya no usa su conocimiento.",
+    limit="etiquetar con un segmento, solo mientras el segmento no venció",
+    alternative="Sacar el paso, o cargar una versión nueva del segmento con otra vigencia.",
+)
 # La regla 14 de un flujo nativo (flow-engine-v2 §9): lo que la base no abre ni admite.
 _NATIVE_LIMIT = ("Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, "
                  "y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente "
@@ -611,7 +627,8 @@ _VALIDATOR_CODES: tuple[CodeSpec, ...] = (
     FLOW_ALREADY_REGISTERED, FLOW_KEY_RESERVED_FOR_LEGACY, NEW_FLOW_MUST_START_IN_COHORT,
     PRENDER_A_COHORT_NEEDS_PAUSED_NATIVE,
     ETIQUETAR_REQUIRES_PURCHASE_TRIGGER,
-    ETIQUETAR_NOT_AFTER_TEMPLATE, ENGINE_NOT_SUPPORTED_NATIVE_TRIGGER, ENGINE_NOT_SUPPORTED_NATIVE_PERMISSION,
+    ETIQUETAR_NOT_AFTER_TEMPLATE, ETIQUETAR_SEGMENT_NOT_BEFORE_TEMPLATE, SEGMENT_LABEL_OUTSIDE_WINDOW,
+    ENGINE_NOT_SUPPORTED_NATIVE_TRIGGER, ENGINE_NOT_SUPPORTED_NATIVE_PERMISSION,
     ENGINE_NOT_SUPPORTED_NATIVE_REPEAT, ENGINE_NOT_SUPPORTED_NATIVE_PRIORITY, ENGINE_NOT_SUPPORTED_NATIVE_SHAPE,
     ENGINE_NOT_SUPPORTED_ETIQUETAR, CHANGE_OUTSIDE_1B_SCOPE, TRIGGER_CHANGE_IS_ANOTHER_FLOW, FLOW_CHANGE_STALE_BASE,
     ROLLBACK_TARGET_NOT_FOUND, ROLLBACK_TARGET_IS_ACTIVE, STATE_TRANSITION_INVALID,
@@ -1094,7 +1111,8 @@ class _Run:
                     emitter = _Emitter((index, "version"), collapse=at)
                     self.blocks.extend(
                         finding_at(finding, at)
-                        for finding in check_definition(target, published=True, path=(index, "version"))
+                        for finding in check_definition(target, published=True, path=(index, "version"),
+                                                         labels=self.instance.labels)
                     )
                     self.subjects.append(_Subject(
                         index=index, item=item, flow=flow, definition=target, emitter=emitter,
@@ -1335,6 +1353,10 @@ class _Run:
                     emitter.add(MEDIO_DE_PAGO_REQUIRES_FICHA_TRIGGER, at + ("condicion", "dato"))
                 elif isinstance(datum, str) and datum in PAYMENT_FAILURE_DATUM_SPECS and payment_failure is False:
                     emitter.add(PAYMENT_FAILURE_DATUM_SPECS[datum], at + ("condicion", "dato"))
+            elif kind == "etiquetar" and step.get("etiquetar") in self.instance.segment_label_states:
+                # E-316: la etiqueta de un segmento va con cualquier disparador, mientras no vencio.
+                if self.instance.segment_label_states[step["etiquetar"]] == "vencido":
+                    emitter.add(SEGMENT_LABEL_OUTSIDE_WINDOW, at + ("etiquetar",))
             elif kind == "etiquetar" and trigger is not None and not (
                     trigger.kind == "evento" and trigger.event is None) and not trigger.is_purchase:
                 emitter.add(ETIQUETAR_REQUIRES_PURCHASE_TRIGGER, at + ("etiquetar",))
@@ -1393,7 +1415,11 @@ class _Run:
 
     def _rule7_etiquetar(self, emitter: _Emitter, steps: object, segments: tuple[Segment, ...], *,
                          sent: bool, labeled: bool, depth: int = 0) -> None:
-        """Un ``etiquetar`` va despues de una plantilla de su camino, y hay uno solo por camino."""
+        """Un ``etiquetar`` va despues de una plantilla de su camino, y hay uno solo por camino.
+
+        El de un segmento (E-316) es al reves: arriba de todo y antes de la plantilla, porque el motor lo
+        ejecuta antes del primer envio.
+        """
         if not isinstance(steps, list) or depth > MAX_DEPTH:
             return
         for index, step in enumerate(steps):
@@ -1401,6 +1427,11 @@ class _Run:
             at = segments + (index,)
             if kind == "plantilla":
                 sent = True
+            elif kind == "etiquetar" and isinstance(step, Mapping) \
+                    and step.get("etiquetar") in self.instance.segment_label_states:
+                if sent or labeled or depth > 0:
+                    emitter.add(ETIQUETAR_SEGMENT_NOT_BEFORE_TEMPLATE, at + ("etiquetar",))
+                labeled = True
             elif kind == "etiquetar":
                 if not sent or labeled:
                     emitter.add(ETIQUETAR_NOT_AFTER_TEMPLATE, at + ("etiquetar",))

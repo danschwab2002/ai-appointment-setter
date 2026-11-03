@@ -1927,16 +1927,31 @@ def test_customer_status_fingerprint_is_last() -> None:
         assert marker in compact_fingerprint, marker
 
 
-def test_handoff_wait_alerts_fingerprint_is_last() -> None:
+def test_segment_label_fingerprint_is_last() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261103001000 (el aviso de derivaciones sin atender, E-309) es
-    # la ultima: la lectura solo para service_role y que mira solo las
-    # derivaciones sin atender.
-    fingerprint = sql.split("'20261103001000'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261103001300 (la etiqueta de un segmento en un flujo nativo,
+    # E-316) es la ultima: la forma nativa con su marca y la de las ramas del
+    # pago rechazado, que el reemplazo contado conserva.
+    fingerprint = sql.split("'20261103001300'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261103001300_flow_engine_native_segment_label_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",1,'flow_engine_native_segment_label')")
+    assert "to_regprocedure('public._flow_engine_native_unsupported(jsonb)')" in compact_fingerprint
+    assert "position('flow_engine_native_segment_label'indefinition)>0" in compact_fingerprint
+    assert "position('flow_engine_native_payment_failure_branches'indefinition)>0" in compact_fingerprint
+
+
+def test_handoff_wait_alerts_fingerprint() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261103001000 (el aviso de derivaciones sin atender, E-309) fue
+    # la ultima hasta E-316: la lectura solo para service_role y que mira solo
+    # las derivaciones sin atender.
+    fingerprint = sql.split("'20261103001000'", 1)[1].split("\n    union all\n", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261103001000_handoff_wait_alerts_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",2,'handoff_wait_alerts')")
+    assert compact_fingerprint.endswith(",2,'handoff_wait_alerts'")
     assert (
         "to_regprocedure('public.list_unattended_human_handoffs_v1(bigint,bigint,timestamptz,integer)')"
         in compact_fingerprint

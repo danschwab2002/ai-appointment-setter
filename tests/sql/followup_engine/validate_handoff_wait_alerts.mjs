@@ -49,8 +49,10 @@ const results = {};
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`${MIGRATION} no esta en la cadena`);
-if (names.slice(position + 1).length !== 0) {
-  fail(`${MIGRATION} tiene que ser la ultima`, names.slice(position + 1));
+// Despues va solo la etiqueta de un segmento en un flujo nativo (20261103001300, E-316): un reemplazo
+// contado en la forma nativa, que no toca las derivaciones. Esta prueba aplica la cadena hasta la suya.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261103001300_flow_engine_native_segment_label_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de la etiqueta de un segmento`, names.slice(position + 1));
 }
 const apply = async (file) => db.exec(readFileSync(file, 'utf8').replace(
   /create extension if not exists pgcrypto;/gi,

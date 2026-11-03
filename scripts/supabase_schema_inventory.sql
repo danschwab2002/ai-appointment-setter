@@ -6605,6 +6605,21 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'handoff_wait_alerts'
+    union all
+    select
+        '20261103001300',
+        '20261103001300_flow_engine_native_segment_label_v1.sql',
+        -- La etiqueta de un segmento en un flujo nativo (E-316): la forma nativa
+        -- con su marca, sin perder la de las ramas del pago rechazado.
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_unsupported(jsonb)')
+              and position('flow_engine_native_segment_label' in definition) > 0
+              and position('flow_engine_native_payment_failure_branches' in definition) > 0
+        )::int,
+        1,
+        'flow_engine_native_segment_label'
 )
 select
     version,

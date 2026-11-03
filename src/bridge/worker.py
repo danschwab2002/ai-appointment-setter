@@ -122,6 +122,7 @@ from bridge.native_flows import (
     payment_failure_product_ref, purchase_product_ref,
 )
 from bridge.product_label import ProductLabeler
+from bridge.segment_labels import NativeSegmentLabelPlan, NativeSegmentLabels
 from bridge.purchase_agent_pause import PurchaseAgentPause
 from bridge.followup_steps import FOLLOWING_STEP_TRIGGERS
 from bridge.lead_decline import LEAD_DECLINED
@@ -876,6 +877,7 @@ class DurableDispatcher:
         flow_engine_enabled: bool = False,
         native_client_labeler: ProductLabeler | None = None,
         purchase_pause_after_native_welcome: PurchaseAgentPause | None = None,
+        native_segment_labels: NativeSegmentLabels | None = None,
     ) -> None:
         if payment_failure_followup is not None and (
             not approved_template_direct or payment_failure_variants is None
@@ -1010,6 +1012,10 @@ class DurableDispatcher:
         # comprar va despues de la bienvenida nativa (el worker la saltea para
         # quien tomo el flujo). Sin el flag, None: ninguna llamada nueva.
         self._purchase_pause_after_native_welcome = purchase_pause_after_native_welcome
+        # E-316 (segment-labels-v1): con FLOW_ENGINE_SEGMENT_LABELS_ENABLED, la
+        # etiqueta de un segmento del paso etiquetar va antes del primer envio.
+        # Sin el flag, None: ninguna llamada nueva.
+        self._native_segment_labels = native_segment_labels
         self._native_purchase_buyers: dict[str, tuple[str | None, str | None]] = {}
         # F-150 (E-263, D4): las acciones cuya ultima lectura de Chatwoot vio un
         # «no» claro de la persona despues del toque anterior. Lo usa solo el
@@ -3040,8 +3046,15 @@ class DurableDispatcher:
                             ):
                                 decisions.append(decision)
                                 continue
+                            segment_plan = await self._native_segment_plan(
+                                action, engine_step
+                            )
                             try:
                                 if followup_conversation_id is not None:
+                                    if segment_plan is not None:
+                                        await segment_plan.before_send(
+                                            followup_conversation_id
+                                        )
                                     followup_kwargs: dict[str, Any] = {
                                         "conversation_id": followup_conversation_id,
                                         "phone": execution_context.buyer_phone or "",
@@ -3096,6 +3109,13 @@ class DurableDispatcher:
                                         == NATIVE_PURCHASE_PERMISSION
                                     ):
                                         first_touch_kwargs["purchase_welcome"] = True
+                                    # E-316: la etiqueta del segmento, con la
+                                    # conversacion ya elegida y antes de la
+                                    # plantilla.
+                                    if segment_plan is not None:
+                                        first_touch_kwargs["before_send"] = (
+                                            segment_plan.before_send
+                                        )
                                     result = await self._sender.send_first_touch(
                                         **first_touch_kwargs
                                     )
@@ -3354,6 +3374,10 @@ class DurableDispatcher:
                                         labeler=self._native_client_labeler,
                                         notes=self._chatwoot,
                                     )
+                                    if segment_plan is not None:
+                                        await segment_plan.after_send(
+                                            result.conversation_id
+                                        )
                                     await self._pause_after_native_step(
                                         action,
                                         engine_step=engine_step,
@@ -3369,6 +3393,22 @@ class DurableDispatcher:
                 decision.reason_code,
             )
         return decisions
+
+    async def _native_segment_plan(
+        self,
+        action: ScheduledAction,
+        engine_step: FlowEngineStepContext | None,
+    ) -> NativeSegmentLabelPlan | None:
+        """E-316: el plan de la etiqueta de un segmento para un envio nativo, o None."""
+        if (
+            self._native_segment_labels is None
+            or action.anchor_type != NATIVE_ANCHOR
+            or engine_step is None
+        ):
+            return None
+        return await self._native_segment_labels.plan(
+            self._supabase, action_id=action.action_id
+        )
 
     def _remember_native_purchase_buyer(
         self,
