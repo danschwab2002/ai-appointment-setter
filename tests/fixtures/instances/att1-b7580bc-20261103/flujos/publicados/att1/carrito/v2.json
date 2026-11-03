@@ -1,0 +1,87 @@
+{
+  "entra": {
+    "permiso": "formulario",
+    "contesto_a": []
+  },
+  "flujo": "carrito",
+  "pasos": [
+    {
+      "boton": {
+        "link": "checkout",
+        "cupon": "personal"
+      },
+      "idioma": "es_MX",
+      "plantilla": "att1_carrito_descuento_01",
+      "variables": [
+        "nombre",
+        "producto",
+        "cuando",
+        "precio",
+        "vence"
+      ]
+    },
+    {
+      "esperar": "36h"
+    },
+    {
+      "idioma": "es_MX",
+      "plantilla": "att1_carrito_dudas_01",
+      "variables": [
+        "nombre",
+        "producto"
+      ]
+    },
+    {
+      "esperar": "36h"
+    },
+    {
+      "boton": {
+        "link": "checkout",
+        "cupon": "personal"
+      },
+      "idioma": "es_MX",
+      "plantilla": "att1_ultima_renovacion_01",
+      "variables": [
+        "nombre",
+        "producto",
+        "vence"
+      ]
+    }
+  ],
+  "topes": {
+    "bolsa": "att1-recuperacion",
+    "total": 5000,
+    "por_dia": 240,
+    "repeticion": {
+      "una_por": "persona_y_oferta",
+      "otra_despues_de": "0m"
+    }
+  },
+  "estado": "publicada",
+  "nombre": "Carrito abandonado",
+  "dispara": {
+    "evento": "carrito"
+  },
+  "esquema": "setter-flujo/v1",
+  "horario": {
+    "zona": "America/Mexico_City",
+    "desde": "09:00",
+    "hasta": "21:00"
+  },
+  "termina": {
+    "si": [
+      "compra"
+    ],
+    "vence": "5d"
+  },
+  "version": 2,
+  "producto": "att1",
+  "prioridad": {
+    "le_gana_a": [
+      "precheckout"
+    ],
+    "no_arranca_mientras": [
+      "pago_fallido"
+    ]
+  }
+}

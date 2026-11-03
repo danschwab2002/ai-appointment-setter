@@ -1,0 +1,298 @@
+# Manifiesto de la instancia ATT1 del setter.
+# Referencia de cada campo: docs/referencia-manifiesto.md del repo del producto
+# (danschwab2002/ai-appointment-setter). Ningun campo de este archivo es secreto.
+#
+# Fuentes, medidas el 2026-09-28 (UTC):
+#   - Hotmart y ofertas: landing publicada (repo draninagarza, src/pages/att1/evg/vsl/ads-a.astro y
+#     org-a.astro, origin/main 32efb9a), reporting (lancemos-ia, alimenta-tu-tiroides-att1.yaml) y
+#     el script servido en site.metodoraizana.com.mx/alimenta-tu-tiroides-d (off=2uafw5bg, 200).
+#   - La landing B del organico, medida el 2026-10-07 a las 20:18Z: site.metodoraizana.com.mx/
+#     alimenta-tu-tiroides responde 200 sin redirecciones (con la barra final tambien) y embebe el
+#     formulario de GHL UHTaDn8feKiqALhjGFFF; su script arma el checkout de D98014973Y con
+#     off=bmaztyhg&checkoutMode=10 recien cuando GHL avisa el envio de ese formulario.
+#   - Chatwoot: base de Chatwoot del VPS, solo lectura: cuenta 2 "ATT1", inbox 11 (WhatsApp Cloud,
+#     +5217296521530), team 2 "att1 - revision humana".
+#   - Plantillas: message_templates del canal 10, sincronizadas por Chatwoot el 2026-10-01 12:55Z
+#     (solo definiciones, en evidencia/2026-10-01-catalogo-plantillas-canal-10.json), y releidas por
+#     la API de Chatwoot el 2026-10-10 00:34Z: las cinco siguen APPROVED (solo definiciones, en
+#     evidencia/2026-10-10-catalogo-plantillas-canal-10.json).
+
+schema = "setter-instancia/v2"
+producto = "v1.28.0"
+
+eventos = ["carrito", "pago_fallido", "compra", "entrante", "intencion", "ficha_impresa"]
+# "intencion" entra por el adaptador del formulario de GHL (producto v1.2.0, [adaptadores.ghl]):
+# el formulario de ATT1 es de GHL y la landing no manda el evento canonico.
+# "ficha_impresa" (producto v1.11.0) es la ficha de pago en efectivo de Hotmart
+# (PURCHASE_BILLET_PRINTED). Declararla no cambia nada: el webhook la sigue guardando y el worker
+# descartandola hasta que se cargue PORTABLE_HOTMART_PAYMENT_SLIP_ENABLED en el archivo del bridge.
+
+[instancia]
+tenant_ref = "lancemos"
+ally_ref = "att1"
+funnel_ref = "att1"
+binding_version = 1
+marca = "Dra. Nina Garza"
+zona_horaria = "America/Mexico_City"   # 60 % del publico es de Mexico (intake-v1.json)
+
+[hotmart]
+product_id = 5071808
+hotlink = "D98014973Y"
+product_name = "Alimenta tu Tiroides"   # checkout publico pay.hotmart.com/D98014973Y, campo name, leido el 2026-09-30 ("tu" en minuscula)
+moneda = "USD"
+precio = "47"
+
+[[hotmart.ofertas]]
+codigo = "gopi6lh7"
+site = "metodoraizana"
+landing_id = "ads-a"
+url = "https://www.metodoraizana.com/att1/evg/vsl/ads-a"
+origen = "pauta"
+por_defecto = true
+
+# El organico (ManyChat) llega a la landing B, que es donde vive su formulario. El producto admite
+# una sola landing por oferta, asi que org-a (www.metodoraizana.com/att1/evg/vsl/org-a, la misma
+# oferta, 0 intenciones y 0 envios al 2026-10-07) queda sin conectar. Esta oferta queda en la
+# MISMA posicion: el bridge compara la fila del binding con este archivo, tupla por tupla y en
+# orden, y con un desfase no arranca. La fila la reata despliegue/base/reatar-bmaztyhg-a-la-landing-b.sql,
+# que corre despliegue/base/conectar-organico.sh --aplicar antes del reinicio (README, "El organico").
+[[hotmart.ofertas]]
+codigo = "bmaztyhg"
+site = "metodoraizana-mx"
+landing_id = "alimenta-tu-tiroides"
+url = "https://site.metodoraizana.com.mx/alimenta-tu-tiroides"
+origen = "organico"
+
+[[hotmart.ofertas]]
+codigo = "2uafw5bg"
+site = "metodoraizana-mx"
+landing_id = "alimenta-tu-tiroides-d"
+url = "https://site.metodoraizana.com.mx/alimenta-tu-tiroides-d"
+origen = "pauta"
+
+# 83utgyow queda afuera a proposito: es la oferta de la recuperacion de GHL que este setter
+# reemplaza. El lead vuelve a la oferta que vio (decision del 2026-09-27).
+
+[chatwoot]
+account_id = 2
+inbox_id = 11
+equipo_derivacion = 2
+
+# #feed-chatwoot-att1, creado por Dan el 2026-10-06. El bridge no lo lee: el canal lo guarda el conector
+# (SLACK_TENANT_CHANNELS_JSON), el propio de ATT1 desde el 2026-10-26 (att1-slack-connector, F-133), y
+# despliegue/slack/conectar-slack.py lo toma de aca para armar ese mapa.
+[slack]
+canal = "C0C6XT9ND98"
+
+[inbound]
+scope_key = "att1-inbound"
+scope_version = 1
+
+[consentimiento]
+# La etiqueta cubre los dos textos que mostraron los formularios: el del 2026-09-29 y, desde el
+# 2026-10-04 (~22:13Z), la frase que pidio Juan el 03/10. Decision de Dan del 03/10: la etiqueta
+# no cambia (consentimiento/att1-whatsapp-contact-v1.md).
+copy_version = "att1-whatsapp-contact-v1"
+
+[plantillas]
+precheckout = { nombre = "att1_interes_precheckout_01", idioma = "es_MX" }
+carrito = { nombre = "att1_carrito_abandonado_01", idioma = "es_MX" }
+pago_fallido = { nombre = "att1_compra_fallida_01", idioma = "es_MX" }
+reactivacion = { nombre = "att1_reactivacion_01", idioma = "es_MX" }
+descuento = { nombre = "att1_seguimiento_descuento_01", idioma = "es_MX" }
+ficha = { nombre = "att1_ficha_efectivo_01", idioma = "es_MX", parametros = ["nombre", "producto", "tienda", "vencimiento"] }
+ficha_vence_manana = { nombre = "att1_ficha_vence_manana_01", idioma = "es_MX", parametros = ["nombre", "tienda", "producto", "vencimiento"] }
+ficha_vence_hoy = { nombre = "att1_ficha_vence_hoy_01", idioma = "es_MX", parametros = ["nombre", "tienda", "producto"] }
+# reactivacion: APPROVED el 2026-10-01, una variable ({{1}} = nombre), sin botones. Pasa
+#   parse_reactivation_template del producto v1.2.0. Declararla no prende nada: [flujos].reactivacion
+#   sigue en false, y el barredor toma la plantilla de WABA_REACTIVATION_TEMPLATE_NAME, no de aca.
+# descuento: desde el producto v1.5.0 este lugar es el del seguimiento con cupon
+#   (CONVERSATION_FOLLOWUP_ENABLED). APPROVED el 2026-10-01 y releida APPROVED el 2026-10-10 00:34Z.
+#   Dos variables ({{1}} nombre, {{2}} producto) y un boton de URL dinamica: el cupon va solo en el
+#   boton (offDiscount), no en el texto. Con el flag prendido, el bridge no arranca si
+#   CONVERSATION_FOLLOWUP_TEMPLATE_NAME y _TEMPLATE_LANGUAGE no son estos (los escribe
+#   despliegue/secretos/generar.py). Reemplaza a att1_descuento_10_post_respuesta_01, que estaba en
+#   "en" y se borro. Detalle en plantillas-pendientes.md.
+# ficha: C1 de la ficha de OXXO (producto v1.11.0). APPROVED por Meta el 2026-10-18 a las 18:58Z,
+#   UTILITY, es_MX, parametros posicionales: «Hola, {{1}}. Te dejo aqui tu ficha para pagar {{2}} en
+#   {{3}}... hasta el {{4}}...» (nombre, producto, la tienda de [[ficha.medios]] y el vencimiento,
+#   «jueves 22 de octubre»). Dos botones: primero el URL
+#   https://customer-local-latam.ebanx.com/print/oxxo?hash={{1}} (tiene que ser boton_prefijo + {{1}}
+#   de la fila de Mexico) y despues la respuesta rapida «No mas mensajes». La forma esta en el
+#   fixture tests/fixtures/chatwoot_message_templates_inbox_11_ficha_20261018.json del producto. Con
+#   el flag, el bridge no arranca si WABA_PAYMENT_SLIP_TEMPLATE_NAME no es este nombre (lo escribe
+#   generar.py).
+# ficha_vence_manana y ficha_vence_hoy: C2 y C3 de la ficha, los recordatorios del vencimiento
+#   (producto v1.13.0, contrato docs/contracts/portable-payment-slip-reminders-v1.md). APPROVED por
+#   Meta el 2026-10-18 a las 18:58Z, es_MX. C2, att1_ficha_vence_manana_01 (id 1487556399862613),
+#   quedo MARKETING por recategorizacion de Meta: «Hola, {{1}}. Tu ficha de {{2}} para {{3}} vence
+#   manana, {{4}}...» (nombre, la tienda, el producto y el vencimiento). C3, att1_ficha_vence_hoy_01
+#   (id 1894168628572098), UTILITY: «Hola, {{1}}. Tu ficha de {{2}} para {{3}} vence hoy...» (nombre,
+#   tienda y producto). Los dos con los botones de la ficha: el URL boton_prefijo + {{1}} de la fila
+#   de Mexico y la respuesta rapida «No mas mensajes». El orden de las variables es otro que el de
+#   ficha (la tienda va antes del producto), por eso los parametros van escritos. La forma esta en
+#   el fixture tests/fixtures/chatwoot_message_templates_inbox_11_ficha_recordatorios_20261019.json
+#   del producto. Declaradas, con el flag de la ficha el bridge no arranca si
+#   WABA_PAYMENT_SLIP_DUE_EVE_TEMPLATE_NAME y _DUE_DAY_ no son estos nombres o si falta su categoria
+#   (las cuatro las escribe generar.py). Cuando sale cada una lo decide el bridge con el vencimiento;
+#   que salgan, la politica del scope de la ficha: con att1-ficha v1 (un solo paso) no sale ninguna;
+#   con la v3 (despliegue/base/publicar-ficha-v3.sql, dos pasos: C1 y C3) sale solo C3. Decision de
+#   Dan del 2026-10-19: sin C2, por la salud de la cuenta de Meta (es MARKETING, y tres mensajes en
+#   tres dias es demasiado). ficha_vence_manana queda declarada (el bridge la valida al arrancar)
+#   para poder volver a sumarla con otra version de la politica; la v2 (publicar-ficha-v2.sql, tres
+#   pasos) quedo publicada y no se activa.
+
+[agente]
+# El profile del agente comercial en el Hermes propio de ATT1 (el servicio hermes del stack, que
+# instala scripts/hermes_instancia.py del producto desde hermes.toml). Tiene que ser el
+# HERMES_MODEL_NAME del bridge, o el bridge no arranca. Antes del corte era att1-agente-comercial, el
+# profile de ATT1 en el Hermes compartido (README, «El corte al Hermes propio»).
+modelo = "agente-comercial"
+conocimiento = "conocimiento/knowledge-v14.toml"
+
+[adaptadores.ghl]
+# Formularios de GHL que muestran la aclaracion del consentimiento (contrato
+# ghl-precheckout-adapter-v1 del producto). Desde el 2026-10-04 (entre las 22:13 y las 22:22Z) los
+# tres muestran, arriba de Enviar, sin casilla y con nombre, telefono y correo obligatorios, la
+# frase que pidio Juan el 03/10 ("... conforme a la Politica de Privacidad de este sitio."); la
+# politica enlazada nombra WhatsApp. Por decision de Dan del 03/10 la etiqueta sigue siendo
+# att1-whatsapp-contact-v1 (consentimiento/att1-whatsapp-contact-v1.md). Uno por landing, en este
+# orden:
+#   EgDqRl2xWc59YjVW1q8W  ads-a ("VSL ATT 1 Recuperaciones Pauta 47USD"), desde el 29/09. Tambien
+#                         esta embebido en org-a, que con el PR del organico se queda sin oferta en
+#                         este manifiesto: un envio desde org-a da 422 ghl_landing_unknown.
+#   Om5FpIg5Sr5ce7nSkuPy  alimenta-tu-tiroides-d ("VSL ATT Recuperaciones Pauta D"), desde el 01/10;
+#                         antes no pedia WhatsApp y no podia entrar a esta lista.
+#   UHTaDn8feKiqALhjGFFF  alimenta-tu-tiroides, la landing B ("VSL ATT Recuperaciones Org A"), desde
+#                         el PR del organico. Medido el 2026-10-07 entre las 20:18 y las 20:31Z: la
+#                         frase de arriba, sin casilla, los tres campos obligatorios. Listarlo con
+#                         la etiqueta v1 lo decidio Dan el 2026-10-07.
+# La lista va en una sola linea: probar-local.py (seccion 14) inserta despues de ella una
+# aceptacion de prueba cuando el manifiesto no trae la real.
+# El adaptador se prende con GHL_PRECHECKOUT_ADAPTER_ENABLED=true en el archivo de secretos del
+# bridge.
+#
+# La aceptacion del riesgo (cabo LAN-054, producto v1.3.0). El token del adaptador es la unica
+# barrera: quien lo tenga registra una intencion «con consentimiento» para cualquier telefono, y
+# lo puede leer cualquier usuario de la subcuenta de GHL. Mientras esta seccion exista y falten
+# las tres claves de abajo, el bridge NO arranca con [flujos].precheckout ni con
+# [flujos].pago_fallido en true, ni con un scope del piloto de audiencia con consentimiento
+# (consented_intent o consented_intent_in_cohort). Las escribe a mano quien decide por la
+# instancia; ningun codigo las escribe. Van las tres o ninguna:
+#   riesgo_aceptado_por = "<COMPLETAR: nombre de quien decide>"   (con < y > no carga)
+#   riesgo_aceptado_el  = <fecha, AAAA-MM-DD sin comillas>
+#   riesgo_contrato     = "ghl-precheckout-adapter-v1"
+# Estan desde el 2026-10-04: las escribio Dan en el PR #12. Sacar esta seccion no saca de la base las
+# intenciones que el adaptador ya admitio, y ademas levanta la guarda: NO se saca para
+# esquivar la firma (README, seccion LAN-054).
+formularios = ["EgDqRl2xWc59YjVW1q8W", "Om5FpIg5Sr5ce7nSkuPy", "UHTaDn8feKiqALhjGFFF"]
+riesgo_aceptado_por = "Dan Schwab"
+riesgo_aceptado_el  = 2026-10-04
+riesgo_contrato     = "ghl-precheckout-adapter-v1"
+#
+# En que landing vive cada formulario (producto v1.4.0). GHL manda en attributionSource.url la
+# pagina donde EMPEZO la visita, no la del formulario: medido el 2026-10-08, 2 de los 14 envios
+# reales de UHTa llegaron con la URL de la -d (esa gente habia entrado por un anuncio) y quedaron con
+# la oferta de la -d, y un envio de Om5F llego con una pagina que no es landing de este manifiesto y
+# quedo en 422 ghl_landing_unknown. De 30 carritos reales desde la conexion del organico, esos son
+# los 2 que no se cubrieron (bitacora del OS del 2026-10-08). EgDq no se declara: esta en ads-a y en
+# org-a, y sigue por la URL. Cada formulario esta en una sola pagina de los repos (inventario de
+# Lancemos, 2026-10-08).
+# "sombra": la landing sigue saliendo de la URL y la linea de log del adaptador termina en
+# form_landing=would_fix:<landing_id> cuando el formulario la habria cambiado. Se pasa a "activo"
+# con su propio PR, despues de mirar esas lineas (README, "Los pasos para subir de v1.3.3 a v1.4.0").
+# Para volver atras: sacar las dos lineas y redesplegar ANTES de bajar de version: el parser de
+# v1.3.3 no las conoce y no carga el manifiesto.
+landing_por_formulario = { Om5FpIg5Sr5ce7nSkuPy = "alimenta-tu-tiroides-d", UHTaDn8feKiqALhjGFFF = "alimenta-tu-tiroides" }
+landing_por_formulario_modo = "sombra"
+
+[flujos]
+# El entrante se prende primero, para su E2E con el telefono de prueba de Dan (2026-10-04).
+# El carrito se prende para su E2E (2026-10-06). Prenderlo aca no manda nada: hacen falta sus
+# flags en el archivo del bridge y armar att1-recuperacion v2, que solo le escribe a quien este
+# en la cohorte (despliegue/camino-a-produccion.md, paso 6).
+# El primer contacto se prende para su E2E (2026-10-07). Igual que el carrito, prenderlo aca no
+# manda nada: hace falta PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED en el archivo del bridge y
+# armar att1-primer-contacto v1, que solo le escribe a quien este en la cohorte. Sin este true,
+# el bridge no arranca con ese flag (paso 6, «El primer contacto, paso a paso»).
+# El pago fallido se prende el 2026-10-09, abierto a leads reales sin un E2E propio (decision de
+# Dan). Comparte el scope att1-recuperacion con el carrito, asi que sale con la version que este
+# armada y gasta sus mismos topes. Tambien hace falta PORTABLE_HOTMART_PAYMENT_FAILURE_ENABLED en
+# el archivo del bridge, y sin este true el bridge no arranca con ese flag (paso 7, «El pago
+# fallido»).
+# El seguimiento con cupon (el lugar descuento desde el producto v1.5.0) se prende aca con la subida
+# a v1.5.0 (decision de Dan del 2026-10-10). Prenderlo aca no manda nada: hace falta
+# CONVERSATION_FOLLOWUP_ENABLED en el archivo del bridge, primero con
+# CONVERSATION_FOLLOWUP_ONLY_PHONE (el telefono de prueba de Dan) para su E2E. Con manifiesto, el
+# bridge no arranca con ese flag sin este true, igual que con los otros flujos. El mismo true es el
+# techo del flujo viejo de descuento (CHATWOOT_POST_INBOUND_DISCOUNT_PLANNING_ENABLED), que no se
+# carga: no arranca con el agente de Corte B prendido.
+# La reactivacion sigue apagada hasta su E2E.
+# La ficha de OXXO (C1, producto v1.11.0; decision de Dan del 2026-10-18) se declara con la subida a
+# v1.11.0. Prenderla aca no manda nada: hace falta PORTABLE_HOTMART_PAYMENT_SLIP_ENABLED en el
+# archivo del bridge, publicar y armar att1-ficha v1 (despliegue/base/publicar-ficha-v1.sql; README,
+# «Los pasos para subir a v1.11.0»). Con el flag apagado el arranque es el mismo: el true solo
+# levanta el techo. Usa la intencion como permiso (INTENT_PERMISSION_FLOWS del producto), asi que
+# tambien exige la aceptacion del riesgo de GHL de [adaptadores.ghl], que esta desde el 2026-10-04.
+# C3 (producto v1.13.0) no es otro flujo: es el segundo paso de la politica de att1-ficha v3 (dos
+# toques, C1 y C3; sin C2 desde la decision de Dan del 2026-10-19), y va con el mismo true y el mismo
+# flag (README, «Los pasos para subir a v1.13.0»).
+inbound = true
+precheckout = true
+carrito = true
+pago_fallido = true
+reactivacion = false
+descuento = true
+ficha = true
+
+# La ficha de pago en efectivo (producto v1.11.0): que medio en que pais tiene una ficha a la que se
+# le escribe. Solo Mexico, el unico con los tres datos medidos sobre las fichas reales de ATT1 (5
+# CASHPAYMENT de Mexico desde el 12/10; decision de Dan del 2026-10-18, punto 2): la base del boton
+# (la del boton aprobado de att1_ficha_efectivo_01), la referencia de 34 digitos con el vencimiento
+# AAAAMMDD en los digitos 19 a 26 (en las 5, el dia de generada en CDMX mas 3) y la tienda. Chile
+# usa otra base (https://api.ebanx.com/ws/redirect?hash=), que abriria otra pagina con el boton
+# aprobado, no trae la fecha en la referencia y no se sabe si es Sencillito o Servipag; Mercado
+# Pago, Nequi y Yape no traen ficha. Esas quedan ignored con payment_slip_method_not_enabled. Un
+# pais nuevo es otra fila, medida, y una plantilla con su base.
+[[ficha.medios]]
+medio = "CASHPAYMENT"
+pais = "MX"
+tienda = "OXXO"
+zona_horaria = "America/Mexico_City"
+referencia_largo = 34
+vencimiento_digitos = [19, 26]
+vencimiento_dias_si_falta = 3
+boton_prefijo = "https://customer-local-latam.ebanx.com/print/oxxo?hash="
+habilitada = true
+
+[guardas]
+# Si un mensaje nombra uno de estos terminos junto con una accion, el bridge deriva a una persona
+# sin pasar por el agente. Son raices: "levotiroxin" cubre levotiroxina.
+terminos_sensibles = [
+  "medicacion", "medicamento", "farmaco", "pastilla",
+  "levotiroxin", "eutirox", "synthroid", "tiroxin", "liotironin",
+  "suplement", "selenio", "yodo",
+]
+# Desde el conocimiento v7 (decision de Dan del 2026-10-15), solo dejar un medicamento: el resto lo
+# decide el agente con el codigo de salud (la recomendacion medica se contesta una vez y se deriva si
+# insiste). Antes estaban tambien cambiar, reducir, aumentar, tomar, dosis y dosificacion, y «¿puedo
+# tomar el programa si tomo levotiroxina?» se derivaba por «tomar». No dejar la lista vacia: con una
+# lista vacia la guarda encuentra cualquier palabra y deriva todos los mensajes (_stem_pattern, v1.8.0).
+acciones_sensibles = [
+  "dejar", "suspender", "interrumpir",
+]
+
+[revision_diaria]
+# Los cuatro de la revision diaria de ATT1 (producto v1.5.0, servicio att1-revision del stack):
+# los mismos de Johanna, por decision de Dan del 2026-10-10. Cada uno entra a la pagina con su
+# usuario del workspace de Slack y es responsable del borrado del lote a las 72 h. Forma
+# "reviewer_ref:SLACK_USER_ID", con los reviewer_ref y los ID de deploy/daily-feedback.env.example
+# del producto. El bridge no los lee: los toma despliegue/revision-diaria/generar-revision.py para
+# DAILY_FEEDBACK_REVIEWERS_JSON (el producto exige exactamente cuatro), y el servicio los escribe
+# en att1-db al arrancar. Sumar o cambiar a alguien no le abre los lotes ya confirmados.
+revisores = [
+  "dan-schwab:U0BQRS38SNM",
+  "juan-martitegui:U0AUVULG326",
+  "marcela-pineda:UNKC76SSV",
+  "mariana-marin:U055VSY5C2D",   # atiende las derivaciones de ATT1
+]

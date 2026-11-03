@@ -1,0 +1,5 @@
+{
+  "_origen": "SIMULADA (escrita a mano el 2026-11-03 para E-312b, con la forma exacta que pide JUDGE_INSTRUCTIONS; no la devolvio un modelo). Citas copiadas del v14 real de ATT1 (b7580bc) y del segmento ficticio campana-ejemplo-v1. La grabacion real sale de test_segment_check_real.py con --grabar.",
+  "modelo": "moonshotai/kimi-k2.6",
+  "content": "Revise el segmento y no encontre problemas."
+}
