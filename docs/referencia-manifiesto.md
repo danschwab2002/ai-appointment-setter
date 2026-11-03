@@ -146,6 +146,25 @@ prioridad = 10                                             # menor va primero
 
 Hasta 8 segmentos; la clave, la etiqueta, el archivo y el macro no se repiten. La vigencia va en el archivo del segmento, no acá.
 
+## `[[campanas]]`, opcional (E-321)
+
+Por dónde entra una campaña sin que la persona lo diga: las landings (y, de respaldo, las ofertas propias) cuyo recorrido nativo lleva la etiqueta del segmento de la campaña antes del primer envío. Contrato: [campaign-entry-v1.md](contracts/campaign-entry-v1.md). Lo usa el bridge solo con `FLOW_ENGINE_CAMPAIGN_ENTRY_ENABLED`; sin el flag, la declaración no cambia nada.
+
+```toml
+[[campanas]]
+segmento = "black-november-2026"   # la clave de un [[agente.segmentos]] con macro_etiqueta
+landings = ["bn-a"]                # landing_id de ofertas declaradas
+ofertas = ["bnoffer1"]             # opcional: las ofertas propias de la campaña
+```
+
+| Campo | Qué es | Si falta o está mal |
+|---|---|---|
+| `segmento` | La clave de un `[[agente.segmentos]]` que tiene `macro_etiqueta` | No carga |
+| `landings` | Lista de `landing_id` de ofertas declaradas (`[hotmart]` o `[[productos]]`), cada uno de una sola oferta | No carga |
+| `ofertas` | Opcional. Lista de códigos de ofertas declaradas | No carga |
+
+Al menos una landing o una oferta. Una landing, una oferta o un segmento no van en dos campañas.
+
 ## `[flujos]`
 
 Los seis flujos, cada uno `true` o `false`: `inbound`, `precheckout`, `carrito`, `pago_fallido`, `reactivacion` y `descuento`. Es el estado **declarado** de la instancia. Un flujo en `true` exige su evento en `eventos` y su plantilla en `[plantillas]`; si falta alguno, el manifiesto no carga. `inbound = true` exige además el conocimiento aprobado.

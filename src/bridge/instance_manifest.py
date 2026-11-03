@@ -144,7 +144,7 @@ _TOP_KEYS_REQUIRED = {
     "flujos",
     "guardas",
 }
-_TOP_KEYS_OPTIONAL = {"slack", "revision_diaria", "adaptadores", "productos", "ficha"}
+_TOP_KEYS_OPTIONAL = {"slack", "revision_diaria", "adaptadores", "productos", "ficha", "campanas"}
 
 # La etiqueta de Chatwoot de un producto. Chatwoot pasa el titulo a minusculas y
 # acepta letras, numeros, guiones y guiones bajos.
@@ -303,6 +303,24 @@ class AgentSegment:
 
 
 @dataclass(frozen=True)
+class Campaign:
+    """Por donde entra una campana sin que la persona lo diga (``[[campanas]]``, E-321).
+
+    ``segment`` es la clave de un ``[[agente.segmentos]]`` con ``macro_etiqueta``:
+    la campana corre por ese segmento (su etiqueta, su conocimiento y su
+    vigencia). ``landings`` son ``landing_id`` de ofertas declaradas: el
+    recorrido nativo que nace de una intencion de una de esas landings lleva la
+    etiqueta del segmento antes del primer envio. ``offers`` son codigos de
+    ofertas declaradas propias de la campana: identifican el recorrido aunque no
+    haya formulario (``docs/contracts/campaign-entry-v1.md``).
+    """
+
+    segment: str
+    landings: tuple[str, ...] = ()
+    offers: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class InstanceManifest:
     product_version: str
     tenant_ref: str
@@ -357,6 +375,9 @@ class InstanceManifest:
     # Los segmentos del agente ([[agente.segmentos]], E-311). Vacio = la
     # instancia no tiene segmentos: el pedido a Hermes es el de siempre.
     agent_segments: tuple[AgentSegment, ...] = ()
+    # Las campanas que entran por landing u oferta ([[campanas]], E-321). Vacio =
+    # ninguna: el motor no pone etiquetas por la landing.
+    campaigns: tuple[Campaign, ...] = ()
 
     def flow_enabled(self, flow: str) -> bool:
         """Si ``flow`` esta prendido; un flujo opcional sin declarar, no."""
@@ -642,6 +663,7 @@ class InstanceManifest:
         ghl_form_ids, ghl_risk_acceptance, ghl_form_landings = _ghl_adapter(
             payload, events, all_offers
         )
+        campaigns = _campaigns(payload.get("campanas"), agent_segments, all_offers)
 
         manifest = cls(
             product_version=product_version,
@@ -679,6 +701,7 @@ class InstanceManifest:
             payment_slip_methods=payment_slip_methods,
             client_ok=client_ok,
             agent_segments=agent_segments,
+            campaigns=campaigns,
         )
         for flow, enabled in manifest.flows.items():
             blockers = manifest.flow_blockers(flow)
@@ -1083,6 +1106,65 @@ def _str_list(value: object, where: str) -> tuple[str, ...]:
     if len(set(value)) != len(value):
         raise ManifestError(f"{where} tiene elementos repetidos")
     return tuple(value)
+
+
+def _campaigns(
+    raw: object, segments: tuple[AgentSegment, ...], offers: tuple[Offer, ...]
+) -> tuple[Campaign, ...]:
+    """``[[campanas]]`` (E-321): las landings y las ofertas por las que entra cada campana.
+
+    Cada campana nombra un segmento con macro (sin macro el motor no puede poner
+    la etiqueta) y al menos una landing u oferta. Cada landing es el
+    ``landing_id`` de una sola oferta declarada (las del principal y las de
+    ``[[productos]]``) y cada oferta un codigo declarado. Una landing, una oferta
+    o un segmento no van en dos campanas: la etiqueta tiene que salir sin
+    ambiguedad.
+    """
+
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or not raw or not all(isinstance(entry, dict) for entry in raw):
+        raise ManifestError("campanas debe ser una lista de tablas ([[campanas]])")
+    by_key = {segment.key: segment for segment in segments}
+    campaigns = []
+    for index, entry in enumerate(raw):
+        where = f"campanas[{index}]"
+        _exact_keys(where, entry, {"segmento"}, {"landings", "ofertas"})
+        key = _ref(entry, "segmento", f"{where}.segmento")
+        segment = by_key.get(key)
+        if segment is None:
+            raise ManifestError(f"{where}.segmento '{key}' no es la clave de un [[agente.segmentos]]")
+        if segment.label_macro_id is None:
+            raise ManifestError(
+                f"{where}.segmento '{key}' no tiene macro_etiqueta: el motor no puede poner su etiqueta"
+            )
+        landings = _str_list(entry.get("landings", []), f"{where}.landings")
+        codes = _str_list(entry.get("ofertas", []), f"{where}.ofertas")
+        if not landings and not codes:
+            raise ManifestError(f"{where} necesita al menos una landing o una oferta")
+        for landing_id in landings:
+            matches = [offer for offer in offers if offer.landing_id == landing_id]
+            if not matches:
+                raise ManifestError(
+                    f"{where}.landings: '{landing_id}' no es el landing_id de ninguna oferta"
+                )
+            if len(matches) > 1:
+                raise ManifestError(
+                    f"{where}.landings: '{landing_id}' es el landing_id de mas de una oferta"
+                )
+        declared_codes = {offer.code for offer in offers}
+        for code in codes:
+            if code not in declared_codes:
+                raise ManifestError(f"{where}.ofertas: '{code}' no es una oferta declarada")
+        campaigns.append(Campaign(segment=key, landings=landings, offers=codes))
+    for what, values in (
+        ("segmento", [campaign.segment for campaign in campaigns]),
+        ("landing", [landing for campaign in campaigns for landing in campaign.landings]),
+        ("oferta", [code for campaign in campaigns for code in campaign.offers]),
+    ):
+        if len(set(values)) != len(values):
+            raise ManifestError(f"campanas: la misma {what} en dos campanas")
+    return tuple(campaigns)
 
 
 def _ghl_adapter(

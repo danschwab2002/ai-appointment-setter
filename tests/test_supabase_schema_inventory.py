@@ -469,7 +469,9 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261103001000 (el aviso de derivaciones sin atender, E-309) suma su lectura.
     # 20261103001500 (las respuestas a la pregunta de entrada de una campana, E-317)
     # suma registrar y leer.
-    assert len(allowlisted) == 191
+    # 20261103001700 (el origen de un recorrido nativo, E-321) suma su lectura.
+    assert len(allowlisted) == 192
+    assert "flow_engine_native_campaign_origin_v1(uuid)" in allowlisted
     assert (
         "list_unattended_human_handoffs_v1(bigint, bigint, timestamp with time zone, integer)"
         in allowlisted
@@ -1934,16 +1936,16 @@ def test_customer_status_fingerprint_is_last() -> None:
         assert marker in compact_fingerprint, marker
 
 
-def test_segment_entry_answers_fingerprint_is_last() -> None:
+def test_segment_entry_answers_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261103001500 (lo que contesto cada conversacion a la pregunta
     # de entrada de una campana, E-317) es la ultima: la tabla con RLS y sin
     # lectura para la API, y las dos funciones solo para service_role.
-    fingerprint = sql.split("'20261103001500'", 1)[1].split("select\n    version,", 1)[0]
+    fingerprint = sql.split("'20261103001500'", 1)[1].split("\n    union all\n", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261103001500_segment_entry_answers_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",2,'segment_entry_answers')")
+    assert compact_fingerprint.endswith(",2,'segment_entry_answers'")
     assert "to_regclass('public.segment_entry_answers')" in compact_fingerprint
     assert "c.relrowsecurity" in compact_fingerprint
     assert (
@@ -2003,3 +2005,18 @@ def test_payment_failure_branches_fingerprint_is_last() -> None:
         "to_regprocedure('public.reserve_recovery_checkout_issuance_v1(uuid,text,bigint,uuid,text,timestamptz)')",
     ):
         assert marker in compact_fingerprint, marker
+
+
+def test_campaign_origin_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261103001700 (el origen de un recorrido nativo para la campana
+    # por landing, E-321) es la ultima: la lectura solo para service_role y que
+    # solo da la landing de una intencion real.
+    fingerprint = sql.split("'20261103001700'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261103001700_flow_engine_native_campaign_origin_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'flow_engine_native_campaign_origin')")
+    assert "to_regprocedure('public.flow_engine_native_campaign_origin_v1(uuid)')" in compact_fingerprint
+    assert "position('provider_observed'indefinition)>0" in compact_fingerprint
+    assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint

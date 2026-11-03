@@ -91,7 +91,9 @@ const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.end
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Despues va solo el aviso de derivaciones sin atender (20261103001000, E-309).
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261103001000_handoff_wait_alerts_v1.sql', '20261103001300_flow_engine_native_segment_label_v1.sql', '20261103001500_segment_entry_answers_v1.sql'])) {
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261103001000_handoff_wait_alerts_v1.sql', '20261103001300_flow_engine_native_segment_label_v1.sql', '20261103001500_segment_entry_answers_v1.sql',
+  // El origen de un recorrido nativo para la campana por landing (20261103001700, E-321): una lectura de service_role.
+  '20261103001700_flow_engine_native_campaign_origin_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la del aviso de derivaciones sin atender`, names.slice(position + 1));
 }
 if (TEMPLATES.length !== 4 || REFUSALS.length !== 3 || REFUSALS[1].persona !== REFUSALS[2].persona) {

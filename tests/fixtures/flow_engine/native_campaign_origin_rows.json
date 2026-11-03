@@ -1,0 +1,18 @@
+{
+  "_capture": {
+    "origen": "validate_flow_engine_native_campaign_origin.mjs: la cadena entera de migraciones (PGlite), el formulario y el carrito capturado por las admisiones portables, y el recorrido nativo del carrito",
+    "encargo": "E-321",
+    "regenerar": "cd tests/sql/followup_engine && node validate_flow_engine_native_campaign_origin.mjs --emit"
+  },
+  "cart": {
+    "oferta": "<OFERTA>",
+    "landing": "alimenta-tu-tiroides-d",
+    "disparador": "carrito"
+  },
+  "cart_fabricated_intent": {
+    "oferta": "<OFERTA>",
+    "landing": null,
+    "disparador": "carrito"
+  },
+  "not_native": null
+}

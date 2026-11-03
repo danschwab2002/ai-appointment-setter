@@ -66,7 +66,9 @@ const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.end
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`${MIGRATION} no esta en la cadena`);
 // Despues va solo la de si la persona ya es cliente (20261103000700, E-297), que no toca la pagina.
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261103000700_customer_status_v1.sql', '20261103000900_flow_engine_native_payment_failure_branches_v1.sql', '20261103001000_handoff_wait_alerts_v1.sql', '20261103001300_flow_engine_native_segment_label_v1.sql', '20261103001500_segment_entry_answers_v1.sql'])) {
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261103000700_customer_status_v1.sql', '20261103000900_flow_engine_native_payment_failure_branches_v1.sql', '20261103001000_handoff_wait_alerts_v1.sql', '20261103001300_flow_engine_native_segment_label_v1.sql', '20261103001500_segment_entry_answers_v1.sql',
+  // El origen de un recorrido nativo para la campana por landing (20261103001700, E-321): una lectura de service_role.
+  '20261103001700_flow_engine_native_campaign_origin_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de si la persona ya es cliente`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(

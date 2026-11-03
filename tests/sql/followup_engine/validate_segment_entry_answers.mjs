@@ -45,7 +45,8 @@ const results = {};
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`${MIGRATION} no esta en la cadena`);
-if (position !== names.length - 1) fail(`${MIGRATION} tiene que ser la ultima`, names.slice(position + 1));
+// El origen de un recorrido nativo para la campana por landing (20261103001700, E-321): una lectura de service_role.
+if (position !== names.length - 2 || names[names.length - 1] !== '20261103001700_flow_engine_native_campaign_origin_v1.sql') fail(`${MIGRATION} tiene que ser la ultima`, names.slice(position + 1));
 const apply = async (file) => db.exec(readFileSync(file, 'utf8').replace(
   /create extension if not exists pgcrypto;/gi,
   '-- pgcrypto is built into PGlite',
