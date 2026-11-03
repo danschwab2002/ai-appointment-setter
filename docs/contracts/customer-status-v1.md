@@ -95,12 +95,38 @@ se prende.
   conversation=…` y `customer_status_coupon_skipped conversation=…`. Nunca el
   teléfono ni el mail.
 
+## Lo que dice el agente (SOUL común, E-301)
+
+La ruta «Es cliente» (`profiles/agente-comercial-comun/SOUL.md`, «### 4. Es
+cliente», D11) es la regla que usa el dato. Corre con `customer_status` en el
+producto del que habla la persona o cuando ella dice que ya lo compró, y manda
+sobre «Lo de comprar se resuelve»:
+
+- `cliente`: no se le vende, ni su enlace, descuento o seguimiento; se la atiende
+  como soporte con el bloque (acceso, contenido, formato, canal de dudas);
+- `reembolsada`: sin venta ni descuento, y si quiere comprar, deriva;
+  `contracargo` deriva siempre (D4);
+- deriva el reembolso, un cobro, la salud y el acceso que no llega pasado el
+  plazo de su medio;
+- otro producto: contesta y pide su enlace solo si ella lo pide, sin descuento
+  (D5);
+- dice que compró y no figura: no pide el mail ni manda un enlace; contesta el
+  acceso con lo aprobado y, si no se resuelve, deriva (D7).
+
+La regla vieja de «Cuándo no pedirlo» («si la persona dice que ya compró o que le
+cobraron…») queda absorbida: ese renglón ahora manda a la ruta. El freno del link
+(D6) y el del cupón siguen en el bridge: el SOUL no es la garantía, el bridge sí.
+
 ## Lo que no hace (todavía)
 
-- Lo que el agente **dice** a una clienta lo fija el SOUL común (ruta «Es
-  cliente», D11 y D12): es el PR siguiente. Hasta entonces el agente recibe el
-  dato sin una regla que lo use, y lo único que se garantiza es el freno del link
-  y del cupón.
+- **El aviso a la clienta al derivar (D12).** Con `decision="handoff"` el bridge
+  no manda el `reply` del modelo (F-033): lo único que le llega a la persona es
+  el aviso fijo de `HANDOFF_NOTICE_ENABLED` (F-034, «Le paso tu consulta al
+  equipo y te responden por este mismo chat.»), que hoy es para todas o para
+  nadie. Escribir el aviso en el SOUL sería texto que nunca sale. D12 («solo con
+  clientas») es un cambio del bridge: mandar ese aviso cuando la entrada trae
+  `customer_status`, aunque `HANDOFF_NOTICE_ENABLED` esté apagado. Va en un PR
+  aparte.
 - Aceptar y guardar reembolsos y contracargos de Hotmart (D4).
 - La carga del historial de Hotmart al instalar (D8): sin ella, una clienta de
   antes de la instalación entra como prospecta salvo por la etiqueta.
