@@ -23,9 +23,7 @@ from bridge.slack_runtime import SlackBridgeRuntime
 
 VARIABLES = (
     "HANDOFF_WAIT_ALERTS_ENABLED",
-    "HANDOFF_WAIT_ALERT_AFTER_BUSINESS_HOURS",
-    "HANDOFF_WAIT_ALERT_BUSINESS_HOURS",
-    "HANDOFF_WAIT_ALERT_BUSINESS_DAYS",
+    "HANDOFF_WAIT_ALERT_AFTER_HOURS",
     "HANDOFF_WAIT_ALERT_MAX_AGE_HOURS",
     "HANDOFF_WAIT_ALERT_INTERVAL_SECONDS",
 )
@@ -80,9 +78,7 @@ def test_everything_is_off_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path:
         monkeypatch.delenv(name, raising=False)
     settings = _settings_from_env(monkeypatch)
     assert settings.handoff_wait_alerts_enabled is False
-    assert settings.handoff_wait_alert_after_business_hours == 2
-    assert settings.handoff_wait_alert_business_hours == (9, 18)
-    assert settings.handoff_wait_alert_business_days == frozenset({1, 2, 3, 4, 5})
+    assert settings.handoff_wait_alert_after_hours == 2
     assert settings.handoff_wait_alert_max_age_hours == 168
     assert settings.handoff_wait_alert_interval_seconds == 600.0
     app = _att1_app(tmp_path)
@@ -92,9 +88,7 @@ def test_everything_is_off_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path:
 
 def test_the_variables_are_read_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HANDOFF_WAIT_ALERTS_ENABLED", "true")
-    monkeypatch.setenv("HANDOFF_WAIT_ALERT_AFTER_BUSINESS_HOURS", "3")
-    monkeypatch.setenv("HANDOFF_WAIT_ALERT_BUSINESS_HOURS", "08-20")
-    monkeypatch.setenv("HANDOFF_WAIT_ALERT_BUSINESS_DAYS", "1-6")
+    monkeypatch.setenv("HANDOFF_WAIT_ALERT_AFTER_HOURS", "3")
     monkeypatch.setenv("HANDOFF_WAIT_ALERT_MAX_AGE_HOURS", "72")
     monkeypatch.setenv("HANDOFF_WAIT_ALERT_INTERVAL_SECONDS", "900")
     # Prendido sin manifiesto no arranca; los valores se leen igual.
@@ -102,9 +96,7 @@ def test_the_variables_are_read_from_the_environment(monkeypatch: pytest.MonkeyP
         app_module._validate_handoff_wait_alerts(_settings_from_env(monkeypatch))
     monkeypatch.setenv("HANDOFF_WAIT_ALERTS_ENABLED", "false")
     settings = _settings_from_env(monkeypatch)
-    assert settings.handoff_wait_alert_after_business_hours == 3
-    assert settings.handoff_wait_alert_business_hours == (8, 20)
-    assert settings.handoff_wait_alert_business_days == frozenset(range(1, 7))
+    assert settings.handoff_wait_alert_after_hours == 3
     assert settings.handoff_wait_alert_max_age_hours == 72
     assert settings.handoff_wait_alert_interval_seconds == 900.0
 
@@ -113,10 +105,8 @@ def test_the_variables_are_read_from_the_environment(monkeypatch: pytest.MonkeyP
     ("name", "value", "message"),
     [
         ("HANDOFF_WAIT_ALERTS_ENABLED", "yes", "^HANDOFF_WAIT_ALERTS_ENABLED must be true or false$"),
-        ("HANDOFF_WAIT_ALERT_AFTER_BUSINESS_HOURS", "dos", "must be a positive integer"),
-        ("HANDOFF_WAIT_ALERT_AFTER_BUSINESS_HOURS", "0", "must be a positive integer"),
-        ("HANDOFF_WAIT_ALERT_BUSINESS_HOURS", "18-09", "HANDOFF_WAIT_ALERT_BUSINESS_HOURS"),
-        ("HANDOFF_WAIT_ALERT_BUSINESS_DAYS", "lun-vie", "HANDOFF_WAIT_ALERT_BUSINESS_DAYS"),
+        ("HANDOFF_WAIT_ALERT_AFTER_HOURS", "dos", "must be a positive integer"),
+        ("HANDOFF_WAIT_ALERT_AFTER_HOURS", "0", "must be a positive integer"),
     ],
 )
 def test_a_bad_value_does_not_start(
@@ -131,10 +121,9 @@ def test_the_ranges_are_checked_even_when_off(monkeypatch: pytest.MonkeyPatch) -
     base = _settings_from_env(monkeypatch)
     app_module._validate_handoff_wait_alerts(base)
     for field, value, message in (
-        ("handoff_wait_alert_after_business_hours", 73, "1-72"),
+        ("handoff_wait_alert_after_hours", 73, "1-72"),
         ("handoff_wait_alert_max_age_hours", 12, "24-720"),
         ("handoff_wait_alert_interval_seconds", 10.0, "60-3600"),
-        ("handoff_wait_alert_business_days", frozenset(), "at least one business hour"),
     ):
         with pytest.raises(ValueError, match=message):
             app_module._validate_handoff_wait_alerts(replace(base, **{field: value}))
@@ -146,12 +135,12 @@ def test_on_with_the_att1_manifest_it_builds_the_sweeper_and_publishes_it(
     app = _att1_app(tmp_path, handoff_wait_alerts_enabled=True)
     sweeper = app.state.handoff_wait_alert_sweeper
     assert isinstance(sweeper, HandoffWaitAlertSweeper)
-    # La zona es la del manifiesto (ATT1: America/Mexico_City).
-    assert sweeper.calendar.time_zone.key == "America/Mexico_City"
+    assert sweeper.after_hours == 2
     body = _get_ready(app)
     assert body["handoff_wait_alerts"] == "never"
     assert body["handoff_wait_alerts_last_scan"] == "never"
-    assert body["handoff_wait_alerts_calendar"] == "2h 1-5 09-18"
+    assert body["handoff_wait_alerts_after"] == "2h"
+    assert "handoff_wait_alerts_calendar" not in body
 
 
 def test_on_without_the_slack_connector_it_does_not_start(tmp_path: Path) -> None:
@@ -161,3 +150,16 @@ def test_on_without_the_slack_connector_it_does_not_start(tmp_path: Path) -> Non
 
 def test_the_flag_is_a_portable_capability() -> None:
     assert "handoff_wait_alerts_enabled" in app_module.PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES
+
+
+def test_the_business_hour_variables_of_e309_are_gone(monkeypatch: pytest.MonkeyPatch) -> None:
+    # E-309b (Dan, 03/11): sin corte por horario. Los nombres de la primera
+    # version no se prendieron en ninguna aliada y ya no se leen.
+    monkeypatch.setenv("HANDOFF_WAIT_ALERT_AFTER_BUSINESS_HOURS", "9")
+    monkeypatch.setenv("HANDOFF_WAIT_ALERT_BUSINESS_HOURS", "08-20")
+    monkeypatch.setenv("HANDOFF_WAIT_ALERT_BUSINESS_DAYS", "1-6")
+    settings = _settings_from_env(monkeypatch)
+    assert settings.handoff_wait_alert_after_hours == 2
+    for name in ("handoff_wait_alert_after_business_hours", "handoff_wait_alert_business_hours",
+                 "handoff_wait_alert_business_days"):
+        assert not hasattr(settings, name)

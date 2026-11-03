@@ -14,17 +14,17 @@ Al canal de Slack de la aliada, por su conector (el mismo productor que `HND-001
 
 | Aviso | Código | Cuándo |
 |---|---|---|
-| Derivación sin respuesta del equipo | `HND-006` | la derivación más nueva sin atender de una conversación abierta lleva `HANDOFF_WAIT_ALERT_AFTER_BUSINESS_HOURS` horas hábiles (2 por defecto) sin un mensaje del equipo |
+| Derivación sin respuesta del equipo | `HND-006` | la derivación más nueva sin atender de una conversación abierta lleva `HANDOFF_WAIT_ALERT_AFTER_HOURS` horas corridas (2 por defecto) sin un mensaje del equipo, a cualquier hora |
 | Se cierra la ventana de 24 h | `HND-005` | en esa misma conversación faltan 2 h o menos para que se cierren las 24 h desde el último mensaje de la persona, a cualquier hora |
-| La persona volvió a escribir en una conversación pausada | `HND-012` (nuevo) | una conversación abierta con `automation_paused`, sin derivación sin atender, donde el último saliente fue del equipo y la persona escribió después, con el mismo umbral de horas hábiles desde su primer mensaje sin contestar |
+| La persona volvió a escribir en una conversación pausada | `HND-012` (nuevo) | una conversación abierta con `automation_paused`, sin derivación sin atender, donde el último saliente fue del equipo y la persona escribió después, con el mismo umbral de horas corridas desde su primer mensaje sin contestar |
 
 **Lo que cuenta como respuesta del equipo:** un mensaje público saliente (`message_type` 1 o 3) de un `user` de Chatwoot, el mismo criterio con el que el bridge marca `attended_at`. El agente (`agent_bot`) y las notas privadas, también la del bridge, no cuentan. Si el historial ya muestra la respuesta, la derivación se da por atendida aunque `attended_at` todavía no haya llegado.
 
 **Lo que nunca avisa:** una conversación que no está abierta, una con `automation_opted_out` (las bajas «No más mensajes»: 11 de las 14 que esperaban en ATT1 el 02/11), una pausada cuyo último saliente fue del agente (la pausa al comprar, la confirmación de una baja), y lo que empezó a esperar hace más de `HANDOFF_WAIT_ALERT_MAX_AGE_HOURS` (168 por defecto). La lectura de la base ya deja afuera las derivaciones más viejas que ese techo.
 
-## Las horas hábiles
+## Sin corte por horario
 
-Se cuentan con un calendario propio, en la zona del manifiesto (`[instancia].zona_horaria`): los días de `HANDOFF_WAIT_ALERT_BUSINESS_DAYS` (`1-5`, lunes a viernes; también `1,2,3,4,5,6`) y el horario `[inicio, fin)` de `HANDOFF_WAIT_ALERT_BUSINESS_HOURS` (`09-18`). Una derivación fuera de horario empieza a contar en la próxima apertura: la del sábado 15:49 con 2 h vence el lunes a las 11:00. El aviso de la ventana no usa el calendario.
+Las horas se cuentan de reloj, sin calendario (Dan, 2026-11-03, E-309b: «no tiene mucho sentido, no es necesario un corte por horario»). Una derivación del sábado a la noche avisa a las 2 h aunque el equipo no atienda a esa hora. La primera versión (E-309) contaba horas hábiles con `HANDOFF_WAIT_ALERT_BUSINESS_DAYS` y `HANDOFF_WAIT_ALERT_BUSINESS_HOURS`; se sacaron antes de prenderse en ninguna aliada, y `HANDOFF_WAIT_ALERT_AFTER_BUSINESS_HOURS` pasó a llamarse `HANDOFF_WAIT_ALERT_AFTER_HOURS`.
 
 ## Qué lleva la tarjeta
 
@@ -47,7 +47,7 @@ El ciclo es la derivación (`HND-006`), el último mensaje de la persona (`HND-0
 3. Lee el detalle y el historial solo de las que tienen una derivación sin atender o la etiqueta `automation_paused`, sin baja, hasta 60 por barrido (primero las derivaciones).
 4. Decide con `evaluate_wait_alerts` y admite lo que tocó.
 
-Un barrido caído no tumba el bridge. `/ready` publica, solo con el flag prendido, `handoff_wait_alerts` (`never`, `healthy`, `error`, `stopped`), `handoff_wait_alerts_last_scan` (los conteos del último barrido, sin números de persona) y `handoff_wait_alerts_calendar` (`2h 1-5 09-18`). Logs: `handoff_wait_scan <conteos>` y `handoff_wait_alert_admitted kind=… conversation=… reason=… waited_hours=…`.
+Un barrido caído no tumba el bridge. `/ready` publica, solo con el flag prendido, `handoff_wait_alerts` (`never`, `healthy`, `error`, `stopped`), `handoff_wait_alerts_last_scan` (los conteos del último barrido, sin números de persona) y `handoff_wait_alerts_after` (`2h`). Logs: `handoff_wait_scan <conteos>` y `handoff_wait_alert_admitted kind=… conversation=… reason=… waited_hours=…`.
 
 ## Lo que exige
 
