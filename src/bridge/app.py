@@ -40,6 +40,13 @@ from bridge.audio_transcription import (
     AudioTranscriptionError,
     needs_audio_transcription,
 )
+from bridge.inbound_attachments import (
+    ATTACHMENT_WITHOUT_TEXT_REPEATED_REASON,
+    attachment_without_text_kinds,
+    attachment_without_text_note,
+    describe_attachments_without_text,
+    is_repeated_attachment_without_text,
+)
 from bridge.business_auto_reply import (
     batch_is_business_auto_reply,
     has_business_auto_reply_shape,
@@ -465,6 +472,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # Transcribir un audio no depende del aliado: la key y el host de Chatwoot
     # ya son configuracion por runtime.
     "chatwoot_audio_transcription_enabled",
+    # E-315: el adjunto sin texto (imagen, sticker, video, documento). La regla
+    # (preguntar, y derivar al segundo) es del producto; por instancia, solo
+    # prenderla.
+    "inbound_attachment_without_text_enabled",
     # Saludar por el primer nombre no depende del aliado: la regla
     # deterministica y las inferencias guardadas son del producto. En un
     # runtime portable solo lo usa el dispatcher en modo plantilla directa.
@@ -1109,6 +1120,10 @@ class Settings:
     openrouter_api_key: str | None = None
     audio_transcription_models: tuple[str, ...] = DEFAULT_TRANSCRIPTION_MODELS
     audio_transcription_cache_dir: Path = Path("./data/audio-transcriptions")
+    # E-315 (ver bridge.inbound_attachments): un adjunto sin texto le llega al
+    # agente como un texto de sistema y, si es el segundo seguido, se deriva.
+    # Apagado, sigue sin respuesta, con su linea en el log.
+    inbound_attachment_without_text_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -1931,6 +1946,10 @@ class Settings:
             openrouter_api_key is None or not audio_transcription_models
         ):
             raise ValueError("audio_transcription_configuration_incomplete")
+        inbound_attachment_without_text_enabled = (
+            os.getenv("INBOUND_ATTACHMENT_WITHOUT_TEXT_ENABLED", "false").lower()
+            == "true"
+        )
         if (
             not math.isfinite(correlation_preresolution_poll_interval_seconds)
             or correlation_preresolution_poll_interval_seconds <= 0
@@ -2457,6 +2476,9 @@ class Settings:
                     "AUDIO_TRANSCRIPTION_CACHE_DIR", "./data/audio-transcriptions"
                 )
             ),
+            inbound_attachment_without_text_enabled=(
+                inbound_attachment_without_text_enabled
+            ),
             chatwoot_scoped_inbound_senders_enabled=(
                 os.getenv(
                     "CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED", "false"
@@ -2731,6 +2753,63 @@ def _shadow_context(payload: dict[str, object]) -> dict[str, object] | None:
             }
         ],
     }
+
+
+async def _attachment_without_text_turn(
+    *,
+    payload: dict[str, object],
+    control_client: object,
+    batch_message_ids: tuple[int, ...],
+) -> tuple[str | None, dict[str, object]]:
+    """E-315: what to do with an inbound attachment that carries no text.
+
+    Returns ``(handoff_reason, payload)``. The first attachment in a row gets
+    the system text as its content and goes to the agent; the second one in a
+    row (no text from the person in between) returns
+    ``attachment_without_text_repeated`` and goes to a person. A message that
+    is not an attachment without text comes back untouched, and the caller
+    keeps ignoring it.
+    """
+    note = attachment_without_text_note(payload)
+    if note is None:
+        return None, payload
+    conversation = payload.get("conversation")
+    conversation_id = (
+        conversation.get("id") if isinstance(conversation, dict) else None
+    )
+    repeated = False
+    if (
+        control_client is not None
+        and isinstance(conversation_id, int)
+        and not isinstance(conversation_id, bool)
+    ):
+        try:
+            history = await control_client.get_conversation_messages(  # type: ignore[attr-defined]
+                conversation_id=conversation_id,
+                limit=max(200, len(set(batch_message_ids)) + 19),
+                required_message_ids=batch_message_ids,
+            )
+        except ChatwootHistoryScanLimitError as exc:
+            raise RuntimeError("chatwoot_history_scan_limit_exceeded") from exc
+        except (httpx.HTTPError, ChatwootProtocolError) as exc:
+            raise RetryableChatwootWorkError(
+                "chatwoot_attachment_history_unavailable"
+            ) from exc
+        message_id = payload.get("id")
+        repeated = is_repeated_attachment_without_text(
+            history,
+            batch_message_ids=batch_message_ids
+            or ((message_id,) if isinstance(message_id, int) else ()),
+        )
+    logger.info(
+        "chatwoot_inbound_attachment_without_text message=%s kinds=%s repeated=%s",
+        payload.get("id"),
+        ",".join(attachment_without_text_kinds(payload) or ()),
+        "true" if repeated else "false",
+    )
+    if repeated:
+        return ATTACHMENT_WITHOUT_TEXT_REPEATED_REASON, payload
+    return None, {**payload, "content": note}
 
 
 def _normalize_chatwoot_history(
@@ -5074,6 +5153,9 @@ def create_app(
             pause_macro_id=settings.chatwoot_pause_macro_id,
             resume_macro_id=settings.chatwoot_resume_macro_id,
             opt_out_macro_id=settings.chatwoot_opt_out_macro_id,
+            accept_attachment_without_text=(
+                settings.inbound_attachment_without_text_enabled
+            ),
         )
     # La etiqueta de producto (varios productos por aliada, pasos 2a y 2c-3b): un
     # etiquetador por producto de [[productos]] que la declare. Sin ninguno no se
@@ -6926,6 +7008,10 @@ def create_app(
             # Sin esto, la normalizacion saltea todo mensaje sin texto: un audio
             # desaparece del historial y el agente nunca sabe que existio.
             history = await audio_transcriber.enrich_history(history)
+        if settings.inbound_attachment_without_text_enabled:
+            # E-315: lo mismo con una imagen, un sticker o un documento sin
+            # texto, que si no desaparecen del historial.
+            history = describe_attachments_without_text(history)
         # E-183: con el flag, el agente sabe si el link que saldria trae el 10 %.
         mark_payment_link_coupon(
             context,
@@ -7829,7 +7915,25 @@ def create_app(
             else:
                 payload = {**payload, "content": transcript}
         context = _shadow_context(payload)
-        if context is None and audio_handoff_reason is None:
+        attachment_handoff_reason: str | None = None
+        if (
+            context is None
+            and audio_handoff_reason is None
+            and settings.inbound_attachment_without_text_enabled
+        ):
+            # E-315: el primer adjunto sin texto le llega al agente como un
+            # texto de sistema; el segundo seguido lo toma una persona.
+            attachment_handoff_reason, payload = (
+                await _attachment_without_text_turn(
+                    payload=payload,
+                    control_client=control_client,
+                    batch_message_ids=batch_message_ids,
+                )
+            )
+            if attachment_handoff_reason is None:
+                context = _shadow_context(payload)
+        synthetic_handoff_reason = audio_handoff_reason or attachment_handoff_reason
+        if context is None and synthetic_handoff_reason is None:
             # Un entrante sin texto (audio con la transcripcion apagada, imagen,
             # sticker) no llega al agente. Antes salia de aca sin dejar rastro:
             # asi se perdieron cinco audios entre el 22 y el 28/09/2026.
@@ -7838,12 +7942,14 @@ def create_app(
                 payload.get("id"),
             )
             return
-        if audio_handoff_reason is not None:
+        if synthetic_handoff_reason is not None:
             # Fallaron todos los modelos: el audio no se entiende y el agente no
-            # puede contestar algo que no leyo. Lo toma una persona.
+            # puede contestar algo que no leyo. Lo toma una persona. Lo mismo
+            # con el segundo adjunto sin texto seguido (E-315).
             if not settings.human_handoff_admission_enabled or admission is None:
                 logger.warning(
-                    "chatwoot_audio_handoff_unavailable message=%s",
+                    "chatwoot_%s_handoff_unavailable message=%s",
+                    "audio" if audio_handoff_reason is not None else "attachment",
                     payload.get("id"),
                 )
                 return
@@ -7851,7 +7957,7 @@ def create_app(
                 "decision": "handoff",
                 "reply": "",
                 "qualification_status": "needs_human",
-                "reason_code": audio_handoff_reason,
+                "reason_code": synthetic_handoff_reason,
             }
             must_scan_canonical_history = False
         else:
@@ -10526,6 +10632,10 @@ def create_app(
                 or (
                     audio_transcriber is not None
                     and needs_audio_transcription(payload)
+                )
+                or (
+                    settings.inbound_attachment_without_text_enabled
+                    and attachment_without_text_note(payload) is not None
                 )
             )
         ):

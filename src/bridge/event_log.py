@@ -77,6 +77,9 @@ LOGGED_INFO_EVENTS = frozenset(
         # warning y salen siempre.
         "segment_context",
         "segment_inactive",
+        # el adjunto sin texto (bridge.app, E-315): el id del mensaje, los
+        # tipos de adjunto y si fue el segundo seguido; nunca el archivo
+        "chatwoot_inbound_attachment_without_text",
     }
 )
 
