@@ -273,6 +273,27 @@ class Product:
 
 
 @dataclass(frozen=True)
+class AgentSegment:
+    """Un segmento del agente (``[[agente.segmentos]]``, E-311).
+
+    Una etiqueta de la conversacion de Chatwoot (``label``) que, mientras el
+    segmento esta vigente, le suma al agente el conocimiento de
+    ``knowledge_path`` como un ``system`` aparte, despues del base
+    (``docs/contracts/segment-knowledge-v1.md``). La vigencia va en el archivo y
+    no aca: la aprueba quien aprueba el contenido (D2). ``priority``: menor va
+    primero y manda en lo que se contradiga (D6). ``label_macro_id`` es el macro
+    de Chatwoot que solo suma la etiqueta; lo usa el motor (PR-C) y hoy es
+    opcional.
+    """
+
+    key: str
+    label: str
+    knowledge_path: str
+    priority: int
+    label_macro_id: int | None = None
+
+
+@dataclass(frozen=True)
 class InstanceManifest:
     product_version: str
     tenant_ref: str
@@ -324,6 +345,9 @@ class InstanceManifest:
     # cuando, con la forma de ok_del_cliente de un item. None = no esta declarado:
     # el Automation Expert lo busca en la ultima propuesta publicada o lo pregunta.
     client_ok: Mapping[str, str] | None = None
+    # Los segmentos del agente ([[agente.segmentos]], E-311). Vacio = la
+    # instancia no tiene segmentos: el pedido a Hermes es el de siempre.
+    agent_segments: tuple[AgentSegment, ...] = ()
 
     def flow_enabled(self, flow: str) -> bool:
         """Si ``flow`` esta prendido; un flujo opcional sin declarar, no."""
@@ -570,7 +594,7 @@ class InstanceManifest:
         templates = _templates(_table(payload, "plantillas"))
 
         agente = _table(payload, "agente")
-        _exact_keys("agente", agente, {"modelo", "conocimiento"})
+        _exact_keys("agente", agente, {"modelo", "conocimiento"}, {"segmentos"})
         knowledge_path = _str(agente, "conocimiento", "agente.conocimiento")
         if knowledge_path.startswith("/") or ".." in Path(knowledge_path).parts:
             raise ManifestError(
@@ -597,6 +621,7 @@ class InstanceManifest:
             _exact_keys("revision_diaria", review, set(), {"revisores"})
             reviewers = _str_list(review.get("revisores", []), "revision_diaria.revisores")
         products = _products(payload.get("productos"))
+        agent_segments = _agent_segments(agente.get("segmentos"), knowledge_path, products)
         payment_slip_methods = _payment_slip_methods(payload)
         # landing_por_formulario puede apuntar a la landing de cualquier producto.
         all_offers = offers + tuple(
@@ -644,6 +669,7 @@ class InstanceManifest:
             products=products,
             payment_slip_methods=payment_slip_methods,
             client_ok=client_ok,
+            agent_segments=agent_segments,
         )
         for flow, enabled in manifest.flows.items():
             blockers = manifest.flow_blockers(flow)
@@ -802,6 +828,80 @@ def _products(raw: object) -> tuple[Product, ...]:
         if len(set(values)) != len(values):
             raise ManifestError(f"productos: dos productos con la misma {what}")
     return tuple(products)
+
+
+# Las etiquetas que no pueden abrir un segmento: las de la automatizacion y la
+# de cliente, que sigue por customer_status con sus frenos (D13).
+_SEGMENT_FORBIDDEN_LABELS = (*RESERVED_CHATWOOT_LABELS, "cliente")
+MAX_AGENT_SEGMENTS = 8
+MAX_SEGMENT_PRIORITY = 1000
+
+
+def _agent_segments(
+    raw: object, knowledge_path: str, products: tuple[Product, ...]
+) -> tuple[AgentSegment, ...]:
+    """``[[agente.segmentos]]`` (E-311): la declaracion; el archivo lo valida el bridge."""
+
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or not raw or not all(isinstance(entry, dict) for entry in raw):
+        raise ManifestError("agente.segmentos debe ser una lista de tablas ([[agente.segmentos]])")
+    if len(raw) > MAX_AGENT_SEGMENTS:
+        raise ManifestError(f"agente.segmentos: admite hasta {MAX_AGENT_SEGMENTS} segmentos")
+    product_labels = {product.chatwoot_label for product in products if product.chatwoot_label}
+    segments = []
+    for index, entry in enumerate(raw):
+        where = f"agente.segmentos[{index}]"
+        _exact_keys(where, entry, {"clave", "etiqueta", "conocimiento", "prioridad"}, {"macro_etiqueta"})
+        key = _ref(entry, "clave", f"{where}.clave")
+        label = _str(entry, "etiqueta", f"{where}.etiqueta")
+        if _CHATWOOT_LABEL.fullmatch(label) is None:
+            raise ManifestError(
+                f"{where}.etiqueta debe ser una etiqueta de Chatwoot en minusculas "
+                "(a-z, 0-9, guiones y guiones bajos)"
+            )
+        if label in _SEGMENT_FORBIDDEN_LABELS:
+            raise ManifestError(f"{where}.etiqueta '{label}' no puede abrir un segmento")
+        if label in product_labels:
+            raise ManifestError(f"{where}.etiqueta '{label}' ya es la etiqueta de un producto")
+        path = _str(entry, "conocimiento", f"{where}.conocimiento")
+        if path.startswith("/") or ".." in Path(path).parts or not path.endswith(".toml"):
+            raise ManifestError(
+                f"{where}.conocimiento debe ser una ruta relativa a un .toml dentro de la instancia"
+            )
+        if path == knowledge_path:
+            raise ManifestError(f"{where}.conocimiento es el conocimiento base")
+        priority = entry.get("prioridad")
+        if type(priority) is not int or not 0 <= priority <= MAX_SEGMENT_PRIORITY:
+            raise ManifestError(
+                f"{where}.prioridad debe ser un entero de 0 a {MAX_SEGMENT_PRIORITY} (menor va primero)"
+            )
+        macro_id = (
+            _positive_int(entry, "macro_etiqueta", f"{where}.macro_etiqueta")
+            if "macro_etiqueta" in entry
+            else None
+        )
+        segments.append(
+            AgentSegment(
+                key=key,
+                label=label,
+                knowledge_path=path,
+                priority=priority,
+                label_macro_id=macro_id,
+            )
+        )
+    for what, values in (
+        ("clave", [segment.key for segment in segments]),
+        ("etiqueta", [segment.label for segment in segments]),
+        ("conocimiento", [segment.knowledge_path for segment in segments]),
+        (
+            "macro_etiqueta",
+            [segment.label_macro_id for segment in segments if segment.label_macro_id is not None],
+        ),
+    ):
+        if len(set(values)) != len(values):
+            raise ManifestError(f"agente.segmentos: dos segmentos con la misma {what}")
+    return tuple(segments)
 
 
 def _hotmart(

@@ -9,6 +9,7 @@ import json
 import os
 import re
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol
 
@@ -316,6 +317,27 @@ class TurnProvenanceRecorder(Protocol):
         ...  # pragma: no cover - protocolo
 
 
+class ExtraSystemBlock(Protocol):
+    """Un `system` de un turno, despues del conocimiento base (E-311).
+
+    Hoy, un segmento vigente por etiqueta (`bridge.segment_knowledge.LoadedSegment`).
+    El procesador solo lee esto: el texto que manda y lo que anota en la
+    procedencia del turno.
+    """
+
+    @property
+    def key(self) -> str: ...
+
+    @property
+    def version(self) -> int: ...
+
+    @property
+    def sha256(self) -> str: ...
+
+    @property
+    def rendered(self) -> str: ...
+
+
 class HermesShadowProcessor:
     """Request and persist an agent proposal without executing it."""
 
@@ -423,8 +445,19 @@ class HermesShadowProcessor:
         return proposal
 
     async def run(
-        self, *, delivery_id: str, context: dict[str, object]
+        self,
+        *,
+        delivery_id: str,
+        context: dict[str, object],
+        extra_system: Sequence[ExtraSystemBlock] = (),
     ) -> None:
+        """Pide la propuesta del turno.
+
+        ``extra_system``: los `system` de este turno que van despues del
+        conocimiento base, en su orden (los segmentos, E-311). Vacio, el pedido
+        es byte a byte el de siempre. El digest y la clave de idempotencia
+        salen del delivery y no cambian.
+        """
         digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
         self._shadow_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
         self._shadow_dir.chmod(0o700)
@@ -443,6 +476,7 @@ class HermesShadowProcessor:
                 digest=digest,
                 context=context,
                 delivery_id=delivery_id,
+                extra_system=tuple(extra_system),
             )
         finally:
             fcntl.flock(processing_lock_fd, fcntl.LOCK_UN)
@@ -468,6 +502,7 @@ class HermesShadowProcessor:
         attempt: int,
         outcome: str,
         model_answered: str | None,
+        extra_system: tuple[ExtraSystemBlock, ...] = (),
     ) -> None:
         """Deja el rastro del turno. Nunca rompe el turno."""
         if self._provenance_recorder is None:
@@ -481,13 +516,36 @@ class HermesShadowProcessor:
                     outcome=outcome,
                     model_requested=self._model_name,
                     model_answered=model_answered,
+                    segments=tuple(
+                        {
+                            "key": block.key,
+                            "version": block.version,
+                            "sha256": block.sha256,
+                            # Cuantas respuestas del agente hubo antes del turno
+                            # (E-311): el primer turno con el segmento y > 0 es
+                            # un segmento que llego tarde.
+                            **(
+                                {"agent_replies_before": replies}
+                                if isinstance(
+                                    replies := getattr(block, "agent_replies_before", None), int
+                                )
+                                else {}
+                            ),
+                        }
+                        for block in extra_system
+                    ),
                 )
             )
         except Exception:  # noqa: BLE001 - la propuesta manda
             pass
 
     async def _request_and_persist(
-        self, *, digest: str, context: dict[str, object], delivery_id: str
+        self,
+        *,
+        digest: str,
+        context: dict[str, object],
+        delivery_id: str,
+        extra_system: tuple[ExtraSystemBlock, ...] = (),
     ) -> None:
         # Lo ultimo que Hermes dijo que contesto. Se arrastra fuera del
         # bucle porque el punto terminal de salida invalida esta despues.
@@ -512,6 +570,10 @@ class HermesShadowProcessor:
                                     [{"role": "system", "content": self._system_prompt}]
                                     if self._system_prompt
                                     else []
+                                ),
+                                *(
+                                    {"role": "system", "content": block.rendered}
+                                    for block in extra_system
                                 ),
                                 {
                                     "role": "user",
@@ -541,6 +603,7 @@ class HermesShadowProcessor:
                     attempt=attempt,
                     outcome="failed",
                     model_answered=None,
+                    extra_system=extra_system,
                 )
                 return
 
@@ -587,6 +650,7 @@ class HermesShadowProcessor:
                     attempt=attempt,
                     outcome="completed",
                     model_answered=model_answered,
+                    extra_system=extra_system,
                 )
                 return
 
@@ -607,6 +671,7 @@ class HermesShadowProcessor:
             attempt=_MAX_PROPOSAL_ATTEMPTS,
             outcome="failed",
             model_answered=model_answered,
+            extra_system=extra_system,
         )
 
     @staticmethod

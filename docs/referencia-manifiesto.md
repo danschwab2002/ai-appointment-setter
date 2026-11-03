@@ -119,6 +119,29 @@ Para `precheckout` vale la misma regla con `WABA_PRECHECKOUT_TEMPLATE_NAME`, que
 | `modelo` | El nombre del modelo (profile de Hermes) que responde por esta instancia |
 | `conocimiento` | Ruta, relativa a la carpeta de la instancia, del archivo de conocimiento (contrato en `docs/contracts/commercial-knowledge-v1.md`) |
 
+### `[[agente.segmentos]]`, opcional (E-311)
+
+Un segmento: una etiqueta de la conversación de Chatwoot que, mientras el segmento está vigente, le suma al agente un conocimiento extra como un `system` aparte, después del base. Contrato: [segment-knowledge-v1.md](contracts/segment-knowledge-v1.md). Lo carga el bridge solo con `AGENT_SEGMENTS_ENABLED`; sin el flag, la declaración no cambia nada.
+
+```toml
+[[agente.segmentos]]
+clave = "campana-de-prueba"                                # slug, único
+etiqueta = "campana-de-prueba"                             # la etiqueta de Chatwoot que lo activa
+conocimiento = "conocimiento/segmentos/campana-de-prueba-v1.toml"
+prioridad = 10                                             # menor va primero
+# macro_etiqueta = 123                                     # opcional: el macro que solo suma la etiqueta (para el motor)
+```
+
+| Campo | Qué es | Si falta o está mal |
+|---|---|---|
+| `clave` | El slug del segmento; la misma `clave` de la cabecera de su archivo | No carga |
+| `etiqueta` | La etiqueta de Chatwoot, en minúsculas. No puede ser `cliente` (sigue por `customer_status`), `automation_paused`, `automation_opted_out` ni la etiqueta de un producto | No carga |
+| `conocimiento` | Ruta relativa al `.toml` del segmento, que se llama `<clave>-v<N>.toml`; no puede ser el conocimiento base | No carga |
+| `prioridad` | Entero de 0 a 1000. Menor va primero y manda en lo que se contradiga. Dos segmentos con la misma prioridad y vigencias que se pisan no cargan | No carga |
+| `macro_etiqueta` | Opcional. El id del macro de Chatwoot que solo suma la etiqueta. Hoy no lo usa nadie: es para el paso `etiquetar` del motor | No carga si no es un entero positivo |
+
+Hasta 8 segmentos; la clave, la etiqueta, el archivo y el macro no se repiten. La vigencia va en el archivo del segmento, no acá.
+
 ## `[flujos]`
 
 Los seis flujos, cada uno `true` o `false`: `inbound`, `precheckout`, `carrito`, `pago_fallido`, `reactivacion` y `descuento`. Es el estado **declarado** de la instancia. Un flujo en `true` exige su evento en `eventos` y su plantilla en `[plantillas]`; si falta alguno, el manifiesto no carga. `inbound = true` exige además el conocimiento aprobado.

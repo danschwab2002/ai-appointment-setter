@@ -1,0 +1,48 @@
+# FIXTURE FICTICIO (E-311, 2026-11-03): un segmento de prueba para los tests del
+# producto (contrato docs/contracts/segment-knowledge-v1.md). No es la oferta de
+# ninguna campana real: el precio, el cupon y los textos estan inventados a
+# proposito. La aliada es la de tests/fixtures/instances/att1 para que el
+# ally_ref coincida con ese manifiesto de prueba.
+#
+# Los comentarios no llegan al agente: ahi van las fuentes de cada dato.
+
+[cabecera]
+segment_version = 1
+estado = "aprobado"
+ally_ref = "att1"
+clave = "campana-de-prueba"
+nombre = "Campaña de prueba"
+aprobado_por = "test"
+aprobado_el = 2026-11-03
+
+[vigencia]
+desde = 2026-11-20T00:00:00-06:00
+hasta = 2026-12-01T00:00:00-06:00
+
+[instruccion]
+texto = "Bloque de prueba: si la persona pregunta por la campaña de prueba, usa estos datos."
+
+[oferta]
+precio = "11"
+moneda = "USD"
+precio_antes = "22"
+cupon = "PRUEBA11"
+garantia = "La misma del programa, sin cambios."
+incluye = ["Un bono ficticio de prueba."]
+reemplaza = ["precio"]
+
+[asesoramiento]
+items = ["Si pregunta qué le conviene, recomienda el programa completo (texto de prueba)."]
+
+[no_confirmado]
+items = ["Si la campaña de prueba se extiende."]
+
+[[faq]]
+pregunta = "¿Hasta cuándo dura la campaña de prueba?"
+respuesta = "Hasta el 30/11 a las 23:59, hora de México (dato de prueba)."
+fuente = "fixture de prueba"
+
+[[preguntas_del_alta]]
+pregunta = "¿Se combina con el cupón del carrito?"
+respuesta = "No (respuesta ficticia de prueba)."
+fuente = "fixture de prueba, 2026-11-03"
