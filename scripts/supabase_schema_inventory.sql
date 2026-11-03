@@ -6620,6 +6620,35 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         1,
         'flow_engine_native_segment_label'
+    union all
+    select
+        '20261103001500',
+        '20261103001500_segment_entry_answers_v1.sql',
+        -- Lo que contesto cada conversacion a la pregunta de entrada de una
+        -- campana (E-317): la tabla, con RLS y sin lectura para la API ...
+        (
+            select count(*) = 1
+            from pg_class c
+            where c.oid = to_regclass('public.segment_entry_answers')
+              and c.relrowsecurity
+              and not has_table_privilege('anon', c.oid, 'SELECT')
+              and not has_table_privilege('authenticated', c.oid, 'SELECT')
+        )::int
+        -- ... y las dos funciones, solo para service_role.
+        + (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public.record_segment_entry_answer_v1(bigint,bigint,bigint,text,text,timestamptz)'),
+                to_regprocedure('public.get_segment_entry_answers_v1(bigint,bigint,bigint)')
+            )
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        2,
+        'segment_entry_answers'
 )
 select
     version,

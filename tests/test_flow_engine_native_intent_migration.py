@@ -68,20 +68,22 @@ def test_it_is_one_transaction_and_the_last() -> None:
     # Las cuatro ramas del pago rechazado nativo (20261103000900, E-306).
     # El aviso de derivaciones sin atender (20261103001000, E-309).
     # La etiqueta de un segmento en un flujo nativo (20261103001300, E-316): un reemplazo contado en la forma nativa.
-    assert names[-1] == "20261103001300_flow_engine_native_segment_label_v1.sql"
-    assert names[-2] == "20261103001000_handoff_wait_alerts_v1.sql"
-    assert names[-3] == "20261103000900_flow_engine_native_payment_failure_branches_v1.sql"
-    assert names[-4] == "20261103000700_customer_status_v1.sql"
-    assert names[-5] == "20261103000600_flow_approval_history_v1.sql"
-    assert names[-6] == "20261103000500_meta_delivery_rejections_v1.sql"
-    assert names[-7] == "20261102000400_identity_recycle_v1.sql"
-    assert names[-8] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
-    assert names[-9] == "20261102000200_meta_template_requests_v1.sql"
-    assert names[-10] == "20261102000100_recovery_coupon_by_reply_v1.sql"
-    assert names[-11] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
-    assert names[-12] == "20261101000200_flow_engine_native_silence_v1.sql"
-    assert names[-13] == MIGRATION.name
-    assert names[-14] == "20261030000400_portable_purchase_stops_see_our_link_v1.sql"
+    # La entrada a una campana: lo que contesto cada conversacion a la pregunta (20261103001500, E-317).
+    assert names[-1] == "20261103001500_segment_entry_answers_v1.sql"
+    assert names[-2] == "20261103001300_flow_engine_native_segment_label_v1.sql"
+    assert names[-3] == "20261103001000_handoff_wait_alerts_v1.sql"
+    assert names[-4] == "20261103000900_flow_engine_native_payment_failure_branches_v1.sql"
+    assert names[-5] == "20261103000700_customer_status_v1.sql"
+    assert names[-6] == "20261103000600_flow_approval_history_v1.sql"
+    assert names[-7] == "20261103000500_meta_delivery_rejections_v1.sql"
+    assert names[-8] == "20261102000400_identity_recycle_v1.sql"
+    assert names[-9] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
+    assert names[-10] == "20261102000200_meta_template_requests_v1.sql"
+    assert names[-11] == "20261102000100_recovery_coupon_by_reply_v1.sql"
+    assert names[-12] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
+    assert names[-13] == "20261101000200_flow_engine_native_silence_v1.sql"
+    assert names[-14] == MIGRATION.name
+    assert names[-15] == "20261030000400_portable_purchase_stops_see_our_link_v1.sql"
     # R9: el bloque 1 valida flow_engine_native_runs con ACCESS EXCLUSIVE.
     assert "set local lock_timeout = '5s';" in sql
     # El ALTER de flow_engine_native_runs va al final: retiene el ACCESS EXCLUSIVE lo menos posible.
@@ -227,7 +229,7 @@ def test_the_validator_and_the_captured_form() -> None:
     assert scripts.rstrip().endswith(
         "node validate_flow_engine_native_intent.mjs && node validate_flow_engine_native_silence.mjs"
         " && node validate_followup_stops.mjs && node validate_recovery_coupon_by_reply.mjs"
-        " && node validate_meta_template_requests.mjs --check && node validate_flow_engine_native_silence_sweep.mjs && node validate_identity_recycle.mjs && node validate_meta_delivery_rejections.mjs && node validate_flow_approval_history.mjs && node validate_customer_status.mjs && node validate_flow_engine_native_payment_failure_branches.mjs --check && node validate_handoff_wait_alerts.mjs && node validate_flow_engine_native_segment_label.mjs")
+        " && node validate_meta_template_requests.mjs --check && node validate_flow_engine_native_silence_sweep.mjs && node validate_identity_recycle.mjs && node validate_meta_delivery_rejections.mjs && node validate_flow_approval_history.mjs && node validate_customer_status.mjs && node validate_flow_engine_native_payment_failure_branches.mjs --check && node validate_handoff_wait_alerts.mjs && node validate_flow_engine_native_segment_label.mjs && node validate_segment_entry_answers.mjs")
     assert MIGRATION.name in validator
     for legacy in (
         "validate_portable_precheckout_first_contact.mjs",

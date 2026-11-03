@@ -49,9 +49,10 @@ const results = {};
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`${MIGRATION} no esta en la cadena`);
-// Despues va solo la etiqueta de un segmento en un flujo nativo (20261103001300, E-316): un reemplazo
-// contado en la forma nativa, que no toca las derivaciones. Esta prueba aplica la cadena hasta la suya.
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261103001300_flow_engine_native_segment_label_v1.sql'])) {
+// Despues van la etiqueta de un segmento en un flujo nativo (20261103001300, E-316): un reemplazo
+// contado en la forma nativa, que no toca las derivaciones; y las respuestas a la pregunta de entrada de
+// una campana (20261103001500, E-317): una tabla nueva. Esta prueba aplica la cadena hasta la suya.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261103001300_flow_engine_native_segment_label_v1.sql', '20261103001500_segment_entry_answers_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de la etiqueta de un segmento`, names.slice(position + 1));
 }
 const apply = async (file) => db.exec(readFileSync(file, 'utf8').replace(

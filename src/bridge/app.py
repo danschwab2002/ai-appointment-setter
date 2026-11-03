@@ -265,6 +265,7 @@ from bridge.recovery_coupon_reply import (
     reply_may_renew,
 )
 from bridge.recovery_coupons import RecoveryCouponWorker
+from bridge.campaign_inbound_entry import campaign_inbound_entry_setup as _campaign_inbound_entry_setup
 from bridge.segment_labels import (
     automation_expert_segments,
     segment_labels_setup as _segment_labels_setup,
@@ -472,6 +473,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # prenderlo.
     "flow_engine_segment_labels_enabled",
     "segment_label_inheritance_enabled",
+    # E-317 (campaign-inbound-entry-v1): la palabra clave del primer mensaje y la
+    # pregunta de entrada de una campana. Lo especifico (frases, pregunta) es de
+    # [[agente.segmentos]]; por instancia, solo prenderlo.
+    "campaign_inbound_entry_enabled",
     "slack_connector_projection_enabled",
     "correlation_preresolution_enabled",
     # Transcribir un audio no depende del aliado: la key y el host de Chatwoot
@@ -1107,6 +1112,10 @@ class Settings:
     # de segmento, le hereda la de otra conversacion del mismo contacto (una
     # lectura de Chatwoot por conversacion, nunca por turno). Apagado, nada.
     segment_label_inheritance_enabled: bool = False
+    # E-317 (campaign-inbound-entry-v1): la etiqueta de la campana por la palabra clave
+    # del primer mensaje, y el aviso con la pregunta de entrada a quien escribe
+    # por su cuenta sin ella. Apagado, el pedido a Hermes es el de siempre.
+    campaign_inbound_entry_enabled: bool = False
     slack_connector_projection_enabled: bool = False
     slack_connector_base_url: str | None = None
     slack_connector_bearer_token: str | None = None
@@ -2574,6 +2583,10 @@ class Settings:
             ),
             segment_label_inheritance_enabled=(
                 os.getenv("SEGMENT_LABEL_INHERITANCE_ENABLED", "false").strip().lower()
+                == "true"
+            ),
+            campaign_inbound_entry_enabled=(
+                os.getenv("CAMPAIGN_INBOUND_ENTRY_ENABLED", "false").strip().lower()
                 == "true"
             ),
         )
@@ -5287,6 +5300,24 @@ def create_app(
             base_url=settings.supabase_base_url,
             service_role_key=settings.supabase_service_role_key,
         )
+    # E-317 (campaign-inbound-entry-v1): la palabra clave y la pregunta de entrada de
+    # las campanas. Sin el flag, None y el turno no lee nada nuevo.
+    campaign_inbound = _campaign_inbound_entry_setup(
+        settings,
+        control_client,
+        shared_supabase,
+        reset_command=CHATWOOT_CONVERSATION_RESET_COMMAND,
+        reset_confirmation=CHATWOOT_CONVERSATION_RESET_CONFIRMATION,
+    )
+    if (
+        campaign_inbound is not None
+        and campaign_inbound.has_question
+        and not getattr(shadow_processor, "accepts_campaign_answers", False)
+    ):
+        raise ValueError(
+            "CAMPAIGN_INBOUND_ENTRY_ENABLED: pregunta_entrada requires an agent "
+            "processor that reads campana_respuesta"
+        )
     # La procedencia del prompt se anota si hay con que: el turno del agente
     # no depende de esto, pero sin esto el feedback no se puede atribuir a
     # una version del agente.
@@ -6965,6 +6996,21 @@ def create_app(
         )
         return code if applied else None
 
+    async def settle_campaign_answer(
+        conversation_id: int, entry_turn: object, delivery_id: str
+    ) -> None:
+        # E-317: lo que contesto la persona a la pregunta de entrada, si el turno
+        # la llevaba. Nunca rompe el turno.
+        if campaign_inbound is None or entry_turn is None:
+            return
+        read = getattr(shadow_processor, "get_campaign_answer", None)
+        answer = read(delivery_id=delivery_id) if read is not None else None
+        await campaign_inbound.settle(
+            conversation_id=conversation_id,
+            turn=entry_turn,  # type: ignore[arg-type]
+            answer=answer,
+        )
+
     async def run_shadow_with_canonical_history(
         *,
         delivery_id: str,
@@ -6975,6 +7021,7 @@ def create_app(
         opt_out_only: bool = False,
         answer_opted_out_contact: bool = False,
         confirm_new_opt_out: Callable[..., Awaitable[None]] | None = None,
+        conversation_labels_now: tuple[str, ...] = (),
     ) -> CanonicalWorkResult:
         if control_client is None or settings.agent_bot_id is None:
             if opt_out_only:
@@ -7234,6 +7281,33 @@ def create_app(
             for message in _history_after_latest_reset(normalized[:first_batch_index])
             if message["actor"] == "assistant"
         )
+        entry_turn = None
+        if campaign_inbound is not None:
+            # E-317: la palabra clave del primer mensaje pone la etiqueta de la
+            # campana antes de armar el pedido, y a quien escribio por su cuenta
+            # sin ella le va el aviso con la pregunta de entrada.
+            entry_turn = await campaign_inbound.turn(
+                conversation_id=conversation_id,
+                history=history,
+                history_complete=len(history)
+                < max(200, len(set(batch_message_ids)) + 19),
+                messages=_history_after_latest_reset(normalized),
+                batch_refs=expected_refs,
+                labels=conversation_labels_now,
+                agent_replies_before=agent_replies_before,
+            )
+            if entry_turn.labels and segment_catalog is not None:
+                entry_entries = _segment_context(
+                    segment_catalog,
+                    payload={
+                        "conversation": {
+                            "labels": [*conversation_labels_now, *entry_turn.labels]
+                        }
+                    },
+                    conversation_id=conversation_id,
+                )
+                if entry_entries:
+                    context[SEGMENT_CONTEXT_KEY] = entry_entries
         normalized = normalized[max(0, first_batch_index - 19) :]
         normalized = _history_after_latest_reset(normalized)
         public_messages = [
@@ -7252,6 +7326,7 @@ def create_app(
         if shadow_processor is None:
             return CanonicalWorkResult(proposal=None, prior_opt_out=prior_opt_out)
         if shadow_processor.has_result(delivery_id=delivery_id):
+            await settle_campaign_answer(conversation_id, entry_turn, delivery_id)
             return CanonicalWorkResult(
                 proposal=shadow_processor.get_completed_proposal(
                     delivery_id=delivery_id
@@ -7285,11 +7360,17 @@ def create_app(
                     block.agent_replies_before,
                     conversation_id,
                 )
+        turn_blocks = (
+            (*segment_blocks, entry_turn.notice)
+            if entry_turn is not None and entry_turn.notice is not None
+            else segment_blocks
+        )
         await shadow_processor.run(
             delivery_id=delivery_id,
             context=enriched_context,
-            **({"extra_system": segment_blocks} if segment_blocks else {}),
+            **({"extra_system": turn_blocks} if turn_blocks else {}),
         )
+        await settle_campaign_answer(conversation_id, entry_turn, delivery_id)
         return CanonicalWorkResult(
             proposal=shadow_processor.get_completed_proposal(delivery_id=delivery_id),
             prior_opt_out=prior_opt_out,
@@ -8237,6 +8318,11 @@ def create_app(
                 # v1.10.2: su SOUL no tiene la regla.
                 answer_opted_out_contact=whatsapp_inbound_equivalence,
                 confirm_new_opt_out=confirm_new_opt_out,
+                **(
+                    {"conversation_labels_now": tuple(conversation_labels(payload))}
+                    if campaign_inbound is not None
+                    else {}
+                ),
             )
             if canonical_result.prior_opt_out and not canonical_result.stopped:
                 # El log se queda, para medir cuantas bajas vuelven a escribir.
@@ -12722,6 +12808,12 @@ def build_app() -> FastAPI:
             shadow_dir=settings.shadow_dir,
             **knowledge_kwargs,
             **product_kwargs,
+            # E-317: la salida puede traer campana_respuesta (apagado, como hoy).
+            **(
+                {"campaign_answers": True}
+                if settings.campaign_inbound_entry_enabled
+                else {}
+            ),
         )
     return create_app(settings, shadow_processor=shadow_processor)
 

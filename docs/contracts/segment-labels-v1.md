@@ -18,7 +18,7 @@ Este contrato la pone antes por dos caminos, y deja diseñado un tercero.
 |---|---|---|---|
 | El motor nativo la pone antes del primer envío | `FLOW_ENGINE_SEGMENT_LABELS_ENABLED` | en cada envío de un flujo nativo cuya versión fijada tiene `etiquetar: <segmento>` | la cola del paso (`flow_engine_native_step_tail_v1`) y el macro, solo en esos envíos |
 | El bridge la hereda de otra conversación del contacto | `SEGMENT_LABEL_INHERITANCE_ENABLED` | la primera vez que el proceso ve una conversación sin ninguna etiqueta de segmento | una lectura de `GET /contacts/{id}/conversations`, una vez por conversación |
-| La palabra clave del primer mensaje | (sin construir) | — | — |
+| La palabra clave del primer mensaje | `CAMPAIGN_INBOUND_ENTRY_ENABLED` (E-317) | en el turno con historia, si el primer mensaje de la conversación trae una frase del segmento | el macro, una vez; ver [campaign-inbound-entry-v1.md](campaign-inbound-entry-v1.md) |
 
 ## 1. El motor nativo pone la etiqueta antes del primer envío
 
@@ -80,14 +80,16 @@ Con `SEGMENT_LABEL_INHERITANCE_ENABLED`, en el turno del agente, antes de que se
 
 Logs: `segment_label_inherited conversation contact segment label from outcome`, `segment_label_inheritance outcome=nada|sin_contacto|lectura_fallida`.
 
-## 3. La palabra clave del primer mensaje (diseñado, sin construir)
+## 3. La palabra clave del primer mensaje (construida en E-317)
+
+**Construida en E-317** con la pregunta de entrada: [campaign-inbound-entry-v1.md](campaign-inbound-entry-v1.md). Lo que sigue es el diseño original de E-316; la construcción lo resolvió así: `palabras_clave` en `[[agente.segmentos]]` (normalizadas, palabras enteras, hasta 8), y «el primer mensaje» se mira en el turno con la historia canónica (`run_shadow_with_canonical_history`), antes de armar el pedido, en vez de en el punto de la herencia.
 
 Un segmento podría declarar frases de entrada (la palabra de un anuncio, «BLACK») y el bridge ponerle la etiqueta antes del primer turno si el primer mensaje de la persona la contiene. No entra en este PR (D-E316-7) porque:
 
-- la declaración vive en `[[agente.segmentos]]` (PR-A, esquema cerrado): sumar `frases_entrada` es tocar el parser y el contrato de PR-A, que todavía no está en `main`;
+- la declaración vive en `[[agente.segmentos]]` (PR-A, esquema cerrado): sumar `palabras_clave` es tocar el parser y el contrato de PR-A, que todavía no está en `main`;
 - «el primer mensaje» pide saber que es el primero, y eso hoy solo lo da la historia (la lectura de `run_shadow_with_canonical_history`), que corre después de armar el contexto.
 
-Lo que haría, sobre este contrato: `frases_entrada = ["black", "black november"]` (normalizadas sin acentos ni mayúsculas, palabra entera, hasta 8 por segmento); en el mismo punto que la herencia, si la conversación no tiene etiqueta de segmento y no está en la memoria, y el texto del entrante contiene una frase, se pone la etiqueta por el macro y se suma al turno, con el log `segment_label_by_keyword`. Mientras tanto, una regla de automatización de Chatwoot por palabra clave hace lo mismo (D10 del diseño).
+Lo que haría, sobre este contrato: `palabras_clave = ["black", "black november"]` (normalizadas sin acentos ni mayúsculas, palabra entera, hasta 8 por segmento); en el mismo punto que la herencia, si la conversación no tiene etiqueta de segmento y no está en la memoria, y el texto del entrante contiene una frase, se pone la etiqueta por el macro y se suma al turno, con el log `segment_label_by_keyword`. Mientras tanto, una regla de automatización de Chatwoot por palabra clave hace lo mismo (D10 del diseño).
 
 ## 4. Lo que ve el Automation Expert (`automation-expert-read-v1` 1.5.0)
 

@@ -284,6 +284,13 @@ class AgentSegment:
     primero y manda en lo que se contradiga (D6). ``label_macro_id`` es el macro
     de Chatwoot que solo suma la etiqueta; lo usa el motor (PR-C) y hoy es
     opcional.
+
+    La entrada a la campana (E-317, ``campaign-inbound-entry-v1``), opcional:
+    ``entry_keywords`` (``palabras_clave``) son las palabras clave del primer
+    mensaje (el texto prellenado del boton de WhatsApp de la landing), ya
+    normalizadas, y ``entry_question`` (``pregunta_entrada``) la pregunta que el
+    agente le hace a quien escribe por su cuenta sin la palabra clave. Las dos
+    piden ``macro_etiqueta``: sin macro el bridge no puede poner la etiqueta.
     """
 
     key: str
@@ -291,6 +298,8 @@ class AgentSegment:
     knowledge_path: str
     priority: int
     label_macro_id: int | None = None
+    entry_keywords: tuple[str, ...] = ()
+    entry_question: str | None = None
 
 
 @dataclass(frozen=True)
@@ -852,7 +861,12 @@ def _agent_segments(
     segments = []
     for index, entry in enumerate(raw):
         where = f"agente.segmentos[{index}]"
-        _exact_keys(where, entry, {"clave", "etiqueta", "conocimiento", "prioridad"}, {"macro_etiqueta"})
+        _exact_keys(
+            where,
+            entry,
+            {"clave", "etiqueta", "conocimiento", "prioridad"},
+            {"macro_etiqueta", "palabras_clave", "pregunta_entrada"},
+        )
         key = _ref(entry, "clave", f"{where}.clave")
         label = _str(entry, "etiqueta", f"{where}.etiqueta")
         if _CHATWOOT_LABEL.fullmatch(label) is None:
@@ -881,6 +895,12 @@ def _agent_segments(
             if "macro_etiqueta" in entry
             else None
         )
+        keywords, question = _segment_entry(entry, where)
+        if (keywords or question is not None) and macro_id is None:
+            raise ManifestError(
+                f"{where}: palabras_clave y pregunta_entrada piden macro_etiqueta "
+                "(sin macro el bridge no puede poner la etiqueta)"
+            )
         segments.append(
             AgentSegment(
                 key=key,
@@ -888,8 +908,13 @@ def _agent_segments(
                 knowledge_path=path,
                 priority=priority,
                 label_macro_id=macro_id,
+                entry_keywords=keywords,
+                entry_question=question,
             )
         )
+    keywords_seen = [keyword for segment in segments for keyword in segment.entry_keywords]
+    if len(set(keywords_seen)) != len(keywords_seen):
+        raise ManifestError("agente.segmentos: dos segmentos con la misma palabra clave")
     for what, values in (
         ("clave", [segment.key for segment in segments]),
         ("etiqueta", [segment.label for segment in segments]),
@@ -902,6 +927,50 @@ def _agent_segments(
         if len(set(values)) != len(values):
             raise ManifestError(f"agente.segmentos: dos segmentos con la misma {what}")
     return tuple(segments)
+
+
+MAX_SEGMENT_KEYWORDS = 8
+MAX_SEGMENT_KEYWORD_CHARS = 80
+MAX_SEGMENT_ENTRY_QUESTION_CHARS = 200
+
+
+def _segment_entry(entry: Mapping[str, Any], where: str) -> tuple[tuple[str, ...], str | None]:
+    """``palabras_clave`` y ``pregunta_entrada`` de un segmento (E-317, ``campaign-inbound-entry-v1``).
+
+    Las palabras clave se guardan normalizadas (sin acentos ni mayusculas, la puntuacion
+    como espacio), que es como las compara el bridge: dos palabras clave que normalizan
+    igual son la misma.
+    """
+
+    from .campaign_inbound_entry import normalize_entry_text
+
+    keywords: tuple[str, ...] = ()
+    if "palabras_clave" in entry:
+        raw = _str_list(entry.get("palabras_clave"), f"{where}.palabras_clave")
+        if not raw or len(raw) > MAX_SEGMENT_KEYWORDS:
+            raise ManifestError(
+                f"{where}.palabras_clave admite de 1 a {MAX_SEGMENT_KEYWORDS} palabras clave"
+            )
+        normalized = tuple(normalize_entry_text(keyword) for keyword in raw)
+        if any(
+            not keyword or len(keyword) > MAX_SEGMENT_KEYWORD_CHARS for keyword in normalized
+        ):
+            raise ManifestError(
+                f"{where}.palabras_clave: cada palabra clave con letras o numeros, hasta "
+                f"{MAX_SEGMENT_KEYWORD_CHARS} caracteres"
+            )
+        if len(set(normalized)) != len(normalized):
+            raise ManifestError(f"{where}.palabras_clave tiene palabras clave que normalizan igual")
+        keywords = normalized
+    question = None
+    if "pregunta_entrada" in entry:
+        question = _str(entry, "pregunta_entrada", f"{where}.pregunta_entrada")
+        if len(question) > MAX_SEGMENT_ENTRY_QUESTION_CHARS or "\n" in question:
+            raise ManifestError(
+                f"{where}.pregunta_entrada: una linea de hasta "
+                f"{MAX_SEGMENT_ENTRY_QUESTION_CHARS} caracteres"
+            )
+    return keywords, question
 
 
 def _hotmart(
