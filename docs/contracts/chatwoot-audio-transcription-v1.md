@@ -112,7 +112,8 @@ en 16 MB de audio (el base64 agrega un tercio).
 
 ## Fuera de alcance
 
-- Imagenes y stickers: siguen sin llegar al agente (ahora con la linea de log).
+- Imagenes, stickers, videos y documentos: su camino es
+  `chatwoot-inbound-attachment-without-text-v1.md` (E-315, con su flag).
 - El monitor de conversaciones trabadas: para tomar una conversacion pide texto
   en el ultimo mensaje del lead (`list_stalled_conversations`), asi que no
   rescata un audio cuyo webhook no llego al bridge.

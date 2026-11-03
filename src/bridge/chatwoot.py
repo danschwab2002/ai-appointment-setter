@@ -17,6 +17,7 @@ from typing import Awaitable, Callable
 import httpx
 
 from bridge.audio_transcription import needs_audio_transcription
+from bridge.inbound_attachments import attachment_without_text_kinds
 from bridge.filtering import (
     classify_chatwoot_event,
     matches_allowed_whatsapp_identity,
@@ -234,6 +235,7 @@ class ChatwootClient:
         confirmation_attempts: int = 10,
         confirmation_delay_seconds: float = 0.5,
         transport: httpx.AsyncBaseTransport | None = None,
+        accept_attachment_without_text: bool = False,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._account_id = account_id
@@ -248,6 +250,10 @@ class ChatwootClient:
         self._confirmation_attempts = confirmation_attempts
         self._confirmation_delay_seconds = confirmation_delay_seconds
         self._transport = transport
+        # E-315 (INBOUND_ATTACHMENT_WITHOUT_TEXT_ENABLED): un adjunto sin texto
+        # de la persona cuenta como disparador, para el monitor de trabadas y
+        # para la guarda de envio, como ya cuenta un audio.
+        self._accept_attachment_without_text = accept_attachment_without_text
 
     @property
     def account_id(self) -> int:
@@ -485,6 +491,12 @@ class ChatwootClient:
         created_at = latest.get("created_at")
         content = latest.get("content")
         sender = latest.get("sender")
+        # E-315: con el flag, un ultimo mensaje que es solo un adjunto (imagen,
+        # sticker, documento) tambien es candidato, como si fuera texto.
+        attachment_only = (
+            self._accept_attachment_without_text
+            and attachment_without_text_kinds(latest) is not None
+        )
         if (
             not isinstance(message_id, int)
             or isinstance(message_id, bool)
@@ -493,8 +505,9 @@ class ChatwootClient:
             or not isinstance(created_at, int)
             or isinstance(created_at, bool)
             or latest.get("message_type") != 0
-            or not isinstance(content, str)
-            or not content.strip()
+            or not (
+                attachment_only or (isinstance(content, str) and content.strip())
+            )
             or not isinstance(sender, dict)
             or sender.get("type") != "contact"
         ):
@@ -527,6 +540,8 @@ class ChatwootClient:
             "conversation": minimal_conversation,
             "_stalled_monitor": {"version": 1},
         }
+        if attachment_only:
+            payload["attachments"] = latest.get("attachments")
         decision = classify_chatwoot_event(
             payload,
             allowed_jid=self._allowed_jid,
@@ -1222,7 +1237,16 @@ class ChatwootClient:
             and trigger_message.get("message_type") == 0
             and isinstance(trigger_sender, dict)
             and trigger_sender.get("type") == "contact"
-            and (trigger_has_text or needs_audio_transcription(trigger_message))
+            and (
+                trigger_has_text
+                or needs_audio_transcription(trigger_message)
+                # E-315: el agente leyo el adjunto como texto de sistema, o es
+                # el aviso de la derivacion del segundo. Solo con el flag.
+                or (
+                    self._accept_attachment_without_text
+                    and attachment_without_text_kinds(trigger_message) is not None
+                )
+            )
         ):
             return {"status": "blocked", "reason": "invalid_trigger_message"}
 
