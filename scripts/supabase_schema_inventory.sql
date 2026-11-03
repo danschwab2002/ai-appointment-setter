@@ -6580,6 +6580,31 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'flow_engine_native_payment_failure_branches'
+    union all
+    select
+        '20261103001000',
+        '20261103001000_handoff_wait_alerts_v1.sql',
+        -- El aviso de derivaciones sin atender (E-309): una lectura, solo para
+        -- service_role ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.list_unattended_human_handoffs_v1(bigint,bigint,timestamptz,integer)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- ... que mira solo las derivaciones sin atender.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.list_unattended_human_handoffs_v1(bigint,bigint,timestamptz,integer)')
+              and position('handoff_wait_alerts' in definition) > 0
+              and position('attended_at is null' in definition) > 0
+        )::int,
+        2,
+        'handoff_wait_alerts'
 )
 select
     version,

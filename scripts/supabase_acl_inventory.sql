@@ -203,7 +203,9 @@ expected_service_role(signature) as (
         ('public.get_customer_status_v1(text, text[], bigint, bigint, bigint, text)'),
         -- 20261103000900: los datos y el registro de la rama del pago rechazado nativo (E-306).
         ('public.get_flow_engine_native_payment_failure_context_v1(uuid, text, bigint, timestamp with time zone)'),
-        ('public.record_flow_engine_native_branch_v1(uuid, uuid, text, bigint, integer, timestamp with time zone)')
+        ('public.record_flow_engine_native_branch_v1(uuid, uuid, text, bigint, integer, timestamp with time zone)'),
+        -- 20261103001000: las derivaciones sin atender, para el aviso por Slack (E-309).
+        ('public.list_unattended_human_handoffs_v1(bigint, bigint, timestamp with time zone, integer)')
 ),
 functions as (
     select

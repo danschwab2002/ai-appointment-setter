@@ -27,6 +27,7 @@ from bridge.correlation_preresolution import (
     CorrelationPreresolutionClaim,
     PreresolutionRecommendation,
 )
+from bridge.handoff_wait_alerts import UnattendedHandoff
 from bridge.slack_handoff_projection import SlackHandoffNotificationClaim
 from bridge.slack_projection import SlackCorrelationNotificationClaim
 from slack_correlation.catalog import (
@@ -4657,6 +4658,85 @@ class SupabaseClient:
                 "p_failure_code": failure_code,
             },
         )
+
+    async def list_unattended_human_handoffs(
+        self,
+        *,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        since: str,
+        limit: int = 200,
+    ) -> list[UnattendedHandoff]:
+        """Las derivaciones sin atender de la bandeja, la mas nueva por conversacion.
+
+        ``list_unattended_human_handoffs_v1`` (20261103001000, E-309): solo
+        lectura, sin nada de la persona. La usa el aviso de derivaciones sin
+        atender (``bridge.handoff_wait_alerts``).
+        """
+        operation = "unattended_human_handoffs"
+        for value in (chatwoot_account_id, chatwoot_inbox_id, limit):
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError("invalid unattended handoff query")
+        if limit > 500 or not isinstance(since, str) or not since:
+            raise ValueError("invalid unattended handoff query")
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/list_unattended_human_handoffs_v1",
+            content=json.dumps(
+                {
+                    "p_chatwoot_account_id": chatwoot_account_id,
+                    "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                    "p_since": since,
+                    "p_limit": limit,
+                }
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        expected_keys = {
+            "handoff_request_id",
+            "external_conversation_id",
+            "primary_reason_code",
+            "detail_reason_code",
+            "created_at",
+        }
+        handoffs: list[UnattendedHandoff] = []
+        for row in rows:
+            if set(row) != expected_keys:
+                raise SupabaseError(f"{operation}_invalid")
+            created_text = _required_string(row, "created_at", operation=operation)
+            try:
+                created_at = datetime.fromisoformat(created_text.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise SupabaseError(f"{operation}_invalid") from exc
+            if created_at.tzinfo is None:
+                raise SupabaseError(f"{operation}_invalid")
+            handoffs.append(
+                UnattendedHandoff(
+                    handoff_request_id=_required_uuid(
+                        row, "handoff_request_id", operation=operation
+                    ),
+                    external_conversation_id=_required_positive_int(
+                        row, "external_conversation_id", operation=operation
+                    ),
+                    primary_reason_code=_required_enum(
+                        row,
+                        "primary_reason_code",
+                        {
+                            "explicit_human_request",
+                            "commercial_exception",
+                            "policy_requires_human",
+                        },
+                        operation=operation,
+                    ),
+                    detail_reason_code=_optional_string(
+                        row, "detail_reason_code", operation=operation
+                    ),
+                    created_at=created_at,
+                )
+            )
+        return handoffs
 
     async def claim_slack_handoff_notifications(
         self,

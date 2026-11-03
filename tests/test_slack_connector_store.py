@@ -68,12 +68,14 @@ def _recommendation() -> CorrelationRecommendation:
     )
 
 
-def test_catalog_has_exactly_the_58_approved_event_codes() -> None:
+def test_catalog_has_exactly_the_59_approved_event_codes() -> None:
     # MOT-001 (flow-engine-v1, seccion 8): la divergencia del motor de flujos.
     # MOT-002 (flow-engine-v2, seccion 8): el motor no pudo arrancar un flujo.
-    assert len(EVENT_TEMPLATES) == 58
+    # HND-012 (handoff-wait-alerts-v1, E-309): la persona volvio a escribir en
+    # una conversacion pausada.
+    assert len(EVENT_TEMPLATES) == 59
     assert set(EVENT_TEMPLATES) == {
-        *(f"HND-{number:03d}" for number in range(1, 12)),
+        *(f"HND-{number:03d}" for number in range(1, 13)),
         *(f"COR-{number:03d}" for number in range(1, 16)),
         *(f"MSG-{number:03d}" for number in range(1, 8)),
         *(f"SYS-{number:03d}" for number in range(1, 10)),

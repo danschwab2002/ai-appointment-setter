@@ -54,34 +54,36 @@ def test_it_is_one_transaction_and_the_last() -> None:
     # El historial de la pagina de aprobacion (20261103000600, E-295).
     # Si la persona ya es cliente (20261103000700, E-297).
     # Las cuatro ramas del pago rechazado nativo (20261103000900, E-306).
-    assert names[-1] == "20261103000900_flow_engine_native_payment_failure_branches_v1.sql"
-    assert names[-2] == "20261103000700_customer_status_v1.sql"
-    assert names[-3] == "20261103000600_flow_approval_history_v1.sql"
-    assert names[-4] == "20261103000500_meta_delivery_rejections_v1.sql"
-    assert names[-5] == "20261102000400_identity_recycle_v1.sql"
-    assert names[-6] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
-    assert names[-7] == "20261102000200_meta_template_requests_v1.sql"
-    assert names[-8] == "20261102000100_recovery_coupon_by_reply_v1.sql"
-    assert names[-9] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
-    assert names[-10] == "20261101000200_flow_engine_native_silence_v1.sql"
+    # El aviso de derivaciones sin atender (20261103001000, E-309).
+    assert names[-1] == "20261103001000_handoff_wait_alerts_v1.sql"
+    assert names[-2] == "20261103000900_flow_engine_native_payment_failure_branches_v1.sql"
+    assert names[-3] == "20261103000700_customer_status_v1.sql"
+    assert names[-4] == "20261103000600_flow_approval_history_v1.sql"
+    assert names[-5] == "20261103000500_meta_delivery_rejections_v1.sql"
+    assert names[-6] == "20261102000400_identity_recycle_v1.sql"
+    assert names[-7] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
+    assert names[-8] == "20261102000200_meta_template_requests_v1.sql"
+    assert names[-9] == "20261102000100_recovery_coupon_by_reply_v1.sql"
+    assert names[-10] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
+    assert names[-11] == "20261101000200_flow_engine_native_silence_v1.sql"
     # Antes, el primer contacto nativo (20261101000100, E-247): el disparador intencion.
-    assert names[-11] == "20261101000100_flow_engine_native_intent_v1.sql"
-    assert names[-12] == "20261030000400_portable_purchase_stops_see_our_link_v1.sql"
-    assert names[-13] == "20261030000300_flow_change_list_v1.sql"
-    assert names[-14] == "20261030000200_flow_engine_native_payment_failure_v1.sql"
-    assert names[-15] == "20261030000100_flow_engine_native_legacy_double_case_v1.sql"
-    assert names[-16] == "20261028000400_purchase_by_our_link_counts_v1.sql"
-    assert names[-17] == "20261028000300_pilot_scope_offer_append_v1.sql"
-    assert names[-18] == "20261028000200_flow_engine_native_cart_v1.sql"
-    assert names[-19] == "20261028000100_flow_change_slack_approver_v1.sql"
-    assert names[-20] == "20261026000200_flow_engine_native_offer_in_context_v1.sql"
-    assert names[-21] == "20261026000100_flow_engine_native_template_shape_v1.sql"
-    assert names[-22] == "20261025000400_purchase_agent_pause_v1.sql"
-    assert names[-23] == "20261025000300_handoff_link_note_v1.sql"
-    assert names[-24] == "20261025000200_payment_failure_product_name_btrim.sql"
-    assert names[-25] == "20261025000100_automation_expert_native_reads_v1.sql"
-    assert names[-26] == MIGRATION.name
-    assert names[-27] == "20261024000500_flow_engine_native_bridge_v1.sql"
+    assert names[-12] == "20261101000100_flow_engine_native_intent_v1.sql"
+    assert names[-13] == "20261030000400_portable_purchase_stops_see_our_link_v1.sql"
+    assert names[-14] == "20261030000300_flow_change_list_v1.sql"
+    assert names[-15] == "20261030000200_flow_engine_native_payment_failure_v1.sql"
+    assert names[-16] == "20261030000100_flow_engine_native_legacy_double_case_v1.sql"
+    assert names[-17] == "20261028000400_purchase_by_our_link_counts_v1.sql"
+    assert names[-18] == "20261028000300_pilot_scope_offer_append_v1.sql"
+    assert names[-19] == "20261028000200_flow_engine_native_cart_v1.sql"
+    assert names[-20] == "20261028000100_flow_change_slack_approver_v1.sql"
+    assert names[-21] == "20261026000200_flow_engine_native_offer_in_context_v1.sql"
+    assert names[-22] == "20261026000100_flow_engine_native_template_shape_v1.sql"
+    assert names[-23] == "20261025000400_purchase_agent_pause_v1.sql"
+    assert names[-24] == "20261025000300_handoff_link_note_v1.sql"
+    assert names[-25] == "20261025000200_payment_failure_product_name_btrim.sql"
+    assert names[-26] == "20261025000100_automation_expert_native_reads_v1.sql"
+    assert names[-27] == MIGRATION.name
+    assert names[-28] == "20261024000500_flow_engine_native_bridge_v1.sql"
 
 
 def test_the_validator_is_in_the_npm_chain() -> None:
@@ -102,7 +104,7 @@ def test_the_validator_is_in_the_npm_chain() -> None:
         " && node validate_flow_engine_native_intent.mjs"
         " && node validate_flow_engine_native_silence.mjs"
         " && node validate_followup_stops.mjs && node validate_recovery_coupon_by_reply.mjs"
-        " && node validate_meta_template_requests.mjs --check && node validate_flow_engine_native_silence_sweep.mjs && node validate_identity_recycle.mjs && node validate_meta_delivery_rejections.mjs && node validate_flow_approval_history.mjs && node validate_customer_status.mjs && node validate_flow_engine_native_payment_failure_branches.mjs --check")
+        " && node validate_meta_template_requests.mjs --check && node validate_flow_engine_native_silence_sweep.mjs && node validate_identity_recycle.mjs && node validate_meta_delivery_rejections.mjs && node validate_flow_approval_history.mjs && node validate_customer_status.mjs && node validate_flow_engine_native_payment_failure_branches.mjs --check && node validate_handoff_wait_alerts.mjs")
 
 
 def test_only_the_simulation_read_is_granted_and_only_to_service_role_and_the_agent() -> None:

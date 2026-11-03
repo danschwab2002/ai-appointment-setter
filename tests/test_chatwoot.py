@@ -3541,6 +3541,31 @@ def test_lists_open_and_resolved_conversations_until_the_activity_cutoff(
     assert listings == [("open", "1"), ("resolved", "1")]
 
 
+def test_without_messages_the_listing_does_not_read_any_conversation(
+    tmp_path: Path,
+) -> None:
+    # E-309: el aviso de derivaciones sin atender lee el historial solo de las
+    # que pueden avisar; el listado le da id, estado y etiquetas.
+    pages = _recent_pages()
+    requests: list[httpx.Request] = []
+    client = _reactivation_client(_recent_handler(pages, requests), tmp_path)
+    entries = asyncio.run(
+        client.list_recent_conversations_with_messages(
+            expected_inbox_id=9,
+            statuses=("open",),
+            active_since_epoch=RECENT_CUTOFF,
+            include_messages=False,
+        )
+    )
+    expected = [
+        item for item in pages["open"]["payload"] if item["last_activity_at"] >= RECENT_CUTOFF
+    ]
+    assert entries == [{"conversation": item} for item in expected]
+    assert all("labels" in entry["conversation"] for entry in entries)
+    assert _detail_ids(requests) == []
+    assert not any(request.url.path.endswith("/messages") for request in requests)
+
+
 def test_a_scan_that_runs_out_of_pages_before_the_cutoff_fails_closed(
     tmp_path: Path,
 ) -> None:

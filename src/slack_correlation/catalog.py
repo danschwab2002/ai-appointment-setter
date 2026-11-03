@@ -108,6 +108,9 @@ EVENT_TEMPLATES: dict[str, EventTemplate] = {
     "HND-009": EventTemplate("p2", "Resultado incierto al proyectar la derivación"),
     "HND-010": EventTemplate("p2", "Conflicto al proyectar la derivación"),
     "HND-011": EventTemplate("p2", "Proyección enviada a dead letter"),
+    # handoff-wait-alerts-v1 (E-309): la persona volvio a escribir en una
+    # conversacion pausada que el equipo dejo, y el agente no contesta.
+    "HND-012": EventTemplate("p2", "La persona volvió a escribir en una conversación pausada"),
     "COR-001": EventTemplate("p2", "Sin coincidencia"),
     "COR-002": EventTemplate("p2", "Coincidencia ambigua"),
     "COR-003": EventTemplate("p2", "Evidencia en conflicto"),
@@ -247,6 +250,15 @@ def render_message(
         if thread_ts is not None:
             message["thread_ts"] = thread_ts
         return message
+    if command.event_code in HANDOFF_WAIT_EVENT_CODES:
+        message = _render_handoff_wait(
+            command,
+            tenant_label=tenant_label,
+            conversation_base_url=conversation_base_url,
+        )
+        if thread_ts is not None:
+            message["thread_ts"] = thread_ts
+        return message
     headline_parts = [f"[{template.severity}] {template.title}", tenant_label]
     if command.subject_ref is not None:
         headline_parts.append(command.subject_ref)
@@ -353,6 +365,141 @@ def _render_new_handoff(
     return {
         "text": headline,
         "blocks": blocks,
+        "metadata": {
+            "event_type": "supportmagician_operational_event",
+            "event_payload": {
+                "event_id": command.event_id,
+                "event_code": command.event_code,
+            },
+        },
+    }
+
+
+# handoff-wait-alerts-v1 (E-309): los tres avisos de una persona que sigue
+# esperando al equipo. Los produce bridge.handoff_wait_alerts.
+HANDOFF_WAIT_EVENT_CODES = frozenset({"HND-005", "HND-006", "HND-012"})
+_HANDOFF_WAIT_HEADLINES = {
+    "HND-006": "Derivación sin respuesta del equipo",
+    "HND-005": "Se cierra la ventana de 24 h de WhatsApp",
+    "HND-012": "La persona volvió a escribir en una conversación pausada",
+}
+# Frases cerradas por motivo; un motivo que no esta aca sale como codigo.
+_HANDOFF_REASON_TEXT = {
+    "explicit_human_request": "pidió hablar con una persona",
+    "policy_requires_human": "la política manda el caso a una persona",
+    "commercial_exception": "excepción comercial",
+    "health_condition": "consulta de salud",
+    "agent_turn_failed": "el agente no pudo responder",
+    "payment_link_purchase_already_approved": "ya compró y pidió el link",
+    "payment_link_conversation_advanced": "la conversación avanzó después del link",
+    "customer_link_request": "es clienta y pidió el link",
+    "automation_paused": "conversación pausada",
+}
+
+
+def _handoff_reason_text(reason_code: str | None) -> str:
+    if reason_code is None:
+        return "sin motivo"
+    return _HANDOFF_REASON_TEXT.get(reason_code, f"`{reason_code}`")
+
+
+def _slack_date(value: datetime) -> str:
+    """Una fecha que Slack muestra en la hora de quien lee, con UTC de respaldo."""
+    epoch = int(value.timestamp())
+    fallback = value.astimezone(UTC).strftime("%Y-%m-%d %H:%MZ")
+    return f"<!date^{epoch}^{{date_short_pretty}} {{time}}|{fallback}>"
+
+
+def _render_handoff_wait(
+    command: NotificationCommand,
+    *,
+    tenant_label: str,
+    conversation_base_url: str | None,
+) -> dict[str, Any]:
+    """HND-005, HND-006 y HND-012: una persona que sigue esperando al equipo.
+
+    Una frase cerrada con el numero de conversacion, el motivo y las horas de
+    espera (``count``), y en el HND-005 la hora en que se cierra la ventana
+    (``deadline_at``). Nada de la persona viaja en el comando. Con la base de
+    Chatwoot del tenant, el mismo boton que HND-001.
+    """
+    if (
+        not isinstance(tenant_label, str)
+        or not tenant_label
+        or len(tenant_label) > 100
+        or any(ord(character) < 32 or ord(character) == 127 for character in tenant_label)
+        or any(character in tenant_label for character in "`<>&")
+    ):
+        raise ValueError("invalid_tenant_label")
+    match = (
+        _CHATWOOT_CONVERSATION_COMPONENT.fullmatch(command.component)
+        if command.component is not None
+        else None
+    )
+    if match is None:
+        raise ValueError("handoff_wait_conversation_required")
+    if command.event_code == "HND-005" and command.deadline_at is None:
+        raise ValueError("handoff_wait_deadline_required")
+    template = EVENT_TEMPLATES[command.event_code]
+    conversation = match.group(1)
+    hours = command.count if command.count is not None else 0
+    reason = _handoff_reason_text(command.reason_code)
+    since = _slack_date(command.occurred_at)
+    if command.event_code == "HND-006":
+        body = (
+            f"La conversación *#{conversation}* lleva *{hours} h* esperando "
+            f"respuesta del equipo (derivada {since}).\n"
+            f"*Motivo:* {reason}."
+        )
+    elif command.event_code == "HND-005":
+        assert command.deadline_at is not None
+        body = (
+            f"La conversación *#{conversation}* sigue sin respuesta del equipo "
+            f"y la ventana de 24 h se cierra {_slack_date(command.deadline_at)}. "
+            "Después de esa hora solo se le puede escribir con una plantilla.\n"
+            f"*Motivo:* {reason} · derivada hace {hours} h."
+        )
+    else:
+        body = (
+            f"La conversación *#{conversation}* está pausada y la persona "
+            f"escribió hace *{hours} h* ({since}). El equipo fue el último en "
+            "escribirle y el agente no contesta mientras siga pausada."
+        )
+    headline = (
+        f"[{template.severity}] {_HANDOFF_WAIT_HEADLINES[command.event_code]}"
+        f" · {tenant_label}"
+    )
+    blocks: list[dict[str, Any]] = [
+        {"type": "header", "text": {"type": "plain_text", "text": headline}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": body}},
+        {
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": f"`{command.event_code}`"}],
+        },
+    ]
+    conversation_url = _conversation_url(command, conversation_base_url)
+    if conversation_url is not None:
+        blocks.append(
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "action_id": HANDOFF_CONVERSATION_LINK_ACTION_ID,
+                        "text": {
+                            "type": "plain_text",
+                            "text": HANDOFF_CONVERSATION_LINK_LABEL,
+                        },
+                        "url": conversation_url,
+                    }
+                ],
+            }
+        )
+    return {
+        "text": headline,
+        "blocks": blocks,
+        "unfurl_links": False,
+        "unfurl_media": False,
         "metadata": {
             "event_type": "supportmagician_operational_event",
             "event_payload": {

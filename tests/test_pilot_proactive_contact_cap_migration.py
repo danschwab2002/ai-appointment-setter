@@ -142,6 +142,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261103000700",
         # Las cuatro ramas del pago rechazado nativo (20261103000900, E-306).
         "20261103000900",
+        # El aviso de derivaciones sin atender (20261103001000, E-309).
+        "20261103001000",
     ]
 
     sql = _sql()

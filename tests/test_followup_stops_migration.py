@@ -33,15 +33,17 @@ def test_it_is_one_transaction_with_lock_timeout_and_the_last() -> None:
     # El historial de la pagina de aprobacion (20261103000600, E-295).
     # Si la persona ya es cliente (20261103000700, E-297).
     # Las cuatro ramas del pago rechazado nativo (20261103000900, E-306).
-    assert names[-1] == "20261103000900_flow_engine_native_payment_failure_branches_v1.sql"
-    assert names[-2] == "20261103000700_customer_status_v1.sql"
-    assert names[-3] == "20261103000600_flow_approval_history_v1.sql"
-    assert names[-4] == "20261103000500_meta_delivery_rejections_v1.sql"
-    assert names[-5] == "20261102000400_identity_recycle_v1.sql"
-    assert names[-6] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
-    assert names[-7] == "20261102000200_meta_template_requests_v1.sql"
-    assert names[-8] == "20261102000100_recovery_coupon_by_reply_v1.sql"
-    assert names[-9] == MIGRATION.name
+    # El aviso de derivaciones sin atender (20261103001000, E-309).
+    assert names[-1] == "20261103001000_handoff_wait_alerts_v1.sql"
+    assert names[-2] == "20261103000900_flow_engine_native_payment_failure_branches_v1.sql"
+    assert names[-3] == "20261103000700_customer_status_v1.sql"
+    assert names[-4] == "20261103000600_flow_approval_history_v1.sql"
+    assert names[-5] == "20261103000500_meta_delivery_rejections_v1.sql"
+    assert names[-6] == "20261102000400_identity_recycle_v1.sql"
+    assert names[-7] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
+    assert names[-8] == "20261102000200_meta_template_requests_v1.sql"
+    assert names[-9] == "20261102000100_recovery_coupon_by_reply_v1.sql"
+    assert names[-10] == MIGRATION.name
     assert sql.count("\nbegin;\n") == 1 and sql.rstrip().endswith("commit;")
     assert "set local lock_timeout = '5s';" in sql
     assert "message = 'followup_stops_already_applied'" in sql

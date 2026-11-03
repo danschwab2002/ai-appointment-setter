@@ -510,6 +510,11 @@ def verify_effective_acls(harness: PostgresHarness) -> None:
                      -- human_handoff_requests (no reintenta sobre una
                      -- derivacion sin atender); solo lee esa tabla.
                      'claim_meta_first_touch_retry_v1',
+                     -- Las derivaciones sin atender de una bandeja, para el
+                     -- aviso por Slack (migracion 20261103001000, E-309):
+                     -- id, conversacion, motivos y hora, sin la nota; solo
+                     -- lee esa tabla.
+                     'list_unattended_human_handoffs_v1',
                      -- Las lecturas del Automation Expert (migracion
                      -- 20261015000200): atan un lead a la instancia por la
                      -- bandeja de su derivacion y muestran cuando se derivo
