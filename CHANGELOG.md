@@ -12,6 +12,11 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Cambiado
+
+- **Las citas de `flow_parity.py` al código ya no van por número de línea** (E-318). Cada excepción de `EXCEPTIONS_V1` que apunta a Python se cita por marca (`src/bridge/app.py#a1_cupon_por_flag`): el bloque entre `# flow-parity: <nombre>` y `# flow-parity-fin: <nombre>` del archivo, con el nombre de la excepción. `tests/test_flow_engine_exceptions.py` busca la marca en vez de contar líneas, así que un PR que mueve código de `app.py`, `worker.py`, `cart_first_touch.py` o `cart_followups.py` ya no rompe la prueba; borrar la marca, duplicarla, dejar una sin citar o sacar la lógica de entre las dos líneas, sí. Las citas a migraciones siguen por línea (una migración aplicada no se edita), y la prueba frena cualquier cita nueva por línea a un `.py`. Sin cambio de comportamiento.
+
+
 ## [1.29.0] - 2026-11-03
 
 Una menor sobre la 1.28.0, con cinco PR (#406, #407, #408, #409 y #410) y dos migraciones. Lo grande son las cuatro versiones del pago rechazado en el motor nativo (#407 y #408): se pueden escribir en un flujo nativo con la cadena de condiciones de ATT1, y la base las abre, el bridge elige la rama y la manda con el botón de nuestro link y el cupón fijo; sin un flujo nativo así, nada cambia. Con `CUSTOMER_HANDOFF_NOTICE_ENABLED` (#406, apagado), a una clienta que se deriva le llega el aviso fijo; con `HANDOFF_WAIT_ALERTS_ENABLED` (#410, apagado), el canal de la aliada recibe un aviso cuando una persona derivada sigue esperando. **Al subir cambia el profile del agente comercial** (#409): el SOUL común suma la ruta «Es cliente», con el flag de la 1.28.0 prendido o no (si la persona dice que ya compró). Cambian también el SOUL del Automation Expert y su biblioteca (cómo se escribe la cadena del pago rechazado). La imagen de Hermes no cambia. **El conector de Slack cambia** (#410: `HND-012` entra en su catálogo y tres avisos comparten una tarjeta nueva): sube junto con el bridge.

@@ -5877,7 +5877,9 @@ def create_app(
                     "durable outbound requires Hermes and sender dependencies"
                 )
         cart_discount: CartDiscountConfig | None = None
+        # flow-parity: a1_cupon_por_flag
         if settings.recovery_discount_first_touch_enabled:
+            # flow-parity-fin: a1_cupon_por_flag
             # A1 lee el cupon que crea el worker del cupon y sale como
             # plantilla aprobada con la compuerta final: sin los dos, no
             # arranca en vez de mandar A1 sin descuento para siempre.
