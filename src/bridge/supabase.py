@@ -4738,6 +4738,84 @@ class SupabaseClient:
             )
         return handoffs
 
+    async def get_segment_entry_answers(
+        self,
+        *,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        chatwoot_conversation_id: int,
+    ) -> dict[str, str]:
+        """Lo que contesto una conversacion a la pregunta de entrada, por segmento.
+
+        ``get_segment_entry_answers_v1`` (20261103001500, E-317,
+        ``campaign-inbound-entry-v1``): solo lectura, sin nada de la persona.
+        """
+        operation = "segment_entry_answers"
+        for value in (chatwoot_account_id, chatwoot_inbox_id, chatwoot_conversation_id):
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError("invalid segment entry answers query")
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_segment_entry_answers_v1",
+            content=json.dumps(
+                {
+                    "p_chatwoot_account_id": chatwoot_account_id,
+                    "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                    "p_chatwoot_conversation_id": chatwoot_conversation_id,
+                }
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        answers: dict[str, str] = {}
+        for row in _response_rows(response, operation=operation):
+            if set(row) != {"segment_key", "answer"}:
+                raise SupabaseError(f"{operation}_invalid")
+            key = _required_string(row, "segment_key", operation=operation)
+            answers[key] = _required_enum(row, "answer", {"si", "no"}, operation=operation)
+        return answers
+
+    async def record_segment_entry_answer(
+        self,
+        *,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        chatwoot_conversation_id: int,
+        segment_key: str,
+        answer: str,
+    ) -> str:
+        """Registrar la respuesta a la pregunta de entrada (D4 de E-319).
+
+        ``record_segment_entry_answer_v1`` (20261103001500, E-317). Idempotente:
+        la primera respuesta queda, y una segunda devuelve ``replayed``.
+        """
+        operation = "record_segment_entry_answer"
+        for value in (chatwoot_account_id, chatwoot_inbox_id, chatwoot_conversation_id):
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError("invalid segment entry answer")
+        if answer not in ("si", "no") or not isinstance(segment_key, str) or not segment_key:
+            raise ValueError("invalid segment entry answer")
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/record_segment_entry_answer_v1",
+            content=json.dumps(
+                {
+                    "p_chatwoot_account_id": chatwoot_account_id,
+                    "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                    "p_chatwoot_conversation_id": chatwoot_conversation_id,
+                    "p_segment_key": segment_key,
+                    "p_answer": answer,
+                }
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1 or set(rows[0]) != {"outcome", "answer"}:
+            raise SupabaseError(f"{operation}_invalid")
+        _required_enum(rows[0], "answer", {"si", "no"}, operation=operation)
+        return _required_enum(rows[0], "outcome", {"recorded", "replayed"}, operation=operation)
+
     async def claim_slack_handoff_notifications(
         self,
         *,

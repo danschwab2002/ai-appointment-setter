@@ -16,6 +16,7 @@ from typing import Protocol
 import httpx
 
 from bridge.agent_provenance import AgentTurn, build_turn
+from bridge.campaign_inbound_entry import CAMPAIGN_ANSWER_KEY
 
 
 _CAPTURED_FIELDS = {
@@ -353,8 +354,15 @@ class HermesShadowProcessor:
         provenance_recorder: TurnProvenanceRecorder | None = None,
         system_prompt: str | None = None,
         product_keys: tuple[str, ...] = (),
+        campaign_answers: bool = False,
     ) -> None:
         self._base_url = base_url.rstrip("/")
+        # E-317 (campaign-inbound-entry-v1): con la entrada a las campanas prendida, la
+        # salida puede traer `campana_respuesta` ("si" | "no"). Se saca de la
+        # propuesta antes de validarla y se guarda aparte: la propuesta queda con
+        # la forma de siempre para todo el que la lee. Apagado, una clave de mas
+        # invalida la propuesta, como hoy.
+        self._campaign_answers = campaign_answers
         # Las claves de [[productos]] del manifiesto: las unicas que acepta
         # `product` en la propuesta. Vacio, la salida es la de siempre.
         self._product_keys = frozenset(product_keys)
@@ -420,6 +428,28 @@ class HermesShadowProcessor:
             return None
         reason = result.get("reason")
         return reason if isinstance(reason, str) else None
+
+    @property
+    def accepts_campaign_answers(self) -> bool:
+        return self._campaign_answers
+
+    def get_campaign_answer(self, *, delivery_id: str) -> str | None:
+        """Lo que contesto la persona a la pregunta de entrada (E-317), o None."""
+        digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
+        try:
+            result = json.loads(
+                (self._shadow_dir / f"{digest}.json").read_text(encoding="utf-8")
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return None
+        if (
+            not isinstance(result, dict)
+            or result.get("delivery_id_hash") != digest
+            or result.get("status") != "completed"
+        ):
+            return None
+        answer = result.get("campaign_answer")
+        return answer if answer in ("si", "no") else None
 
     def get_completed_proposal(
         self, *, delivery_id: str
@@ -531,6 +561,13 @@ class HermesShadowProcessor:
                                 )
                                 else {}
                             ),
+                            # E-317: el aviso de campana va con su tipo, para no
+                            # contarlo como el bloque de un segmento.
+                            **(
+                                {"kind": kind}
+                                if isinstance(kind := getattr(block, "kind", None), str)
+                                else {}
+                            ),
                         }
                         for block in extra_system
                     ),
@@ -628,6 +665,18 @@ class HermesShadowProcessor:
                     proposal_text
                 )
 
+            campaign_answer: str | None = None
+            if (
+                self._campaign_answers
+                and isinstance(proposal, dict)
+                and CAMPAIGN_ANSWER_KEY in proposal
+            ):
+                proposal = dict(proposal)
+                raw_answer = proposal.pop(CAMPAIGN_ANSWER_KEY)
+                # Otro valor (null, "tal vez") no invalida la respuesta: no se
+                # registra nada, como sin respuesta clara.
+                campaign_answer = raw_answer if raw_answer in ("si", "no") else None
+
             if isinstance(proposal, dict) and _is_valid_proposal(
                 proposal, self._product_keys
             ):
@@ -640,6 +689,8 @@ class HermesShadowProcessor:
                     # Senal positiva, como `attempts`: solo aparece en los
                     # turnos rescatados de la prosa, para poder contarlos.
                     completed["parsed_from"] = parsed_from
+                if campaign_answer is not None:
+                    completed["campaign_answer"] = campaign_answer
                 self._persist_result(
                     digest=digest,
                     result=self._attempted(completed, attempt=attempt),

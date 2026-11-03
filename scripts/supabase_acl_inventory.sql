@@ -205,7 +205,10 @@ expected_service_role(signature) as (
         ('public.get_flow_engine_native_payment_failure_context_v1(uuid, text, bigint, timestamp with time zone)'),
         ('public.record_flow_engine_native_branch_v1(uuid, uuid, text, bigint, integer, timestamp with time zone)'),
         -- 20261103001000: las derivaciones sin atender, para el aviso por Slack (E-309).
-        ('public.list_unattended_human_handoffs_v1(bigint, bigint, timestamp with time zone, integer)')
+        ('public.list_unattended_human_handoffs_v1(bigint, bigint, timestamp with time zone, integer)'),
+        -- 20261103001500: las respuestas a la pregunta de entrada de una campana (E-317).
+        ('public.record_segment_entry_answer_v1(bigint, bigint, bigint, text, text, timestamp with time zone)'),
+        ('public.get_segment_entry_answers_v1(bigint, bigint, bigint)')
 ),
 functions as (
     select

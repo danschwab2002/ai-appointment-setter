@@ -130,6 +130,8 @@ etiqueta = "campana-de-prueba"                             # la etiqueta de Chat
 conocimiento = "conocimiento/segmentos/campana-de-prueba-v1.toml"
 prioridad = 10                                             # menor va primero
 # macro_etiqueta = 123                                     # opcional: el macro que solo suma la etiqueta (para el motor)
+# palabras_clave = ["Black November"]                      # opcional (E-317): la palabra clave del primer mensaje
+# pregunta_entrada = "¿Nos escribes por Black November?"   # opcional (E-317): la pregunta a quien escribe sin ella
 ```
 
 | Campo | Qué es | Si falta o está mal |
@@ -139,6 +141,8 @@ prioridad = 10                                             # menor va primero
 | `conocimiento` | Ruta relativa al `.toml` del segmento, que se llama `<clave>-v<N>.toml`; no puede ser el conocimiento base | No carga |
 | `prioridad` | Entero de 0 a 1000. Menor va primero y manda en lo que se contradiga. Dos segmentos con la misma prioridad y vigencias que se pisan no cargan | No carga |
 | `macro_etiqueta` | Opcional. El id del macro de Chatwoot que solo suma la etiqueta. Hoy no lo usa nadie: es para el paso `etiquetar` del motor | No carga si no es un entero positivo |
+| `palabras_clave` | Opcional (E-317, [campaign-inbound-entry-v1.md](contracts/campaign-inbound-entry-v1.md)). De 1 a 8 palabras clave con las que esperamos que la persona empiece la conversación (por ejemplo «Black November»). Se buscan **contenidas en cualquier parte del primer mensaje**, sin acentos, mayúsculas ni espacios de más, como palabras enteras: no hace falta que el mensaje sea el texto exacto del botón. Pide `macro_etiqueta`. Solo actúa con `CAMPAIGN_INBOUND_ENTRY_ENABLED`. Hoy se declara acá; que la configure el Automation Expert es el encargo siguiente | No carga si falta el macro, si una palabra clave no tiene letras ni números, pasa de 80 caracteres o se repite (también entre segmentos) |
+| `pregunta_entrada` | Opcional (E-317). Una línea de hasta 200 caracteres: lo que el agente le pregunta a quien escribe por su cuenta sin la palabra clave. Pide `macro_etiqueta`. Dos segmentos con la pregunta y vigencias que se pisan no arrancan (D5) | No carga si falta el macro o pasa del largo |
 
 Hasta 8 segmentos; la clave, la etiqueta, el archivo y el macro no se repiten. La vigencia va en el archivo del segmento, no acá.
 

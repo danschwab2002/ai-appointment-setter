@@ -34,8 +34,10 @@ def _code() -> str:
 def test_it_is_one_transaction_with_lock_timeout_and_the_last() -> None:
     sql = _sql()
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
-    assert names[-1] == MIGRATION.name
-    assert names[-2] == "20261103001000_handoff_wait_alerts_v1.sql"
+    # La entrada a una campana: lo que contesto cada conversacion a la pregunta (20261103001500, E-317).
+    assert names[-1] == "20261103001500_segment_entry_answers_v1.sql"
+    assert names[-2] == MIGRATION.name
+    assert names[-3] == "20261103001000_handoff_wait_alerts_v1.sql"
     assert sql.count("\nbegin;\n") == 1 and sql.rstrip().endswith("commit;")
     assert "set local lock_timeout = '5s';" in sql
     assert "message = 'flow_engine_native_segment_label_already_applied'" in sql
@@ -81,4 +83,4 @@ def test_the_replaced_text_is_the_live_definition() -> None:
 def test_the_validator_is_the_last_of_the_npm_chain() -> None:
     chain = json.loads(PACKAGE.read_text(encoding="utf-8"))["scripts"]["test"]
     assert chain.rstrip().endswith(
-        " && node validate_handoff_wait_alerts.mjs && node validate_flow_engine_native_segment_label.mjs")
+        " && node validate_handoff_wait_alerts.mjs && node validate_flow_engine_native_segment_label.mjs && node validate_segment_entry_answers.mjs")

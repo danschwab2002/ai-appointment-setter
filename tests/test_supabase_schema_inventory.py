@@ -467,12 +467,19 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # listar, reservar, cerrar y frenar el reintento, y marcar el aviso.
     # 20261103000700 (si la persona ya es cliente, E-297) suma su lectura.
     # 20261103001000 (el aviso de derivaciones sin atender, E-309) suma su lectura.
-    assert len(allowlisted) == 189
+    # 20261103001500 (las respuestas a la pregunta de entrada de una campana, E-317)
+    # suma registrar y leer.
+    assert len(allowlisted) == 191
     assert (
         "list_unattended_human_handoffs_v1(bigint, bigint, timestamp with time zone, integer)"
         in allowlisted
     )
     assert "get_customer_status_v1(text, text[], bigint, bigint, bigint, text)" in allowlisted
+    assert (
+        "record_segment_entry_answer_v1(bigint, bigint, bigint, text, text, timestamp with time zone)"
+        in allowlisted
+    )
+    assert "get_segment_entry_answers_v1(bigint, bigint, bigint)" in allowlisted
     # 20261103000900 (las ramas del pago rechazado nativo, E-306): los datos y el registro.
     assert ("get_flow_engine_native_payment_failure_context_v1(uuid, text, bigint, timestamp with time zone)"
             in allowlisted)
@@ -1927,16 +1934,36 @@ def test_customer_status_fingerprint_is_last() -> None:
         assert marker in compact_fingerprint, marker
 
 
-def test_segment_label_fingerprint_is_last() -> None:
+def test_segment_entry_answers_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261103001500 (lo que contesto cada conversacion a la pregunta
+    # de entrada de una campana, E-317) es la ultima: la tabla con RLS y sin
+    # lectura para la API, y las dos funciones solo para service_role.
+    fingerprint = sql.split("'20261103001500'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261103001500_segment_entry_answers_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'segment_entry_answers')")
+    assert "to_regclass('public.segment_entry_answers')" in compact_fingerprint
+    assert "c.relrowsecurity" in compact_fingerprint
+    assert (
+        "to_regprocedure('public.record_segment_entry_answer_v1(bigint,bigint,bigint,text,text,timestamptz)')"
+        in compact_fingerprint
+    )
+    assert "to_regprocedure('public.get_segment_entry_answers_v1(bigint,bigint,bigint)')" in compact_fingerprint
+    assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
+
+
+def test_segment_label_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261103001300 (la etiqueta de un segmento en un flujo nativo,
-    # E-316) es la ultima: la forma nativa con su marca y la de las ramas del
-    # pago rechazado, que el reemplazo contado conserva.
-    fingerprint = sql.split("'20261103001300'", 1)[1].split("select\n    version,", 1)[0]
+    # E-316) fue la ultima hasta E-317: la forma nativa con su marca y la de las
+    # ramas del pago rechazado, que el reemplazo contado conserva.
+    fingerprint = sql.split("'20261103001300'", 1)[1].split("\n    union all\n", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261103001300_flow_engine_native_segment_label_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",1,'flow_engine_native_segment_label')")
+    assert compact_fingerprint.endswith(",1,'flow_engine_native_segment_label'")
     assert "to_regprocedure('public._flow_engine_native_unsupported(jsonb)')" in compact_fingerprint
     assert "position('flow_engine_native_segment_label'indefinition)>0" in compact_fingerprint
     assert "position('flow_engine_native_payment_failure_branches'indefinition)>0" in compact_fingerprint
