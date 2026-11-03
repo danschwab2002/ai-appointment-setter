@@ -32,14 +32,10 @@ import pytest
 
 from bridge.chatwoot import ChatwootProtocolError
 from bridge.handoff_wait_alerts import (
-    BusinessCalendar,
     HandoffWaitAlertSweeper,
     UnattendedHandoff,
     WaitAlert,
-    business_days_text,
     evaluate_wait_alerts,
-    parse_business_days,
-    parse_business_hours,
 )
 from slack_correlation.catalog import EVENT_TEMPLATES, render_message
 from slack_correlation.producer import (
@@ -56,7 +52,6 @@ CONV_50 = json.loads(
     )
 )["conversation"]
 MX = ZoneInfo("America/Mexico_City")
-CALENDAR = BusinessCalendar(time_zone=MX)
 TWO_HOURS = 7200
 WEEK = 168 * 3600
 HANDOFF_ID = "7c1f2e0a-4b9d-4c55-9d1e-2f6a0b3c4d5e"
@@ -94,69 +89,31 @@ def _evaluate(details: dict, messages: list[dict], *, now: int, handoff=None, **
         handoff=handoff,
         expected_inbox_id=11,
         now_epoch=now,
-        calendar=kw.get("calendar", CALENDAR),
-        after_business_seconds=kw.get("after", TWO_HOURS),
+        after_seconds=kw.get("after", TWO_HOURS),
         max_age_seconds=kw.get("max_age", WEEK),
     )
-
-
-# ── el calendario ──────────────────────────────────────────────────────────
-
-
-def test_a_saturday_handoff_starts_counting_on_monday_morning() -> None:
-    # La 50: derivada el sabado 15:49; con 2 h habiles de lunes a viernes 09-18
-    # vence el lunes a las 11:00, no el sabado a las 17:49.
-    assert CALENDAR.add_business_seconds(HANDOFF_AT, TWO_HOURS) == _mx("2026-10-12 11:00")
-
-
-def test_the_threshold_crosses_the_end_of_the_day() -> None:
-    # Viernes 17:00 + 2 h: una hora el viernes y una el lunes.
-    assert CALENDAR.add_business_seconds(_mx("2026-10-16 17:00"), TWO_HOURS) == _mx(
-        "2026-10-19 10:00"
-    )
-    # Adentro del horario es reloj comun.
-    assert CALENDAR.add_business_seconds(_mx("2026-10-13 10:30"), TWO_HOURS) == _mx(
-        "2026-10-13 12:30"
-    )
-
-
-def test_a_seven_day_calendar_counts_the_weekend() -> None:
-    every_day = BusinessCalendar(time_zone=MX, weekdays=frozenset(range(1, 8)))
-    assert every_day.add_business_seconds(HANDOFF_AT, TWO_HOURS) == HANDOFF_AT + TWO_HOURS  # sabado 17:49
-
-
-def test_the_calendar_rejects_an_impossible_schedule() -> None:
-    with pytest.raises(ValueError):
-        BusinessCalendar(time_zone=MX, start_hour=18, end_hour=9)
-    with pytest.raises(ValueError):
-        BusinessCalendar(time_zone=MX, weekdays=frozenset())
-    with pytest.raises(ValueError):
-        BusinessCalendar(time_zone=MX, weekdays=frozenset({0}))
-
-
-def test_the_environment_values_parse_and_print_back() -> None:
-    assert parse_business_hours("") == (9, 18)
-    assert parse_business_hours("08-20") == (8, 20)
-    assert parse_business_days("") == frozenset({1, 2, 3, 4, 5})
-    assert parse_business_days("1-6") == frozenset(range(1, 7))
-    assert parse_business_days("1,3,5") == frozenset({1, 3, 5})
-    assert business_days_text(frozenset(range(1, 6))) == "1-5"
-    assert business_days_text(frozenset({1, 3, 5})) == "1,3,5"
-    for bad in ("9-18", "18-09", "00-25", "nine"):
-        with pytest.raises(ValueError):
-            parse_business_hours(bad)
-    for bad in ("5-1", "0-5", "1,1", "lun-vie", "8"):
-        with pytest.raises(ValueError):
-            parse_business_days(bad)
 
 
 # ── la derivacion sin respuesta y la ventana ───────────────────────────────
 
 
 def test_before_the_threshold_nothing_is_due() -> None:
+    # Sin corte por horario (E-309b): la derivacion del sabado 15:49 vence a las
+    # 17:49 del mismo sabado, a 2 h de reloj.
     details, messages = _until(2839)
-    alerts, skip = _evaluate(details, messages, handoff=_handoff(), now=_mx("2026-10-12 10:00"))
+    alerts, skip = _evaluate(details, messages, handoff=_handoff(), now=HANDOFF_AT + TWO_HOURS - 1)
     assert alerts == () and skip == "handoff_not_due"
+    alerts, _ = _evaluate(details, messages, handoff=_handoff(), now=HANDOFF_AT + TWO_HOURS)
+    assert [alert.kind for alert in alerts] == ["unattended"]
+
+
+def test_the_threshold_counts_clock_hours_even_on_the_weekend() -> None:
+    # Con otro umbral, lo mismo: horas corridas desde la derivacion.
+    details, messages = _until(2839)
+    four = 4 * 3600
+    assert _evaluate(details, messages, handoff=_handoff(), now=HANDOFF_AT + four - 1, after=four)[0] == ()
+    alerts, _ = _evaluate(details, messages, handoff=_handoff(), now=HANDOFF_AT + four, after=four)
+    assert alerts[0].waited_hours == 4
 
 
 def test_the_unattended_alert_carries_only_the_conversation_reason_and_hours() -> None:
@@ -186,30 +143,22 @@ def test_the_unattended_alert_carries_only_the_conversation_reason_and_hours() -
 def test_the_window_alert_fires_two_hours_before_it_closes_even_on_sunday() -> None:
     # La ultima de la persona es la 2836 (sabado 15:48): la ventana se cierra el
     # domingo 15:48 y el aviso sale desde las 13:48, aunque el equipo no atienda
-    # el domingo. El de la derivacion todavia no vence (lunes 11:00).
+    # el domingo. El de la derivacion ya vencio el sabado: salen los dos.
     details, messages = _until(2839)
     closes = 1791668934 + 86400
     alerts, skip = _evaluate(details, messages, handoff=_handoff(), now=closes - 3600)
     assert skip is None
-    assert [alert.kind for alert in alerts] == ["window_closing"]
-    window = alerts[0]
+    assert [alert.kind for alert in alerts] == ["unattended", "window_closing"]
+    window = alerts[1]
     assert window.cycle_key == "window:50:2836"
     assert window.deadline_epoch == closes
     command = window.command(account_id=2, inbox_id=11)
     assert command.event_code == "HND-005"
     assert command.deadline_at == datetime.fromtimestamp(closes, UTC)
-    # Antes de las 2 h y despues de cerrarse, no.
-    assert _evaluate(details, messages, handoff=_handoff(), now=closes - 7201)[0] == ()
-    assert _evaluate(details, messages, handoff=_handoff(), now=closes)[0] == ()
-
-
-def test_both_alerts_when_the_threshold_passed_and_the_window_is_closing() -> None:
-    every_day = BusinessCalendar(time_zone=MX, weekdays=frozenset(range(1, 8)))
-    details, messages = _until(2839)
-    alerts, _ = _evaluate(
-        details, messages, handoff=_handoff(), now=1791668934 + 86400 - 600, calendar=every_day
-    )
-    assert [alert.kind for alert in alerts] == ["unattended", "window_closing"]
+    # Antes de las 2 h y despues de cerrarse, solo el de la derivacion.
+    for now in (closes - 7201, closes):
+        kinds = [a.kind for a in _evaluate(details, messages, handoff=_handoff(), now=now)[0]]
+        assert kinds == ["unattended"]
 
 
 def test_a_team_reply_after_the_handoff_counts_as_attended() -> None:
@@ -450,7 +399,6 @@ def _sweeper(chatwoot, supabase, producer, now: int) -> HandoffWaitAlertSweeper:
         producer=producer,
         account_id=2,
         inbox_id=11,
-        calendar=CALENDAR,
         clock=lambda: float(now),
     )
 
@@ -532,8 +480,8 @@ def test_the_sweeper_rejects_an_impossible_configuration() -> None:
     chatwoot = _Chatwoot(entries={}, reads=[])
     supabase = _Supabase(handoffs=[], calls=[])
     for kwargs in (
-        {"after_business_hours": 0},
-        {"after_business_hours": 73},
+        {"after_hours": 0},
+        {"after_hours": 73},
         {"max_age_hours": 12},
         {"scan_interval_seconds": 10},
     ):
@@ -544,6 +492,5 @@ def test_the_sweeper_rejects_an_impossible_configuration() -> None:
                 producer=_Producer(),
                 account_id=3,
                 inbox_id=13,
-                calendar=CALENDAR,
-                **kwargs,
+                        **kwargs,
             )

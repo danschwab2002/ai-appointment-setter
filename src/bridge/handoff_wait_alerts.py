@@ -9,9 +9,10 @@ mediana es de 6,1 h, el fin de semana de 59 h, y una sola persona contesta.
 Tres avisos, al canal de Slack de la aliada por su conector (el mismo productor
 que HND-001, MSG-002 y MOT-002):
 
-* ``unattended`` (HND-006): una derivacion lleva N horas habiles sin respuesta
-  del equipo. Las horas habiles salen de un calendario propio (dias y horario,
-  en la zona del manifiesto).
+* ``unattended`` (HND-006): una derivacion lleva N horas corridas sin
+  respuesta del equipo (2 por defecto). Sin corte por horario (Dan, 03/11: «no
+  es necesario un corte por horario», E-309b): a las 2 h de una derivacion del
+  sabado a la noche sale el aviso, aunque el equipo no atienda a esa hora.
 * ``window_closing`` (HND-005): faltan 2 h para que se cierre la ventana de 24 h
   de WhatsApp de una persona derivada que nadie contesto. Despues de eso el
   equipo solo puede escribirle con una plantilla.
@@ -33,7 +34,7 @@ recuerda lo admitido para no pedirlo en cada barrido.
 
 Piezas, separadas a proposito:
 
-* ``BusinessCalendar`` y ``evaluate_wait_alerts`` son el criterio, puro y sin
+* ``evaluate_wait_alerts`` es el criterio, puro y sin
   red, sobre el detalle de la conversacion (GET show), su historial y la
   derivacion sin atender que devuelve la base. Se testean contra capturas.
 * ``HandoffWaitAlertSweeper`` es el worker recurrente: pide a la base las
@@ -55,8 +56,7 @@ import uuid
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import UTC, datetime
 
 from bridge.chatwoot import ChatwootProtocolError
 from bridge.slack_notifications import NotificationProducer
@@ -79,9 +79,7 @@ SERVICE_WINDOW_SECONDS = 86_400
 # Dan (03/11): avisar cuando faltan 2 h, para que el equipo conteste con texto
 # y no con plantilla.
 WINDOW_WARNING_SECONDS = 7_200
-DEFAULT_AFTER_BUSINESS_HOURS = 2
-DEFAULT_BUSINESS_HOURS = (9, 18)
-DEFAULT_BUSINESS_DAYS = frozenset({1, 2, 3, 4, 5})
+DEFAULT_AFTER_HOURS = 2
 DEFAULT_MAX_AGE_HOURS = 168
 DEFAULT_SCAN_INTERVAL_SECONDS = 600.0
 DEFAULT_MAX_PAGES = 10
@@ -89,68 +87,6 @@ DEFAULT_MAX_CONVERSATIONS_PER_SCAN = 60
 PAUSED_REPLY_REASON = "automation_paused"
 _NAMESPACE = uuid.UUID("5d0f3a52-6c1e-4f6b-9b51-0e3f8f7c2a09")
 _MACHINE_REASON = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,79}$")
-_HOURS_RE = re.compile(r"([0-9]{2})-([0-9]{2})")
-_DAYS_RANGE_RE = re.compile(r"([1-7])-([1-7])")
-
-
-@dataclass(frozen=True)
-class BusinessCalendar:
-    """Los dias (ISO, lunes = 1) y el horario [inicio, fin) en que el equipo atiende."""
-
-    time_zone: ZoneInfo
-    weekdays: frozenset[int] = DEFAULT_BUSINESS_DAYS
-    start_hour: int = DEFAULT_BUSINESS_HOURS[0]
-    end_hour: int = DEFAULT_BUSINESS_HOURS[1]
-
-    def __post_init__(self) -> None:
-        if (
-            not isinstance(self.time_zone, ZoneInfo)
-            or not isinstance(self.weekdays, frozenset)
-            or not self.weekdays
-            or not self.weekdays <= frozenset(range(1, 8))
-            or isinstance(self.start_hour, bool)
-            or isinstance(self.end_hour, bool)
-            or not isinstance(self.start_hour, int)
-            or not isinstance(self.end_hour, int)
-            or not 0 <= self.start_hour < self.end_hour <= 24
-        ):
-            raise ValueError("invalid handoff wait business calendar")
-
-    def _day_window(self, day: datetime) -> tuple[int, int]:
-        """Inicio y fin del horario de ese dia local, en epoch (respeta el cambio de hora)."""
-        start = datetime(day.year, day.month, day.day, tzinfo=self.time_zone) + timedelta(
-            hours=self.start_hour
-        )
-        end = datetime(day.year, day.month, day.day, tzinfo=self.time_zone) + timedelta(
-            hours=self.end_hour
-        )
-        return int(start.timestamp()), int(end.timestamp())
-
-    def add_business_seconds(self, start_epoch: int, seconds: int) -> int:
-        """El momento en que, desde ``start_epoch``, se juntan ``seconds`` habiles.
-
-        Un inicio fuera de horario empieza a contar en la proxima apertura: una
-        derivacion del viernes a la noche con 2 h vence el lunes a las 11 si el
-        horario es 09-18 de lunes a viernes.
-        """
-        if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds <= 0:
-            raise ValueError("invalid business seconds")
-        remaining = seconds
-        local = datetime.fromtimestamp(start_epoch, self.time_zone)
-        day = datetime(local.year, local.month, local.day)
-        # Dos años de dias es mas de lo que cualquier umbral razonable recorre,
-        # y corta un calendario mal armado en vez de colgar el barrido.
-        for _ in range(800):
-            if day.isoweekday() in self.weekdays:
-                open_epoch, close_epoch = self._day_window(day)
-                begin = max(open_epoch, start_epoch)
-                if begin < close_epoch:
-                    available = close_epoch - begin
-                    if remaining <= available:
-                        return begin + remaining
-                    remaining -= available
-            day = day + timedelta(days=1)
-        raise ValueError("business calendar never accumulates the threshold")
 
 
 @dataclass(frozen=True)
@@ -289,8 +225,7 @@ def evaluate_wait_alerts(
     handoff: UnattendedHandoff | None,
     expected_inbox_id: int,
     now_epoch: int,
-    calendar: BusinessCalendar,
-    after_business_seconds: int,
+    after_seconds: int,
     max_age_seconds: int,
 ) -> tuple[tuple[WaitAlert, ...], str | None]:
     """Decidir que avisos tocan en una conversacion, o por que ninguno.
@@ -303,9 +238,9 @@ def evaluate_wait_alerts(
         isinstance(now_epoch, bool)
         or not isinstance(now_epoch, int)
         or now_epoch <= 0
-        or isinstance(after_business_seconds, bool)
-        or not isinstance(after_business_seconds, int)
-        or after_business_seconds <= 0
+        or isinstance(after_seconds, bool)
+        or not isinstance(after_seconds, int)
+        or after_seconds <= 0
         or isinstance(max_age_seconds, bool)
         or not isinstance(max_age_seconds, int)
         or max_age_seconds <= 0
@@ -336,8 +271,7 @@ def evaluate_wait_alerts(
             return (), "team_replied"
         waited_hours = max(0, (now_epoch - handoff_epoch) // 3600)
         alerts: list[WaitAlert] = []
-        due = calendar.add_business_seconds(handoff_epoch, after_business_seconds)
-        if now_epoch >= due:
+        if now_epoch >= handoff_epoch + after_seconds:
             alerts.append(
                 WaitAlert(
                     kind="unattended",
@@ -392,8 +326,7 @@ def evaluate_wait_alerts(
     first = unanswered[0]
     if now_epoch - first.created_at > max_age_seconds:
         return (), "too_old"
-    due = calendar.add_business_seconds(first.created_at, after_business_seconds)
-    if now_epoch < due:
+    if now_epoch < first.created_at + after_seconds:
         return (), "paused_reply_not_due"
     return (
         (
@@ -410,52 +343,6 @@ def evaluate_wait_alerts(
     )
 
 
-def parse_business_hours(raw: str) -> tuple[int, int]:
-    """``HANDOFF_WAIT_ALERT_BUSINESS_HOURS``: ``HH-HH`` con 0 <= inicio < fin <= 24."""
-    text = raw.strip()
-    if not text:
-        return DEFAULT_BUSINESS_HOURS
-    match = _HOURS_RE.fullmatch(text)
-    if match is None:
-        raise ValueError(
-            "HANDOFF_WAIT_ALERT_BUSINESS_HOURS must be HH-HH with 00 <= start < end <= 24"
-        )
-    start, end = int(match.group(1)), int(match.group(2))
-    if not 0 <= start < end <= 24:
-        raise ValueError(
-            "HANDOFF_WAIT_ALERT_BUSINESS_HOURS must be HH-HH with 00 <= start < end <= 24"
-        )
-    return start, end
-
-
-def parse_business_days(raw: str) -> frozenset[int]:
-    """``HANDOFF_WAIT_ALERT_BUSINESS_DAYS``: ``1-5`` o ``1,2,3,4,5,6`` (lunes = 1)."""
-    text = raw.strip()
-    error = "HANDOFF_WAIT_ALERT_BUSINESS_DAYS must be a range like 1-5 or a list like 1,2,3,4,5,6 (Monday = 1)"
-    if not text:
-        return DEFAULT_BUSINESS_DAYS
-    match = _DAYS_RANGE_RE.fullmatch(text)
-    if match is not None:
-        start, end = int(match.group(1)), int(match.group(2))
-        if start > end:
-            raise ValueError(error)
-        return frozenset(range(start, end + 1))
-    parts = [part.strip() for part in text.split(",")]
-    if any(part not in {"1", "2", "3", "4", "5", "6", "7"} for part in parts):
-        raise ValueError(error)
-    if len(set(parts)) != len(parts):
-        raise ValueError(error)
-    return frozenset(int(part) for part in parts)
-
-
-def business_days_text(days: frozenset[int]) -> str:
-    """Los dias como se leen en /ready: ``1-5`` si son seguidos, si no ``1,3,5``."""
-    ordered = sorted(days)
-    if ordered == list(range(ordered[0], ordered[-1] + 1)):
-        return f"{ordered[0]}-{ordered[-1]}"
-    return ",".join(str(day) for day in ordered)
-
-
 class HandoffWaitAlertSweeper:
     """Barre la bandeja y avisa por Slack a quien sigue esperando al equipo."""
 
@@ -467,21 +354,19 @@ class HandoffWaitAlertSweeper:
         producer: NotificationProducer,
         account_id: int,
         inbox_id: int,
-        calendar: BusinessCalendar,
-        after_business_hours: int = DEFAULT_AFTER_BUSINESS_HOURS,
+        after_hours: int = DEFAULT_AFTER_HOURS,
         max_age_hours: int = DEFAULT_MAX_AGE_HOURS,
         scan_interval_seconds: float = DEFAULT_SCAN_INTERVAL_SECONDS,
         max_pages: int = DEFAULT_MAX_PAGES,
         max_conversations_per_scan: int = DEFAULT_MAX_CONVERSATIONS_PER_SCAN,
         clock: Callable[[], float] = time.time,
     ) -> None:
-        for value in (account_id, inbox_id, after_business_hours, max_age_hours):
+        for value in (account_id, inbox_id, after_hours, max_age_hours):
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError("invalid handoff wait alert configuration")
         if (
-            not isinstance(calendar, BusinessCalendar)
-            or producer is None
-            or not 1 <= after_business_hours <= 72
+            producer is None
+            or not 1 <= after_hours <= 72
             or not 24 <= max_age_hours <= 720
             or isinstance(scan_interval_seconds, bool)
             or not isinstance(scan_interval_seconds, (int, float))
@@ -496,9 +381,8 @@ class HandoffWaitAlertSweeper:
         self._producer = producer
         self._account_id = account_id
         self._inbox_id = inbox_id
-        self._calendar = calendar
-        self._after_business_seconds = after_business_hours * 3600
-        self._after_business_hours = after_business_hours
+        self._after_seconds = after_hours * 3600
+        self._after_hours = after_hours
         self._max_age_seconds = max_age_hours * 3600
         self._scan_interval_seconds = float(scan_interval_seconds)
         self._max_pages = max_pages
@@ -519,12 +403,8 @@ class HandoffWaitAlertSweeper:
         return self._last_scan_summary
 
     @property
-    def after_business_hours(self) -> int:
-        return self._after_business_hours
-
-    @property
-    def calendar(self) -> BusinessCalendar:
-        return self._calendar
+    def after_hours(self) -> int:
+        return self._after_hours
 
     async def run_once(self) -> dict[str, int]:
         """Un barrido. Devuelve los conteos (nunca un numero de persona)."""
@@ -589,8 +469,7 @@ class HandoffWaitAlertSweeper:
                 handoff=by_conversation.get(conversation_id),
                 expected_inbox_id=self._inbox_id,
                 now_epoch=now_epoch,
-                calendar=self._calendar,
-                after_business_seconds=self._after_business_seconds,
+                after_seconds=self._after_seconds,
                 max_age_seconds=self._max_age_seconds,
             )
             if not alerts:
@@ -691,12 +570,8 @@ class HandoffWaitAlertSweeper:
 
 __all__: Sequence[str] = (
     "ALERT_KINDS",
-    "BusinessCalendar",
     "HandoffWaitAlertSweeper",
     "UnattendedHandoff",
     "WaitAlert",
-    "business_days_text",
     "evaluate_wait_alerts",
-    "parse_business_days",
-    "parse_business_hours",
 )
