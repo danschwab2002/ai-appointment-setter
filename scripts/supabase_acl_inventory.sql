@@ -208,7 +208,9 @@ expected_service_role(signature) as (
         ('public.list_unattended_human_handoffs_v1(bigint, bigint, timestamp with time zone, integer)'),
         -- 20261103001500: las respuestas a la pregunta de entrada de una campana (E-317).
         ('public.record_segment_entry_answer_v1(bigint, bigint, bigint, text, text, timestamp with time zone)'),
-        ('public.get_segment_entry_answers_v1(bigint, bigint, bigint)')
+        ('public.get_segment_entry_answers_v1(bigint, bigint, bigint)'),
+        -- 20261103001700: la landing y la oferta de un recorrido nativo, para la campana por landing (E-321).
+        ('public.flow_engine_native_campaign_origin_v1(uuid)')
 ),
 functions as (
     select

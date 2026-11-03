@@ -141,6 +141,8 @@ def test_it_is_one_transaction_and_comes_before_the_bridge_reads() -> None:
         "20261103001300_flow_engine_native_segment_label_v1.sql",
         # La entrada a una campana: lo que contesto cada conversacion a la pregunta (20261103001500, E-317).
         "20261103001500_segment_entry_answers_v1.sql",
+        # El origen de un recorrido nativo para la campana por landing (20261103001700, E-321): una lectura de service_role.
+        "20261103001700_flow_engine_native_campaign_origin_v1.sql",
     ]
     later = (MIGRATIONS / names[position + 1]).read_text(encoding="utf-8")
     assert "create or replace" not in later.lower()

@@ -1363,6 +1363,19 @@ class FlowEngineNativeStepTail:
 
 
 @dataclass(frozen=True)
+class FlowEngineNativeCampaignOrigin:
+    """Where a native run came from: its trigger, its offer and its landing (E-321).
+
+    ``landing`` is the ``landing_ref`` of the real intent the run was opened with
+    (the form the person filled), or None. Never a phone, mail or name.
+    """
+
+    disparador: str
+    oferta: str | None
+    landing: str | None
+
+
+@dataclass(frozen=True)
 class PilotBoundaryConfig:
     """Non-secret identity of one published pilot scope."""
 
@@ -7623,6 +7636,32 @@ class SupabaseClient:
             etiquetar=label,
             producto=payload.get("producto"),
             momento=payload.get("momento"),
+        )
+
+    async def get_flow_engine_native_campaign_origin(
+        self, action_id: str
+    ) -> FlowEngineNativeCampaignOrigin | None:
+        """The trigger, offer and landing of a native run (E-321), or None for any other."""
+        operation = "flow_engine_native_campaign_origin_v1"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps({"p_action_id": action_id}),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise SupabaseError(f"{operation}_invalid_json") from exc
+        if payload is None:
+            return None
+        if not isinstance(payload, dict):
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return FlowEngineNativeCampaignOrigin(
+            disparador=_required_string(payload, "disparador", operation=operation),
+            oferta=_optional_string(payload, "oferta", operation=operation),
+            landing=_optional_string(payload, "landing", operation=operation),
         )
 
     async def _flow_engine_bool(self, operation: str, body: dict[str, object]) -> bool:

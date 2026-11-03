@@ -270,6 +270,7 @@ from bridge.segment_labels import (
     automation_expert_segments,
     segment_labels_setup as _segment_labels_setup,
 )
+from bridge.campaign_entry import campaign_entry_labels as _campaign_entry_labels
 from bridge.customer_status import (
     CUSTOMER_LINK_REQUEST_REASON,
     CUSTOMER_STATUS_CONTEXT_KEY,
@@ -477,6 +478,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # pregunta de entrada de una campana. Lo especifico (frases, pregunta) es de
     # [[agente.segmentos]]; por instancia, solo prenderlo.
     "campaign_inbound_entry_enabled",
+    # E-321 (campaign-entry-v1): la etiqueta de una campana por la landing que
+    # vio la persona. Lo especifico (que landings, que ofertas) es de
+    # [[campanas]]; por instancia, solo prenderlo.
+    "flow_engine_campaign_entry_enabled",
     "slack_connector_projection_enabled",
     "correlation_preresolution_enabled",
     # Transcribir un audio no depende del aliado: la key y el host de Chatwoot
@@ -1116,6 +1121,10 @@ class Settings:
     # del primer mensaje, y el aviso con la pregunta de entrada a quien escribe
     # por su cuenta sin ella. Apagado, el pedido a Hermes es el de siempre.
     campaign_inbound_entry_enabled: bool = False
+    # E-321 (campaign-entry-v1): un recorrido nativo que nace de una intencion de
+    # una landing (o de una oferta) de una [[campanas]] vigente lleva la etiqueta
+    # de su segmento antes del primer envio. Apagado, el despacho no lee nada nuevo.
+    flow_engine_campaign_entry_enabled: bool = False
     slack_connector_projection_enabled: bool = False
     slack_connector_base_url: str | None = None
     slack_connector_bearer_token: str | None = None
@@ -2587,6 +2596,10 @@ class Settings:
             ),
             campaign_inbound_entry_enabled=(
                 os.getenv("CAMPAIGN_INBOUND_ENTRY_ENABLED", "false").strip().lower()
+                == "true"
+            ),
+            flow_engine_campaign_entry_enabled=(
+                os.getenv("FLOW_ENGINE_CAMPAIGN_ENTRY_ENABLED", "false").strip().lower()
                 == "true"
             ),
         )
@@ -5224,6 +5237,11 @@ def create_app(
     # [[agente.segmentos]] (macro_etiqueta). Sin los dos flags, nada.
     segment_labels_setup = _segment_labels_setup(settings, control_client)
     native_segment_labels = segment_labels_setup.native
+    # E-321 (campaign-entry-v1): con el flag, el mismo plan suma la etiqueta de la
+    # campana de la landing (o la oferta) del recorrido. Sin el flag, el de E-316.
+    native_segment_labels = _campaign_entry_labels(
+        settings, control_client, native_segment_labels
+    )
     segment_label_inheritance = segment_labels_setup.inheritance
 
     async def label_products(

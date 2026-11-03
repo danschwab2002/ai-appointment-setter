@@ -6649,6 +6649,31 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'segment_entry_answers'
+    union all
+    select
+        '20261103001700',
+        '20261103001700_flow_engine_native_campaign_origin_v1.sql',
+        -- El origen de un recorrido nativo para la campana por landing (E-321):
+        -- una lectura, solo para service_role ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.flow_engine_native_campaign_origin_v1(uuid)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- ... que solo da la landing de una intencion real.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.flow_engine_native_campaign_origin_v1(uuid)')
+              and position('flow_engine_native_campaign_origin' in definition) > 0
+              and position('provider_observed' in definition) > 0
+        )::int,
+        2,
+        'flow_engine_native_campaign_origin'
 )
 select
     version,

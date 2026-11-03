@@ -148,6 +148,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261103001300",
         # La entrada a una campana: lo que contesto cada conversacion a la pregunta (20261103001500, E-317).
         "20261103001500",
+        # El origen de un recorrido nativo para la campana por landing (20261103001700, E-321): una lectura de service_role.
+        "20261103001700",
     ]
 
     sql = _sql()
