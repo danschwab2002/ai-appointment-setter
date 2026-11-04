@@ -17,6 +17,7 @@ Todos los efectos permanecen apagados por defecto.
 - `HANDOFF_NOTICE_ENABLED=false` (F-034, el aviso a la persona; ver abajo)
 - `CUSTOMER_HANDOFF_NOTICE_ENABLED=false` (E-304, P-11 D12, el mismo aviso solo a clientas; ver abajo)
 - `HANDOFF_LINK_NOTE_ENABLED=false` (F-034, D8, la nota privada con el link; ver abajo)
+- `SAFETY_HANDOFF_REPLY_ENABLED=false` y `SAFETY_HANDOFF_HELP_LINE` (E-328, el mensaje de seguridad al derivar por riesgo para la persona; ver abajo)
 
 Proyección habilitada exige Supabase, control plane Chatwoot, account/inbox canónicos y worker ID. Admisión habilitada exige además proyección, dispatcher outbound y perímetro Lancemos. Configuración incompleta impide arrancar.
 
@@ -61,6 +62,45 @@ derivación del entrante de una clienta, también la de `customer_link_request`
   sin teléfono ni mail. Un aviso que no sale nunca frena la derivación.
 - Las derivaciones que no leen `customer_status` (el audio que no se pudo
   transcribir) no lo mandan.
+
+### El mensaje de seguridad al derivar por riesgo (E-328)
+
+Hasta E-328, al derivar el bridge descartaba el `reply` del agente (F-033),
+también cuando la persona decía que se quería hacer daño: en el arnés de ATT1
+(E-301 y E-322) el caso 75 derivó 2 de 3 veces, con un `reply` que le pedía
+buscar ayuda de emergencia que nunca le llegaba.
+
+El SOUL común de E-328 (un PR aparte, que se instala después de prender el flag) pide, ante riesgo para la salud o la vida (hacerse daño, no querer
+vivir, dañar a otra persona, no estar a salvo), derivar con
+`reason_code="safety_risk"` y poner en el `reply` la indicación de buscar
+atención médica, ayuda de emergencia o una persona de confianza. Con
+`SAFETY_HANDOFF_REPLY_ENABLED=true` (portable; exige
+`HUMAN_HANDOFF_ADMISSION_ENABLED`), en esa derivación:
+
+- el bridge le manda a la persona el `reply` del agente antes de pedir la
+  derivación durable y antes de `automation_paused`, por la misma guarda de envío
+  que el aviso de F-034, **en lugar** de ese aviso (uno solo);
+- si el `reply` no sirve (vacío, más de 1000 caracteres o con una URL), manda el
+  texto fijo del producto: «Lo que me cuentas es importante y mereces ayuda ahora
+  mismo. Por favor, busca atención médica o llama a los servicios de emergencia
+  de tu país, o pide a una persona de confianza que te acompañe.»;
+- con `SAFETY_HANDOFF_HELP_LINE` (una línea, hasta 300 caracteres, sin link),
+  la suma al final, separada por una línea en blanco: es donde va el número de
+  la línea de ayuda del país de la instancia. El producto no trae números;
+- lleva `appointment_setter_decision = "safety_handoff"` y
+  `appointment_setter_reason_code = "safety_risk"`; no se limita a una vez por
+  conversación;
+- queda en el log revisado `safety_handoff_reply outcome=<sent|duplicate|blocked|not_sent|not_configured> conversation=<n>`,
+  sin el texto ni datos de la persona. Un mensaje que no sale nunca frena la
+  derivación;
+- la tarjeta HND-001 de Slack sale como `[URGENTE] Riesgo para la persona:
+  atender ya · <aliada>`, y los avisos de espera (E-309) nombran el motivo como
+  «URGENTE: riesgo para la persona».
+
+Con el flag apagado, o con cualquier otro motivo, la derivación sigue como hasta
+hoy. El orden de activación importa: el flag se prende **antes** de cargar un SOUL
+que pida `safety_risk`; con el SOUL nuevo y el flag apagado, esa derivación
+callaría siempre.
 
 ### Nota privada con el link al derivar (F-034, D8)
 

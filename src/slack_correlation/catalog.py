@@ -325,6 +325,11 @@ def _machine_fields(command: NotificationCommand) -> list[dict[str, str]]:
     return fields
 
 
+# E-328: la derivacion por riesgo para la persona (reason_code del agente).
+SAFETY_RISK_REASON_CODE = "safety_risk"
+SAFETY_RISK_HEADLINE = "Riesgo para la persona: atender ya"
+
+
 def _render_new_handoff(
     command: NotificationCommand,
     *,
@@ -340,6 +345,10 @@ def _render_new_handoff(
     """
     template = EVENT_TEMPLATES[command.event_code]
     headline = f"[{template.severity}] {template.title} · {tenant_label}"
+    if command.reason_code == SAFETY_RISK_REASON_CODE:
+        # E-328: la persona dijo algo que pone en riesgo su vida o su salud. La
+        # tarjeta lo dice arriba, para que no se lea como una derivacion mas.
+        headline = f"[URGENTE] {SAFETY_RISK_HEADLINE} · {tenant_label}"
     blocks: list[dict[str, Any]] = [
         {"type": "header", "text": {"type": "plain_text", "text": headline}},
         {"type": "section", "fields": _machine_fields(command)},
@@ -394,6 +403,7 @@ _HANDOFF_REASON_TEXT = {
     "payment_link_conversation_advanced": "la conversación avanzó después del link",
     "customer_link_request": "es clienta y pidió el link",
     "automation_paused": "conversación pausada",
+    "safety_risk": "URGENTE: riesgo para la persona",
 }
 
 
