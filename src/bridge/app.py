@@ -120,6 +120,12 @@ from bridge.handoff_notice import (
     HANDOFF_NOTICE_TEXT,
     handoff_notice_already_sent,
 )
+from bridge.safety_handoff import (
+    SAFETY_REPLY_DECISION,
+    is_safety_handoff,
+    safety_reply_text,
+    validate_safety_help_line,
+)
 from bridge.inbound_handoff import request_handoff_for_inbound_proposal
 from bridge.ghl_precheckout_adapter import (
     FORM_LANDING_ACTIVE,
@@ -423,6 +429,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # E-304 (P-11, D12): el mismo aviso, solo cuando deriva a una clienta. Lo
     # unico por instancia es prenderlo.
     "customer_handoff_notice_enabled",
+    # E-328: al derivar por riesgo para la persona (safety_risk), le llega el
+    # reply del agente. Lo unico por instancia es prenderlo (y la linea de
+    # ayuda de su pais, SAFETY_HANDOFF_HELP_LINE).
+    "safety_handoff_reply_enabled",
     # F-034, D8: al derivar, una nota privada con el ultimo link que recibio
     # la persona. El texto es del producto; por instancia, solo prenderlo.
     "handoff_link_note_enabled",
@@ -1005,6 +1015,12 @@ class Settings:
     # Con HANDOFF_NOTICE_ENABLED prendido este no agrega nada: ya avisa a
     # todas. Apagado, todo como antes.
     customer_handoff_notice_enabled: bool = False
+    # E-328: con una derivacion por riesgo para la persona
+    # (reason_code="safety_risk"), el reply del agente sale antes de la pausa
+    # (o un texto fijo si no sirve), con la linea de ayuda de la instancia al
+    # final si la tiene. Apagado, esa derivacion calla como las demas.
+    safety_handoff_reply_enabled: bool = False
+    safety_handoff_help_line: str = ""
     # F-034, D8 (Dan, 24/10): al derivar, la conversacion recibe una nota
     # privada con el ultimo link que le mandamos a la persona (y su cupon, si
     # vino del carrito). Apagado, la derivacion queda como hasta ahora.
@@ -1853,6 +1869,13 @@ class Settings:
             os.getenv("CUSTOMER_HANDOFF_NOTICE_ENABLED", "false").strip().lower()
             == "true"
         )
+        safety_handoff_reply_enabled = (
+            os.getenv("SAFETY_HANDOFF_REPLY_ENABLED", "false").strip().lower()
+            == "true"
+        )
+        safety_handoff_help_line = validate_safety_help_line(
+            os.getenv("SAFETY_HANDOFF_HELP_LINE", "")
+        )
         opt_out_confirmation_enabled = (
             os.getenv("OPT_OUT_CONFIRMATION_ENABLED", "false").lower() == "true"
         )
@@ -2326,6 +2349,8 @@ class Settings:
             human_handoff_admission_enabled=human_handoff_admission_enabled,
             handoff_notice_enabled=handoff_notice_enabled,
             customer_handoff_notice_enabled=customer_handoff_notice_enabled,
+            safety_handoff_reply_enabled=safety_handoff_reply_enabled,
+            safety_handoff_help_line=safety_handoff_help_line,
             handoff_link_note_enabled=handoff_link_note_enabled,
             purchase_agent_pause_enabled=purchase_agent_pause_enabled,
             purchase_agent_pause_after_native_welcome_enabled=(
@@ -5682,6 +5707,16 @@ def create_app(
         raise ValueError(
             "HANDOFF_NOTICE_ENABLED requires HUMAN_HANDOFF_ADMISSION_ENABLED"
         )
+    if (
+        settings.safety_handoff_reply_enabled
+        and not settings.human_handoff_admission_enabled
+    ):
+        # E-328: el mensaje vive dentro de la derivacion del entrante, como el
+        # aviso de F-034: sin ella no sale nunca.
+        raise ValueError(
+            "SAFETY_HANDOFF_REPLY_ENABLED requires HUMAN_HANDOFF_ADMISSION_ENABLED"
+        )
+    validate_safety_help_line(settings.safety_handoff_help_line)
     if settings.customer_handoff_notice_enabled:
         # E-304: el aviso vive en la derivacion del entrante y sabe que es
         # clienta por customer_status. Sin alguna de las dos no sale nunca, y
@@ -8183,6 +8218,53 @@ def create_app(
             )
             return "blocked"
 
+        async def send_safety_reply(proposal: dict[str, object]) -> str:
+            # E-328: con riesgo para la persona, el reply del agente (la
+            # indicacion de pedir ayuda) sale antes de la derivacion y de la
+            # pausa, por el mismo camino y con las mismas guardas que el aviso
+            # de F-034. No se mira si ya salio antes: cada vez que la persona
+            # dice algo asi, lo recibe. Un mensaje que no sale nunca frena la
+            # derivacion: va al log y la derivacion sigue.
+            if (
+                control_client is None
+                or not isinstance(message_id, int)
+                or isinstance(message_id, bool)
+                or not isinstance(conversation_id, int)
+                or isinstance(conversation_id, bool)
+            ):
+                logger.warning("safety_handoff_reply outcome=not_configured")
+                return "not_configured"
+            try:
+                result = await send_scoped_agent_bot_reply(
+                    conversation_id=conversation_id,
+                    trigger_message_id=message_id,
+                    content=safety_reply_text(
+                        proposal, help_line=settings.safety_handoff_help_line
+                    ),
+                    agent_decision=SAFETY_REPLY_DECISION,
+                    agent_reason_code=_agent_marker(proposal.get("reason_code")),
+                )
+            except (
+                ChatwootReplyDeliveryUnknownError,
+                ChatwootProtocolError,
+                httpx.HTTPError,
+            ) as exc:
+                logger.warning(
+                    "safety_handoff_reply outcome=not_sent conversation=%s "
+                    "error_type=%s",
+                    conversation_id,
+                    type(exc).__name__,
+                )
+                return "not_sent"
+            status = result.get("status")
+            outcome = str(status) if status in {"sent", "duplicate"} else "blocked"
+            logger.info(
+                "safety_handoff_reply outcome=%s conversation=%s",
+                outcome,
+                conversation_id,
+            )
+            return outcome
+
         async def write_handoff_link_note(handoff: object) -> None:
             # F-034, D8: despues de la derivacion durable y de la pausa, una
             # nota privada con el ultimo link que le mandamos a la persona. El
@@ -8252,7 +8334,14 @@ def create_app(
             assert admission is not None
             assert settings.handoff_projection_policy_key is not None
             assert settings.handoff_projection_policy_version is not None
-            if settings.handoff_notice_enabled:
+            if settings.safety_handoff_reply_enabled and is_safety_handoff(
+                proposal
+            ):
+                # E-328: el mensaje de seguridad va en lugar del aviso generico
+                # (que dice que el equipo responde, sin la indicacion de pedir
+                # ayuda). Uno solo.
+                await send_safety_reply(proposal)
+            elif settings.handoff_notice_enabled:
                 await send_handoff_notice(proposal)
             elif (
                 settings.customer_handoff_notice_enabled

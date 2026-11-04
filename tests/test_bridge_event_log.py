@@ -291,6 +291,7 @@ def test_every_reviewed_event_is_a_hotmart_line_present_in_the_code() -> None:
                 "handoff_wait_",
                 "segment_",
                 "chatwoot_inbound_attachment_",
+                "safety_handoff_",
             )
         ), name
         assert f'"{name} ' in sources, name

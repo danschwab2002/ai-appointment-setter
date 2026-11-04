@@ -66,6 +66,9 @@ LOGGED_INFO_EVENTS = frozenset(
         # el aviso al derivar a una clienta (bridge.app, E-304): si salio o
         # por que no, el motivo de la derivacion y el numero de conversacion
         "customer_status_handoff_notice",
+        # el mensaje de seguridad al derivar por riesgo (bridge.app, E-328):
+        # si salio o por que no y el numero de conversacion; nunca el texto
+        "safety_handoff_reply",
         # el aviso de derivaciones sin atender (bridge.handoff_wait_alerts,
         # E-309): conteos del barrido, y por aviso el tipo, el numero de
         # conversacion, el motivo y las horas de espera; nunca el telefono
