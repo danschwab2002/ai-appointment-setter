@@ -205,7 +205,10 @@ def test_the_runs_are_merged_and_nothing_seen_once_is_lost(example_text, base) -
 
     runs = {item.title: item.runs for item in report.items}
     assert report.valid_runs == 3 and report.clean is False and report.chequeo_sha is None
-    assert [item.number for item in report.items] == ["C1", "C2", "H1", "D1"]
+    # El hueco alta-09 de las corridas 1 y 3 pregunta lo que el equipo ya contesto en
+    # [alta-09] sin citar la respuesta: con las reglas v2 sale como aviso, no como abierto.
+    assert [item.number for item in report.items] == ["C1", "C2", "D1"]
+    assert sum("[alta-09]" in w for w in report.warnings) == 2
     assert runs["El base prohibe precios distintos de USD 47 y la campana trae USD 37"] == [1, 3]
     assert runs["El base prohibe hablar de vencimientos y el segmento dice hasta cuando vale"] == [1, 2]
     assert runs["No queda claro hasta cuando esta el bono"] == [2]  # una sola corrida: se pregunta igual
@@ -240,7 +243,7 @@ def test_one_run_with_an_item_keeps_it_open(example_text, base) -> None:
 
     report = _run(example_text, base, Spy(answers))
 
-    assert not report.clean and len(report.items) == 2 and report.chequeo_sha is None
+    assert not report.clean and len(report.items) == 1 and report.chequeo_sha is None
 
 
 def test_a_bad_answer_is_retried_once(example_text, base) -> None:
@@ -476,7 +479,7 @@ def test_cli_clean_with_recorded_answers_exits_0(tmp_path: Path, example_text, c
     assert code == 0 and payload["abiertos"] == 0 and len(payload["corridas"]) == 3
     assert f"LIMPIO chequeo_sha={payload['chequeo_sha']}" in err
     assert payload["fuentes"]["base"]["sha256"].startswith("0914acdb1baf")
-    assert payload["fuentes"]["leidas_por_el_juez"][:3] == ["segmento", "soul", "base"]
+    assert payload["fuentes"]["leidas_por_el_juez"][:4] == ["segmento", "respuestas", "soul", "base"]
     assert sorted(p.name for p in (tmp_path / "grab").iterdir()) == ["respuesta-1.json", "respuesta-2.json", "respuesta-3.json"]
 
 
@@ -486,7 +489,7 @@ def test_cli_with_open_items_exits_1(tmp_path: Path, example_text, capsys) -> No
 
     assert sc.main(["chequear", str(segment), "--grabadas", *answers, "--json"]) == 1
     payload = json.loads(capsys.readouterr().out)
-    assert payload["abiertos"] == 4 and payload["chequeo_sha"] is None
+    assert payload["abiertos"] == 3 and payload["chequeo_sha"] is None
 
 
 def test_cli_without_the_key_exits_3(tmp_path: Path, example_text, monkeypatch, capsys) -> None:

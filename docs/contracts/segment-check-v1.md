@@ -51,6 +51,7 @@ fuentes enteras, cada una entre `<fuente id="…">`:
 | id | Qué |
 |---|---|
 | `segmento` | el archivo TOML del segmento, tal cual, con sus `[[preguntas_del_alta]]` |
+| `respuestas` | (reglas v2, solo si hay) las entradas de `[[preguntas_del_alta]]` cuya `pregunta` empieza con `[clave]`, una por bloque: `[clave] Pregunta / Respuesta / Fuente`, presentadas como resueltas |
 | `soul` | el SOUL común |
 | `base` | el render del conocimiento base, tal como lo recibe el agente |
 | `segmento:<clave>` | cada otro segmento declarado cuya vigencia se pisa con este |
@@ -65,12 +66,25 @@ ayuda para que no se le pase un número. No es una fuente citable y no decide na
 
 ## Qué devuelve el juez
 
-Solo un objeto JSON: `{"items": [{"tipo", "clave", "titulo", "citas": [{"fuente", "texto"}], "pregunta", "campo"}]}`.
+Solo un objeto JSON: `{"items": [{"tipo", "clave", "titulo", "citas": [{"fuente", "texto"}], "pregunta", "campo", "reabre"}]}`
+(`reabre` es de las reglas v2; una salida sin ese campo se sigue leyendo).
 
 - `tipo` es `contradiccion`, `hueco` o `duda`. Lo que el juez no tiene claro va como duda, nunca
   como «está bien».
-- Una respuesta en `[[preguntas_del_alta]]` que resuelve la cuestión, sin que el resto del segmento
-  la contradiga, hace que ese item no vuelva. Si no la resuelve, vuelve citando también la respuesta.
+- Una respuesta en `[[preguntas_del_alta]]` deja la cuestión resuelta: el juez no la vuelve a
+  preguntar con otras palabras, desde otro campo ni como otro tipo de item. Solo la reabre si la
+  respuesta no la resuelve, es ambigua o un texto dice otra cosa; entonces pone en `reabre` la clave
+  de la respuesta y cita las dos cosas. Sin reabrir nada, `reabre` va vacío.
+- `oferta.cupon` es el cupón de la campaña: no va en `oferta.reemplaza` (que solo admite
+  `REPLACEABLE_FIELDS`), y que exista o sea distinto de un cupón del base no es un item. Sí lo es que
+  el segmento ofrezca otro cupón o diga que se suma con otro cuando se dice que no.
+
+**Reabrir una respuesta (reglas v2, en código, `gate_reopened`):** un item reabre la respuesta
+`[clave]` si lo dice en `reabre` o si el juez le pone el mismo slug que tenía la pregunta contestada
+(la clave sin el tipo ni la huella). Queda abierto solo si cita, verificado, un fragmento de esa
+respuesta **y** un texto que no está en ninguna entrada de `[[preguntas_del_alta]]`. Si no, sale en
+los avisos («el juez volvió a preguntar [clave]… sin citar…») y no cuenta como abierto. La
+equivalencia con otras palabras la decide el juez; el código solo exige la evidencia.
 
 **La validación en código:**
 - Una salida que no tiene exactamente esa forma es inválida. Hay un reintento por corrida y, si
@@ -90,7 +104,8 @@ Cada item queda numerado (`C1…`, `H1…`, `D1…`) y lleva una clave: el slug 
 sus citas, estable mientras el juez cite lo mismo. También lleva un `mensaje_slack` listo para
 mandar.
 
-El chequeo es limpio solo si **las N corridas fueron válidas y ninguna devolvió items**.
+El chequeo es limpio solo si **las N corridas fueron válidas y no quedó ningún item abierto** (un
+item que reabre una respuesta sin la evidencia de arriba va a los avisos y no cuenta).
 
 ## Las respuestas del equipo
 
@@ -101,8 +116,9 @@ respuesta = "Sí: para quien está en la campaña vale USD 37."
 fuente = "Slack, <quién>, <fecha>"
 ```
 
-La corrida siguiente las lee como parte del segmento. Lo que el código no hace: no cierra un item por
-su clave, porque si la respuesta alcanza o no lo juzga el modelo.
+La corrida siguiente las lee como parte del segmento y, con su clave, en la fuente `respuestas`. Si
+la respuesta alcanza lo sigue juzgando el modelo; lo que el código exige (reglas v2) es que, para
+reabrirla, el item cite la respuesta y el texto que la contradice.
 
 ## El `chequeo_sha`
 

@@ -1,0 +1,115 @@
+# SEGMENTO DE PRUEBA (E-326): FICTICIO, no es ninguna oferta real. No se declara en instancia.toml.
+# Generado por armar.py (E-326) desde la ficha ficha-prueba-bn-sintetico.toml (campana-ficha-v0).
+# No se edita a mano: se cambia la ficha y se vuelve a armar. Esquema: docs/contracts/segment-knowledge-v1.md.
+
+[cabecera]
+segment_version = 1
+estado = "borrador"
+ally_ref = "att1"
+clave = "prueba-bn-sintetico"
+nombre = "Promo Zorzal (PRUEBA sintética de Black November)"
+
+[vigencia]
+desde = 2026-11-05T15:00:00+00:00
+hasta = 2026-11-08T03:00:00+00:00
+
+[instruccion]
+texto = "Esta persona viene por la Promo Zorzal, una PRUEBA sintética. Usa el precio, el cupón, el bono, la garantía, los meses sin intereses y el plazo de este bloque. El enlace de pago que envía el sistema no trae el cupón: al enviarlo, dile que escriba PRUEBABN31 en el campo del cupón de la página de pago. No ofrezcas TIROIDES10 ni otro cupón: no se suman con este."
+
+[oferta]
+producto = "alimenta-tu-tiroides"
+precio = "31"
+moneda = "USD"
+precio_antes = "47"
+cupon = "PRUEBABN31"
+incluye = [
+  "Todo Alimenta Tu Tiroides, igual que siempre.",
+  "El bono de esta promo: la «Guía Zorzal de colaciones», solo para compras hechas durante la promo.",
+]
+garantia = "15 días en esta promo: dentro de ese plazo se puede pedir el reembolso por Hotmart."
+medios = [
+  "Los mismos medios de pago de siempre en cada país; la página de pago muestra los del país elegido.",
+  "En México, con tarjeta de crédito: hasta 4 meses sin intereses, solo en esta promo. La página de pago muestra las opciones.",
+]
+reemplaza = ["precio", "incluye", "garantia", "medios"]
+
+[asesoramiento]
+items = [
+  "A quien pregunta el precio: en esta promo Alimenta Tu Tiroides cuesta USD 31 en lugar de USD 47, escribiendo el cupón PRUEBABN31 en la página de pago.",
+  "A quien duda entre comprar ahora o después: la promo vale hasta el 07/11 a las 21:00, hora de México. Díselo una vez y sin presionar.",
+  "A quien pregunta qué trae de más: la «Guía Zorzal de colaciones», además del programa completo. Es una guía de ideas de colaciones, no un plan médico.",
+  "A quien ya tiene el 10 % del carrito (TIROIDES10 o su cupón personal): en la promo no se suman; el que le conviene es PRUEBABN31, que deja el precio en USD 31.",
+  "A quien ya compró Alimenta Tu Tiroides: la promo es para quien todavía no lo tiene; su acceso sigue igual y la guía Zorzal no se suma a compras anteriores.",
+]
+
+[se_puede_decir]
+items = [
+  "La garantía en esta promo es de 15 días, por Hotmart.",
+  "En México, con tarjeta de crédito, se puede pagar hasta en 4 meses sin intereses solo en esta promo.",
+  "En México, el precio de la campaña es MXN 577. Con el cupón PRUEBABN31 escrito en la página de pago.",
+  "En Colombia, el precio de la campaña es COP 131.313. Con el cupón PRUEBABN31 escrito en la página de pago.",
+]
+
+[no_confirmado]
+items = ["si la promo se extiende después del 07/11 a las 21:00, hora de México"]
+
+[promesas_prohibidas]
+items = [
+  "Que la «Guía Zorzal de colaciones» mejora la tiroides, baja de peso o reemplaza un tratamiento o un medicamento.",
+  "Que el cupón PRUEBABN31 se suma con TIROIDES10 o con otro cupón.",
+]
+
+[[faq]]
+pregunta = "¿Cuánto cuesta en la promo?"
+respuesta = "En la Promo Zorzal, Alimenta Tu Tiroides cuesta USD 31 (antes USD 47), con el cupón PRUEBABN31 escrito en la página de pago."
+fuente = "Danitza (SINTÉTICO), planilla, 2026-11-05"
+
+[[faq]]
+pregunta = "¿Hasta cuándo dura la promo?"
+respuesta = "Hasta el sábado 07/11 a las 21:00, hora de México."
+fuente = "Danitza (SINTÉTICO), planilla, 2026-11-05"
+
+[[faq]]
+pregunta = "¿Cómo uso el cupón?"
+respuesta = "En la página de pago, en el campo del cupón, escribe PRUEBABN31 y el precio queda en USD 31."
+fuente = "Danitza (SINTÉTICO), planilla, 2026-11-05"
+
+[[faq]]
+pregunta = "¿Tiene garantía en la promo?"
+respuesta = "Sí: en la Promo Zorzal la garantía es de 15 días por Hotmart."
+fuente = "Danitza (SINTÉTICO), planilla, 2026-11-05"
+
+[[preguntas_del_alta]]
+pregunta = "[alta-08] ¿La campaña se combina con el cupón del carrito (el cupón personal o el código del carrito)?"
+respuesta = "No se suman: Hotmart acepta un solo cupón. En la promo gana PRUEBABN31 (USD 31) y no se ofrece el del carrito."
+fuente = "Danitza (SINTÉTICO), planilla, 2026-11-05"
+
+[[preguntas_del_alta]]
+pregunta = "[alta-09] ¿La campaña aplica a quien ya es clienta? ¿Qué se le dice?"
+respuesta = "No aplica a quien ya compró Alimenta Tu Tiroides: su acceso sigue igual y la guía Zorzal no se suma a compras anteriores."
+fuente = "Danitza (SINTÉTICO), planilla, 2026-11-05"
+
+[[preguntas_del_alta]]
+pregunta = "[alta-10] ¿Qué se le dice a quien escribe después de que termina la campaña?"
+respuesta = "Que la Promo Zorzal terminó el 07/11 a las 21:00 hora de México y que el precio es el de siempre, USD 47. (Pasado el hasta, el bloque deja de ir y el agente contesta con el base: no hace falta texto aparte.)"
+fuente = "Danitza (SINTÉTICO), planilla, 2026-11-05"
+
+[[preguntas_del_alta]]
+pregunta = "[alta-12] ¿Quién entra al segmento: qué flujo o qué acción del equipo pone la etiqueta?"
+respuesta = "Solo la palabra clave «quiero la promo zorzal» del primer mensaje (E-317) y el macro a mano. No hay landing propia, ni difusión, ni flujo que etiquete."
+fuente = "Danitza (SINTÉTICO), planilla, 2026-11-05"
+
+[[preguntas_del_alta]]
+pregunta = "[c-meses-sin-intereses-cad65ade] ¿Los pagos a 4 meses con tarjeta de crédito en México para esta promo son sin intereses (total igual al de un pago) o con intereses (total mayor que en un solo pago)? El base prohíbe afirmar que los pagos a meses son sin intereses, pero el segmento lo afirma en varios lugares."
+respuesta = "Sin intereses, a propósito y solo en esta promo: en México, con tarjeta de crédito, hasta 4 meses y el total es igual al de un solo pago (USD 31 o MXN 577). Fuera de la promo vale lo del base: los pagos a meses no son sin intereses."
+fuente = "Danitza (SINTÉTICO), coordinadora, 2026-11-05"
+
+[[preguntas_del_alta]]
+pregunta = "[c-cupon-falta-en-reemplaza-55810e78] ¿El campo [oferta].cupon debería incluirse en reemplaza, ya que el cupón de la campaña (PRUEBABN31) es distinto del cupón del 10 % (TIROIDES10) que maneja el base?"
+respuesta = "Sí: en la promo el cupón es PRUEBABN31 y reemplaza a TIROIDES10 (no se suman; Hotmart acepta uno solo). El producto no deja nombrar el cupón en oferta.reemplaza (REPLACEABLE_FIELDS no lo incluye), por eso se declara acá."
+fuente = "Danitza (SINTÉTICO), coordinadora, 2026-11-05"
+
+[[preguntas_del_alta]]
+pregunta = "[c-meses-sin-intereses-vs-promesa-prohibida-f16f4a81] El base prohíbe afirmar que los pagos a meses son sin intereses, pero el segmento afirma explícitamente que en esta promo sí lo son. ¿El segmento puede anular una promesa prohibida del base con el campo reemplaza, o se necesita una excepción formal en el base o en el SOUL para esta campaña?"
+respuesta = "Sí, a propósito: el bloque de la campaña manda sobre el base en los medios de pago (oferta.reemplaza incluye medios) y el base v15 lo dice explícito para las promesas prohibidas («salvo… el bloque de una campaña vigente»). Los 4 meses sin intereses valen solo en esta promo."
+fuente = "Danitza (SINTÉTICO), coordinadora, 2026-11-05"

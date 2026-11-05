@@ -12,6 +12,10 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Cambiado
+
+- **El chequeo del alta converge (`segment-check-juez-v2`).** Con las reglas v1 el juez volvía a preguntar lo que el equipo ya había contestado en `[[preguntas_del_alta]]` y marcaba como contradicción que `oferta.cupon` no estuviera en `oferta.reemplaza`, cosa que el producto no admite: cuatro vueltas reales sobre la campaña sintética del 05/11 no llegaron a limpio. Ahora las respuestas con `[clave]` le llegan al juez como resueltas (fuente `respuestas`), el juez dice en `reabre` cuál reabre, y un item que reabre una respuesta sin citarla junto con el texto que la contradice va a los avisos y no cuenta. El cupón de la campaña es legítimo sin `reemplaza`. Contrato: [docs/contracts/segment-check-v1.md](docs/contracts/segment-check-v1.md). **Qué hacer al actualizar:** nada; cambian todos los `chequeo_sha` (ningún segmento aprobado hoy), así que un segmento se vuelve a chequear antes de aprobarlo.
+
 ## [1.30.0] - 2026-11-04
 
 Una menor sobre la 1.29.0, con 9 PR (#412, #413, #414, #415, #416, #417, #418, #419 y #420) y 3 migraciones. Todo lo nuevo llega apagado: con las variables nuevas ausentes, para las personas que escriben no cambia nada al subir. **Al subir cambia un profile:** instalar la distribucion en automation-expert (plugins/). El conector de Slack cambia y sube junto con el bridge.
