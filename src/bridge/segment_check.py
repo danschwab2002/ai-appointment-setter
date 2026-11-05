@@ -60,7 +60,7 @@ SEGMENT_SCHEMA = "segment-knowledge-v1"
 
 # La version del chequeo (instrucciones del juez y validacion de su salida). Cambiarla
 # cambia todos los chequeo_sha: un segmento aprobado con otra version vuelve al chequeo.
-CHECK_RULES_VERSION = "segment-check-juez-v1"
+CHECK_RULES_VERSION = "segment-check-juez-v2"
 
 SOUL_RELATIVE_PATH = Path("profiles") / "agente-comercial-comun" / "SOUL.md"
 
@@ -767,6 +767,40 @@ class Source:
     text: str
 
 
+@dataclass(frozen=True)
+class Answered:
+    """Una cuestion que el equipo ya contesto: una entrada de ``[[preguntas_del_alta]]``
+    cuya ``pregunta`` empieza con ``[clave]``."""
+
+    key: str
+    question: str
+    answer: str
+    source: str
+
+    @property
+    def core(self) -> str:
+        """La clave sin el tipo ni la huella (``c-cupon-x-55810e78`` → ``cupon-x``): el slug
+        que el juez le pondria si la volviera a preguntar."""
+
+        core = re.sub(r"^[chd]-", "", self.key)
+        return re.sub(r"-[0-9a-f]{8}x*$", "", core)
+
+
+_ANSWER_KEY = re.compile(r"\[([a-z0-9][a-z0-9-]{0,127})\]\s*")
+
+
+def resolved_answers(segment: "Segment") -> list[Answered]:
+    """Las respuestas del equipo que llevan su clave. Una sin clave sigue en el segmento,
+    pero no se puede reabrir por nombre."""
+
+    out = []
+    for question, answer, source in segment.answers:
+        match = _ANSWER_KEY.match(question)
+        if match:
+            out.append(Answered(match.group(1), question[match.end():].strip(), answer, source))
+    return out
+
+
 def build_sources(
     *,
     segment_text: str,
@@ -784,6 +818,17 @@ def build_sources(
 
     sources = [
         Source("segmento", f"El segmento a chequear ({segment.key} v{segment.version}), el archivo TOML entero", segment_text),
+    ]
+    answered = resolved_answers(segment)
+    if answered:
+        sources.append(
+            Source(
+                "respuestas",
+                "Las cuestiones que el equipo ya contesto en [[preguntas_del_alta]], con su clave: estan resueltas",
+                "\n\n".join(f"[{a.key}] Pregunta: {a.question}\nRespuesta: {a.answer}\nFuente: {a.source}" for a in answered),
+            )
+        )
+    sources += [
         Source("soul", "El SOUL comun del agente comercial (las reglas que el segmento no puede pisar)", soul_text),
         Source("base", f"El conocimiento base de la aliada, v{base.version}, tal como lo recibe el agente", base.render()),
     ]
@@ -793,6 +838,11 @@ def build_sources(
         f"Fecha y hora del chequeo: {now.isoformat()}.",
         f"Vigencia del segmento: desde {segment.starts.isoformat()} hasta {segment.ends.isoformat()}.",
     ]
+    if segment.coupon:
+        context_lines.append(
+            f"oferta.cupon = {segment.coupon} es el cupon de esta campana. oferta.reemplaza solo admite "
+            f"{', '.join(REPLACEABLE_FIELDS)}: el cupon no se nombra ahi, y no hace falta."
+        )
     if flows is None:
         context_lines.append("No se buscaron los flujos que ponen la etiqueta del segmento: no se sabe quien entra.")
     elif not flows:
@@ -833,7 +883,7 @@ def extracted_hints(sources: Sequence[Source]) -> str:
 
     lines = []
     for source in sources:
-        if source.source_id in ("soul", "preguntas_fijas", "contexto"):
+        if source.source_id in ("soul", "preguntas_fijas", "contexto", "respuestas"):
             continue
         data = sorted({f"{d.kind} {d.quote}" for d in extract(source.text) if d.kind != "bono"})
         if data:
@@ -846,7 +896,7 @@ def extracted_hints(sources: Sequence[Source]) -> str:
 
 JUDGE_INSTRUCTIONS = """Sos el revisor del alta de un segmento de conocimiento de un agente comercial de WhatsApp.
 
-Un segmento es un bloque extra (una campana, por ejemplo) que el agente recibe, ademas del conocimiento base y del SOUL, cuando la conversacion tiene una etiqueta y el segmento esta vigente. Donde el segmento dice algo distinto del conocimiento base, manda el segmento, pero solo si el cambio es a proposito: un campo de [oferta] que cambia frente al base tiene que estar en [oferta].reemplaza. El SOUL no lo puede pisar ningun segmento.
+Un segmento es un bloque extra (una campana, por ejemplo) que el agente recibe, ademas del conocimiento base y del SOUL, cuando la conversacion tiene una etiqueta y el segmento esta vigente. Donde el segmento dice algo distinto del conocimiento base, manda el segmento, pero solo si el cambio es a proposito: un campo de [oferta] de los que se reemplazan (__REEMPLAZABLES__) que cambia frente al base tiene que estar en [oferta].reemplaza. Los otros campos de [oferta] (cupon, precio_antes, producto) no se pueden nombrar en reemplaza y no hace falta: son de la campana. oferta.cupon es el cupon de la campana: que exista, o que sea distinto de un cupon del base, no es un item. Si es un item que un texto del segmento ofrezca otro cupon, nombre como el de la campana uno distinto del de oferta.cupon, o diga que se suma con otro cuando el base o el segmento dicen que no se suman. El SOUL no lo puede pisar ningun segmento.
 
 Tu trabajo es encontrar todo lo que pueda hacer que el agente diga algo falso, contradictorio o no confirmado a una persona de este segmento, antes de que entre en produccion. Nada entra con algo abierto, asi que lo que no tengas claro no lo das por bueno: lo preguntas.
 
@@ -855,16 +905,20 @@ Devuelve tres tipos de item:
 - "hueco": falta algo que el agente va a necesitar. Cada pregunta de la fuente preguntas_fijas que el segmento no contesta (ni con un campo, ni con una [[faq]], ni con una respuesta en [[preguntas_del_alta]]) es un hueco. Tambien lo es un caso del arnes cuya respuesta esperada no sale del segmento ni del base, y una plantilla que no se pudo leer.
 - "duda": algo que no esta claro y que puede estar bien o mal; una frase ambigua; algo que el agente podria entender de dos maneras. Si dudas entre si algo es un problema o no, es una duda.
 
-Las respuestas del equipo estan en [[preguntas_del_alta]] del segmento. Una cuestion respondida ahi, de forma que la resuelve y sin que el resto del segmento la contradiga, ya no es un item. Si la respuesta no la resuelve, es ambigua o el segmento sigue diciendo otra cosa, vuelve a ser un item, citando tambien la respuesta.
+Antes de marcar un item de redaccion o de tratamiento, comproba que el texto esta mal: «dile que escriba» o «pidele que elija» son subjuntivo de tu, no de usted.
+
+Las respuestas del equipo estan en [[preguntas_del_alta]] del segmento, y repetidas en la fuente respuestas con su clave entre corchetes. Una cuestion respondida ahi esta resuelta: no la vuelvas a preguntar, ni con otras palabras, ni desde otro campo o fuente, ni como otro tipo de item, aunque prefieras otra forma de resolverla. Es la misma cuestion si la respuesta ya contesta lo que preguntarias. Solo se reabre si la respuesta no la resuelve, es ambigua, o un texto del segmento o de otra fuente dice otra cosa que la respuesta: entonces el item lleva en "reabre" la clave de esa respuesta y cita las dos cosas, un fragmento de la respuesta y el texto, fuera de [[preguntas_del_alta]], que la contradice o que queda sin contestar. Un item que reabre una respuesta sin citar las dos cosas no se cuenta. Un item que no reabre ninguna respuesta lleva "reabre": "".
 
 Reglas de la salida:
-1. Cada item cita textualmente, de cada fuente que lo origina, el fragmento exacto: copialo caracter por caracter de la fuente, sin resumir ni corregir, de una frase o menos. Una cita que no aparece tal cual en su fuente se descarta. Las fuentes se nombran por su id (segmento, soul, base, contexto, preguntas_fijas, segmento:<clave>, plantilla:<nombre>, caso:<id>). Un hueco de una pregunta fija cita esa pregunta de preguntas_fijas.
+1. Cada item cita textualmente, de cada fuente que lo origina, el fragmento exacto: copialo caracter por caracter de la fuente, sin resumir ni corregir, de una frase o menos. Una cita que no aparece tal cual en su fuente se descarta. Las fuentes se nombran por su id (segmento, respuestas, soul, base, contexto, preguntas_fijas, segmento:<clave>, plantilla:<nombre>, caso:<id>). Un hueco de una pregunta fija cita esa pregunta de preguntas_fijas.
 2. Cada item lleva una pregunta para el equipo, en espanol neutro, cerrada si se puede, que se pueda mandar sola por Slack, y el campo del segmento que se va a escribir con la respuesta.
 3. Los datos que encontro el extractor son una ayuda para no pasar por alto un numero: pueden estar mal, y no son una fuente que se cita.
 4. Si no encontras nada, devuelve items vacio. Solo si de verdad no hay nada que preguntar.
 
 Responde SOLO un objeto JSON, sin texto alrededor, con esta forma:
-{"items": [{"tipo": "contradiccion" | "hueco" | "duda", "clave": "slug-corto-en-minusculas", "titulo": "una linea", "citas": [{"fuente": "<id>", "texto": "<fragmento literal>"}], "pregunta": "...", "campo": "..."}]}"""
+{"items": [{"tipo": "contradiccion" | "hueco" | "duda", "clave": "slug-corto-en-minusculas", "titulo": "una linea", "citas": [{"fuente": "<id>", "texto": "<fragmento literal>"}], "pregunta": "...", "campo": "...", "reabre": "" | "<clave de la respuesta>"}]}""".replace(
+    "__REEMPLAZABLES__", ", ".join(REPLACEABLE_FIELDS)
+)
 
 
 def build_messages(sources: Sequence[Source]) -> list[dict[str, str]]:
@@ -956,6 +1010,8 @@ def recorded_judge(answers: Sequence[str], model: str = "grabado") -> Judge:
 
 ITEM_KINDS = {"contradiccion": "C", "hueco": "H", "duda": "D"}
 _ITEM_KEYS = {"tipo", "clave", "titulo", "citas", "pregunta", "campo"}
+# ``reabre`` es de las reglas v2; una salida sin ese campo (las grabadas con v1) se sigue leyendo.
+_ITEM_OPTIONAL_KEYS = {"reabre"}
 
 
 def _plain(text: str) -> str:
@@ -991,6 +1047,7 @@ class Item:
     runs: list[int]
     number: str = ""
     discarded: list[Citation] = field(default_factory=list)
+    reopens: str = ""  # la clave de la respuesta del equipo que este item reabre
 
     @property
     def verified(self) -> bool:
@@ -1014,6 +1071,7 @@ class Item:
             "sin_cita_verificable": not self.verified,
             "pregunta": self.question,
             "campo": self.field,
+            "reabre": self.reopens,
             "corridas": list(self.runs),
             "para_registrar": f"[{self.key}] {self.question}",
             "mensaje_slack": self.slack(),
@@ -1039,8 +1097,11 @@ def parse_judge_output(content: str, sources: Sequence[Source], run: int) -> lis
     by_id = {source.source_id: _plain(source.text) for source in sources}
     items = []
     for index, raw in enumerate(payload["items"]):
-        if not isinstance(raw, dict) or set(raw) != _ITEM_KEYS:
-            raise ValueError(f"items[{index}] no tiene exactamente {', '.join(sorted(_ITEM_KEYS))}")
+        if not isinstance(raw, dict) or not _ITEM_KEYS <= set(raw) <= _ITEM_KEYS | _ITEM_OPTIONAL_KEYS:
+            raise ValueError(f"items[{index}] no tiene exactamente {', '.join(sorted(_ITEM_KEYS))} (y reabre)")
+        reopens = raw.get("reabre", "")
+        if not isinstance(reopens, str):
+            raise ValueError(f"items[{index}].reabre tiene que ser un texto (vacio si no reabre nada)")
         if raw["tipo"] not in ITEM_KINDS:
             raise ValueError(f"items[{index}].tipo no es contradiccion, hueco ni duda")
         for name in ("clave", "titulo", "pregunta", "campo"):
@@ -1069,9 +1130,45 @@ def parse_judge_output(content: str, sources: Sequence[Source], run: int) -> lis
                 field=raw["campo"].strip(),
                 runs=[run],
                 discarded=bad,
+                reopens=reopens.strip().strip("[]").strip(),
             )
         )
     return items
+
+
+def gate_reopened(items: Sequence[Item], answered: Sequence[Answered]) -> tuple[list[Item], list[str]]:
+    """Una cuestion que el equipo ya contesto no vuelve a abrirse sola. Un item reabre una
+    respuesta si lo dice en ``reabre`` o si el juez le pone el mismo slug que tenia la
+    pregunta contestada. Para quedar abierto tiene que citar (verificado) un fragmento de
+    esa respuesta y un texto que no este en ninguna entrada de [[preguntas_del_alta]]: lo
+    que la contradice o lo que queda sin contestar. Si no, sale como aviso y no cuenta.
+    Devuelve (los items que siguen, los avisos)."""
+
+    by_key = {a.key: a for a in answered}
+    by_core = {a.core: a for a in answered}
+    team_texts = [_plain(text) for a in answered for text in (a.question, a.answer)]
+    kept: list[Item] = []
+    notes: list[str] = []
+    for item in items:
+        target = by_key.get(item.reopens) or by_core.get(item.key)
+        if target is None:
+            kept.append(item)
+            continue
+        item.reopens = target.key
+        answer = _plain(target.answer)
+        cites_answer = any(_plain(c.text) in answer for c in item.citations)
+        cites_new = any(not any(_plain(c.text) in text for text in team_texts) for c in item.citations if c.source != "respuestas")
+        if cites_answer and cites_new:
+            kept.append(item)
+            continue
+        missing = " y ".join(
+            part for part, ok in (("un fragmento de la respuesta", cites_answer), ("un texto que la contradiga", cites_new)) if not ok
+        )
+        notes.append(
+            f"corrida {item.runs[0]}: el juez volvio a preguntar [{target.key}], que el equipo ya contesto, "
+            f"sin citar {missing} («{item.title}»): no cuenta como abierto"
+        )
+    return kept, notes
 
 
 def merge_items(runs: Sequence[list[Item]]) -> list[Item]:
@@ -1255,6 +1352,7 @@ def chequear(
         now=now,
     )
     messages = build_messages(sources)
+    answered = resolved_answers(seg)
     runs: list[Run] = []
     found: list[list[Item]] = []
     for number in range(1, corridas + 1):
@@ -1274,6 +1372,8 @@ def chequear(
                 last_error = f"salida invalida: {exc}"
                 continue
             runs.append(Run(number, model, True, len(items)))
+            items, reopened = gate_reopened(items, answered)
+            warnings += reopened
             found.append(items)
             last_error = None
             break

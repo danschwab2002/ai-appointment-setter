@@ -1,0 +1,5 @@
+{
+  "_grabado": "2026-11-05T14:43:51.595048+00:00",
+  "modelo": "moonshotai/kimi-k2.6",
+  "content": "{\"items\": [{\"tipo\":\"contradiccion\",\"clave\":\"cupon-falta-en-reemplaza\",\"titulo\":\"El campo cupón de [oferta] difiere del base pero no está en reemplaza\",\"citas\":[{\"fuente\":\"base\",\"texto\":\"el código TIROIDES10 en el campo del cupón de la página de pago\"},{\"fuente\":\"segmento\",\"texto\":\"cupon = \\\"PRUEBABN31\\\"\"},{\"fuente\":\"segmento\",\"texto\":\"reemplaza = [\\\"precio\\\", \\\"incluye\\\", \\\"garantia\\\", \\\"medios\\\"]\"}],\"pregunta\":\"¿El campo [oferta].cupon debería incluirse en reemplaza, ya que el cupón de la campaña (PRUEBABN31) es distinto del cupón del 10 % (TIROIDES10) que maneja el base?\",\"campo\":\"oferta.reemplaza\"}]}"
+}

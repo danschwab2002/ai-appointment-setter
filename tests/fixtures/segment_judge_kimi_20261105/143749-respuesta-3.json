@@ -1,0 +1,5 @@
+{
+  "_grabado": "2026-11-05T14:45:40.089817+00:00",
+  "modelo": "moonshotai/kimi-k2.6",
+  "content": "{\"items\": [{\"tipo\":\"contradiccion\",\"clave\":\"meses-sin-intereses-vs-promesa-prohibida-base\",\"titulo\":\"El segmento afirma que los pagos a meses son sin intereses pero el base lo prohíbe en promesas prohibidas\",\"citas\":[{\"fuente\":\"base\",\"texto\":\"Que los pagos a meses son sin intereses.\"},{\"fuente\":\"segmento\",\"texto\":\"En México, con tarjeta de crédito: hasta 4 meses sin intereses, solo en esta promo.\"},{\"fuente\":\"segmento\",\"texto\":\"En México, con tarjeta de crédito, se puede pagar hasta en 4 meses sin intereses solo en esta promo.\"}],\"pregunta\":\"El base prohíbe afirmar que los pagos a meses son sin intereses, pero el segmento afirma explícitamente que en esta promo sí lo son. ¿El segmento puede anular una promesa prohibida del base con el campo reemplaza, o se necesita una excepción formal en el base o en el SOUL para esta campaña?\",\"campo\":\"oferta.reemplaza\"}]}"
+}

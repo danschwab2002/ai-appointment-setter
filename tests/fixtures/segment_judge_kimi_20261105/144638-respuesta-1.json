@@ -1,0 +1,5 @@
+{
+  "_grabado": "2026-11-05T14:49:37.871678+00:00",
+  "modelo": "moonshotai/kimi-k2.6",
+  "content": "{\"items\": [{\"tipo\":\"duda\",\"clave\":\"cupon-reemplaza-faltante\",\"titulo\":\"El campo [oferta].cupón cambia respecto al base pero no está en reemplaza\",\"citas\":[{\"fuente\":\"segmento\",\"texto\":\"reemplaza = [\\\"precio\\\", \\\"incluye\\\", \\\"garantia\\\", \\\"medios\\\"]\"},{\"fuente\":\"segmento\",\"texto\":\"cupon = \\\"PRUEBABN31\\\"\"},{\"fuente\":\"base\",\"texto\":\"el código TIROIDES10 en el campo del cupón\"},{\"fuente\":\"segmento\",\"texto\":\"El producto no deja nombrar el cupón en oferta.reemplaza (REPLACEABLE_FIELDS no lo incluye), por eso se declara acá.\"}],\"pregunta\":\"El campo cupón de la oferta cambia respecto al base (PRUEBABN31 vs TIROIDES10) pero no se incluye en oferta.reemplaza por limitación del producto, según la respuesta del alta. ¿Se confirma que esta excepción está liberada para producción y que el agente priorizará PRUEBABN31 sin necesidad del flag en reemplaza?\",\"campo\":\"oferta.reemplaza\"}]}"
+}
