@@ -68,6 +68,15 @@ Portable: la regla es del producto y por instancia solo se prende.
 
 La etiqueta queda en Chatwoot como historia: el bridge no la pone ni la saca.
 
+## El cupón de la campaña en el link (PR-A2)
+
+Un segmento que **va en el turno** (etiqueta, vigente, dentro de los topes) y trae `[oferta].cupon` cambia dos cosas, y solo esas. Sin segmento con cupón (flag apagado, sin la etiqueta, vencido, por empezar o sin `cupon`) las dos salen como antes.
+
+- **El link del agente** (`send_payment_link`) sale con `&offDiscount=<cupón>` al final del link que emitió la base, con el mismo armado que el cupón fijo de la instancia (`payment_link_coupon.payment_link_with_coupon`): el texto, el botón y lo escrito en Chatwoot iguales; la fila de la base guarda el link sin cupón y la atribución por `sck` no cambia. El cupón del segmento **reemplaza** al fijo (`PAYMENT_LINK_COUPON_CODE`) y **no depende** del toque de recuperación (`PAYMENT_LINK_COUPON_RECOVERY_ONLY`); con ese flag, `payment_link_action.coupon_applied` pasa a `true`. Con dos segmentos con cupón en el turno, va el del primero (menor prioridad). Si el link de la base ya trae un `offDiscount` (cupón personal), manda ese, como con el fijo.
+- **El cupón del carrito** (E-267, `RECOVERY_COUPON_BY_REPLY_ENABLED`): no se pide la renovación por respuesta y la entrada no lleva `recovery_coupon`, igual que con una clienta (`customer_status`). Se decide después de la palabra clave de la campaña (`campaign-inbound-entry-v1`), así que también frena con la etiqueta que puso la palabra clave en ese mismo turno.
+
+No cambia lo que mandan los flujos: una plantilla del carrito con cupón que salga del motor sigue saliendo. El cupón se declara en `[oferta].cupon` y no va en `reemplaza` (el base no tiene un campo de cupón; ver `segment-check-v1`).
+
 ## La etiqueta antes del primer turno
 
 **La etiqueta tiene que estar puesta antes del primer turno del agente en la conversación** (Dan, 2026-11-03): un inicio de conversación sin el segmento deja en el historial respuestas que el agente dio sin él, y eso ensucia lo que lee en los turnos siguientes aunque después se sume la etiqueta.
@@ -86,13 +95,17 @@ Con el flag, `agent_segments` lista cada segmento declarado como `clave:vN:sha25
 - `segment_inactive key=… version=… reason=expired|not_started conversation=…`: la conversación tiene la etiqueta y el segmento no está vigente.
 - `segment_dropped_max_per_turn …` y `segment_dropped_size …` (warning): un segmento vigente que no fue por los topes del turno.
 - `segment_after_agent_replies key=… version=… agent_replies_before=… conversation=…` (warning): un segmento que fue en una conversación donde el agente ya había respondido.
+- `segment_link_coupon key=… conversation=…`: el link del agente salió con el cupón de ese segmento (nunca el código).
+- `segment_recovery_coupon_skipped key=… conversation=…`: con ese segmento no se ofreció el cupón del carrito.
+
+Los dos de PR-A2 todavía no están en `LOGGED_INFO_EVENTS`: se ven en el log del proceso, no en el del contenedor.
 
 Nunca el teléfono, el mail ni el texto de los mensajes.
 
 ## Lo que no hace (todavía)
 
 - **El chequeo del alta** (`setter segmento chequear`: contradicciones y huecos, `chequeo_sha` obligatorio para cargar): PR-B.
-- **El cupón en el link** (`[oferta].cupon` → `offDiscount` en el link del agente) y el freno del `recovery_coupon` con un segmento vigente: PR-A2. Hasta entonces el cupón solo se le dice al agente; el link sale como siempre.
+- **El link por oferta del segmento** (una campaña con otro código de oferta y no un cupón): en la v1 el segmento lo dice en `[instruccion]` y el agente deriva para el link (D8).
 - **Poner la etiqueta desde el motor** (`etiquetar` con las etiquetas de los segmentos, `macro_etiqueta`, la regla `segment_label_outside_window`) y la lectura del AE (`/segments`, `allowed_labels`): PR-C. Hoy la pone el equipo con un macro de Chatwoot.
 - `cliente` no es un segmento: sigue por `customer_status`, con sus frenos (D13).
 

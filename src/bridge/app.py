@@ -93,7 +93,7 @@ from bridge.purchase_agent_pause import (
 from bridge.product_label import ProductLabeler
 from bridge.product_routes import HotmartUnrouted, ProductRoute, ProductRoutes
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
-from bridge.payment_link_coupon import coupon_applied_in_context, mark_payment_link_coupon, validate_payment_link_coupon_code
+from bridge.payment_link_coupon import coupon_applied_in_context, mark_payment_link_coupon, mark_segment_link_coupon, segment_link_coupon, validate_payment_link_coupon_code  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
 from bridge.filtering import EventDecision, classify_chatwoot_event
 from bridge.agent_provenance import AgentTurn, CONTEXT_BUILDER_VERSION
 from bridge.hermes import AGENT_TURN_FAILED_REASON_CODE, HermesShadowProcessor, agent_turn_failure_to_hand_off, payment_link_product  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
@@ -6630,6 +6630,19 @@ def create_app(
                 "customer_status_coupon_skipped conversation=%s", conversation_id
             )
             return
+        campaign = segment_link_coupon(
+            segment_catalog, context.get(SEGMENT_CONTEXT_KEY)
+        )
+        if campaign is not None:
+            # PR-A2 (E-338, diseno E-310 §2.6): con una campana con cupon
+            # vigente no se renueva el cupon del carrito por respuesta ni se le
+            # dice al agente que hay uno. Los dos no se suman.
+            logger.info(
+                "segment_recovery_coupon_skipped key=%s conversation=%s",
+                campaign[0],
+                conversation_id,
+            )
+            return
         message_ref = (
             current_message.get("_message_ref") if current_message is not None else None
         )
@@ -7038,7 +7051,22 @@ def create_app(
         al agente (``coupon_applied``, que marca el barrido del historial
         canonico). Si el turno no lo decidio, el link sale sin cupon: el
         agente no pudo prometer un 10 % que no sabia.
+
+        Con un segmento vigente que trae cupon (PR-A2, E-338), manda el de la
+        campana: reemplaza al fijo y no depende del toque de recuperacion (D1 y
+        D2). Sin segmentos, todo como antes.
         """
+        campaign = segment_link_coupon(
+            segment_catalog,
+            context.get(SEGMENT_CONTEXT_KEY) if isinstance(context, dict) else None,
+        )
+        if campaign is not None:
+            logger.info(
+                "segment_link_coupon key=%s conversation=%s",
+                campaign[0],
+                context.get("conversation_ref") if isinstance(context, dict) else None,
+            )
+            return campaign[1]
         code = settings.payment_link_coupon_code
         if code is None or not settings.payment_link_coupon_recovery_only:
             return code
@@ -7308,21 +7336,6 @@ def create_app(
             # Only the stop and the opt-out were asked for: the agent does
             # not run.
             return CanonicalWorkResult(proposal=None)
-        if (
-            settings.recovery_coupon_by_reply_enabled
-            and whatsapp_inbound_equivalence
-            and shared_supabase is not None
-        ):
-            # E-267: antes del agente, para que su entrada ya sepa del cupon.
-            await recovery_coupon_turn(
-                context=context,
-                history=history,
-                conversation_id=conversation_id,
-                external_user_id=external_user_id,
-                phone=inbound_wa_id,
-                current_message=normalized[-1] if normalized else None,
-                prior_opt_out=prior_opt_out,
-            )
         first_batch_index = min(
             (message_indexes[message_ref] for message_ref in expected_refs),
             default=current_index,
@@ -7361,6 +7374,27 @@ def create_app(
                 )
                 if entry_entries:
                     context[SEGMENT_CONTEXT_KEY] = entry_entries
+        if (
+            settings.recovery_coupon_by_reply_enabled
+            and whatsapp_inbound_equivalence
+            and shared_supabase is not None
+        ):
+            # E-267: antes del agente, para que su entrada ya sepa del cupon.
+            # Despues de la palabra clave (E-338, D9): asi el freno del cupon
+            # del carrito ve tambien el segmento que puso la palabra clave.
+            await recovery_coupon_turn(
+                context=context,
+                history=history,
+                conversation_id=conversation_id,
+                external_user_id=external_user_id,
+                phone=inbound_wa_id,
+                current_message=normalized[-1] if normalized else None,
+                prior_opt_out=prior_opt_out,
+            )
+        if segment_link_coupon(segment_catalog, context.get(SEGMENT_CONTEXT_KEY)):
+            # PR-A2 (D2): el link va con el cupon de la campana, haya habido o
+            # no un toque de recuperacion.
+            mark_segment_link_coupon(context)
         normalized = normalized[max(0, first_batch_index - 19) :]
         normalized = _history_after_latest_reset(normalized)
         public_messages = [
