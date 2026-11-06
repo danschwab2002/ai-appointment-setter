@@ -72,7 +72,7 @@ La etiqueta queda en Chatwoot como historia: el bridge no la pone ni la saca.
 
 Un segmento que **va en el turno** (etiqueta, vigente, dentro de los topes) y trae `[oferta].cupon` cambia dos cosas, y solo esas. Sin segmento con cupón (flag apagado, sin la etiqueta, vencido, por empezar o sin `cupon`) las dos salen como antes.
 
-- **El link del agente** (`send_payment_link`) sale con `&offDiscount=<cupón>` al final del link que emitió la base, con el mismo armado que el cupón fijo de la instancia (`payment_link_coupon.payment_link_with_coupon`): el texto, el botón y lo escrito en Chatwoot iguales; la fila de la base guarda el link sin cupón y la atribución por `sck` no cambia. El cupón del segmento **reemplaza** al fijo (`PAYMENT_LINK_COUPON_CODE`) y **no depende** del toque de recuperación (`PAYMENT_LINK_COUPON_RECOVERY_ONLY`); con ese flag, `payment_link_action.coupon_applied` pasa a `true`. Con dos segmentos con cupón en el turno, va el del primero (menor prioridad). Si el link de la base ya trae un `offDiscount` (cupón personal), manda ese, como con el fijo.
+- **El link del agente** (`send_payment_link`) sale con `&offDiscount=<cupón>` al final del link que emitió la base, con el mismo armado que el cupón fijo de la instancia (`payment_link_coupon.payment_link_with_coupon`): el texto, el botón y lo escrito en Chatwoot iguales; la fila de la base guarda el link sin cupón y la atribución por `sck` no cambia. El cupón del segmento **reemplaza** al fijo (`PAYMENT_LINK_COUPON_CODE`) y **no depende** del toque de recuperación (`PAYMENT_LINK_COUPON_RECOVERY_ONLY`); con ese flag, `payment_link_action.coupon_applied` pasa a `true`. Con dos segmentos con cupón en el turno, va el del primero (menor prioridad). Si el link de la base ya trae un `offDiscount` (cupón personal), manda ese, como con el fijo. **El cupón es del producto de la campaña:** va solo si el link es de `[oferta].producto` o, sin `producto`, del principal; un link de otro producto sale como siempre (con el fijo, si la instancia lo tiene). Una instancia sin `[[productos]]` tiene un solo producto y ahí siempre va. Con varios productos, `coupon_applied` no se adelanta: el producto lo nombra el agente después.
 - **El cupón del carrito** (E-267, `RECOVERY_COUPON_BY_REPLY_ENABLED`): no se pide la renovación por respuesta y la entrada no lleva `recovery_coupon`, igual que con una clienta (`customer_status`). Se decide después de la palabra clave de la campaña (`campaign-inbound-entry-v1`), así que también frena con la etiqueta que puso la palabra clave en ese mismo turno.
 
 No cambia lo que mandan los flujos: una plantilla del carrito con cupón que salga del motor sigue saliendo. El cupón se declara en `[oferta].cupon` y no va en `reemplaza` (el base no tiene un campo de cupón; ver `segment-check-v1`).
@@ -96,9 +96,10 @@ Con el flag, `agent_segments` lista cada segmento declarado como `clave:vN:sha25
 - `segment_dropped_max_per_turn …` y `segment_dropped_size …` (warning): un segmento vigente que no fue por los topes del turno.
 - `segment_after_agent_replies key=… version=… agent_replies_before=… conversation=…` (warning): un segmento que fue en una conversación donde el agente ya había respondido.
 - `segment_link_coupon key=… conversation=…`: el link del agente salió con el cupón de ese segmento (nunca el código).
+- `segment_link_coupon_other_product key=… product=… conversation=…`: el turno tenía un segmento con cupón y el link era de otro producto; salió sin ese cupón.
 - `segment_recovery_coupon_skipped key=… conversation=…`: con ese segmento no se ofreció el cupón del carrito.
 
-Los dos de PR-A2 todavía no están en `LOGGED_INFO_EVENTS`: se ven en el log del proceso, no en el del contenedor.
+Los tres de PR-A2 todavía no están en `LOGGED_INFO_EVENTS`: se ven en el log del proceso, no en el del contenedor.
 
 Nunca el teléfono, el mail ni el texto de los mensajes.
 

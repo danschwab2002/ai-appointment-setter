@@ -93,7 +93,7 @@ from bridge.purchase_agent_pause import (
 from bridge.product_label import ProductLabeler
 from bridge.product_routes import HotmartUnrouted, ProductRoute, ProductRoutes
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
-from bridge.payment_link_coupon import coupon_applied_in_context, mark_payment_link_coupon, mark_segment_link_coupon, segment_link_coupon, validate_payment_link_coupon_code  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
+from bridge.payment_link_coupon import coupon_applied_in_context, mark_payment_link_coupon, mark_segment_link_coupon, segment_coupon_fits_product, segment_link_coupon, validate_payment_link_coupon_code  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
 from bridge.filtering import EventDecision, classify_chatwoot_event
 from bridge.agent_provenance import AgentTurn, CONTEXT_BUILDER_VERSION
 from bridge.hermes import AGENT_TURN_FAILED_REASON_CODE, HermesShadowProcessor, agent_turn_failure_to_hand_off, payment_link_product  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
@@ -6639,7 +6639,7 @@ def create_app(
             # dice al agente que hay uno. Los dos no se suman.
             logger.info(
                 "segment_recovery_coupon_skipped key=%s conversation=%s",
-                campaign[0],
+                campaign.key,
                 conversation_id,
             )
             return
@@ -7043,7 +7043,9 @@ def create_app(
             )
         )
 
-    def agent_link_coupon_code(context: dict[str, object] | None) -> str | None:
+    def agent_link_coupon_code(
+        context: dict[str, object] | None, *, link_product: str | None = None
+    ) -> str | None:
         """El cupon que lleva el link del agente (E-148 y, con el flag, E-183).
 
         Con ``PAYMENT_LINK_COUPON_RECOVERY_ONLY`` el cupon va solo si la
@@ -7054,19 +7056,35 @@ def create_app(
 
         Con un segmento vigente que trae cupon (PR-A2, E-338), manda el de la
         campana: reemplaza al fijo y no depende del toque de recuperacion (D1 y
-        D2). Sin segmentos, todo como antes.
+        D2). Sin segmentos, todo como antes. El cupon de la campana es de su
+        producto (``[oferta].producto``, o el principal): un link de otro
+        producto sale como siempre (D10).
         """
         campaign = segment_link_coupon(
             segment_catalog,
             context.get(SEGMENT_CONTEXT_KEY) if isinstance(context, dict) else None,
         )
         if campaign is not None:
-            logger.info(
-                "segment_link_coupon key=%s conversation=%s",
-                campaign[0],
-                context.get("conversation_ref") if isinstance(context, dict) else None,
+            conversation_ref = (
+                context.get("conversation_ref") if isinstance(context, dict) else None
             )
-            return campaign[1]
+            if segment_coupon_fits_product(
+                campaign,
+                link_product=link_product,
+                principal_product=commercial_ally_routes.principal.key,
+            ):
+                logger.info(
+                    "segment_link_coupon key=%s conversation=%s",
+                    campaign.key,
+                    conversation_ref,
+                )
+                return campaign.code
+            logger.info(
+                "segment_link_coupon_other_product key=%s product=%s conversation=%s",
+                campaign.key,
+                link_product,
+                conversation_ref,
+            )
         code = settings.payment_link_coupon_code
         if code is None or not settings.payment_link_coupon_recovery_only:
             return code
@@ -7391,9 +7409,21 @@ def create_app(
                 current_message=normalized[-1] if normalized else None,
                 prior_opt_out=prior_opt_out,
             )
-        if segment_link_coupon(segment_catalog, context.get(SEGMENT_CONTEXT_KEY)):
+        turn_coupon = segment_link_coupon(
+            segment_catalog, context.get(SEGMENT_CONTEXT_KEY)
+        )
+        if (
+            turn_coupon is not None
+            and len(commercial_ally_routes) == 1
+            and segment_coupon_fits_product(
+                turn_coupon,
+                link_product=commercial_ally_routes.principal.key,
+                principal_product=commercial_ally_routes.principal.key,
+            )
+        ):
             # PR-A2 (D2): el link va con el cupon de la campana, haya habido o
-            # no un toque de recuperacion.
+            # no un toque de recuperacion. Solo con un producto: con varios, el
+            # producto del link lo elige el agente despues (D11).
             mark_segment_link_coupon(context)
         normalized = normalized[max(0, first_batch_index - 19) :]
         normalized = _history_after_latest_reset(normalized)
@@ -8650,7 +8680,7 @@ def create_app(
             assert settings.chatwoot_account_id is not None
             assert settings.chatwoot_inbox_id is not None
             assert control_client is not None
-            link_coupon_code = agent_link_coupon_code(context)
+            link_coupon_code = agent_link_coupon_code(context, link_product=link_product)
             link_conversation_id = conversation_id
             link_trigger_id = message_id
 

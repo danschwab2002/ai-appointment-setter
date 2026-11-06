@@ -31,7 +31,9 @@ import pytest
 from test_campaign_inbound_entry_bridge import _Answers, _turn as _entry_turn
 from test_campaign_inbound_entry_bridge import _settings as _entry_settings
 from test_recovery_coupon_reply import ATT1_471, CODE, _a2_message
-from test_segment_bridge import ALWAYS, PAST, SEGMENT, _SegmentShadow
+from test_agent_link_product import _LinkSupabase
+from test_checkout_link_for_funnel import _two_products_settings
+from test_segment_bridge import ALWAYS, FUTURE, PAST, SEGMENT, _SegmentShadow
 from test_webhook import StubChatwootClient, _post, _signed_headers
 from test_whatsapp_inbound_equivalence import (
     FORM_ID,
@@ -44,7 +46,12 @@ from test_whatsapp_inbound_equivalence import (
 
 from bridge.app import Settings, create_app
 from bridge.instance_manifest import InstanceManifest
-from bridge.payment_link_coupon import mark_segment_link_coupon, segment_link_coupon
+from bridge.payment_link_coupon import (
+    SegmentCoupon,
+    mark_segment_link_coupon,
+    segment_coupon_fits_product,
+    segment_link_coupon,
+)
 from bridge.segment_knowledge import SEGMENT_CONTEXT_KEY, load_segment_catalog
 from bridge.supabase import RecoveryCouponForConversation
 
@@ -64,11 +71,19 @@ def _settings(
     coupon: bool = True,
     enabled: bool = True,
     window: tuple[str, str] = ALWAYS,
+    product: str | None = None,
+    second: tuple[str, str, int] | None = None,
+    base: Settings | None = None,
     **overrides: Any,
 ) -> Settings:
-    """El manifiesto de prueba con el segmento ficticio declarado (como test_segment_bridge)."""
+    """El manifiesto de prueba con el segmento ficticio declarado (como test_segment_bridge).
 
-    base = _manifest_settings(tmp_path)
+    ``product``: ``[oferta].producto`` del segmento. ``second``: (etiqueta,
+    cupon, prioridad) de un segundo segmento, copia del primero con otra clave.
+    ``base``: otros settings de partida (por ejemplo, dos productos).
+    """
+
+    base = base or _manifest_settings(tmp_path)
     instance = tmp_path / "instancia"
     folder = instance / "conocimiento" / "segmentos"
     folder.mkdir()
@@ -78,12 +93,23 @@ def _settings(
     if not coupon:
         assert f'cupon = "{SEGMENT_COUPON}"\n' in text
         text = text.replace(f'cupon = "{SEGMENT_COUPON}"\n', "")
+    if product is not None:
+        text = text.replace("[oferta]\n", f'[oferta]\nproducto = "{product}"\n', 1)
     (folder / SEGMENT.name).write_text(text, encoding="utf-8")
+    segments = [(LABEL, SEGMENT.name, 10)]
+    if second is not None:
+        label, code, priority = second
+        other = text.replace(f'clave = "{LABEL}"', f'clave = "{label}"').replace(
+            f'cupon = "{SEGMENT_COUPON}"', f'cupon = "{code}"'
+        )
+        (folder / f"{label}-v1.toml").write_text(other, encoding="utf-8")
+        segments.append((label, f"{label}-v1.toml", priority))
     manifest_path = instance / "instancia.toml"
     anchor = 'conocimiento = "conocimiento/knowledge-v1.toml"\n'
-    declaration = (
-        f'\n[[agente.segmentos]]\nclave = "{LABEL}"\netiqueta = "{LABEL}"\n'
-        f'conocimiento = "conocimiento/segmentos/{SEGMENT.name}"\nprioridad = 10\n'
+    declaration = "".join(
+        f'\n[[agente.segmentos]]\nclave = "{label}"\netiqueta = "{label}"\n'
+        f'conocimiento = "conocimiento/segmentos/{name}"\nprioridad = {priority}\n'
+        for label, name, priority in segments
     )
     manifest_path.write_text(
         manifest_path.read_text(encoding="utf-8").replace(anchor, anchor + declaration),
@@ -131,19 +157,29 @@ def _process(
     return chatwoot, shadow
 
 
-def _link(tmp_path: Path, settings: Settings, labels: list[str] | None) -> str:
+def _link(
+    tmp_path: Path,
+    settings: Settings,
+    labels: list[str] | None,
+    *,
+    proposal: dict[str, object] | None = None,
+    supabase: Any = None,
+    shadow_out: list[_SegmentShadow] | None = None,
+) -> str:
     """La persona pide el link y el agente decide send_payment_link: lo que se escribio."""
 
     webhook, history = _text_webhook("Pasame el link para pagar")
     if labels is not None:
         webhook["conversation"]["labels"] = labels
-    chatwoot, _ = _process(
-        _PaymentLinkSupabase(identities=(FORM_ID,)),
+    chatwoot, shadow = _process(
+        supabase or _PaymentLinkSupabase(identities=(FORM_ID,)),
         settings=settings,
         webhook=webhook,
         history=history,
-        proposal=PAYMENT_LINK_PROPOSAL,
+        proposal=proposal or PAYMENT_LINK_PROPOSAL,
     )
+    if shadow_out is not None:
+        shadow_out.append(shadow)
     [reply] = chatwoot.reply_calls
     content = str(reply["content"])
     assert content.startswith(f"{LINK_REPLY}\n")
@@ -157,7 +193,7 @@ def test_the_coupon_is_the_one_of_the_first_segment_of_the_turn_that_has_one(tmp
     catalog = _settings(tmp_path).agent_segment_catalog
     entries = [{"key": LABEL, "version": 1}]
 
-    assert segment_link_coupon(catalog, entries) == (LABEL, SEGMENT_COUPON)
+    assert segment_link_coupon(catalog, entries) == SegmentCoupon(LABEL, SEGMENT_COUPON, None)
     assert segment_link_coupon(catalog, []) is None
     assert segment_link_coupon(catalog, None) is None
     assert segment_link_coupon(catalog, [{"key": LABEL, "version": 2}]) is None
@@ -204,6 +240,7 @@ def test_with_a_segment_in_force_the_link_carries_its_coupon(
         (["otra"], {}),  # sin la etiqueta
         ([LABEL], {"enabled": False}),  # el flag apagado: ATT1, Maribel y Johanna hoy
         ([LABEL], {"window": PAST}),  # vencido
+        ([LABEL], {"window": FUTURE}),  # por empezar
         ([LABEL], {"coupon": False}),  # vigente sin cupon
     ],
 )
@@ -334,3 +371,151 @@ def test_the_keyword_of_a_campaign_with_coupon_also_stops_the_cart_coupon(tmp_pa
     assert context[SEGMENT_CONTEXT_KEY] == [{"key": LABEL, "version": 1}]
     assert supabase.lookups == []
     assert "recovery_coupon" not in context
+
+
+# --------------------------------------------- el producto del cupon (revision del #424)
+
+
+def test_the_coupon_fits_only_the_product_of_its_campaign() -> None:
+    """D10: un cupon de Hotmart es de un producto; sin producto, el del principal."""
+
+    of_att2 = SegmentCoupon(LABEL, SEGMENT_COUPON, "att2")
+    of_principal = SegmentCoupon(LABEL, SEGMENT_COUPON, None)
+
+    assert segment_coupon_fits_product(of_att2, link_product="att2", principal_product="att1")
+    assert not segment_coupon_fits_product(of_att2, link_product="att1", principal_product="att1")
+    assert segment_coupon_fits_product(of_principal, link_product="att1", principal_product="att1")
+    assert not segment_coupon_fits_product(of_principal, link_product="att2", principal_product="att1")
+    # Sin [[productos]] la instancia tiene un solo producto: siempre es ese.
+    assert segment_coupon_fits_product(of_att2, link_product=None, principal_product=None)
+
+
+def _two(tmp_path: Path, **kwargs: Any) -> Settings:
+    return _settings(tmp_path, base=_two_products_settings(tmp_path), **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("segment_product", "link_product", "fits"),
+    [
+        ("att1", "att1", True),
+        ("att1", "att2", False),
+        ("att2", "att2", True),
+        ("att2", "att1", False),
+        (None, "att1", True),  # sin producto: el principal
+        (None, "att2", False),
+    ],
+)
+def test_with_two_products_the_coupon_goes_only_in_the_link_of_its_product(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    segment_product: str | None,
+    link_product: str,
+    fits: bool,
+) -> None:
+    caplog.set_level(logging.INFO, logger="bridge")
+
+    url = _link(
+        tmp_path,
+        _two(tmp_path, product=segment_product),
+        [LABEL],
+        proposal={**PAYMENT_LINK_PROPOSAL, "product": link_product},
+        supabase=_LinkSupabase(),
+    )
+
+    assert url.endswith("&offDiscount=" + SEGMENT_COUPON) is fits
+    assert ("offDiscount" in url) is fits
+    if not fits:
+        assert (
+            f"segment_link_coupon_other_product key={LABEL} product={link_product} conversation=200"
+            in caplog.text
+        )
+
+
+def test_a_link_of_another_product_keeps_the_fixed_coupon_of_the_instance(tmp_path: Path) -> None:
+    url = _link(
+        tmp_path,
+        _two(tmp_path, product="att1", payment_link_coupon_code="PROTOCOLO10+"),
+        [LABEL],
+        proposal={**PAYMENT_LINK_PROPOSAL, "product": "att2"},
+        supabase=_LinkSupabase(),
+    )
+
+    assert url.endswith("&offDiscount=PROTOCOLO10%2B")
+
+
+# ------------------------------------------- lo que ve el agente (revision del #424)
+
+
+def _link_context(tmp_path: Path, settings: Settings, labels: list[str]) -> dict[str, Any]:
+    shadows: list[_SegmentShadow] = []
+    _link(tmp_path, settings, labels, shadow_out=shadows)
+    [(_, context)] = shadows[0].calls
+    return context
+
+
+def test_with_the_recovery_flag_the_agent_is_told_the_campaign_link_carries_the_coupon(
+    tmp_path: Path,
+) -> None:
+    """D2: la conversacion la abrio la persona (sin toque de recuperacion), y la campana va igual."""
+
+    settings = _settings(
+        tmp_path, payment_link_coupon_code="PROTOCOLO10+", payment_link_coupon_recovery_only=True
+    )
+
+    context = _link_context(tmp_path, settings, [LABEL])
+
+    assert context["payment_link_action"]["coupon_applied"] is True
+
+
+def test_with_the_recovery_flag_and_without_the_label_the_agent_is_told_as_today(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(
+        tmp_path, payment_link_coupon_code="PROTOCOLO10+", payment_link_coupon_recovery_only=True
+    )
+
+    context = _link_context(tmp_path, settings, ["otra"])
+
+    assert context["payment_link_action"]["coupon_applied"] is False
+
+
+def test_with_two_products_the_agent_is_not_told_before_it_names_the_product(tmp_path: Path) -> None:
+    """D11: con varios productos el producto del link lo dice el agente despues."""
+
+    settings = _two(
+        tmp_path,
+        product="att1",
+        payment_link_coupon_code="PROTOCOLO10+",
+        payment_link_coupon_recovery_only=True,
+    )
+    shadows: list[_SegmentShadow] = []
+    _link(
+        tmp_path,
+        settings,
+        [LABEL],
+        proposal={**PAYMENT_LINK_PROPOSAL, "product": "att1"},
+        supabase=_LinkSupabase(),
+        shadow_out=shadows,
+    )
+    [(_, context)] = shadows[0].calls
+
+    assert context["payment_link_action"]["coupon_applied"] is False
+
+
+# ------------------------------------------------------------ D3 y D4 por la app
+
+
+def test_with_two_coupon_segments_the_first_by_priority_wins(tmp_path: Path) -> None:
+    settings = _settings(tmp_path, second=("campana-dos", "DOS22", 5))
+
+    url = _link(tmp_path, settings, [LABEL, "campana-dos"])
+
+    assert url == BASE_LINK + "&offDiscount=DOS22"
+
+
+def test_a_coupon_already_in_the_link_of_the_base_still_wins(tmp_path: Path) -> None:
+    personal = BASE_LINK + "&offDiscount=ATT1K7Q2M9XP"
+    supabase = _PaymentLinkSupabase(identities=(FORM_ID,))
+    supabase.reservation_url_override = personal
+
+    assert _link(tmp_path, _settings(tmp_path), [LABEL], supabase=supabase) == personal

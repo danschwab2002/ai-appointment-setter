@@ -30,6 +30,7 @@ regla es la convivencia para cuando llegue el personal.
 from __future__ import annotations
 
 import re
+from typing import NamedTuple
 from urllib.parse import parse_qsl, quote, urlsplit
 
 from bridge.chatwoot import FLOW_ENGINE_PURCHASE_WELCOME_MARKER
@@ -201,8 +202,17 @@ def coupon_applied_in_context(context: object) -> bool | None:
 # ``segments``: devuelve None y todo sale como antes.
 
 
-def segment_link_coupon(catalog: object, entries: object) -> tuple[str, str] | None:
-    """(clave, codigo) del primer segmento del turno que trae cupon, o None.
+class SegmentCoupon(NamedTuple):
+    """El cupon de un segmento del turno: su clave, el codigo y su producto."""
+
+    key: str
+    code: str
+    # ``[oferta].producto``: la clave de ``[[productos]]``, o None («el principal»).
+    product: str | None
+
+
+def segment_link_coupon(catalog: object, entries: object) -> SegmentCoupon | None:
+    """El cupon del primer segmento del turno que trae uno, o None.
 
     ``entries`` es la entrada ``segments`` del turno, ya en orden de prioridad
     (``SegmentSelection.context_entries``): gana el primero (D3 de E-338).
@@ -213,8 +223,25 @@ def segment_link_coupon(catalog: object, entries: object) -> tuple[str, str] | N
     for segment in catalog.blocks_for(entries):  # type: ignore[attr-defined]
         offer = segment.knowledge.offer
         if offer is not None and offer.coupon is not None:
-            return segment.key, offer.coupon
+            return SegmentCoupon(segment.key, offer.coupon, offer.product)
     return None
+
+
+def segment_coupon_fits_product(
+    coupon: SegmentCoupon, *, link_product: str | None, principal_product: str | None
+) -> bool:
+    """Si el cupon de la campana es del producto del link (D10 de E-338).
+
+    Un cupon de Hotmart es de un producto: el de la campana va solo en el link
+    de su producto. Sin ``[oferta].producto`` es el del principal (E-310 §2.1,
+    «el principal»). Una instancia sin ``[[productos]]`` tiene un solo
+    producto (``link_product`` None): ahi siempre es ese.
+    """
+
+    if link_product is None:
+        return True
+    target = coupon.product if coupon.product is not None else principal_product
+    return target == link_product
 
 
 def mark_segment_link_coupon(context: dict[str, object]) -> None:
