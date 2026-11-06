@@ -193,6 +193,9 @@ def test_sections_differ_from_johanna_only_in_the_written_differences(heading: s
 def test_output_contract_differs_only_in_the_neutral_reason_code_and_the_product() -> None:
     # La 2b: con `products` en la entrada, el pedido del link lleva `product`.
     # Sin productos declarados, la salida es la de Johanna.
+    # E-328: el motivo de la derivacion por riesgo para la persona
+    # (`safety_risk`, ver “Seguridad”), que el bridge reconoce para mandarle
+    # el reply. Johanna no lo tiene.
     johanna = _section(JOHANNA, "## Salida obligatoria").replace(
         "johanna_e2e_response", "commercial_response"
     ).replace(
@@ -200,6 +203,10 @@ def test_output_contract_differs_only_in_the_neutral_reason_code_and_the_product
         "- No agregues ni elimines claves. Única excepción: con `products` en la\n"
         "  entrada y `decision=\"send_payment_link\"`, va también `product` (ver “Enlace\n"
         "  de pago”).\n",
+    ).replace(
+        "  revisión particular o cualquier otra condición restrictiva.\n",
+        "  revisión particular o cualquier otra condición restrictiva; `safety_risk`:\n"
+        "  ver “Seguridad”.\n",
     )
 
     assert _section(COMMON, "## Salida obligatoria") == johanna
@@ -495,3 +502,34 @@ def test_the_customer_route_does_not_write_the_handoff_notice() -> None:
 
     assert HANDOFF_NOTICE_TEXT not in COMMON
     assert "te escriben por acá" not in COMMON
+
+
+# --- E-328: el riesgo para la persona ----------------------------------------
+
+SAFETY = _section(COMMON, "## Seguridad")
+
+
+def test_risk_for_the_person_is_handed_off_with_its_own_reason_and_the_reply_still_arrives() -> None:
+    # E-301 y E-322: con «no derives», el caso 75 derivo 2 de 3 veces con
+    # policy_requires_human y el bridge descartaba el reply. Ahora deriva con
+    # un motivo propio y el bridge (SAFETY_HANDOFF_REPLY_ENABLED) le manda el
+    # reply: la indicacion de pedir ayuda tiene que estar en el reply.
+    compacto = " ".join(SAFETY.split())
+    assert '`reason_code="safety_risk"`' in compacto
+    for riesgo in ("hacerse daño", "no querer vivir", "dañar a otra persona", "no estar seguros"):
+        assert riesgo in compacto
+    assert "en `reply`, que le llega igual, indicá que busquen atención médica o ayuda de emergencia" in compacto
+    assert "No evalúes el riesgo, no prometas confidencialidad y no sigas vendiendo." in compacto
+    assert "no inventes teléfonos locales" in compacto
+    # El motivo esta entre los de la salida.
+    assert "`safety_risk`:\n  ver “Seguridad”." in _section(COMMON, "## Salida obligatoria")
+
+
+def test_the_sensitive_data_rule_survives_in_the_policy_after_the_dedupe() -> None:
+    # E-328 saco de «Seguridad» el «No pidas historia clinica…» para que el SOUL
+    # entre bajo el corte de Hermes: la misma regla sigue en la politica.
+    assert "No pidas historia clínica" not in COMMON
+    assert (
+        "No\nrecopiles información financiera, clínica, documentos, credenciales ni otros\ndatos sensibles."
+        in COMMON
+    )
