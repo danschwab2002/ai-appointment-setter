@@ -23,6 +23,7 @@ from .segment_knowledge import (
     SegmentError,
     build_catalog,
     load_declared_segment,
+    verificar_chequeo,
 )
 from .instance_manifest import (
     FLOWS,
@@ -214,9 +215,10 @@ def _validate_segments(
 ) -> None:
     """Los segmentos del agente (E-311): cada archivo, y que entren juntos en el turno.
 
-    Carga tambien los borradores, para revisarlos. El chequeo del alta (las
-    contradicciones y los huecos, ``setter segmento chequear``) no corre aca
-    todavia: llega con PR-B.
+    Carga tambien los borradores, para revisarlos. De cada ``aprobado`` verifica
+    el ``chequeo_sha`` como el cargador del bridge (E-337): uno que no calza es un
+    error aca, antes del despliegue, y no un bridge que no arranca. El juez del
+    chequeo (``setter segmento chequear``) no corre aca: se verifica la huella.
     """
     loaded = []
     entries: list[dict[str, Any]] = []
@@ -268,6 +270,15 @@ def _validate_segments(
             build_catalog(loaded, base_bytes=len(knowledge.render().encode("utf-8")))
         except SegmentError as exc:
             report["errores"].append(f"segmentos: {exc}")
+    for segment in loaded:
+        try:
+            verificar_chequeo(
+                dict(segment.raw),
+                base=knowledge,
+                otros=[dict(other.raw) for other in loaded if other.key != segment.key],
+            )
+        except SegmentError as exc:
+            report["errores"].append(f"segmento {segment.key}: {exc}")
 
 
 def _print_human(report: dict[str, Any]) -> None:

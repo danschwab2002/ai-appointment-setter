@@ -23,7 +23,7 @@ from typing import Any
 import httpx
 import pytest
 
-from bridge import segment_knowledge
+from bridge import segment_check, segment_knowledge
 from bridge.agent_provenance import AgentTurn
 from bridge.commercial_knowledge import CommercialKnowledge
 from bridge.hermes import HermesShadowProcessor
@@ -112,6 +112,27 @@ def _approve(path: Path) -> None:
     )
 
 
+def sellar_chequeo(text: str, base: CommercialKnowledge, otros: tuple[str, ...] = ()) -> str:
+    """El segmento con el ``chequeo_sha`` que da el calculo real (E-337).
+
+    Es lo que escribe ``setter segmento chequear`` con 0 abiertos: el cargador lo
+    exige a un ``aprobado``. Se calcula con ``segment_check.calcular_chequeo_sha``
+    sobre el contenido actual y el base de la prueba, nunca a mano. ``otros`` son
+    los textos de los otros segmentos declarados.
+    """
+
+    raw = tomllib.loads(text)
+    sha = segment_check.calcular_chequeo_sha(
+        raw,
+        base_sha256=base.rendered_sha256,
+        otros=[tomllib.loads(other) for other in otros],
+    )
+    lines = [line for line in text.splitlines(keepends=True) if not line.startswith("chequeo_sha")]
+    anchor = next(index for index, line in enumerate(lines) if line.startswith("aprobado_el"))
+    lines.insert(anchor + 1, f'chequeo_sha = "{sha}"\n')
+    return "".join(lines)
+
+
 @pytest.fixture
 def instance(tmp_path: Path) -> Path:
     """La instancia de prueba de ATT1 con el conocimiento aprobado y el segmento declarado."""
@@ -120,7 +141,10 @@ def instance(tmp_path: Path) -> Path:
     shutil.copytree(ATT1, target)
     _approve(target / "conocimiento" / "knowledge-v1.toml")
     (target / "conocimiento" / "segmentos").mkdir()
-    shutil.copy(SEGMENT, target / "conocimiento" / "segmentos" / SEGMENT.name)
+    base = CommercialKnowledge.from_toml_file(target / "conocimiento" / "knowledge-v1.toml")
+    (target / "conocimiento" / "segmentos" / SEGMENT.name).write_text(
+        sellar_chequeo(SEGMENT.read_text(encoding="utf-8"), base), encoding="utf-8"
+    )
     manifest = target / "instancia.toml"
     text = manifest.read_text(encoding="utf-8")
     anchor = 'conocimiento = "conocimiento/knowledge-v1.toml"\n'
@@ -452,7 +476,7 @@ def test_the_bridge_loads_the_declared_segment_of_the_instance(instance: Path) -
 def test_the_check_hook_gets_each_segment_with_everything_the_check_compares(
     instance: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """El enchufe de PR-B (firma de segment_check.verificar_chequeo): hoy no hace nada."""
+    """El enchufe de PR-B (firma de segment_check.verificar_chequeo) recibe todo lo que compara."""
 
     calls: list[dict[str, Any]] = []
 
@@ -464,11 +488,80 @@ def test_the_check_hook_gets_each_segment_with_everything_the_check_compares(
     load_segment_catalog(_manifest(instance), instance, base)
 
     [call] = calls
-    assert call["segmento"] == _payload()  # el dict de tomllib, tal cual
+    on_disk = instance / "conocimiento" / "segmentos" / SEGMENT.name
+    assert call["segmento"] == tomllib.loads(on_disk.read_text(encoding="utf-8"))  # el dict de tomllib, tal cual
     assert call["base"] is base and call["otros"] == []
-    # Y el de verdad, hoy, no frena un segmento sin chequeo_sha.
-    monkeypatch.undo()
-    assert load_segment_catalog(_manifest(instance), instance, base).segments[0].knowledge.check_sha is None
+
+
+# ------------------------------------------------------------------ el chequeo del alta (E-337)
+
+
+def _segment_file(instance: Path) -> Path:
+    return instance / "conocimiento" / "segmentos" / SEGMENT.name
+
+
+def test_an_approved_segment_with_the_sha_of_its_content_loads(instance: Path) -> None:
+    base = _base(instance)
+    [segment] = load_segment_catalog(_manifest(instance), instance, base).segments
+    raw = tomllib.loads(_segment_file(instance).read_text(encoding="utf-8"))
+    assert segment.knowledge.check_sha == segment_check.calcular_chequeo_sha(
+        raw, base_sha256=base.rendered_sha256
+    )
+
+
+def test_an_approved_segment_without_the_sha_does_not_load(instance: Path) -> None:
+    path = _segment_file(instance)
+    path.write_text(SEGMENT.read_text(encoding="utf-8"), encoding="utf-8")  # aprobado, sin chequeo_sha
+    with pytest.raises(SegmentError, match="aprobado sin chequeo_sha"):
+        load_segment_catalog(_manifest(instance), instance, _base(instance))
+
+
+def test_a_sha_from_another_content_does_not_load(instance: Path) -> None:
+    """El sha que dio el chequeo sobre una version anterior del segmento no vale para esta."""
+
+    path = _segment_file(instance)
+    text = path.read_text(encoding="utf-8")
+    old = '"Un bono ficticio de prueba."'
+    assert text.count(old) == 1
+    path.write_text(text.replace(old, '"Un bono ficticio de prueba, cambiado."'), encoding="utf-8")
+    with pytest.raises(SegmentError, match="no es el del contenido actual"):
+        load_segment_catalog(_manifest(instance), instance, _base(instance))
+
+
+def test_a_sha_measured_against_another_base_does_not_load(instance: Path) -> None:
+    """Cambiar el conocimiento base vuelve al chequeo: el sha cubre su render."""
+
+    base = _base(instance)
+    other = CommercialKnowledge.from_toml_file(
+        FIXTURES / "instances" / "att1-b7580bc-20261103" / "conocimiento" / "knowledge-v14.toml"
+    )
+    assert other.rendered_sha256 != base.rendered_sha256
+    with pytest.raises(SegmentError, match="no es el del contenido actual"):
+        segment_knowledge.verificar_chequeo(
+            tomllib.loads(_segment_file(instance).read_text(encoding="utf-8")), base=other
+        )
+
+
+def test_approving_and_writing_the_sha_do_not_change_it(instance: Path) -> None:
+    """El sha no cubre la aprobacion: el que dio el chequeo sobre el borrador vale aprobado."""
+
+    base = _base(instance)
+    draft = SEGMENT.read_text(encoding="utf-8").replace('estado = "aprobado"', 'estado = "borrador"')
+    sealed_draft = sellar_chequeo(draft, base)
+    sha_line = next(line for line in sealed_draft.splitlines() if line.startswith("chequeo_sha"))
+    assert sha_line in _segment_file(instance).read_text(encoding="utf-8")
+
+
+def test_a_draft_passes_the_hook_and_the_loader_stops_it_apart(instance: Path) -> None:
+    draft = _payload()
+    draft["cabecera"]["estado"] = "borrador"
+    segment_knowledge.verificar_chequeo(draft, base=_base(instance))  # sin chequeo_sha, no lanza
+
+
+def test_another_segment_the_check_cannot_read_is_a_segment_error(instance: Path) -> None:
+    raw = tomllib.loads(_segment_file(instance).read_text(encoding="utf-8"))
+    with pytest.raises(SegmentError, match="chequeo del alta"):
+        segment_knowledge.verificar_chequeo(raw, base=_base(instance), otros=[{"cabecera": {}}])
 
 
 @pytest.mark.parametrize(
@@ -545,7 +638,19 @@ def test_validate_reports_each_segment_and_its_state(instance: Path) -> None:
     assert segment["clave"] == "campana-de-prueba" and segment["estado"] == "aprobado"
     assert segment["vigencia"]["ahora"] == "vigente"
     assert segment["bytes"] == len(EXPECTED_RENDER.encode("utf-8"))
-    assert segment["chequeo_sha"] is None
+    assert isinstance(segment["chequeo_sha"], str) and len(segment["chequeo_sha"]) == 64
+
+
+def test_validate_flags_an_approved_segment_whose_sha_is_not_its_own(instance: Path) -> None:
+    """Lo que no dejaria arrancar al bridge sale antes, en ``setter validate`` (E-337)."""
+
+    _segment_file(instance).write_text(SEGMENT.read_text(encoding="utf-8"), encoding="utf-8")
+    report = validate_instance(instance, now=INSIDE)
+    assert report["valida"] is False
+    assert any(
+        error.startswith("segmento campana-de-prueba:") and "chequeo_sha" in error
+        for error in report["errores"]
+    )
 
 
 def test_validate_without_segments_has_no_segment_key() -> None:

@@ -80,6 +80,11 @@ LOGGED_INFO_EVENTS = frozenset(
         # warning y salen siempre.
         "segment_context",
         "segment_inactive",
+        # la etiqueta que pone la palabra clave del primer mensaje
+        # (bridge.campaign_inbound_entry, E-317; E-336): numero de conversacion,
+        # clave y etiqueta del segmento y lo que hizo el macro; nunca el texto
+        # del mensaje, el telefono ni el nombre
+        "segment_label_by_keyword",
         # el adjunto sin texto (bridge.app, E-315): el id del mensaje, los
         # tipos de adjunto y si fue el segundo seguido; nunca el archivo
         "chatwoot_inbound_attachment_without_text",

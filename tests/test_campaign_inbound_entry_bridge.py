@@ -48,6 +48,7 @@ from bridge.campaign_inbound_entry import CAMPAIGN_ANSWER_KEY, NOTICE_KIND, camp
 from bridge.hermes import HermesShadowProcessor
 from bridge.instance_manifest import InstanceManifest
 from bridge.segment_knowledge import SEGMENT_CONTEXT_KEY, load_segment_catalog
+from test_segment_knowledge import sellar_chequeo
 from bridge.supabase import SupabaseClient, SupabaseError
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -88,7 +89,8 @@ def _settings(
     text = SEGMENT.read_text(encoding="utf-8")
     text = text.replace("desde = 2026-11-20T00:00:00-06:00", f"desde = {window[0]}")
     text = text.replace("hasta = 2026-12-01T00:00:00-06:00", f"hasta = {window[1]}")
-    (folder / SEGMENT.name).write_text(text, encoding="utf-8")
+    assert base.commercial_knowledge is not None
+    (folder / SEGMENT.name).write_text(sellar_chequeo(text, base.commercial_knowledge), encoding="utf-8")
     manifest_path = instance / "instancia.toml"
     anchor = 'conocimiento = "conocimiento/knowledge-v1.toml"\n'
     manifest_path.write_text(
