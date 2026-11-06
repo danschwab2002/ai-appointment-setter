@@ -38,14 +38,16 @@ def test_it_is_one_transaction_with_lock_timeout_and_the_last() -> None:
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
     # Despues, el aviso de derivaciones sin atender (20261103001000, E-309).
     # La etiqueta de un segmento en un flujo nativo (20261103001300, E-316): un reemplazo contado en la forma nativa.
+    # El cierre del caso por el cupon de una campana (20261106000100, E-339): una RPC de service_role.
+    assert names[-1] == "20261106000100_recovery_case_segment_coupon_close_v1.sql"
     # El origen de un recorrido nativo para la campana por landing (20261103001700, E-321): una lectura de service_role.
-    assert names[-1] == "20261103001700_flow_engine_native_campaign_origin_v1.sql"
+    assert names[-2] == "20261103001700_flow_engine_native_campaign_origin_v1.sql"
     # La entrada a una campana: lo que contesto cada conversacion a la pregunta (20261103001500, E-317).
-    assert names[-2] == "20261103001500_segment_entry_answers_v1.sql"
-    assert names[-3] == "20261103001300_flow_engine_native_segment_label_v1.sql"
-    assert names[-4] == "20261103001000_handoff_wait_alerts_v1.sql"
-    assert names[-5] == MIGRATION.name
-    assert names[-6] == "20261103000700_customer_status_v1.sql"
+    assert names[-3] == "20261103001500_segment_entry_answers_v1.sql"
+    assert names[-4] == "20261103001300_flow_engine_native_segment_label_v1.sql"
+    assert names[-5] == "20261103001000_handoff_wait_alerts_v1.sql"
+    assert names[-6] == MIGRATION.name
+    assert names[-7] == "20261103000700_customer_status_v1.sql"
     assert sql.count("\nbegin;\n") == 1 and sql.rstrip().endswith("commit;")
     assert "set local lock_timeout = '5s';" in sql
     assert "message = 'flow_engine_native_payment_failure_branches_already_applied'" in sql
@@ -90,4 +92,4 @@ def test_the_choices_table_and_the_acl() -> None:
 def test_the_validator_is_the_last_of_the_npm_chain() -> None:
     chain = json.loads(PACKAGE.read_text(encoding="utf-8"))["scripts"]["test"]
     assert chain.rstrip().endswith(
-        " && node validate_customer_status.mjs && node validate_flow_engine_native_payment_failure_branches.mjs --check && node validate_handoff_wait_alerts.mjs && node validate_flow_engine_native_segment_label.mjs && node validate_segment_entry_answers.mjs && node validate_flow_engine_native_campaign_origin.mjs --check")
+        " && node validate_customer_status.mjs && node validate_flow_engine_native_payment_failure_branches.mjs --check && node validate_handoff_wait_alerts.mjs && node validate_flow_engine_native_segment_label.mjs && node validate_segment_entry_answers.mjs && node validate_flow_engine_native_campaign_origin.mjs --check && node validate_recovery_case_segment_coupon_close.mjs")

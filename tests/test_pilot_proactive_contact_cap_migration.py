@@ -150,6 +150,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261103001500",
         # El origen de un recorrido nativo para la campana por landing (20261103001700, E-321): una lectura de service_role.
         "20261103001700",
+        # El cierre del caso por el cupon de una campana (20261106000100, E-339): una RPC de service_role.
+        "20261106000100",
     ]
 
     sql = _sql()

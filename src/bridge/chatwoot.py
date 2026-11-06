@@ -2474,6 +2474,7 @@ class ChatwootClient:
         inbox_id: int,
         messages_since_epoch: int | None = None,
         messages_limit: int = 20,
+        on_truncated: Callable[[], None] | None = None,
     ) -> list[ContactConversation]:
         """Las conversaciones del contacto en el inbox. Solo lee.
 
@@ -2490,7 +2491,9 @@ class ChatwootClient:
         marca no puede tenerlo y no se lee.
 
         Falla cerrado (``ChatwootProtocolError``) ante un item mal formado, de
-        otro contacto, o una lista que puede venir cortada.
+        otro contacto, o una lista que puede venir cortada. Con ``on_truncated``,
+        quien llama sabe que decide con una parte: se lo avisa y devuelve lo que
+        vino, las mas activas.
         """
         if (
             not isinstance(contact_id, int)
@@ -2533,7 +2536,9 @@ class ChatwootClient:
         ):
             raise ChatwootProtocolError("invalid_contact_conversations_payload")
         if len(payload) >= _CONTACT_CONVERSATIONS_PAGE_LIMIT:
-            raise ChatwootProtocolError("contact_conversations_truncated")
+            if on_truncated is None:
+                raise ChatwootProtocolError("contact_conversations_truncated")
+            on_truncated()
         conversations: list[ContactConversation] = []
         seen: set[int] = set()
         for item in payload:

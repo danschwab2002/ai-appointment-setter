@@ -8267,6 +8267,44 @@ class SupabaseClient:
             operation=operation,
         )
 
+    async def close_recovery_case_segment_coupon(
+        self,
+        *,
+        action_id: str,
+        attempt_id: str,
+        worker_id: str,
+        lease_generation: int,
+        now: str,
+    ) -> str:
+        """A2 or Z stopped by a campaign coupon: close attempt, sequence and case.
+
+        ``closed``: the case is cancelled, so a later cart starts clean.
+        ``case_not_open``: something else closed the case first (E-339).
+        """
+        operation = "close_recovery_case_segment_coupon_v1"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps(
+                {
+                    "p_action_id": action_id,
+                    "p_attempt_id": attempt_id,
+                    "p_worker_id": worker_id,
+                    "p_lease_generation": lease_generation,
+                    "p_now": now,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return _required_enum(
+            rows[0], "outcome", {"closed", "case_not_open"}, operation=operation
+        )
+
     async def request_cart_renewal_by_reply(
         self,
         *,

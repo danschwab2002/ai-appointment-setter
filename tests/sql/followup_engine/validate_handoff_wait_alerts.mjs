@@ -54,7 +54,9 @@ if (position < 0) fail(`${MIGRATION} no esta en la cadena`);
 // una campana (20261103001500, E-317): una tabla nueva. Esta prueba aplica la cadena hasta la suya.
 if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261103001300_flow_engine_native_segment_label_v1.sql', '20261103001500_segment_entry_answers_v1.sql',
   // El origen de un recorrido nativo para la campana por landing (20261103001700, E-321): una lectura de service_role.
-  '20261103001700_flow_engine_native_campaign_origin_v1.sql'])) {
+  '20261103001700_flow_engine_native_campaign_origin_v1.sql',
+  // El cierre del caso por el cupon de una campana (20261106000100, E-339): una RPC de service_role.
+  '20261106000100_recovery_case_segment_coupon_close_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de la etiqueta de un segmento`, names.slice(position + 1));
 }
 const apply = async (file) => db.exec(readFileSync(file, 'utf8').replace(

@@ -85,6 +85,21 @@ LOGGED_INFO_EVENTS = frozenset(
         # clave y etiqueta del segmento y lo que hizo el macro; nunca el texto
         # del mensaje, el telefono ni el nombre
         "segment_label_by_keyword",
+        # el cupon de la campana (bridge.app, E-338): la clave del segmento, el
+        # producto (su clave de [[productos]]) y el numero de conversacion;
+        # nunca el codigo del cupon
+        "segment_link_coupon",
+        "segment_link_coupon_other_product",
+        "segment_recovery_coupon_skipped",
+        # lo que el cupon de la campana frena sin pasar por el agente
+        # (bridge.worker y bridge.followup_discount, E-339): la clave del
+        # segmento, el paso, el id de la accion y el numero de conversacion;
+        # nunca el codigo
+        "segment_contact_labels_truncated",
+        "segment_first_touch_without_coupon",
+        "segment_cart_followup_skipped",
+        "segment_coupon_case_closed",
+        "segment_followup_coupon_skipped",
         # el adjunto sin texto (bridge.app, E-315): el id del mensaje, los
         # tipos de adjunto y si fue el segundo seguido; nunca el archivo
         "chatwoot_inbound_attachment_without_text",

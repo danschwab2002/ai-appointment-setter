@@ -6674,6 +6674,31 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'flow_engine_native_campaign_origin'
+    union all
+    select
+        '20261106000100',
+        '20261106000100_recovery_case_segment_coupon_close_v1.sql',
+        -- El cierre del caso por el cupon de una campana (E-339): una RPC, solo
+        -- para service_role ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.close_recovery_case_segment_coupon_v1(uuid,uuid,text,bigint,timestamptz)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- ... que cancela el caso con su motivo, por la finalizacion de hoy.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.close_recovery_case_segment_coupon_v1(uuid,uuid,text,bigint,timestamptz)')
+              and position('recovery_case_segment_coupon_close' in definition) > 0
+              and position('_finalize_followup_delivery_attempt' in definition) > 0
+        )::int,
+        2,
+        'recovery_case_segment_coupon_close'
 )
 select
     version,

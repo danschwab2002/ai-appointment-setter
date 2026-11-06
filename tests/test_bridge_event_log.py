@@ -280,6 +280,7 @@ def test_every_reviewed_event_is_a_hotmart_line_present_in_the_code() -> None:
             "meta_delivery.py",
             "handoff_wait_alerts.py",
             "campaign_inbound_entry.py",
+            "followup_discount.py",
         )
     )
     for name in LOGGED_INFO_EVENTS:

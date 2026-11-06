@@ -24,6 +24,7 @@ from bridge.cart_first_touch import (
     CART_DISCOUNT_VARIABLES,
     CartDiscountConfig,
     CartDiscountDefer,
+    CartDiscountFallback,
     CartDiscountOutcome,
     CartDiscountReady,
     CartDiscountStop,
@@ -122,6 +123,11 @@ from bridge.native_flows import (
     payment_failure_product_ref, purchase_product_ref,
 )
 from bridge.product_label import ProductLabeler
+from bridge.payment_link_coupon import (
+    SEGMENT_COUPON_ACTIVE,
+    SegmentCoupon,
+    segment_coupon_for_labels,
+)
 from bridge.segment_labels import NativeSegmentLabelPlan, NativeSegmentLabels
 from bridge.purchase_agent_pause import PurchaseAgentPause
 from bridge.followup_steps import FOLLOWING_STEP_TRIGGERS
@@ -188,6 +194,16 @@ NATIVE_BRANCH_RECORD_UNAVAILABLE = "flow_engine_native_branch_record_unavailable
 NATIVE_BRANCH_STALE = "flow_engine_native_branch_stale"
 NATIVE_CHECKOUT_UNAVAILABLE = "flow_engine_native_checkout_unavailable"
 NATIVE_QUEUE_REFRESH_SECONDS = 60.0
+# E-339: no se pudo leer si la persona viene por una campana con cupon, o no se
+# pudo cerrar su caso. A2 y Z no salen a ciegas: se reintenta.
+SEGMENT_LABELS_UNAVAILABLE = "segment_labels_unavailable"
+# A2 y Z esperan una caida real: 3 reintentos de 15 min (la base da 3 reintentos,
+# cart_first_touch.py). En el ultimo intento se decide sin esa lectura, con la
+# conversacion del caso: sin evidencia de una etiqueta no se le saca el paso a
+# nadie, y el caso no queda abierto sin accion.
+SEGMENT_LABELS_RETRIES = 3
+SEGMENT_LABELS_RETRY_AFTER = timedelta(minutes=15)
+SEGMENT_COUPON_CLOSE_UNAVAILABLE = "segment_coupon_close_unavailable"
 _FLOW_ENGINE_CART_BUTTON = {"link": "checkout", "cupon": "personal"}
 # Lo que el bridge arma a mano para cada paso del carrito: las variables, en
 # orden, y el boton (cart_first_touch.py y cart_followups.py).
@@ -878,6 +894,7 @@ class DurableDispatcher:
         native_client_labeler: ProductLabeler | None = None,
         purchase_pause_after_native_welcome: PurchaseAgentPause | None = None,
         native_segment_labels: NativeSegmentLabels | None = None,
+        segment_catalog: object | None = None,
     ) -> None:
         if payment_failure_followup is not None and (
             not approved_template_direct or payment_failure_variants is None
@@ -1023,6 +1040,11 @@ class DurableDispatcher:
         # lead_declined. Contestar sin un «no» claro lo sigue dejando salir
         # (20261019000800).
         self._declined_after_anchor: set[str] = set()
+        # E-339: los segmentos del agente (None con AGENT_SEGMENTS_ENABLED
+        # apagado) y, por accion, la clave del segmento con cupon que vio la
+        # lectura canonica: A2 y Z no le ofrecen otro cupon a esa persona.
+        self._segment_catalog = segment_catalog
+        self._segment_coupon_after_anchor: dict[str, str] = {}
         self._payment_slip = payment_slip
         self._payment_failure_variants = payment_failure_variants
         self._payment_failure_followup = payment_failure_followup
@@ -1328,6 +1350,14 @@ class DurableDispatcher:
                         self._declined_after_anchor.add(action.action_id)
                     else:
                         self._declined_after_anchor.discard(action.action_id)
+                    if self._segment_catalog is not None:
+                        campaign = segment_coupon_for_labels(
+                            self._segment_catalog,
+                            snapshot.labels,
+                            now=datetime.fromisoformat(now),
+                        )
+                        if campaign is not None:
+                            self._segment_coupon_after_anchor[action.action_id] = campaign.key
                     evidence = {
                         "p_chatwoot_conversation_id": str(snapshot.conversation_id),
                         "p_chatwoot_checkpoint_message_id": str(
@@ -1482,6 +1512,45 @@ class DurableDispatcher:
                     failure_reason=LEAD_DECLINED,
                     retryable=False,
                 )
+            if cart_step:
+                # E-339 (D6 de E-338): quien viene por una campana con cupon no
+                # recibe A2, que promete el 10 %, ni Z, que lleva el cupon 2. No
+                # hay variante sin cupon: el despachador cierra el caso. La
+                # etiqueta puede estar en otra conversacion del contacto: A1 la
+                # mira ahi y A2 sale en la conversacion de A1.
+                campaign_key = self._segment_coupon_after_anchor.get(action.action_id)
+                if campaign_key is None and self._segment_catalog is not None:
+                    try:
+                        campaign = await self._contact_segment_coupon(
+                            execution_context.buyer_phone
+                        )
+                    except (httpx.HTTPError, ChatwootProtocolError) as exc:
+                        logger.warning(
+                            "segment_labels_unavailable action_id=%s error=%s",
+                            action.action_id,
+                            type(exc).__name__,
+                        )
+                        if (
+                            attempt is None
+                            or attempt.attempt_number <= SEGMENT_LABELS_RETRIES
+                        ):
+                            return _ApprovedTemplateComposition(
+                                failure_reason=SEGMENT_LABELS_UNAVAILABLE,
+                                retry_after=SEGMENT_LABELS_RETRY_AFTER,
+                            )
+                        campaign = None
+                    campaign_key = campaign.key if campaign is not None else None
+                if campaign_key is not None:
+                    logger.info(
+                        "segment_cart_followup_skipped key=%s step=%s action_id=%s",
+                        campaign_key,
+                        action.step_key,
+                        action.action_id,
+                    )
+                    return _ApprovedTemplateComposition(
+                        failure_reason=SEGMENT_COUPON_ACTIVE,
+                        retryable=False,
+                    )
             step_key = action.step_key
         template = self._waba_template
         assert template is not None
@@ -1686,18 +1755,52 @@ class DurableDispatcher:
             and trigger_kind == CART_ABANDONMENT_TRIGGER
             and attempt is not None
         ):
-            discount = await compose_cart_discount_first_touch(
-                config=cart_discount,
-                supabase=self._supabase,
-                inbox=inbox,
-                action=action,
-                attempt=attempt,
-                buyer_name=name_value or "",
-                product_name=product_name or "",
-                buyer_phone=execution_context.buyer_phone,
-                worker_id=self._worker_id,
-                now=self._clock(),
-                ulid_factory=generate_issuance_ulid,
+            # E-339: quien viene por una campana con cupon recibe A1 igual, con
+            # la plantilla sin descuento. Sin leer las etiquetas, tampoco va el
+            # 10 % a ciegas: se reintenta y al final sale sin cupon (A1 no se
+            # pierde). Con el flag apagado no hay ninguna lectura.
+            segment_stop: str | None = None
+            if self._segment_catalog is not None:
+                try:
+                    campaign = await self._contact_segment_coupon(
+                        execution_context.buyer_phone
+                    )
+                except (httpx.HTTPError, ChatwootProtocolError) as exc:
+                    logger.warning(
+                        "segment_labels_unavailable action_id=%s error=%s",
+                        action.action_id,
+                        type(exc).__name__,
+                    )
+                    if attempt.attempt_number <= cart_discount.defer_attempts:
+                        return _ApprovedTemplateComposition(
+                            failure_reason=SEGMENT_LABELS_UNAVAILABLE,
+                            retry_after=cart_discount.defer_delay,
+                        )
+                    segment_stop = SEGMENT_LABELS_UNAVAILABLE
+                else:
+                    if campaign is not None:
+                        segment_stop = SEGMENT_COUPON_ACTIVE
+                        logger.info(
+                            "segment_first_touch_without_coupon key=%s action_id=%s",
+                            campaign.key,
+                            action.action_id,
+                        )
+            discount = (
+                CartDiscountFallback(segment_stop)
+                if segment_stop is not None
+                else await compose_cart_discount_first_touch(
+                    config=cart_discount,
+                    supabase=self._supabase,
+                    inbox=inbox,
+                    action=action,
+                    attempt=attempt,
+                    buyer_name=name_value or "",
+                    product_name=product_name or "",
+                    buyer_phone=execution_context.buyer_phone,
+                    worker_id=self._worker_id,
+                    now=self._clock(),
+                    ulid_factory=generate_issuance_ulid,
+                )
             )
         if discount is not None:
             assert attempt is not None
@@ -2235,6 +2338,82 @@ class DurableDispatcher:
             retryable=outcome.retryable,
         )
 
+    async def _contact_segment_coupon(self, phone: str | None) -> SegmentCoupon | None:
+        """El cupon de campana de la persona, por las conversaciones de su contacto.
+
+        Antes de A1 la conversacion todavia no se eligio. Solo lee: el mismo
+        contacto que va a usar el envio y sus conversaciones del inbox. Solo con
+        catalogo (AGENT_SEGMENTS_ENABLED): con el flag apagado no hace ninguna
+        llamada. Una falla de Chatwoot sale como excepcion. Una lista cortada
+        (mas de 20 conversaciones) no es una falla: se decide con las que se
+        leyeron, se frena solo con evidencia de la etiqueta y queda en el log.
+        """
+        if (
+            self._segment_catalog is None
+            or not self._whatsapp_equivalence_enabled
+            or not phone
+        ):
+            return None
+        assert self._chatwoot is not None
+        assert self._chatwoot_inbox_id is not None
+        cut: list[bool] = []
+        recipient = await self._sender.resolve_first_touch_recipient(phone=phone)
+        if recipient.contact_id is None:
+            return None
+        conversations = await self._chatwoot.list_contact_conversations(
+            contact_id=recipient.contact_id,
+            inbox_id=self._chatwoot_inbox_id,
+            on_truncated=lambda: cut.append(True),
+        )
+        campaign = segment_coupon_for_labels(
+            self._segment_catalog,
+            [label for conversation in conversations for label in conversation.labels],
+            now=datetime.fromisoformat(self._clock()),
+        )
+        if cut:
+            logger.info(
+                "segment_contact_labels_truncated contact=%s read=%s outcome=%s",
+                recipient.contact_id,
+                len(conversations),
+                "frenado" if campaign is not None else "sin_evidencia",
+            )
+        return campaign
+
+    async def _close_case_for_segment_coupon(
+        self, *, action: ScheduledAction, attempt: DeliveryAttempt
+    ) -> None:
+        """A2 o Z frenados: intento, accion, secuencia y caso, en una transaccion.
+
+        Sin el cierre el caso quedaria abierto y un carrito nuevo no arrancaria.
+        Si la base no contesta (o le falta la migracion 20261106000100), nada
+        sale y se reintenta.
+        """
+        try:
+            outcome = await self._supabase.close_recovery_case_segment_coupon(
+                action_id=action.action_id,
+                attempt_id=attempt.attempt_id,
+                worker_id=self._worker_id,
+                lease_generation=action.lease_generation,
+                now=self._clock(),
+            )
+        except SupabaseError as exc:
+            logger.warning(
+                "segment_coupon_case_close_failed action_id=%s error=%s",
+                action.action_id,
+                type(exc).__name__,
+            )
+            await self._finalize_pre_request_failure(
+                action=action,
+                attempt=attempt,
+                reason_code=SEGMENT_COUPON_CLOSE_UNAVAILABLE,
+            )
+            return
+        logger.info(
+            "segment_coupon_case_closed action_id=%s outcome=%s",
+            action.action_id,
+            outcome,
+        )
+
     async def _compose_cart_followup_proposal(
         self,
         *,
@@ -2446,6 +2625,7 @@ class DurableDispatcher:
         decisions: list[ReevaluationDecision] = []
         self._native_purchase_buyers.clear()
         self._declined_after_anchor.clear()
+        self._segment_coupon_after_anchor.clear()
         for action in actions:
             evidence = await self._load_chatwoot_evidence(action=action, now=now)
             # The anchor picks the reevaluation: the first contact after the
@@ -2604,13 +2784,18 @@ class DurableDispatcher:
                             attempt.attempt_id,
                             direct_failure,
                         )
-                        await self._finalize_pre_request_failure(
-                            action=action,
-                            attempt=attempt,
-                            reason_code=direct_failure,
-                            retryable=direct_retryable,
-                            retry_after=direct_retry_after,
-                        )
+                        if direct_failure == SEGMENT_COUPON_ACTIVE:
+                            await self._close_case_for_segment_coupon(
+                                action=action, attempt=attempt
+                            )
+                        else:
+                            await self._finalize_pre_request_failure(
+                                action=action,
+                                attempt=attempt,
+                                reason_code=direct_failure,
+                                retryable=direct_retryable,
+                                retry_after=direct_retry_after,
+                            )
                     elif proposal is None:
                         logger.warning(
                             "durable_followup_proposal_unavailable "

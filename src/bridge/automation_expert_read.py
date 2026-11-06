@@ -123,11 +123,14 @@ _REASON_BY_CODE = {
     "last_message_not_from_agent": "tomada_por_el_equipo",
     "team_replied": "tomada_por_el_equipo",
     "inbound_too_old": "vencio",
+    # E-339: un toque o el cupon frenados por el cupon de una campana.
+    "segment_coupon_active": "ya_no_entra",
 }
 
 # La frase fija de cada codigo. Un codigo que no esta aca sale con la frase y
 # el motivo en null, y suma el hueco unknown_reason_code.
 EXPLANATIONS = {
+    "segment_coupon_active": "La persona viene por una campaña con cupón vigente: no se le manda otro cupón y el carrito se cerró.",
     "business_window_closed": "Le tocaba salir fuera del horario del flujo y esperó a la próxima apertura.",
     "superseded_by_provider_event": "Llegó un evento de Hotmart de un flujo que le gana, y este paso se canceló.",
     "pilot_runtime_not_armed": "El flujo no estaba prendido cuando llegó el evento.",

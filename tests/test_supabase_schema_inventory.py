@@ -470,7 +470,9 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261103001500 (las respuestas a la pregunta de entrada de una campana, E-317)
     # suma registrar y leer.
     # 20261103001700 (el origen de un recorrido nativo, E-321) suma su lectura.
-    assert len(allowlisted) == 192
+    # 20261106000100 (el cierre del caso por el cupon de una campana, E-339) suma su RPC.
+    assert len(allowlisted) == 193
+    assert "close_recovery_case_segment_coupon_v1(uuid, uuid, text, bigint, timestamp with time zone)" in allowlisted
     assert "flow_engine_native_campaign_origin_v1(uuid)" in allowlisted
     assert (
         "list_unattended_human_handoffs_v1(bigint, bigint, timestamp with time zone, integer)"
@@ -2007,16 +2009,29 @@ def test_payment_failure_branches_fingerprint_is_last() -> None:
         assert marker in compact_fingerprint, marker
 
 
-def test_campaign_origin_fingerprint_is_last() -> None:
+def test_campaign_origin_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261103001700 (el origen de un recorrido nativo para la campana
-    # por landing, E-321) es la ultima: la lectura solo para service_role y que
-    # solo da la landing de una intencion real.
-    fingerprint = sql.split("'20261103001700'", 1)[1].split("select\n    version,", 1)[0]
+    # por landing, E-321): la lectura solo para service_role y que solo da la
+    # landing de una intencion real.
+    fingerprint = sql.split("'20261103001700'", 1)[1].split("\n    union all\n", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261103001700_flow_engine_native_campaign_origin_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",2,'flow_engine_native_campaign_origin')")
+    assert compact_fingerprint.endswith(",2,'flow_engine_native_campaign_origin'")
     assert "to_regprocedure('public.flow_engine_native_campaign_origin_v1(uuid)')" in compact_fingerprint
     assert "position('provider_observed'indefinition)>0" in compact_fingerprint
+    assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
+
+
+def test_segment_coupon_close_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261106000100 (el cierre del caso por el cupon de una campana,
+    # E-339) es la ultima: una RPC solo para service_role, por la finalizacion.
+    fingerprint = sql.split("'20261106000100'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261106000100_recovery_case_segment_coupon_close_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'recovery_case_segment_coupon_close')")
+    assert "position('_finalize_followup_delivery_attempt'indefinition)>0" in compact_fingerprint
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint

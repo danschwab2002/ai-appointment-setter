@@ -210,7 +210,9 @@ expected_service_role(signature) as (
         ('public.record_segment_entry_answer_v1(bigint, bigint, bigint, text, text, timestamp with time zone)'),
         ('public.get_segment_entry_answers_v1(bigint, bigint, bigint)'),
         -- 20261103001700: la landing y la oferta de un recorrido nativo, para la campana por landing (E-321).
-        ('public.flow_engine_native_campaign_origin_v1(uuid)')
+        ('public.flow_engine_native_campaign_origin_v1(uuid)'),
+        -- 20261106000100: el cierre del caso por el cupon de una campana (E-339).
+        ('public.close_recovery_case_segment_coupon_v1(uuid, uuid, text, bigint, timestamp with time zone)')
 ),
 functions as (
     select

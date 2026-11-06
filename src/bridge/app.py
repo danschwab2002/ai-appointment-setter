@@ -93,7 +93,7 @@ from bridge.purchase_agent_pause import (
 from bridge.product_label import ProductLabeler
 from bridge.product_routes import HotmartUnrouted, ProductRoute, ProductRoutes
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
-from bridge.payment_link_coupon import coupon_applied_in_context, mark_payment_link_coupon, mark_segment_link_coupon, segment_coupon_fits_product, segment_link_coupon, validate_payment_link_coupon_code  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
+from bridge.payment_link_coupon import coupon_applied_in_context, mark_payment_link_coupon, mark_segment_link_coupon, segment_coupon_fits_product, segment_coupon_for_labels, segment_link_coupon, validate_payment_link_coupon_code  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
 from bridge.filtering import EventDecision, classify_chatwoot_event
 from bridge.agent_provenance import AgentTurn, CONTEXT_BUILDER_VERSION
 from bridge.hermes import AGENT_TURN_FAILED_REASON_CODE, HermesShadowProcessor, agent_turn_failure_to_hand_off, payment_link_product  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
@@ -6203,6 +6203,7 @@ def create_app(
             flow_engine_enabled=settings.flow_engine_enabled,
             native_client_labeler=native_client_labeler,
             native_segment_labels=native_segment_labels,
+            segment_catalog=segment_catalog,
             purchase_pause_after_native_welcome=(
                 purchase_agent_pause
                 if settings.purchase_agent_pause_after_native_welcome_enabled
@@ -6566,8 +6567,22 @@ def create_app(
         ``already_requested``). Without a pending Z, or without the message id
         and time to record it, the message follows the usual path: the
         admission and the agent.
+
+        E-339: with a campaign coupon in force, the same usual path: Z does not
+        go out to that person (D6 of E-338), so bringing it forward would leave
+        the button without an answer.
         """
         assert shared_supabase is not None
+        campaign = segment_coupon_for_labels(
+            segment_catalog, conversation_labels(payload), now=datetime.now(UTC)
+        )
+        if campaign is not None:
+            logger.info(
+                "segment_recovery_coupon_skipped key=%s conversation=%s",
+                campaign.key,
+                conversation_id,
+            )
+            return False
         message_id = payload.get("id")
         occurred_at = _webhook_created_at(payload.get("created_at"))
         if (
@@ -9246,6 +9261,7 @@ def create_app(
                     "client, canonical ids and Supabase"
                 )
             conversation_followup_sweeper = ConversationFollowupSweeper(
+                segment_catalog=segment_catalog,
                 chatwoot=control_client,
                 supabase=shared_supabase,
                 account_id=settings.chatwoot_account_id,
@@ -9434,6 +9450,7 @@ def create_app(
                     conversation_statuses=spec.conversation_statuses,
                     only_conversation_ids=spec.cohort_conversation_ids,
                     log_prefix="flow_engine_silence",
+                    segment_catalog=segment_catalog,
                 )
 
             native_silence_sweepers = NativeSilenceSweepers(
