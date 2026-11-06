@@ -12,6 +12,11 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Cambiado
+
+- **Prueba de `setter validate` con dos segmentos que se pisan (E-340).** El `chequeo_sha` de un segmento cubre también a los otros declarados cuya vigencia se pisa con la suya (E-337), y faltaba probarlo por `setter validate`. Las pruebas nuevas fijan que: sellados juntos dan VALIDA; cambiar uno marca a los dos, y volver a chequear solo el que cambió no alcanza; un segundo segmento nuevo manda al primero de vuelta al chequeo; dos vigencias que se tocan en el borde no se pisan; mover una vigencia sobre otra marca a la otra, y aprobar o sellar uno no mueve el sha del otro. Solo tests: no cambia el producto. **Qué hacer al actualizar:** nada.
+
+
 ## [1.31.0] - 2026-11-06
 
 Una menor sobre la 1.30.0, con 4 PR (#422, #423, #424 y #425) y sin migraciones. No trae variables nuevas, y lo de segmentos sigue detrás de `AGENT_SEGMENTS_ENABLED` (apagada). Lo único que actúa apenas se instala es el SOUL común (#423): con él, el agente deriva el riesgo para la persona con `safety_risk`. **Al subir cambia un profile:** instalar la distribucion en agente-comercial (SOUL.md). El conector de Slack no cambia de código.

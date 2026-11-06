@@ -653,6 +653,175 @@ def test_validate_flags_an_approved_segment_whose_sha_is_not_its_own(instance: P
     )
 
 
+# Dos segmentos con vigencias que se pisan (E-340). El sha de cada uno cubre su contenido,
+# el base y el contenido de los otros que se pisan con el (segment_check.calcular_chequeo_sha):
+# se cambia uno y el otro tambien vuelve al chequeo. El fixture va de noviembre al 01/12.
+SECOND_KEY = "campana-dos"
+SECOND_DECLARATION = DECLARATION.replace("campana-de-prueba", SECOND_KEY).replace(
+    "prioridad = 10", "prioridad = 20"
+)
+
+
+def _second_file(instance: Path) -> Path:
+    return instance / "conocimiento" / "segmentos" / f"{SECOND_KEY}-v1.toml"
+
+
+def _second_text(*, desde: str = "2026-11-20T00:00:00-06:00", hasta: str = "2026-12-01T00:00:00-06:00") -> str:
+    """El fixture con otra clave, otro cupon y la vigencia que se pida."""
+
+    text = SEGMENT.read_text(encoding="utf-8")
+    for old, new in (
+        ('clave = "campana-de-prueba"\n', f'clave = "{SECOND_KEY}"\n'),
+        ('cupon = "PRUEBA11"\n', 'cupon = "PRUEBA22"\n'),
+        ("desde = 2026-11-20T00:00:00-06:00\n", f"desde = {desde}\n"),
+        ("hasta = 2026-12-01T00:00:00-06:00\n", f"hasta = {hasta}\n"),
+    ):
+        assert text.count(old) == 1, old
+        text = text.replace(old, new)
+    return text
+
+
+def _declare_second(instance: Path, second: str) -> None:
+    _second_file(instance).write_text(second, encoding="utf-8")
+    _with_segments(instance, DECLARATION + SECOND_DECLARATION)
+
+
+def _seal_both(instance: Path) -> None:
+    """Lo que deja ``setter segmento chequear`` corrido sobre cada uno con el otro declarado."""
+
+    _seal_first(instance)
+    _seal_second(instance)
+
+
+def _seal_first(instance: Path) -> None:
+    path = _segment_file(instance)
+    other = _second_file(instance).read_text(encoding="utf-8")
+    path.write_text(sellar_chequeo(path.read_text(encoding="utf-8"), _base(instance), (other,)), encoding="utf-8")
+
+
+def _seal_second(instance: Path) -> None:
+    path = _second_file(instance)
+    other = _segment_file(instance).read_text(encoding="utf-8")
+    path.write_text(sellar_chequeo(path.read_text(encoding="utf-8"), _base(instance), (other,)), encoding="utf-8")
+
+
+def _change_a_bonus(path: Path) -> None:
+    text = path.read_text(encoding="utf-8")
+    old = '"Un bono ficticio de prueba."'
+    assert text.count(old) == 1
+    path.write_text(text.replace(old, '"Un bono ficticio de prueba, cambiado."'), encoding="utf-8")
+
+
+def _sha_out_of_date(instance: Path) -> set[str]:
+    """Las claves de los segmentos que validate marca por el chequeo_sha, y nada mas."""
+
+    report = validate_instance(instance, now=INSIDE)
+    flagged = {
+        key
+        for key in ("campana-de-prueba", SECOND_KEY)
+        if any(
+            error.startswith(f"segmento {key}:") and "no es el del contenido actual" in error
+            for error in report["errores"]
+        )
+    }
+    assert report["valida"] is (not flagged), report["errores"]
+    assert len(report["errores"]) == len(flagged), report["errores"]
+    return flagged
+
+
+def test_validate_passes_two_overlapping_segments_sealed_with_each_other(instance: Path) -> None:
+    _declare_second(instance, _second_text())
+    _seal_both(instance)
+
+    report = validate_instance(instance, now=INSIDE)
+
+    assert report["valida"] is True, report["errores"]
+    assert [(entry["clave"], entry["vigencia"]["ahora"]) for entry in report["segmentos"]] == [
+        ("campana-de-prueba", "vigente"),
+        (SECOND_KEY, "vigente"),
+    ]
+    base = _base(instance)
+    for path in (_segment_file(instance), _second_file(instance)):
+        # La huella de cada uno cuenta al otro: no es la que daria el segmento solo.
+        raw = tomllib.loads(path.read_text(encoding="utf-8"))
+        assert raw["cabecera"]["chequeo_sha"] != segment_check.calcular_chequeo_sha(
+            raw, base_sha256=base.rendered_sha256
+        )
+    # El cargador del bridge dice lo mismo que validate.
+    assert len(load_segment_catalog(_manifest(instance), instance, base).segments) == 2
+
+
+def test_validate_changing_one_of_two_overlapping_segments_flags_both(instance: Path) -> None:
+    """Volver a chequear solo el que cambio no alcanza: el otro se midio contra su version vieja."""
+
+    _declare_second(instance, _second_text())
+    _seal_both(instance)
+    _change_a_bonus(_second_file(instance))
+    assert _sha_out_of_date(instance) == {"campana-de-prueba", SECOND_KEY}
+    with pytest.raises(SegmentError, match="no es el del contenido actual"):
+        load_segment_catalog(_manifest(instance), instance, _base(instance))
+
+    _seal_second(instance)
+    assert _sha_out_of_date(instance) == {"campana-de-prueba"}
+
+    _seal_first(instance)
+    assert _sha_out_of_date(instance) == set()
+
+
+def test_validate_a_new_overlapping_segment_sends_the_first_back_to_the_check(instance: Path) -> None:
+    """El primero sigue sellado solo, como antes de que existiera el segundo."""
+
+    _declare_second(instance, _second_text())
+    _seal_second(instance)
+    assert _sha_out_of_date(instance) == {"campana-de-prueba"}
+
+
+def test_validate_segments_that_do_not_overlap_do_not_depend_on_each_other(instance: Path) -> None:
+    """La vigencia termina en el borde exacto donde empieza la otra: no se pisan."""
+
+    alone = _segment_file(instance).read_text(encoding="utf-8")
+    _declare_second(instance, _second_text(desde="2026-12-01T00:00:00-06:00", hasta="2026-12-05T00:00:00-06:00"))
+    _seal_both(instance)
+    assert _segment_file(instance).read_text(encoding="utf-8") == alone
+    assert _sha_out_of_date(instance) == set()
+
+    _change_a_bonus(_second_file(instance))
+    assert _sha_out_of_date(instance) == {SECOND_KEY}
+
+
+def test_validate_a_window_that_moves_onto_another_segment_flags_it(instance: Path) -> None:
+    """La cuenta de quien se pisa se hace con las vigencias de hoy, no con las del chequeo."""
+
+    _declare_second(instance, _second_text(desde="2026-12-01T00:00:00-06:00", hasta="2026-12-05T00:00:00-06:00"))
+    _seal_both(instance)
+    path = _second_file(instance)
+    old = "desde = 2026-12-01T00:00:00-06:00\n"
+    text = path.read_text(encoding="utf-8")
+    assert text.count(old) == 1
+    path.write_text(text.replace(old, "desde = 2026-11-30T23:59:00-06:00\n"), encoding="utf-8")
+    _seal_second(instance)  # el que se movio se chequea de nuevo; el primero no se toco
+
+    assert _sha_out_of_date(instance) == {"campana-de-prueba"}
+
+
+def test_validate_approving_or_sealing_the_other_does_not_move_the_sha(instance: Path) -> None:
+    """Sin esto, dos segmentos que se pisan no se podrian sellar nunca: el sha de uno no ve el del otro."""
+
+    _declare_second(instance, _second_text())
+    first = SEGMENT.read_text(encoding="utf-8")
+    assert sellar_chequeo(first, _base(instance), (_second_text(),)) == sellar_chequeo(
+        first, _base(instance), (sellar_chequeo(_second_text(), _base(instance)),)
+    )
+    _seal_both(instance)
+
+    path = _second_file(instance)
+    text = path.read_text(encoding="utf-8")
+    old = 'aprobado_por = "test"\n'
+    assert text.count(old) == 1
+    path.write_text(text.replace(old, 'aprobado_por = "otra persona"\n'), encoding="utf-8")
+    assert _sha_out_of_date(instance) == set()
+
+
 def test_validate_without_segments_has_no_segment_key() -> None:
     assert "segmentos" not in validate_instance(ATT1)
 
