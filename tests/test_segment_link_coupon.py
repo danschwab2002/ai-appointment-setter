@@ -34,6 +34,7 @@ from test_recovery_coupon_reply import ATT1_471, CODE, _a2_message
 from test_agent_link_product import _LinkSupabase
 from test_checkout_link_for_funnel import _two_products_settings
 from test_segment_bridge import ALWAYS, FUTURE, PAST, SEGMENT, _SegmentShadow
+from test_segment_knowledge import sellar_chequeo
 from test_webhook import StubChatwootClient, _post, _signed_headers
 from test_whatsapp_inbound_equivalence import (
     FORM_ID,
@@ -104,6 +105,15 @@ def _settings(
         )
         (folder / f"{label}-v1.toml").write_text(other, encoding="utf-8")
         segments.append((label, f"{label}-v1.toml", priority))
+    # E-336/E-337: el cargador exige el chequeo_sha. Cada segmento se sella con el calculo
+    # real, con los otros declarados como ``otros`` (los que se pisan entran en la huella).
+    assert base.commercial_knowledge is not None
+    written = {name: (folder / name).read_text(encoding="utf-8") for _, name, _ in segments}
+    for name, content in written.items():
+        rest = tuple(other for key, other in written.items() if key != name)
+        (folder / name).write_text(
+            sellar_chequeo(content, base.commercial_knowledge, rest), encoding="utf-8"
+        )
     manifest_path = instance / "instancia.toml"
     anchor = 'conocimiento = "conocimiento/knowledge-v1.toml"\n'
     declaration = "".join(

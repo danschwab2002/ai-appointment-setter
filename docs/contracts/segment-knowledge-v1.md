@@ -40,7 +40,7 @@ Cerrado, como el base: no se acepta ninguna clave fuera de esta tabla.
 - **Convivencia (D6):** dos segmentos con vigencias que se pisan no pueden tener la misma prioridad, ni sumar con el base más de 40.000 bytes. Si pasa, el bridge no arranca. Así el recorte por tamaño del turno no debería pasar en producción.
 - **Sin secretos:** se reusa el filtro del conocimiento base (claves `sk-`, tokens de Slack, GitHub o Meta, JWT, hex largos) sobre el render.
 - **El flag exige manifiesto y conocimiento base** (`INSTANCE_MANIFEST_PATH` y `COMMERCIAL_KNOWLEDGE_ENABLED`): los segmentos se apilan sobre el base y se miden contra él. Johanna (sin manifiesto) no arranca con el flag.
-- **El chequeo del alta (PR-B).** `segment_knowledge.verificar_chequeo` es el punto donde el cargador va a exigir que `chequeo_sha` sea el del reporte del chequeo determinista sobre el contenido actual. En esta versión no hace nada: el campo se parsea y se valida su forma. Recibe el segmento, la carpeta de la instancia, el conocimiento base y los otros segmentos.
+- **El chequeo del alta (PR-B, E-337).** `segment_knowledge.verificar_chequeo` llama a `segment_check.verificar_chequeo` (contrato `segment-check-v1`) y convierte su `ChequeoError` en `SegmentError`: un segmento `aprobado` sin `cabecera.chequeo_sha`, o con uno que no es el que da `calcular_chequeo_sha` sobre el contenido actual, el render del base y los otros segmentos que se pisan, **no deja arrancar** al bridge, como uno en borrador. Cambiar el conocimiento base cambia la huella: el segmento vuelve al chequeo. `setter validate` hace la misma verificación y lo marca como error antes del despliegue. Recibe el segmento, el conocimiento base y los otros segmentos.
 
 ## El render
 

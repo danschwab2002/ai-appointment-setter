@@ -44,6 +44,7 @@ from bridge.app import Settings, create_app
 from bridge.hermes import HermesShadowProcessor
 from bridge.instance_manifest import InstanceManifest
 from bridge.segment_knowledge import SEGMENT_CONTEXT_KEY, load_segment_catalog
+from test_segment_knowledge import sellar_chequeo
 
 SEGMENT = Path(__file__).parent / "fixtures" / "segments" / "campana-de-prueba-v1.toml"
 LABEL = "campana-de-prueba"
@@ -79,7 +80,8 @@ def _settings(tmp_path: Path, *, window: tuple[str, str] = ALWAYS, enabled: bool
     text = SEGMENT.read_text(encoding="utf-8")
     text = text.replace("desde = 2026-11-20T00:00:00-06:00", f"desde = {window[0]}")
     text = text.replace("hasta = 2026-12-01T00:00:00-06:00", f"hasta = {window[1]}")
-    (folder / SEGMENT.name).write_text(text, encoding="utf-8")
+    assert base.commercial_knowledge is not None
+    (folder / SEGMENT.name).write_text(sellar_chequeo(text, base.commercial_knowledge), encoding="utf-8")
     manifest_path = instance / "instancia.toml"
     anchor = 'conocimiento = "conocimiento/knowledge-v1.toml"\n'
     manifest_path.write_text(

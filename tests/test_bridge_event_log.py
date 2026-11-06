@@ -279,6 +279,7 @@ def test_every_reviewed_event_is_a_hotmart_line_present_in_the_code() -> None:
             "purchase_agent_pause.py",
             "meta_delivery.py",
             "handoff_wait_alerts.py",
+            "campaign_inbound_entry.py",
         )
     )
     for name in LOGGED_INFO_EVENTS:
@@ -295,6 +296,37 @@ def test_every_reviewed_event_is_a_hotmart_line_present_in_the_code() -> None:
             )
         ), name
         assert f'"{name} ' in sources, name
+
+
+def test_the_keyword_label_line_reaches_the_container_log(
+    bare_logging: logging.Logger, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E-336: la etiqueta que pone la palabra clave del primer mensaje (E-317) deja
+    rastro en produccion. Antes ``segment_label_by_keyword`` era info sin revisar y
+    no salia: del alta por palabra clave no quedaba nada en el log. La linea lleva
+    la conversacion, el segmento, la etiqueta y lo que hizo el macro; ni el texto
+    del mensaje, ni el telefono ni el nombre de quien escribe (historia capturada
+    de la conversacion 6 del inbox 13, la de ``test_campaign_inbound_entry``)."""
+    from test_campaign_inbound_entry import KEY, LABEL, MARIBEL_6, _entry, _inbound, _run
+
+    monkeypatch.setattr(logging.getLogger(), "handlers", [])
+    stream = io.StringIO()
+    assert configure_bridge_event_log(stream) is True
+
+    text = "Hola, vengo por Black November"
+    entry, labeler, _ = _entry()
+    turn = _run(entry, _inbound(text))
+    assert turn.labels == (LABEL,) and labeler.calls == [(9, "segment_entry_keyword")]
+
+    lines = stream.getvalue().splitlines()
+    assert lines == [
+        f"segment_label_by_keyword conversation=9 segment={KEY} label={LABEL} outcome=added"
+    ], lines
+    sender = MARIBEL_6[0]["sender"]
+    personal = [text, *(str(sender.get(field)) for field in ("name", "phone_number", "email")
+                        if sender.get(field))]
+    assert not any(value in line for value in personal for line in lines), lines
+    _assert_no_personal(lines)
 
 
 def test_the_purchase_pause_lines_reach_the_container_log(

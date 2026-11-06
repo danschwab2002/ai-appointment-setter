@@ -19,10 +19,12 @@ Este modulo es la parte pura: el esquema, el render, el catalogo y la seleccion
 por turno. El cableado (el flag, la entrada del agente, ``/ready`` y los logs)
 vive en ``bridge.app``; el pedido a Hermes, en ``bridge.hermes``.
 
-EL ENCHUFE DEL CHEQUEO DEL ALTA (PR-B). ``verificar_chequeo`` es el punto donde
-el chequeo determinista (``setter segmento chequear``, ``bridge.segment_check``)
-exige el ``chequeo_sha`` de la cabecera. Tiene la firma del de PR-B y hoy no
-hace nada; el campo ya se parsea y se valida su forma.
+EL ENCHUFE DEL CHEQUEO DEL ALTA (PR-B, E-337). ``verificar_chequeo`` es el punto
+donde el cargador exige el ``chequeo_sha`` de la cabecera: llama a
+``bridge.segment_check.verificar_chequeo`` y convierte su ``ChequeoError`` en
+``SegmentError``. Un ``aprobado`` sin ``chequeo_sha``, o con uno que no es el del
+contenido actual (el segmento, el base, otro segmento que se pisa o las reglas del
+chequeo), no carga y el bridge no arranca, como un segmento en borrador.
 """
 
 from __future__ import annotations
@@ -506,7 +508,7 @@ def verificar_chequeo(
     base: CommercialKnowledge,
     otros: Sequence[Mapping[str, Any]] = (),
 ) -> None:
-    """El enchufe del chequeo del alta (PR-B del diseno E-310, §3.1).
+    """El enchufe del chequeo del alta (PR-B del diseno E-310, §3.1; E-337).
 
     Misma firma que ``bridge.segment_check.verificar_chequeo`` de PR-B (E-312):
     ``segmento`` es el dict de tomllib del archivo, ``base`` el conocimiento base y
@@ -514,14 +516,21 @@ def verificar_chequeo(
     ``load_segment_catalog`` para cada segmento que el bridge va a cargar, despues
     de validar el archivo y el catalogo entero.
 
-    Hoy no hace nada. Al unificar los dos PR, el cuerpo pasa a llamar a
-    ``segment_check.verificar_chequeo`` y a convertir su ``ChequeoError`` en
-    ``SegmentError``: un ``aprobado`` sin ``cabecera.chequeo_sha``, o con uno que no
-    es el que da ``calcular_chequeo_sha`` sobre el contenido actual, no carga. Asi
-    «nada entra con una contradiccion abierta» lo hace cumplir el codigo.
+    Un ``borrador`` pasa (el cargador ya lo frena aparte). Un ``aprobado`` sin
+    ``cabecera.chequeo_sha``, o con uno que no es el que da
+    ``segment_check.calcular_chequeo_sha`` sobre el contenido actual, lanza
+    ``SegmentError``: asi «nada entra con una contradiccion abierta» lo hace
+    cumplir el codigo. Un otro segmento que el lector de PR-B no entiende tambien
+    es ``SegmentError``, nunca otra excepcion.
     """
 
-    del segmento, base, otros
+    from .segment_check import ChequeoError, SegmentCheckError
+    from .segment_check import verificar_chequeo as verificar_huella
+
+    try:
+        verificar_huella(segmento, base=base, otros=otros)
+    except (ChequeoError, SegmentCheckError) as exc:
+        raise SegmentError(f"chequeo del alta: {exc}") from exc
 
 
 def load_declared_segment(
