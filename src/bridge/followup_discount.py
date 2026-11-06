@@ -53,6 +53,7 @@ from bridge.chatwoot import ChatwootProtocolError
 from bridge.checkout_issuance import generate_issuance_ulid
 from bridge.lead_decline import LEAD_DECLINED, detect_lead_decline
 from bridge.lead_first_name import resolve_greeting_name, template_greeting_name_is_safe
+from bridge.payment_link_coupon import SEGMENT_COUPON_ACTIVE, segment_coupon_for_labels
 from bridge.phones import equivalent_whatsapp_phones, same_whatsapp_phone
 from bridge.reactivation import _last_conversational_message, _scan_summary
 from bridge.supabase import NativeSilenceRun
@@ -751,6 +752,10 @@ class ConversationFollowupSweeper:
       sin releer ni reservar.
     * ``log_prefix``: el prefijo de cada linea del log, para que el nativo y el
       legado se cuenten por separado.
+
+    Y ``segment_catalog`` (E-339, D6 de E-338): los segmentos del agente, None
+    con ``AGENT_SEGMENTS_ENABLED`` apagado. Una candidata con un segmento vigente
+    con otro cupon no se reserva ni recibe este: ya tiene el de su campana.
     """
 
     def __init__(
@@ -781,6 +786,7 @@ class ConversationFollowupSweeper:
         conversation_statuses: tuple[str, ...] = FOLLOWUP_CONVERSATION_STATUSES,
         only_conversation_ids: frozenset[int] | None = None,
         log_prefix: str = "conversation_followup",
+        segment_catalog: object | None = None,
         clock: Callable[[], float] = time.time,
         ulid_factory: Callable[[], str] = generate_issuance_ulid,
     ) -> None:
@@ -874,6 +880,7 @@ class ConversationFollowupSweeper:
         self._conversation_statuses = conversation_statuses
         self._only_conversation_ids = only_conversation_ids
         self._log_prefix = log_prefix
+        self._segment_catalog = segment_catalog
         self._clock = clock
         self._ulid_factory = ulid_factory
         self._task: asyncio.Task[None] | None = None
@@ -1062,6 +1069,17 @@ class ConversationFollowupSweeper:
                 if decision.skip_reason == LEAD_DECLINED:
                     self._log_stop(details.get("id"), LEAD_DECLINED)
                 continue
+            campaign = segment_coupon_for_labels(
+                self._segment_catalog,
+                details.get("labels"),
+                now=datetime.fromtimestamp(now_epoch, UTC),
+            )
+            # Un silencio nativo con el cupon de la propia campana no es un
+            # segundo cupon: ese si sale.
+            if campaign is not None and campaign.code != self._coupon_code:
+                motivos[SEGMENT_COUPON_ACTIVE] += 1
+                self._log_segment_skip(campaign.key, decision.candidate.conversation_id)
+                continue
             if self._only_phone is not None and not same_whatsapp_phone(
                 decision.candidate.phone, self._only_phone
             ):
@@ -1117,6 +1135,18 @@ class ConversationFollowupSweeper:
         logger.info(
             f"{self._log_prefix}_stopped reason=%s conversation=%s",
             reason,
+            conversation_id,
+        )
+
+    def _log_segment_skip(self, key: str, conversation_id: int) -> None:
+        """E-339: una vez por conversacion y por proceso, como ``_log_stop``."""
+        mark = (conversation_id, SEGMENT_COUPON_ACTIVE)
+        if mark in self._stops_logged:
+            return
+        self._stops_logged.add(mark)
+        logger.info(
+            "segment_followup_coupon_skipped key=%s conversation=%s",
+            key,
             conversation_id,
         )
 

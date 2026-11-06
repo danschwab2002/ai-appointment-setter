@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -61,7 +62,8 @@ from bridge.chatwoot import CanonicalConversationSnapshot, ChatwootClient
 from bridge.followup_discount import FOLLOWUP_STOP_REASONS, evaluate_followup_candidate
 from bridge.lead_decline import LEAD_DECLINED
 from bridge.payment_slip_reminders import PAYMENT_SLIP_DUE_DAY_STEP
-from bridge.supabase import FOLLOWUP_CLAIM_OUTCOMES, ChatwootAuthorityContext
+from bridge.supabase import FOLLOWUP_CLAIM_OUTCOMES, ChatwootAuthorityContext, ScheduledAction
+from bridge.worker import DurableDispatcher
 
 ATT1_542 = "Hola buenas tardes. Cambie de opinión. Ya no quiero el curso.. gracias"
 ATT1_491_PRICE = "Mil gracias pero si es ahorita muy caro para mi saludos"
@@ -299,6 +301,18 @@ def test_a_private_note_is_not_the_person() -> None:
 
 
 def _run_c3(tmp_path: Path, *, declined: bool) -> tuple[_ReminderChatwoot, _ReminderAuthority]:
+    return _run_c3_with(
+        tmp_path,
+        declined=declined,
+    )
+
+
+def _run_c3_with(
+    tmp_path: Path,
+    *,
+    declined: bool = False,
+    mark: Callable[[DurableDispatcher, ScheduledAction], None] | None = None,
+) -> tuple[_ReminderChatwoot, _ReminderAuthority]:
     authority = _ReminderAuthority(PAYMENT_SLIP_DUE_DAY_STEP)
     chatwoot = _ReminderChatwoot(CATALOG)
     dispatcher = _dispatcher(authority, chatwoot, tmp_path, clock=C3_AT, template=WITH_STEPS)
@@ -308,6 +322,8 @@ def _run_c3(tmp_path: Path, *, declined: bool) -> tuple[_ReminderChatwoot, _Remi
         # prueba de abajo): la evidencia es la misma y la accion queda marcada.
         if declined:
             dispatcher._declined_after_anchor.add(action.action_id)  # type: ignore[attr-defined]
+        if mark is not None:
+            mark(dispatcher, action)  # type: ignore[arg-type]
         return dict(EVIDENCE, p_chatwoot_inbound_after_anchor=declined)
 
     dispatcher._load_chatwoot_evidence = evidence  # type: ignore[method-assign]

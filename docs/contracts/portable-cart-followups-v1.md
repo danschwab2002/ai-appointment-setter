@@ -87,4 +87,6 @@ Ninguna política publicada antes de esta migración tiene las marcas: nada camb
 
 ## Qué lo corta
 
+Con `AGENT_SEGMENTS_ENABLED`, una persona con un segmento vigente con cupón (E-339, [segment-knowledge-v1.md](segment-knowledge-v1.md)): A1 sale sin cupón, A2 y Z no salen y la RPC `close_recovery_case_segment_coupon_v1` cancela el caso (`segment_coupon_active`), y «Quiero mi 10 %» no adelanta Z. El carrito nativo no entra en este freno.
+
 Lo mismo que A1: la compra de cualquier oferta del producto (20261019000300), la baja (incluido «No más mensajes»), la derivación, la pérdida del consentimiento y la respuesta de la persona después del toque anterior, salvo «Quiero mi 10 %» (y, con `RECOVERY_COUPON_BY_REPLY_ENABLED`, una respuesta escrita a A2 que no sea una baja ni un «no» claro). Cuenta en los topes del scope del carrito: cada envío es un arranque.

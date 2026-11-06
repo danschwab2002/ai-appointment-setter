@@ -275,7 +275,9 @@ const rows = await db.query(`
       ('record_segment_entry_answer_v1(bigint,bigint,bigint,text,text,timestamp with time zone)'),
       ('get_segment_entry_answers_v1(bigint,bigint,bigint)'),
       -- 20261103001700: la landing y la oferta de un recorrido nativo, para la campana por landing (E-321).
-      ('flow_engine_native_campaign_origin_v1(uuid)')
+      ('flow_engine_native_campaign_origin_v1(uuid)'),
+      -- 20261106000100: el cierre del caso por el cupon de una campana (E-339).
+      ('close_recovery_case_segment_coupon_v1(uuid,uuid,text,bigint,timestamp with time zone)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -300,6 +302,7 @@ const result = rows.rows[0];
 // 20261103001000 (el aviso de derivaciones sin atender, E-309) suma su lectura: 189.
 // 20261103001500 (las respuestas a la pregunta de entrada de una campana, E-317) suma registrar y leer: 191.
 // 20261103001700 (el origen de un recorrido nativo para la campana por landing, E-321) suma su lectura: 192.
+// 20261106000100 (el cierre del caso por el cupon de una campana, E-339) suma su RPC: 193.
 // Historical baseline guard was `result.expected_count !== 63`; the current
 // baseline is 68 RPCs, daily feedback adds fourteen, payment links add three,
 // the one-shot operator disposition adds one, and correlation event context
@@ -350,7 +353,7 @@ const result = rows.rows[0];
 // The Meta rejections (20261103000500, E-284) add six: record, list due,
 // claim, settle and block the retry, and mark the 131026 notice.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 192) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 193) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

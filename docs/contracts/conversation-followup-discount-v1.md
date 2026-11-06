@@ -21,6 +21,7 @@ El bridge evalua contra Chatwoot, porque ahi viven esos hechos:
 5. El ultimo mensaje conversacional es nuestro y es del AgentBot. Si es del lead, se saltea con `last_message_inbound`: el turno es del agente, y si nadie contesta le toca a la reactivacion. Si es de una persona del equipo, se saltea con `last_message_not_from_agent`.
 6. Ninguna persona del equipo escribio despues del ultimo mensaje del lead.
 7. Pasaron entre 24 h y 72 h desde el ultimo mensaje del lead. El techo evita escribirle al historico el dia que se prende el flag.
+8. Con `AGENT_SEGMENTS_ENABLED`, la conversacion no tiene un segmento vigente con cupon (E-339, [segment-knowledge-v1.md](segment-knowledge-v1.md)). Si lo tiene, no se reserva y el resumen la cuenta como `segment_coupon_active`: ya tiene el cupon de su campana. Vale para el barrido del legado y para el silencio nativo.
 
 La base evalua al reservar (`claim_conversation_followup_v1`) lo que tiene que sobrevivir a un bridge mal configurado:
 

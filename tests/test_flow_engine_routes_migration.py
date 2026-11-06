@@ -139,6 +139,8 @@ def test_it_is_one_transaction_and_comes_right_after_the_t4b() -> None:
         "20261103001500_segment_entry_answers_v1.sql",
         # El origen de un recorrido nativo para la campana por landing (20261103001700, E-321): una lectura de service_role.
         "20261103001700_flow_engine_native_campaign_origin_v1.sql",
+        # El cierre del caso por el cupon de una campana (20261106000100, E-339): una RPC de service_role.
+        "20261106000100_recovery_case_segment_coupon_close_v1.sql",
     ]
 
 

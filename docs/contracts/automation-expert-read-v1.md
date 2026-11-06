@@ -214,6 +214,7 @@ Así se traducen los códigos de hoy. Todos aparecen en att1-db, salvo `human_ta
 - `precheckout_contact_already_planned` pasa a `ya_en_curso`.
 - `precheckout_conversation_handoff` y `human_takeover_active` pasan a `tomada_por_el_equipo`. El segundo va con `decision: pause`, porque hoy el carrito y el pago fallido no terminan.
 - Los vencimientos (`expired` y `expired_after_worker_crash`) pasan a `vencio`.
+- `segment_coupon_active` (E-339, [segment-knowledge-v1.md](segment-knowledge-v1.md)) pasa a `ya_no_entra`.
 - `accepted_by_chatwoot` y `policy_exhausted` pasan a `completo`.
 
 Los demás códigos de hoy, como `pilot_contact_not_in_cohort`, `precheckout_contact_ambiguous` o `payment_failure_correlation_unresolved`, salen con `reason: null` y su `reason_code` hasta que esta lista les dé un motivo. La lista se confirma en el claim, leyendo dónde nace cada código, y la frase de cada uno se escribe ahí. Así, cuando la 1b guarde estos motivos, no se rehacen el plugin, el SOUL ni los casos de prueba.

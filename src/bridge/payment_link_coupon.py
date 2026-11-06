@@ -30,6 +30,7 @@ regla es la convivencia para cuando llegue el personal.
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import NamedTuple
 from urllib.parse import parse_qsl, quote, urlsplit
 
@@ -200,6 +201,16 @@ def coupon_applied_in_context(context: object) -> bool | None:
 #
 # Sin ``AGENT_SEGMENTS_ENABLED`` no hay catalogo y la entrada no trae
 # ``segments``: devuelve None y todo sale como antes.
+#
+# El mismo criterio frena lo que manda el producto sin pasar por el agente
+# (E-339, D6 de E-338): A1 del carrito, que sale sin cupon, A2 y Z (``worker``),
+# el seguimiento con cupon fijo, que es el que lleva ``TIROIDES10``
+# (``followup_discount``), y el boton «Quiero mi 10 %» (``app``). Ahi no hay
+# entrada del turno: se parte de las etiquetas (``segment_coupon_for_labels``).
+
+# El motivo con que A2 y Z cierran el caso (close_recovery_case_segment_coupon_v1,
+# 20261106000100) y el seguimiento se saltea.
+SEGMENT_COUPON_ACTIVE = "segment_coupon_active"
 
 
 class SegmentCoupon(NamedTuple):
@@ -225,6 +236,29 @@ def segment_link_coupon(catalog: object, entries: object) -> SegmentCoupon | Non
         if offer is not None and offer.coupon is not None:
             return SegmentCoupon(segment.key, offer.coupon, offer.product)
     return None
+
+
+def segment_coupon_for_labels(
+    catalog: object, labels: object, *, now: datetime
+) -> SegmentCoupon | None:
+    """El cupon de campana de una conversacion, por sus etiquetas, o None.
+
+    La misma seleccion que un turno del agente (etiqueta, vigencia, prioridad y
+    topes). Sin catalogo (flag apagado) devuelve None sin mirar las etiquetas. La
+    forma es la de la lectura canonica de Chatwoot (una lista de textos no
+    vacios), pero lo que no la cumple cuenta como sin etiquetas: este freno no
+    tira un barrido.
+    """
+
+    if catalog is None:
+        return None
+    present = (
+        [label for label in labels if isinstance(label, str) and label]
+        if isinstance(labels, list | tuple)
+        else []
+    )
+    selection = catalog.select(labels=present, now=now)  # type: ignore[attr-defined]
+    return segment_link_coupon(catalog, selection.context_entries())
 
 
 def segment_coupon_fits_product(
