@@ -138,8 +138,15 @@ from bridge.lead_precheckout import LeadPrecheckoutSubmission, parse_lead_preche
 from bridge.handoff_wait_alerts import HandoffWaitAlertSweeper
 from bridge.meta_delivery import (
     DEFAULT_RETRY_MAX_AGE_SECONDS as META_RETRY_MAX_AGE_SECONDS,
+    DEFAULT_ACCOUNT_HOLD_CODES as META_ACCOUNT_HOLD_DEFAULT_CODES,
+    DEFAULT_ACCOUNT_HOLD_MAX_AGE_SECONDS as META_ACCOUNT_HOLD_DEFAULT_MAX_AGE_SECONDS,
+    MAX_RETRY_MAX_AGE_SECONDS as META_RETRY_MAX_MAX_AGE_SECONDS,
+    MIN_ACCOUNT_HOLD_MAX_AGE_SECONDS as META_ACCOUNT_HOLD_MIN_MAX_AGE_SECONDS,
+    NEVER_ACCOUNT_HOLD_CODES as META_NEVER_ACCOUNT_HOLD_CODES,
+    AccountHoldConfig as MetaAccountHoldConfig,
     MetaDeliveryRejectionSweeper,
     RetryConfig as MetaFirstTouchRetryConfig,
+    parse_account_hold_codes as parse_meta_account_hold_codes,
     parse_retry_templates as parse_meta_retry_templates,
 )
 from bridge.messaging import (
@@ -340,6 +347,9 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "meta_delivery_rejections_enabled",
     "meta_first_touch_retry_enabled",
     "meta_unreachable_close_enabled",
+    # E-348 (P-33): el rechazo de la cuenta (131042) no gasta el toque. Por
+    # instancia, prenderlo; los codigos y el vencimiento tienen default.
+    "meta_account_hold_retry_enabled",
     # E-309: el aviso por Slack de las derivaciones sin atender. Por instancia,
     # prenderlo y el umbral en horas corridas (sin corte por horario, E-309b).
     "handoff_wait_alerts_enabled",
@@ -810,6 +820,14 @@ class Settings:
     meta_first_touch_retry_templates: frozenset[str] = frozenset()
     meta_first_touch_retry_send_hours: tuple[int, int] | None = None
     meta_delivery_scan_interval_seconds: float = 600.0
+    # E-348 (P-33, decisiones de Dan del 2026-11-07): un primer contacto que
+    # Meta rechazo por la cuenta (META_ACCOUNT_HOLD_CODES, default 131042)
+    # espera a que la cuenta vuelva a entregar una plantilla y sale otra vez,
+    # con las plantillas, el horario y el gate del reintento del 131049, antes
+    # de META_ACCOUNT_HOLD_MAX_AGE_SECONDS (72 h). Apagado por defecto.
+    meta_account_hold_retry_enabled: bool = False
+    meta_account_hold_codes: frozenset[str] = META_ACCOUNT_HOLD_DEFAULT_CODES
+    meta_account_hold_max_age_seconds: int = META_ACCOUNT_HOLD_DEFAULT_MAX_AGE_SECONDS
     # E-309 (handoff-wait-alerts-v1): el aviso por Slack de una derivacion que
     # lleva N horas corridas sin respuesta (HANDOFF_WAIT_ALERT_AFTER_HOURS, sin
     # corte por horario desde E-309b), de la ventana de 24 h que se cierra en
@@ -1818,6 +1836,7 @@ class Settings:
             "META_DELIVERY_REJECTIONS_ENABLED",
             "META_FIRST_TOUCH_RETRY_ENABLED",
             "META_UNREACHABLE_CLOSE_ENABLED",
+            "META_ACCOUNT_HOLD_RETRY_ENABLED",
         ):
             meta_flag_value = os.environ.get(meta_flag, "false").strip().lower()
             if meta_flag_value not in {"true", "false"}:
@@ -1836,6 +1855,13 @@ class Settings:
         )
         meta_delivery_scan_interval_seconds = float(
             os.environ.get("META_DELIVERY_SCAN_INTERVAL_SECONDS", "600")
+        )
+        meta_account_hold_codes = parse_meta_account_hold_codes(
+            os.environ.get("META_ACCOUNT_HOLD_CODES", "")
+        )
+        meta_account_hold_max_age_seconds = _parse_positive_int_env(
+            "META_ACCOUNT_HOLD_MAX_AGE_SECONDS",
+            META_ACCOUNT_HOLD_DEFAULT_MAX_AGE_SECONDS,
         )
         handoff_wait_alerts_raw = (
             os.environ.get("HANDOFF_WAIT_ALERTS_ENABLED", "false").strip().lower()
@@ -2100,6 +2126,11 @@ class Settings:
             meta_first_touch_retry_templates=meta_first_touch_retry_templates,
             meta_first_touch_retry_send_hours=meta_first_touch_retry_send_hours,
             meta_delivery_scan_interval_seconds=meta_delivery_scan_interval_seconds,
+            meta_account_hold_retry_enabled=meta_delivery_flags[
+                "META_ACCOUNT_HOLD_RETRY_ENABLED"
+            ],
+            meta_account_hold_codes=meta_account_hold_codes,
+            meta_account_hold_max_age_seconds=meta_account_hold_max_age_seconds,
             handoff_wait_alerts_enabled=handoff_wait_alerts_raw == "true",
             handoff_wait_alert_after_hours=handoff_wait_alert_after_hours,
             handoff_wait_alert_max_age_hours=handoff_wait_alert_max_age_hours,
@@ -4014,6 +4045,7 @@ def _validate_meta_delivery(settings: Settings) -> None:
         _followup_send_hours_in_range(settings.meta_first_touch_retry_send_hours)
     ):
         raise ValueError(_FOLLOWUP_SEND_HOURS_ERROR)
+    _validate_meta_account_hold(settings)
     if not settings.meta_first_touch_retry_enabled:
         return
     if settings.instance_manifest is None:
@@ -4032,6 +4064,59 @@ def _validate_meta_delivery(settings: Settings) -> None:
     if _meta_first_touch_retry_send_hours(settings) is None:
         raise ValueError(
             "META_FIRST_TOUCH_RETRY_ENABLED requires "
+            "META_FIRST_TOUCH_RETRY_SEND_HOURS or CONVERSATION_FOLLOWUP_SEND_HOURS"
+        )
+
+
+def _validate_meta_account_hold(settings: Settings) -> None:
+    """Las guardas de arranque del rechazo de la cuenta (E-348, P-33).
+
+    Los rangos se miran con el flag prendido o apagado. Prendido, vive adentro
+    del barrido que registra y reusa lo del reintento del 131049 (D3 de Dan: la
+    misma lista de plantillas de un mensaje, el mismo horario y el efecto
+    final de Meta), pero no exige que el reintento del 131049 este prendido.
+    """
+    codes = settings.meta_account_hold_codes
+    if (
+        not isinstance(codes, frozenset)
+        or not 1 <= len(codes) <= 10
+        or any(
+            not isinstance(code, str)
+            or not code.isdigit()
+            or not 3 <= len(code) <= 6
+            or code in META_NEVER_ACCOUNT_HOLD_CODES
+            for code in codes
+        )
+    ):
+        raise ValueError(
+            "META_ACCOUNT_HOLD_CODES must be up to 10 Meta codes, never 131049 or 131026"
+        )
+    if not (
+        isinstance(settings.meta_account_hold_max_age_seconds, int)
+        and META_ACCOUNT_HOLD_MIN_MAX_AGE_SECONDS
+        <= settings.meta_account_hold_max_age_seconds
+        <= META_RETRY_MAX_MAX_AGE_SECONDS
+    ):
+        raise ValueError("META_ACCOUNT_HOLD_MAX_AGE_SECONDS must be 3600-604800")
+    if not settings.meta_account_hold_retry_enabled:
+        return
+    if not settings.meta_delivery_rejections_enabled:
+        raise ValueError(
+            "META_ACCOUNT_HOLD_RETRY_ENABLED requires META_DELIVERY_REJECTIONS_ENABLED"
+        )
+    if settings.instance_manifest is None:
+        raise ValueError("META_ACCOUNT_HOLD_RETRY_ENABLED requires an instance manifest")
+    if not settings.meta_final_effect_enabled:
+        raise ValueError(
+            "META_ACCOUNT_HOLD_RETRY_ENABLED requires META_FINAL_EFFECT_ENABLED"
+        )
+    if not settings.meta_first_touch_retry_templates:
+        raise ValueError(
+            "META_ACCOUNT_HOLD_RETRY_ENABLED requires META_FIRST_TOUCH_RETRY_TEMPLATES"
+        )
+    if _meta_first_touch_retry_send_hours(settings) is None:
+        raise ValueError(
+            "META_ACCOUNT_HOLD_RETRY_ENABLED requires "
             "META_FIRST_TOUCH_RETRY_SEND_HOURS or CONVERSATION_FOLLOWUP_SEND_HOURS"
         )
 
@@ -9349,6 +9434,23 @@ def create_app(
                     ),
                     max_age_seconds=META_RETRY_MAX_AGE_SECONDS,
                 )
+            meta_account_hold_config: MetaAccountHoldConfig | None = None
+            if settings.meta_account_hold_retry_enabled:
+                # E-348: el rechazo de la cuenta espera a que la cuenta vuelva.
+                meta_hold_hours = _meta_first_touch_retry_send_hours(settings)
+                assert meta_hold_hours is not None
+                assert settings.instance_manifest is not None
+                meta_account_hold_config = MetaAccountHoldConfig(
+                    codes=settings.meta_account_hold_codes,
+                    allowed_templates=settings.meta_first_touch_retry_templates,
+                    send_hours=meta_hold_hours,
+                    time_zone=ZoneInfo(settings.instance_manifest.time_zone),
+                    gate=FinalMetaEffectGate(
+                        enabled=settings.meta_final_effect_enabled,
+                        evidence_dir=settings.meta_final_effect_evidence_dir,
+                    ),
+                    max_age_seconds=settings.meta_account_hold_max_age_seconds,
+                )
             meta_delivery_sweeper = MetaDeliveryRejectionSweeper(
                 chatwoot=control_client,
                 supabase=shared_supabase,
@@ -9362,6 +9464,7 @@ def create_app(
                     slack_runtime.producer if slack_runtime is not None else None
                 ),
                 retry=meta_retry_config,
+                account_hold=meta_account_hold_config,
                 scan_interval_seconds=settings.meta_delivery_scan_interval_seconds,
             )
             app.state.meta_delivery_sweeper = meta_delivery_sweeper
@@ -10428,6 +10531,9 @@ def create_app(
                 ),
                 "meta_unreachable_close": (
                     "enabled" if meta_delivery_sweeper.close_unreachable else "disabled"
+                ),
+                "meta_account_hold_retry": (
+                    "enabled" if meta_delivery_sweeper.account_hold_enabled else "disabled"
                 ),
             }
         if handoff_wait_alert_sweeper is not None:

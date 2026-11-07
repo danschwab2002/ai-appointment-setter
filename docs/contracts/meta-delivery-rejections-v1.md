@@ -2,7 +2,7 @@
 
 - **Estado:** contrato de la construcción (E-284, P-12a del plan del 2026-11-02). Todo apagado por defecto.
 - **Decisiones de Dan:** D1 del 2026-11-02 (un solo reintento a las 24 h o más, solo el primer contacto, nunca en ráfaga) y el punto 5 de «lo que se prende en cada aliada» del 2026-11-02 (el 131026 cierra el caso sin reintentar y avisa al equipo).
-- **Migración:** `20261103000500_meta_delivery_rejections_v1.sql`. **Código:** `src/bridge/meta_delivery.py`.
+- **Migración:** `20261103000500_meta_delivery_rejections_v1.sql`; el rechazo de la cuenta, `20261107000100_meta_account_hold_retry_v1.sql` (E-348). **Código:** `src/bridge/meta_delivery.py`.
 
 ## El problema
 
@@ -42,6 +42,23 @@ Con `META_UNREACHABLE_CLOSE_ENABLED`, el registro de un 131026 cierra el caso de
 
 El aviso es `MSG-002` («Envío falló definitivamente») por el conector de Slack de la aliada, el mismo productor que `MOT-002`: `reason_code = meta_131026_<tipo de toque>`, `component = chatwoot.conversation.<n>`, sin teléfono ni texto. El id es estable por (bandeja, mensaje): un aviso que no llegó a marcarse se vuelve a pedir y el conector lo deduplica. Sin conector, se registra y `/ready` lo cuenta (`notice_without_slack`).
 
+## Cuando la cuenta no entrega (E-348, P-33)
+
+- **Decisiones de Dan del 2026-11-07** sobre el diseño E-345: D1 solo el 131042 al arrancar, con la lista abierta; D2 vence a las 72 h del mensaje original; D3 solo los flujos de un mensaje (la misma lista que el 131049); D4 nada retroactivo; D5 la señal de «la cuenta volvió» es una plantilla nuestra entregada o leída después del último rechazo, y sin tráfico una sonda cada 2 h (ver «Lo que no está»); D6 aviso cuando se libera la cola.
+- **Por qué:** el 04/11 Maribel tuvo un problema de pago con Meta y desde las 15:00Z todas las plantillas volvieron con `131042: Business eligibility payment issue`. Los casos de un toque se cerraron en `sequence_exhausted` como si hubieran llegado. Con el problema de pago Meta rechaza **las plantillas**; las respuestas dentro de la ventana de 24 h salen igual. Por eso la señal es una plantilla, no cualquier mensaje.
+
+**La espera.** Con `META_ACCOUNT_HOLD_RETRY_ENABLED`, cuando `record_meta_delivery_rejection_v1` contesta `recorded` para un primer contacto con un código de `META_ACCOUNT_HOLD_CODES`, el bridge llama a `hold_meta_account_rejection_v1` y la fila entra a `meta_account_holds` en `waiting`, con `expires_at` = hora del mensaje + `META_ACCOUNT_HOLD_MAX_AGE_SECONDS`. Un `replayed` no entra nunca: lo registrado antes de prender el flag queda afuera (D4). La base rechaza el 131049 y el 131026 (tienen su camino), los otros tipos de toque (`not_eligible`) y lo que ya venció (`too_late`).
+
+**La señal.** En cada barrido el bridge guarda la hora de la última plantilla nuestra (con la marca del bridge, ver «Qué se lee») en `delivered` o `read` que vio en la bandeja; la recuerda aunque la conversación salga de la ventana. `release_meta_account_holds_v1` primero vence lo que pasó `expires_at` (`expired`, no sale nunca) y, si esa hora es posterior al último rechazo con un código de la cuenta en la bandeja (de cualquier tipo de toque, el reintento incluido), pasa las filas en `waiting` anteriores a la señal a `released`. Con al menos una liberada, el equipo recibe `SYS-008` («Recuperación confirmada») por el conector de Slack de la aliada: `reason_code = meta_account_hold_released`, `component = chatwoot.inbox.<n>`, `count` = cuántas salen, sin teléfonos ni textos. El id es estable por (bandeja, hora de la señal). Sin conector, se cuenta (`hold_notice_without_slack`).
+
+**El reintento.** Dentro del horario del reintento del 131049 (`META_FIRST_TOUCH_RETRY_SEND_HOURS` o, sin ella, `CONVERSATION_FOLLOWUP_SEND_HOURS`) y con el efecto final de Meta abierto, hasta 3 por barrido: `list_due_meta_account_hold_retries_v1`, la relectura de la conversación con el mismo criterio que el 131049 pero sin la espera de 24 h, `claim_meta_account_hold_retry_v1` (las mismas barreras de la base: `blocked_too_late`, `blocked_conversation`, `blocked_pending_handoff`, `blocked_contact`, `blocked_opt_out`, `purchase_already_approved`, `blocked_case_closed`; en espera contesta `not_released`), el envío de la misma plantilla con los mismos parámetros y `recovery_first_touch_retry_of`, y `settle_meta_account_hold_retry_v1`. Solo las plantillas de `META_FIRST_TOUCH_RETRY_TEMPLATES` (D3). En Chatwoot frena, para siempre, lo mismo que el 131049 (`block_meta_account_hold_retry_v1` con `bridge_<motivo>`), salvo que un reintento propio de ese mensaje rechazado otra vez no cuenta como «la conversación siguió»: los parámetros se leen de él. El id de entrega es `meta-hold:<bandeja>:<mensaje>:<intento>`.
+
+**Si vuelve rechazado.** Con un código de la cuenta, `requeue_meta_account_hold_v1` devuelve la fila a `waiting` y hace falta una señal nueva, posterior a ese rechazo. Al tercer intento rechazado queda `blocked` con `hold_attempts_exhausted`. Con otro código (por ejemplo, 131049) la fila queda `sent`: se registra y se cierra ahí.
+
+**Con el 131049.** Son filas distintas (una por mensaje, un código cada una): `list_due_meta_first_touch_retries_v1` no ve las de la cuenta y el reintento de la cuenta no exige que el del 131049 esté prendido.
+
+**Lo que no está.** La sonda sin tráfico (D5: cada 2 h, máximo 3 por fila) no se construyó: medir la cuenta así es mandarle el mensaje real a la persona más vieja de la cola, y eso necesita la decisión explícita de Dan. Sin señal pasiva, la fila vence a las 72 h. La salud de la cuenta que avisa de la caída (P-32) vive en el OS (`meta_salud.py`), no en el bridge.
+
 ## Las variables
 
 | Variable | Default | Qué hace |
@@ -52,9 +69,14 @@ El aviso es `MSG-002` («Envío falló definitivamente») por el conector de Sla
 | `META_FIRST_TOUCH_RETRY_SEND_HOURS` | vacío | `HH-HH` en la zona del manifiesto; sin ella, `CONVERSATION_FOLLOWUP_SEND_HOURS`. |
 | `META_UNREACHABLE_CLOSE_ENABLED` | `false` | El cierre y el aviso del 131026. Exige el registro. |
 | `META_DELIVERY_SCAN_INTERVAL_SECONDS` | `600` | El intervalo del barrido. |
+| `META_ACCOUNT_HOLD_RETRY_ENABLED` | `false` | El reintento del rechazo de la cuenta (E-348). Exige el registro, el manifiesto, `META_FINAL_EFFECT_ENABLED=true`, `META_FIRST_TOUCH_RETRY_TEMPLATES` y un horario; no exige `META_FIRST_TOUCH_RETRY_ENABLED`. |
+| `META_ACCOUNT_HOLD_CODES` | `131042` | Los códigos de la cuenta, separados por coma, hasta 10. Nunca 131049 ni 131026. |
+| `META_ACCOUNT_HOLD_MAX_AGE_SECONDS` | `259200` | El vencimiento desde el mensaje original (72 h), entre 3600 y 604800. |
 
-`/ready` publica `meta_delivery_rejections` (estado del barrido), `meta_delivery_rejections_last_scan` (los conteos), `meta_first_touch_retry` y `meta_unreachable_close` (`enabled`/`disabled`), sin números de teléfono ni nombres.
+`/ready` publica `meta_delivery_rejections` (estado del barrido), `meta_delivery_rejections_last_scan` (los conteos, con los `hold_*` del rechazo de la cuenta), `meta_first_touch_retry`, `meta_unreachable_close` y `meta_account_hold_retry` (`enabled`/`disabled`), sin números de teléfono ni nombres.
 
 ## Contar por plantilla
 
 `public.meta_delivery_rejection_counts_v1` (sin permisos para la API; se lee por psql de solo lectura): por bandeja, plantilla (`sin_plantilla` si no se pudo leer), tipo de toque y código, cuántos se rechazaron, cuántos se reintentaron, cuántos frenó una barrera, cuántos fallaron al mandar y cuántos reintentos rechazó Meta otra vez.
+
+`public.meta_account_holds` (sin permisos para la API, también por psql de solo lectura): una fila por primer contacto en espera, con su estado (`waiting`, `released`, `claimed`, `sent`, `failed`, `blocked`, `expired`), los intentos, el motivo y la hora de la señal que lo liberó.

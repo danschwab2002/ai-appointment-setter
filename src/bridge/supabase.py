@@ -2450,6 +2450,47 @@ class MetaFirstTouchRetryClaim:
     rejection_id: str | None
 
 
+# ── El rechazo de la cuenta (meta-account-hold-retry-v1, E-348) ───────
+
+META_ACCOUNT_HOLD_OUTCOMES = frozenset({"held", "replayed", "not_eligible", "not_found", "too_late"})
+META_ACCOUNT_HOLD_REQUEUE_OUTCOMES = frozenset({"requeued", "exhausted", "expired", "not_found"})
+# Lo que puede contestar claim_meta_account_hold_retry_v1: claimed reserva; el
+# resto no manda nada (los blocked_* y purchase_already_approved quedan
+# escritos en la base como blocked).
+META_ACCOUNT_HOLD_CLAIM_OUTCOMES = frozenset({
+    "claimed", "not_found", "not_released",
+    "blocked_too_late", "blocked_conversation", "blocked_pending_handoff",
+    "blocked_contact", "blocked_opt_out", "purchase_already_approved",
+    "blocked_case_closed",
+})
+
+
+@dataclass(frozen=True)
+class MetaAccountHoldRelease:
+    """Lo que hizo la senal pasiva en la bandeja: liberadas, vencidas, en espera."""
+
+    released: int
+    expired: int
+    waiting: int
+
+
+@dataclass(frozen=True)
+class DueMetaAccountHoldRetry:
+    """Un primer contacto rechazado por la cuenta que la senal ya libero."""
+
+    rejection_id: str
+    external_conversation_id: int
+    chatwoot_message_id: int
+    attempts: int
+
+
+@dataclass(frozen=True)
+class MetaAccountHoldClaim:
+    outcome: str
+    rejection_id: str | None
+    attempts: int
+
+
 # ── Client ───────────────────────────────────────────────────────────
 
 
@@ -10534,3 +10575,182 @@ class SupabaseClient:
         if len(rows) != 1:
             raise SupabaseError(f"{operation}_invalid_shape")
         return _required_enum(rows[0], "outcome", {"blocked", "not_found"}, operation=operation)
+
+    # ── El rechazo de la cuenta (meta-account-hold-retry-v1, E-348) ───
+
+    async def hold_meta_account_rejection(
+        self, *, rejection_id: str, max_age_seconds: int, now: str
+    ) -> str:
+        """Poner en espera un rechazo de la cuenta recien registrado."""
+        operation = "meta_account_hold"
+        rows = await self._meta_delivery_rpc(
+            "hold_meta_account_rejection_v1",
+            {"p_rejection_id": rejection_id, "p_max_age_seconds": max_age_seconds, "p_now": now},
+            operation=operation,
+        )
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return _required_enum(
+            rows[0], "outcome", set(META_ACCOUNT_HOLD_OUTCOMES), operation=operation
+        )
+
+    async def release_meta_account_holds(
+        self,
+        *,
+        chatwoot_inbox_id: int,
+        codes: list[str],
+        account_ok_at: str | None,
+        now: str,
+    ) -> MetaAccountHoldRelease:
+        """Vencer lo que paso el techo y liberar si la cuenta volvio a entregar."""
+        operation = "meta_account_hold_release"
+        rows = await self._meta_delivery_rpc(
+            "release_meta_account_holds_v1",
+            {
+                "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                "p_codes": codes,
+                "p_account_ok_at": account_ok_at,
+                "p_now": now,
+            },
+            operation=operation,
+        )
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        return MetaAccountHoldRelease(
+            released=_required_nonnegative_int(row, "released", operation=operation),
+            expired=_required_nonnegative_int(row, "expired", operation=operation),
+            waiting=_required_nonnegative_int(row, "waiting", operation=operation),
+        )
+
+    async def list_due_meta_account_hold_retries(
+        self, *, chatwoot_inbox_id: int, limit: int, now: str
+    ) -> list[DueMetaAccountHoldRetry]:
+        """Los rechazos de la cuenta que la senal libero y no vencieron."""
+        operation = "meta_account_hold_list"
+        rows = await self._meta_delivery_rpc(
+            "list_due_meta_account_hold_retries_v1",
+            {"p_chatwoot_inbox_id": chatwoot_inbox_id, "p_limit": limit, "p_now": now},
+            operation=operation,
+        )
+        return [
+            DueMetaAccountHoldRetry(
+                rejection_id=_required_uuid(row, "rejection_id", operation=operation),
+                external_conversation_id=_required_positive_int(
+                    row, "external_conversation_id", operation=operation
+                ),
+                chatwoot_message_id=_required_positive_int(
+                    row, "chatwoot_message_id", operation=operation
+                ),
+                attempts=_required_nonnegative_int(row, "attempts", operation=operation),
+            )
+            for row in rows
+        ]
+
+    async def claim_meta_account_hold_retry(
+        self,
+        *,
+        chatwoot_inbox_id: int,
+        chatwoot_message_id: int,
+        external_user_id: str,
+        contact_email: str | None,
+        now: str,
+    ) -> MetaAccountHoldClaim:
+        """Reservar el reintento con las barreras de la base."""
+        operation = "meta_account_hold_claim"
+        rows = await self._meta_delivery_rpc(
+            "claim_meta_account_hold_retry_v1",
+            {
+                "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                "p_chatwoot_message_id": chatwoot_message_id,
+                "p_external_user_id": external_user_id,
+                "p_contact_email": contact_email,
+                "p_now": now,
+            },
+            operation=operation,
+        )
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        outcome = _required_enum(
+            row, "outcome", set(META_ACCOUNT_HOLD_CLAIM_OUTCOMES), operation=operation
+        )
+        rejection_id = (
+            None
+            if row.get("rejection_id") is None
+            else _required_uuid(row, "rejection_id", operation=operation)
+        )
+        attempts = (
+            0
+            if row.get("attempts") is None
+            else _required_nonnegative_int(row, "attempts", operation=operation)
+        )
+        if outcome == "claimed" and (rejection_id is None or attempts < 1):
+            raise _invalid_row_error(operation)
+        return MetaAccountHoldClaim(outcome=outcome, rejection_id=rejection_id, attempts=attempts)
+
+    async def settle_meta_account_hold_retry(
+        self,
+        *,
+        rejection_id: str,
+        status: str,
+        retry_message_id: int | None,
+        failure_reason: str | None,
+        now: str,
+    ) -> str:
+        """Cerrar la reserva del reintento. Devuelve settled o not_found."""
+        operation = "meta_account_hold_settle"
+        rows = await self._meta_delivery_rpc(
+            "settle_meta_account_hold_retry_v1",
+            {
+                "p_rejection_id": rejection_id,
+                "p_status": status,
+                "p_retry_message_id": retry_message_id,
+                "p_failure_reason": failure_reason,
+                "p_now": now,
+            },
+            operation=operation,
+        )
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return _required_enum(rows[0], "outcome", {"settled", "not_found"}, operation=operation)
+
+    async def block_meta_account_hold_retry(
+        self, *, rejection_id: str, reason: str, now: str
+    ) -> str:
+        """Frenar el reintento por lo que vio el bridge (``bridge_<motivo>``)."""
+        operation = "meta_account_hold_block"
+        rows = await self._meta_delivery_rpc(
+            "block_meta_account_hold_retry_v1",
+            {"p_rejection_id": rejection_id, "p_reason": reason, "p_now": now},
+            operation=operation,
+        )
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return _required_enum(rows[0], "outcome", {"blocked", "not_found"}, operation=operation)
+
+    async def requeue_meta_account_hold(
+        self,
+        *,
+        chatwoot_inbox_id: int,
+        original_message_id: int,
+        retry_message_id: int,
+        now: str,
+    ) -> str:
+        """El reintento volvio rechazado por la cuenta: la fila vuelve a esperar."""
+        operation = "meta_account_hold_requeue"
+        rows = await self._meta_delivery_rpc(
+            "requeue_meta_account_hold_v1",
+            {
+                "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                "p_original_message_id": original_message_id,
+                "p_retry_message_id": retry_message_id,
+                "p_now": now,
+            },
+            operation=operation,
+        )
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return _required_enum(
+            rows[0], "outcome", set(META_ACCOUNT_HOLD_REQUEUE_OUTCOMES), operation=operation
+        )

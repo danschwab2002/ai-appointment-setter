@@ -1,0 +1,105 @@
+{
+  "_origen": "Chatwoot de produccion (infra_chatwoot-db, base infra, tabla messages), inbox 13 (Maribel). Leido por Andy el 2026-11-07 ~21:35Z en sesion de solo lectura. Sin contenido ni telefonos: solo estado, horas y content_attributes. template_params existe pero no se copio.",
+  "_estados_chatwoot": "0 sent, 1 delivered, 2 read, 3 failed",
+  "_adaptacion": "E-348: las filas de la base de Chatwoot pasadas a la forma de la API de mensajes que leen los tests de meta_delivery (como el 131049 de ATT1): id = message_id, conversation_id = conversation_display_id (el id de la API), status con el enum de Chatwoot (0 sent, 1 delivered, 2 read, 3 failed), content_type 0 = text, created_at como epoch UTC (la base guarda UTC sin zona) y private = false (la captura no trae la columna; las plantillas del AgentBot nunca son privadas). content_attributes tal cual. Sin contenido, telefonos ni template_params: los tests los ponen con la forma del show capturado de ATT1. La captura original va entera en captura_original.",
+  "rechazados_131042": [
+    {
+      "id": 5781,
+      "conversation_id": 122,
+      "inbox_id": 13,
+      "message_type": 1,
+      "private": false,
+      "status": "failed",
+      "content_type": "text",
+      "created_at": 1793804409,
+      "content_attributes": {
+        "recovery_first_touch_hash": "c4a6ec2122cd929414f2dfd60b02043c5327b341265119160abe7ba45c6f2ad8",
+        "external_error": "131042: Business eligibility payment issue"
+      }
+    },
+    {
+      "id": 5782,
+      "conversation_id": 123,
+      "inbox_id": 13,
+      "message_type": 1,
+      "private": false,
+      "status": "failed",
+      "content_type": "text",
+      "created_at": 1793804414,
+      "content_attributes": {
+        "recovery_first_touch_hash": "e4e0efaaeedde63c24cc008327dd478dca75ada314e027bca6f4ad2c3e6ba2c7",
+        "external_error": "131042: Business eligibility payment issue"
+      }
+    }
+  ],
+  "primera_plantilla_entregada_despues": {
+    "id": 5884,
+    "conversation_id": 143,
+    "inbox_id": 13,
+    "message_type": 1,
+    "private": false,
+    "status": "read",
+    "content_type": "text",
+    "created_at": 1793898495,
+    "content_attributes": {
+      "recovery_first_touch_hash": "5b41d8ef4c62355ce3aff36bccc63f13a355014a063ec963a3cafb9e59283a7f"
+    }
+  },
+  "captura_original": {
+    "rechazados_131042": [
+      {
+        "message_id": 5781,
+        "conversation_display_id": 122,
+        "inbox_id": 13,
+        "message_type": 1,
+        "status": 3,
+        "created_at": "2026-11-04T15:00:09.535144",
+        "updated_at": "2026-11-04T15:00:14.625635",
+        "content_type": 0,
+        "content_attributes": {
+          "recovery_first_touch_hash": "c4a6ec2122cd929414f2dfd60b02043c5327b341265119160abe7ba45c6f2ad8",
+          "external_error": "131042: Business eligibility payment issue"
+        },
+        "additional_attributes_keys": [
+          "template_params"
+        ],
+        "source_id_present": true
+      },
+      {
+        "message_id": 5782,
+        "conversation_display_id": 123,
+        "inbox_id": 13,
+        "message_type": 1,
+        "status": 3,
+        "created_at": "2026-11-04T15:00:14.628209",
+        "updated_at": "2026-11-04T15:00:20.75912",
+        "content_type": 0,
+        "content_attributes": {
+          "recovery_first_touch_hash": "e4e0efaaeedde63c24cc008327dd478dca75ada314e027bca6f4ad2c3e6ba2c7",
+          "external_error": "131042: Business eligibility payment issue"
+        },
+        "additional_attributes_keys": [
+          "template_params"
+        ],
+        "source_id_present": true
+      }
+    ],
+    "primera_plantilla_entregada_despues": {
+      "message_id": 5884,
+      "conversation_display_id": 143,
+      "inbox_id": 13,
+      "message_type": 1,
+      "status": 2,
+      "created_at": "2026-11-05T17:08:15.286269",
+      "updated_at": "2026-11-05T17:08:32.832389",
+      "content_type": 0,
+      "content_attributes": {
+        "recovery_first_touch_hash": "5b41d8ef4c62355ce3aff36bccc63f13a355014a063ec963a3cafb9e59283a7f"
+      },
+      "additional_attributes_keys": [
+        "template_params"
+      ],
+      "source_id_present": true
+    }
+  }
+}

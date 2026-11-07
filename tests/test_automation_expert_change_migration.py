@@ -132,6 +132,8 @@ def test_it_is_one_transaction_and_comes_before_the_flow_engine_routes() -> None
         "20261103001700_flow_engine_native_campaign_origin_v1.sql",
         # El cierre del caso por el cupon de una campana (20261106000100, E-339): una RPC de service_role.
         "20261106000100_recovery_case_segment_coupon_close_v1.sql",
+        # El rechazo de la cuenta espera a que la cuenta vuelva (20261107000100, E-348): una tabla y siete RPC de service_role.
+        "20261107000100_meta_account_hold_retry_v1.sql",
     ]
 
 

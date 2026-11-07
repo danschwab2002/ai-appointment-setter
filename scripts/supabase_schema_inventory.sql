@@ -6699,6 +6699,49 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'recovery_case_segment_coupon_close'
+    union all
+    select
+        '20261107000100',
+        '20261107000100_meta_account_hold_retry_v1.sql',
+        -- El rechazo de la cuenta espera a que la cuenta vuelva (E-348, P-33):
+        -- la tabla, con RLS y sin lectura para la API ...
+        (
+            select count(*) = 1
+            from pg_class c
+            where c.oid = to_regclass('public.meta_account_holds')
+              and c.relrowsecurity
+              and not has_table_privilege('anon', c.oid, 'SELECT')
+              and not has_table_privilege('authenticated', c.oid, 'SELECT')
+        )::int
+        -- ... las siete funciones, solo para service_role ...
+        + (
+            select count(*) = 7
+            from functions
+            where oid in (
+                to_regprocedure('public.hold_meta_account_rejection_v1(uuid,integer,timestamptz)'),
+                to_regprocedure('public.release_meta_account_holds_v1(bigint,text[],timestamptz,timestamptz)'),
+                to_regprocedure('public.list_due_meta_account_hold_retries_v1(bigint,integer,timestamptz)'),
+                to_regprocedure('public.claim_meta_account_hold_retry_v1(bigint,bigint,text,text,timestamptz)'),
+                to_regprocedure('public.settle_meta_account_hold_retry_v1(uuid,text,bigint,text,timestamptz)'),
+                to_regprocedure('public.block_meta_account_hold_retry_v1(uuid,text,timestamptz)'),
+                to_regprocedure('public.requeue_meta_account_hold_v1(bigint,bigint,bigint,timestamptz)')
+            )
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- ... y la reserva con las barreras del reintento del 131049.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.claim_meta_account_hold_retry_v1(bigint,bigint,text,text,timestamptz)')
+              and position('purchase_already_approved' in definition) > 0
+              and position('blocked_pending_handoff' in definition) > 0
+              and position('contact_opt_out_events' in definition) > 0
+        )::int,
+        3,
+        'meta_account_hold_retry'
 )
 select
     version,
