@@ -404,16 +404,32 @@ def latest_template_delivered(entry: Mapping[str, object]) -> int | None:
     Es la senal pasiva de que la cuenta volvio (D5 de Dan del 2026-11-07): con
     el problema de pago Meta rechaza las plantillas, pero las respuestas dentro
     de la ventana de 24 h salen igual, asi que cualquier mensaje entregado no
-    alcanza. Solo cuenta lo que lleva la marca de una plantilla del bridge.
+    alcanza. Cuenta solo lo que lleva la marca del bridge Y es una plantilla:
+    ``additional_attributes.template_params`` en el mensaje o, como la API de
+    mensajes no trae ``additional_attributes``, en el ultimo mensaje del show
+    (el mismo criterio con que se lee la plantilla del rechazo). Un mensaje
+    con marca sin ``template_params`` (un texto libre dentro de la ventana)
+    no es la senal. Si despues de la plantilla entregada la persona contesta,
+    el show deja de traerla; el barredor guarda la ultima que vio.
     """
     messages = entry.get("messages")
     if not isinstance(messages, list):
         return None
+    details = entry.get("conversation")
     latest: int | None = None
     for message in messages:
         if not isinstance(message, dict) or message.get("status") not in DELIVERED_STATUSES:
             continue
         if touch_kind(message) is None:
+            continue
+        message_id = _positive_int(message.get("id"))
+        additional = message.get("additional_attributes")
+        own_params = additional.get("template_params") if isinstance(additional, dict) else None
+        if not (isinstance(own_params, dict) and isinstance(own_params.get("name"), str)) and (
+            message_id is None
+            or not isinstance(details, dict)
+            or _show_template_params(details, message_id) is None
+        ):
             continue
         created = _positive_int(message.get("created_at"))
         if created is not None and (latest is None or created > latest):

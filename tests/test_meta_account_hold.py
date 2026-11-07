@@ -159,6 +159,20 @@ def test_the_signal_is_a_template_of_ours_delivered_or_read() -> None:
     assert latest_template_delivered(sent_only) is None
 
 
+def test_the_signal_needs_template_params_not_only_the_mark() -> None:
+    """H5: un mensaje con la marca del bridge pero sin plantilla no es la senal."""
+    freeform = _delivered_entry()
+    # El show trae otro ultimo mensaje: no hay template_params de la 5884.
+    freeform["conversation"]["messages"][0]["id"] = 5884 + 1
+    assert latest_template_delivered(freeform) is None
+    # Con los template_params en el propio mensaje (la base de Chatwoot los tiene) si.
+    own = copy.deepcopy(freeform)
+    own["messages"][0]["additional_attributes"] = {
+        "template_params": copy.deepcopy(_delivered_entry()["conversation"]["messages"][0]
+                                         ["additional_attributes"]["template_params"])}
+    assert latest_template_delivered(own) == DELIVERED_AT
+
+
 # ------------------------------------------------------------- el criterio
 
 
