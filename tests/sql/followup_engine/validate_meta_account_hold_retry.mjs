@@ -7,8 +7,8 @@
 // Chatwoot lo acepta con un id sintetico. El codigo es el 131042 capturado en
 // Maribel (tests/fixtures/chatwoot_db_messages_inbox_13_maribel_131042_20261107.json).
 //
-// Prueba:
-//   0. la forma: agrega exactamente sus siete funciones y una tabla, no cambia
+// Prueba (las secciones 0b, 2b, 2c y 2d son de la revision del PR #432):
+//   0. la forma: agrega exactamente sus ocho funciones y dos tablas, no cambia
 //      ninguna otra funcion; solo service_role las ejecuta; la tabla sin
 //      permisos para la API; correrla dos veces aborta (55000);
 //   1. la espera: un 131042 registrado queda waiting; sin senal, o con una
@@ -16,7 +16,13 @@
 //      contesta not_released; con una plantilla entregada despues se libera,
 //      sale una vez, y si el reintento vuelve rechazado por la cuenta la fila
 //      vuelve a esperar, hasta 3 intentos;
-//   2. las barreras de la base: compra y caso cerrado;
+//   0b. la marca de prendido: sin marca no entra nada; lo anterior a la marca
+//      no entra aunque se registre como recorded; un replayed posterior si;
+//   2. las barreras de la base: compra y caso cerrado; 2b. la cuenta vuelve a
+//      caer con filas liberadas (vuelven a esperar sin gastar intentos);
+//      2c. la misma persona en dos conversaciones y un contacto posterior;
+//      2d. conversacion tomada, derivacion sin atender, contacto sin permiso
+//      y baja;
 //   3. lo que no entra: el 131049, el 131026, un seguimiento, lo vencido; el
 //      reintento del 131049 no ve las filas de la cuenta;
 //   4. el freno del bridge y las entradas invalidas (22023).
@@ -349,6 +355,65 @@ const mark = async (now) => one(await sql('select * from public.mark_meta_accoun
   const later = await claim(older, hours(newer.sentAt, 60.1));
   if (later.outcome !== 'blocked_newer_contact') fail('un contacto posterior entregado', later);
   results.misma_persona = { misma: same.outcome, posterior: later.outcome };
+}
+
+// ---------------------------------------------------------------------------
+// 2d. Las demas barreras copiadas del 131049: conversacion tomada, derivacion
+//     sin atender, contacto sin permiso y baja.
+// ---------------------------------------------------------------------------
+{
+  const convOf = async (lead) => {
+    const context = JSON.stringify({ chatwoot_conversation_id: String(lead.chatwoot) });
+    const found = await sql('select id from public.conversations where commercial_context = $1::jsonb', [context]);
+    if (found.length) return found[0].id;
+    const identity = one(await sql(`insert into public.channel_identities (contact_id, channel, account_id, external_user_id,
+      external_conversation_id) values ($1, 'whatsapp', $2, $3, $4) returning id`,
+    [lead.contact, `chatwoot:${A.accountId}`, lead.phone, String(lead.chatwoot)]), 'identidad').id;
+    return one(await sql(`insert into public.conversations (contact_id, channel_identity_id, commercial_context)
+      values ($1, $2, $3::jsonb) returning id`, [lead.contact, identity, context]), 'conversacion').id;
+  };
+  const taken = await sentA1('cuenta-tomada');
+  const handoff = await sentA1('cuenta-derivada');
+  const denied = await sentA1('cuenta-sin-permiso');
+  const optedOut = await sentA1('cuenta-baja');
+  for (const lead of [taken, handoff, denied, optedOut]) await hold((await record(lead)).rejection_id, lead.sentAt);
+  await sql('update public.conversations set human_takeover = true where id = $1', [await convOf(taken)]);
+  const handoffConversation = await convOf(handoff);
+  const identity = one(await sql('select channel_identity_id from public.conversations where id = $1',
+    [handoffConversation]), 'identidad').channel_identity_id;
+  // El caso comercial inbound exige un alcance publicado (trigger de
+  // 20260816000200); aca se prueba la barrera de la reserva, no la admision:
+  // la fila se siembra con los triggers apagados en esta sesion.
+  await sql(`set session_replication_role = replica`);
+  const commercial = one(await sql(`insert into public.commercial_cases (id, case_kind, contact_id, selected_channel_identity_id,
+      conversation_id, status, automation_status, authority_mode, inbound_scope_key, inbound_scope_version, tenant_ref)
+    values (gen_random_uuid(), 'inbound_sales', $1, $2, $3, 'active', 'draft_only', 'shadow', 'att1-inbound', 1, 'lancemos') returning id`,
+  [handoff.contact, identity, handoffConversation]), 'caso comercial').id;
+  await sql(`insert into public.human_handoff_requests (id, conversation_id, command_key, primary_reason_code, requested_by,
+      projection_policy_key, projection_policy_version, chatwoot_account_id, chatwoot_inbox_id, external_conversation_id,
+      expected_team_id, note_template_key, note_template_version, private_note_body, status, commercial_case_id,
+      inbound_scope_key, inbound_scope_version)
+    values (gen_random_uuid(), $1, $2, 'policy_requires_human', 'agent', 'handoff-policy', 1, $3, $4, $5, 7, 'handoff-note', 1,
+      'nota de prueba', 'requested', $6, 'att1-inbound', 1)`,
+  [handoffConversation, `handoff:${handoff.chatwoot}`, A.accountId, A.inboxId, Number(handoff.chatwoot), commercial]);
+  await sql(`set session_replication_role = origin`);
+  await convOf(denied);
+  await sql(`update public.contacts set contact_permission = 'opted_out' where id = $1`, [denied.contact]);
+  await sql(`insert into public.contact_opt_out_events (contact_id, channel, purpose, source, canonical_account_id,
+      canonical_inbox_id, canonical_conversation_id, canonical_message_id, external_user_id, occurred_at,
+      normalized_rule_key, correlation_status, projection_status)
+    values ($1, 'whatsapp', 'cart_recovery', 'chatwoot', $2, $3, $4, 4001, $5, now(), 'stop_receiving_messages',
+      'applied', 'applied')`, [optedOut.contact, A.accountId, A.inboxId, Number(optedOut.chatwoot), optedOut.phone]);
+  const signal = hours(optedOut.sentAt, 61);
+  await release(signal, hours(optedOut.sentAt, 61.1));
+  const barriers = {};
+  for (const [name, lead, expected] of [['tomada', taken, 'blocked_conversation'],
+    ['derivada', handoff, 'blocked_pending_handoff'], ['sin_permiso', denied, 'blocked_contact'],
+    ['baja', optedOut, 'blocked_opt_out']]) {
+    barriers[name] = (await claim(lead, hours(optedOut.sentAt, 61.1))).outcome;
+    if (barriers[name] !== expected || (await holdOf(lead)).status !== 'blocked') fail(`la barrera ${name}`, barriers);
+  }
+  results.otras_barreras = barriers;
 }
 
 // ---------------------------------------------------------------------------

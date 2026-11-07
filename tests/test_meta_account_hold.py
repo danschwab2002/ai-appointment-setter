@@ -373,7 +373,10 @@ def test_without_the_flag_a_131042_is_only_recorded() -> None:
     assert counts == {"recorded": 1}
 
 
-def test_a_new_131042_waits_and_nothing_goes_out_without_the_signal(tmp_path: Path) -> None:
+def test_a_new_131042_asks_for_the_hold_and_passes_no_signal(tmp_path: Path) -> None:
+    """Lo que contesta la base lo decide el doble; aca se mira que el barredor
+    pida la espera y la liberacion sin senal. Que sin senal no salga nada lo
+    prueba la base (validate_meta_account_hold_retry.mjs, seccion 1)."""
     chatwoot, supabase = FakeChatwoot(_entry()), FakeSupabase()
     sweeper = _sweeper(chatwoot, supabase, account_hold=_hold(tmp_path), clock=lambda: float(SENT_AT + 600))
     counts = asyncio.run(sweeper.run_once())
