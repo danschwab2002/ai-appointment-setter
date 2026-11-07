@@ -51,6 +51,7 @@ from bridge.supabase import (
     MetaAccountHoldClaim,
     MetaAccountHoldRelease,
     MetaDeliveryRejectionRecord,
+    SupabaseError,
 )
 from slack_correlation.catalog import EVENT_TEMPLATES, render_message
 
@@ -286,14 +287,27 @@ class FakeSupabase:
         self._released = released
         self._due = due
         self._claim = claim
+        self.fail_mark = 0
+        self.fail_hold = 0
+        self.hold_outcome = "held"
 
     async def record_meta_delivery_rejection(self, **kwargs: object) -> MetaDeliveryRejectionRecord:
         self.calls.append(("record", kwargs))
         return MetaDeliveryRejectionRecord(self._record, ID, "none", None, False)
 
+    async def mark_meta_account_hold_enabled(self, **kwargs: object) -> str:
+        self.calls.append(("mark", kwargs))
+        if self.fail_mark:
+            self.fail_mark -= 1
+            raise SupabaseError("meta_account_hold_mark_failed: HTTP 503")
+        return "marked"
+
     async def hold_meta_account_rejection(self, **kwargs: object) -> str:
         self.calls.append(("hold", kwargs))
-        return "held"
+        if self.fail_hold:
+            self.fail_hold -= 1
+            raise SupabaseError("meta_account_hold_failed: HTTP 503")
+        return self.hold_outcome
 
     async def requeue_meta_account_hold(self, **kwargs: object) -> str:
         self.calls.append(("requeue", kwargs))
@@ -320,7 +334,7 @@ class FakeSupabase:
         return "blocked"
 
     def names(self) -> list[str]:
-        return [name for name, _ in self.calls]
+        return [name for name, _ in self.calls if name != "mark"]
 
     def call(self, name: str) -> dict:
         return next(kwargs for n, kwargs in self.calls if n == name)
@@ -372,11 +386,52 @@ def test_a_new_131042_waits_and_nothing_goes_out_without_the_signal(tmp_path: Pa
     assert chatwoot.listed[0]["active_since_epoch"] == SENT_AT + 600 - HOLD_AGE
 
 
-def test_a_replayed_rejection_is_never_held(tmp_path: Path) -> None:
-    """D4: lo registrado antes de prender el flag no entra nunca."""
+def test_a_replayed_rejection_asks_the_base_once_and_the_base_cuts_by_the_mark(tmp_path: Path) -> None:
+    """H2 y H4: un replayed tambien se pregunta (una llamada fallida se repite), y
+    lo anterior a la marca de prendido lo corta la base (D4)."""
     chatwoot, supabase = FakeChatwoot(_entry()), FakeSupabase(record="replayed")
-    asyncio.run(_sweeper(chatwoot, supabase, account_hold=_hold(tmp_path)).run_once())
-    assert "hold" not in supabase.names()
+    supabase.hold_outcome = "before_enabled"
+    sweeper = _sweeper(chatwoot, supabase, account_hold=_hold(tmp_path))
+    counts = asyncio.run(sweeper.run_once())
+    asyncio.run(sweeper.run_once())
+    assert supabase.names().count("hold") == 1 and counts["hold_before_enabled"] == 1
+    # La marca se pide una vez por proceso, al primer barrido.
+    assert [name for name, _ in supabase.calls].count("mark") == 1
+    assert supabase.call("mark")["chatwoot_inbox_id"] == INBOX
+
+
+def test_a_failed_hold_does_not_stop_the_scan_and_is_retried(tmp_path: Path) -> None:
+    """H2: un error de la base al poner en espera no corta el barrido."""
+    retry = RetryConfig(allowed_templates=frozenset({TEMPLATE}), send_hours=(0, 24),
+                        time_zone=ZoneInfo("UTC"),
+                        gate=FinalMetaEffectGate(enabled=True, evidence_dir=tmp_path / "r"))
+
+    class Both(FakeSupabase):
+        async def list_due_meta_first_touch_retries(self, **kwargs: object) -> list:
+            self.calls.append(("due_131049", kwargs))
+            return []
+
+    supabase = Both()
+    supabase.fail_hold = 1
+    sweeper = _sweeper(FakeChatwoot(_entry()), supabase, retry=retry, account_hold=_hold(tmp_path))
+    counts = asyncio.run(sweeper.run_once())
+    assert counts["hold_error"] == 1 and sweeper.last_scan_state == "healthy"
+    assert supabase.names() == ["record", "hold", "due_131049", "release", "due"]
+    # El barrido siguiente: el registro da replayed y la espera se pide otra vez.
+    supabase._record = "replayed"
+    counts = asyncio.run(sweeper.run_once())
+    assert counts["hold_held"] == 1
+
+
+def test_without_the_mark_nothing_is_held_and_the_mark_is_retried(tmp_path: Path) -> None:
+    supabase = FakeSupabase()
+    supabase.fail_mark = 1
+    sweeper = _sweeper(FakeChatwoot(_entry()), supabase, account_hold=_hold(tmp_path))
+    counts = asyncio.run(sweeper.run_once())
+    assert "hold" not in supabase.names() and counts["hold_error"] == 1
+    supabase._record = "replayed"
+    asyncio.run(sweeper.run_once())
+    assert [name for name, _ in supabase.calls].count("mark") == 2 and "hold" in supabase.names()
 
 
 def test_other_codes_are_not_held(tmp_path: Path) -> None:
@@ -392,7 +447,7 @@ def test_the_delivered_template_releases_and_the_hold_goes_out_with_a_notice(tmp
     chatwoot = FakeChatwoot(_entry(), _delivered_entry())
     supabase, producer = FakeSupabase(record="replayed", released=2, due=True), FakeProducer()
     counts = asyncio.run(_sweeper(chatwoot, supabase, account_hold=_hold(tmp_path), producer=producer).run_once())
-    assert supabase.names() == ["record", "release", "due", "claim", "settle"]
+    assert supabase.names() == ["record", "hold", "release", "due", "claim", "settle"]
     release = supabase.call("release")
     assert release["account_ok_at"] == datetime.fromtimestamp(DELIVERED_AT, UTC).isoformat()
     [command] = producer.commands
@@ -456,7 +511,7 @@ def test_the_base_barriers_and_the_bridge_blocks(tmp_path: Path) -> None:
                               "content": "hola", "content_attributes": {}})
     chatwoot, supabase = FakeChatwoot(wrote), FakeSupabase(record="replayed", due=True)
     asyncio.run(_sweeper(chatwoot, supabase, account_hold=_hold(tmp_path)).run_once())
-    assert supabase.names() == ["record", "release", "due", "block"]
+    assert supabase.names() == ["record", "hold", "release", "due", "block"]
     assert supabase.call("block")["reason"] == "bridge_lead_wrote" and chatwoot.sent == []
 
 

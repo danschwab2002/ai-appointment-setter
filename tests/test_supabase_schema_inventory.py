@@ -471,9 +471,10 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # suma registrar y leer.
     # 20261103001700 (el origen de un recorrido nativo, E-321) suma su lectura.
     # 20261106000100 (el cierre del caso por el cupon de una campana, E-339) suma su RPC.
-    # 20261107000100 (el rechazo de la cuenta, E-348) suma sus siete: esperar,
-    # liberar, listar, reservar, cerrar, frenar y volver a esperar.
-    assert len(allowlisted) == 200
+    # 20261107000100 (el rechazo de la cuenta, E-348) suma sus ocho: marcar el
+    # prendido, esperar, liberar, listar, reservar, cerrar, frenar y volver a esperar.
+    assert len(allowlisted) == 201
+    assert "mark_meta_account_hold_enabled_v1(bigint, timestamp with time zone)" in allowlisted
     assert "requeue_meta_account_hold_v1(bigint, bigint, bigint, timestamp with time zone)" in allowlisted
     assert "close_recovery_case_segment_coupon_v1(uuid, uuid, text, bigint, timestamp with time zone)" in allowlisted
     assert "flow_engine_native_campaign_origin_v1(uuid)" in allowlisted
@@ -2049,8 +2050,9 @@ def test_meta_account_hold_fingerprint_is_last() -> None:
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261107000100_meta_account_hold_retry_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",3,'meta_account_hold_retry')")
+    assert compact_fingerprint.endswith(",4,'meta_account_hold_retry')")
+    assert "to_regclass('public.meta_account_hold_activations')" in compact_fingerprint
     assert "to_regclass('public.meta_account_holds')" in compact_fingerprint
-    assert "selectcount(*)=7" in compact_fingerprint
+    assert "selectcount(*)=8" in compact_fingerprint
     assert "position('purchase_already_approved'indefinition)>0" in compact_fingerprint
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint

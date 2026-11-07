@@ -279,6 +279,7 @@ const rows = await db.query(`
       -- 20261106000100: el cierre del caso por el cupon de una campana (E-339).
       ('close_recovery_case_segment_coupon_v1(uuid,uuid,text,bigint,timestamp with time zone)'),
       -- 20261107000100: el rechazo de la cuenta espera a que la cuenta vuelva (E-348).
+      ('mark_meta_account_hold_enabled_v1(bigint,timestamp with time zone)'),
       ('hold_meta_account_rejection_v1(uuid,integer,timestamp with time zone)'),
       ('release_meta_account_holds_v1(bigint,text[],timestamp with time zone,timestamp with time zone)'),
       ('list_due_meta_account_hold_retries_v1(bigint,integer,timestamp with time zone)'),
@@ -311,7 +312,7 @@ const result = rows.rows[0];
 // 20261103001500 (las respuestas a la pregunta de entrada de una campana, E-317) suma registrar y leer: 191.
 // 20261103001700 (el origen de un recorrido nativo para la campana por landing, E-321) suma su lectura: 192.
 // 20261106000100 (el cierre del caso por el cupon de una campana, E-339) suma su RPC: 193.
-// 20261107000100 (el rechazo de la cuenta, E-348) suma sus siete: 200.
+// 20261107000100 (el rechazo de la cuenta, E-348) suma sus ocho: 201.
 // Historical baseline guard was `result.expected_count !== 63`; the current
 // baseline is 68 RPCs, daily feedback adds fourteen, payment links add three,
 // the one-shot operator disposition adds one, and correlation event context
@@ -362,7 +363,7 @@ const result = rows.rows[0];
 // The Meta rejections (20261103000500, E-284) add six: record, list due,
 // claim, settle and block the retry, and mark the 131026 notice.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 200) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 201) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

@@ -553,6 +553,12 @@ class MetaDeliveryRejectionSweeper:
         # La ultima plantilla entregada que vio este proceso: la senal no se
         # pierde porque la conversacion salga de la ventana del barrido.
         self._account_ok_epoch: int | None = None
+        # La marca de prendido de la bandeja (la escribe la base la primera vez).
+        # Sin ella, este barrido no pone nada en espera.
+        self._hold_marked = False
+        # Los rechazos de la cuenta que ya tienen respuesta final de la base: no
+        # se vuelve a preguntar en cada barrido.
+        self._hold_settled: set[int] = set()
         self._scan_interval_seconds = scan_interval_seconds
         self._lookback_seconds = lookback_seconds
         self._max_pages = max_pages
@@ -603,6 +609,8 @@ class MetaDeliveryRejectionSweeper:
             lookback = max(lookback, self._retry.max_age_seconds)
         if self._first_scan and self._account_hold is not None:
             lookback = max(lookback, self._account_hold.max_age_seconds)
+        if self._account_hold is not None and not self._hold_marked:
+            await self._guarded_hold_step("mark", self._mark_hold_enabled, counts)
         conversations = await self._chatwoot.list_recent_conversations_with_messages(  # type: ignore[attr-defined]
             expected_inbox_id=self._inbox_id,
             statuses=REJECTION_CONVERSATION_STATUSES,
@@ -627,9 +635,9 @@ class MetaDeliveryRejectionSweeper:
             else:
                 counts["retry_outside_send_hours"] += 1
         if self._account_hold is not None:
-            await self._release_holds(counts)
+            await self._guarded_hold_step("release", self._release_holds, counts)
             if self._inside_send_hours(self._account_hold):
-                await self._hold_due(counts)
+                await self._guarded_hold_step("due", self._hold_due, counts)
             else:
                 counts["hold_outside_send_hours"] += 1
         self._last_scan_state = "healthy"
@@ -669,17 +677,48 @@ class MetaDeliveryRejectionSweeper:
             await self._notify_unreachable(rejection, recorded.rejection_id, counts)
         if (
             self._account_hold is not None
-            and recorded.outcome == "recorded"
+            and self._hold_marked
             and rejection.code in self._account_hold.codes
+            and rejection.message_id not in self._hold_settled
         ):
-            await self._hold(rejection, recorded.rejection_id, counts)
+
+            async def step(c: Counter[str]) -> None:
+                await self._hold(rejection, recorded.rejection_id, c)
+
+            await self._guarded_hold_step("hold", step, counts)
+
+    async def _guarded_hold_step(
+        self, step: str, run: Callable[[Counter[str]], object], counts: Counter[str]
+    ) -> None:
+        """Un paso de la espera que falla no corta el barrido (H2 de E-348).
+
+        El registro, el aviso del 131026 y el reintento del 131049 siguen; lo
+        que no se pudo hacer se repite en el barrido siguiente (la base es
+        idempotente en cada paso).
+        """
+        try:
+            await run(counts)  # type: ignore[misc]
+        except Exception as exc:  # noqa: BLE001
+            counts["hold_error"] += 1
+            logger.warning(
+                "meta_account_hold_failed step=%s error=%s", step, type(exc).__name__
+            )
+
+    async def _mark_hold_enabled(self, counts: Counter[str]) -> None:
+        outcome = await self._supabase.mark_meta_account_hold_enabled(  # type: ignore[attr-defined]
+            chatwoot_inbox_id=self._inbox_id, now=self._now_iso()
+        )
+        self._hold_marked = True
+        counts[f"hold_enabled_{outcome}"] += 1
 
     async def _hold(self, rejection: Rejection, rejection_id: str, counts: Counter[str]) -> None:
-        """El rechazo de la cuenta recien registrado: espera o vuelve a esperar.
+        """Un rechazo de la cuenta: espera o vuelve a esperar.
 
-        Solo con ``recorded`` (D4 de Dan: nada retroactivo; lo registrado antes
-        de prender el flag no entra nunca). Un reintento rechazado otra vez por
-        la cuenta devuelve su fila original a la espera.
+        Con ``recorded`` y con ``replayed``: si una llamada fallo, el barrido
+        siguiente la repite. Lo retroactivo lo corta la base con la marca de
+        prendido (D4 de Dan: solo lo que Meta rechazo despues de prender).
+        Un reintento rechazado otra vez por la cuenta devuelve su fila
+        original a la espera.
         """
         hold = self._account_hold
         assert hold is not None
@@ -690,6 +729,11 @@ class MetaDeliveryRejectionSweeper:
                 now=self._now_iso(),
             )
             counts[f"hold_{held}"] += 1
+            if held == "not_enabled":
+                return
+            self._hold_settled.add(rejection.message_id)
+            if held == "replayed":
+                return
             logger.info(
                 "meta_account_hold outcome=%s code=%s template=%s conversation=%s",
                 held,
@@ -705,6 +749,7 @@ class MetaDeliveryRejectionSweeper:
                 now=self._now_iso(),
             )
             counts[f"hold_requeue_{requeued}"] += 1
+            self._hold_settled.add(rejection.message_id)
             logger.info(
                 "meta_account_hold_requeue outcome=%s code=%s conversation=%s message=%s",
                 requeued,

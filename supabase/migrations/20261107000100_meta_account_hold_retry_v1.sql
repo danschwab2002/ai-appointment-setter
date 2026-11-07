@@ -16,9 +16,14 @@
 --    la base solo excluye el 131049 y el 131026, que tienen su propio camino).
 --    Estados: waiting (la cuenta sigue caida), released (la cuenta volvio a
 --    entregar una plantilla), claimed, sent, failed, blocked y expired.
--- 2. hold_meta_account_rejection_v1: poner en espera un rechazo recien
---    registrado. El bridge lo llama solo cuando record_meta_delivery_rejection_v1
---    contesta recorded, con el flag prendido: nada retroactivo (D4).
+-- 2. meta_account_hold_activations y mark_meta_account_hold_enabled_v1: la
+--    marca de prendido por bandeja, la primera vez que el barrido corre con el
+--    flag (no se mueve despues). hold_meta_account_rejection_v1 pone en
+--    espera solo un rechazo cuyo mensaje es posterior a esa marca: nada
+--    retroactivo (D4), aunque el registro y la espera se prendan juntos y el
+--    primer barrido registre los rechazos de las ultimas 72 h. El bridge lo
+--    llama con recorded y con replayed: si una llamada fallo, el barrido
+--    siguiente la repite.
 -- 3. release_meta_account_holds_v1: la senal pasiva de «la cuenta volvio» (D5):
 --    el bridge pasa la hora de la ultima plantilla nuestra entregada o leida en
 --    la bandeja; si es posterior al ultimo rechazo con un codigo de la cuenta
@@ -113,6 +118,43 @@ where status in ('waiting', 'released');
 
 alter table public.meta_account_holds enable row level security;
 
+create table public.meta_account_hold_activations (
+    chatwoot_inbox_id bigint primary key check (chatwoot_inbox_id > 0),
+    enabled_at timestamptz not null
+);
+
+alter table public.meta_account_hold_activations enable row level security;
+
+-- 1b. La marca de prendido (idempotente: la primera gana).
+
+create function public.mark_meta_account_hold_enabled_v1(
+    p_chatwoot_inbox_id bigint,
+    p_now timestamptz default clock_timestamp()
+)
+returns table (
+    outcome text,
+    enabled_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $function$
+begin
+    if p_chatwoot_inbox_id is null or p_chatwoot_inbox_id <= 0 then
+        raise exception using errcode = '22023',
+            message = 'mark_meta_account_hold_enabled_invalid_input';
+    end if;
+    insert into public.meta_account_hold_activations (chatwoot_inbox_id, enabled_at)
+    values (p_chatwoot_inbox_id, coalesce(p_now, clock_timestamp()))
+    on conflict (chatwoot_inbox_id) do nothing;
+    outcome := case when found then 'marked' else 'replayed' end;
+    select activation.enabled_at into enabled_at
+    from public.meta_account_hold_activations activation
+    where activation.chatwoot_inbox_id = p_chatwoot_inbox_id;
+    return next;
+end;
+$function$;
+
 -- 2. Poner en espera un rechazo recien registrado.
 
 create function public.hold_meta_account_rejection_v1(
@@ -132,6 +174,7 @@ declare
     v_rejection public.meta_delivery_rejections%rowtype;
     v_now timestamptz;
     v_expires timestamptz;
+    v_enabled_at timestamptz;
 begin
     if p_rejection_id is null
        or p_max_age_seconds is null or p_max_age_seconds not between 3600 and 604800 then
@@ -165,6 +208,20 @@ begin
        or v_rejection.meta_error_code in ('131049', '131026')
        or v_rejection.retry_status <> 'none' then
         outcome := 'not_eligible';
+        return next;
+        return;
+    end if;
+    -- D4: solo lo que Meta rechazo despues de prender la espera en la bandeja.
+    select activation.enabled_at into v_enabled_at
+    from public.meta_account_hold_activations activation
+    where activation.chatwoot_inbox_id = v_rejection.chatwoot_inbox_id;
+    if v_enabled_at is null then
+        outcome := 'not_enabled';
+        return next;
+        return;
+    end if;
+    if v_rejection.message_created_at < v_enabled_at then
+        outcome := 'before_enabled';
         return next;
         return;
     end if;
@@ -676,13 +733,14 @@ end;
 $function$;
 
 -- Permisos: como 20261103000500, todo se revoca y solo service_role (el
--- bridge) ejecuta las siete funciones. La tabla no tiene permisos para ningun
--- rol de la API: la lee el OS por psql de solo lectura.
+-- bridge) ejecuta las ocho funciones. Las tablas no tienen permisos para ningun
+-- rol de la API: las lee el OS por psql de solo lectura.
 do $acl$
 declare
     v_function text;
     v_role text;
     v_functions text[] := array[
+        'public.mark_meta_account_hold_enabled_v1(bigint,timestamptz)',
         'public.hold_meta_account_rejection_v1(uuid,integer,timestamptz)',
         'public.release_meta_account_holds_v1(bigint,text[],timestamptz,timestamptz)',
         'public.list_due_meta_account_hold_retries_v1(bigint,integer,timestamptz)',
@@ -693,6 +751,7 @@ declare
     ];
 begin
     revoke all on table public.meta_account_holds from public;
+    revoke all on table public.meta_account_hold_activations from public;
     foreach v_function in array v_functions loop
         execute format('revoke all on function %s from public', v_function);
         foreach v_role in array array['anon', 'authenticated'] loop
@@ -707,10 +766,11 @@ begin
     foreach v_role in array array['anon', 'authenticated', 'service_role'] loop
         if to_regrole(v_role) is not null then
             execute format('revoke all on table public.meta_account_holds from %I', v_role);
+            execute format('revoke all on table public.meta_account_hold_activations from %I', v_role);
         end if;
     end loop;
 
-    -- Por presencia: service_role ejecuta las siete y ningun rol de la API.
+    -- Por presencia: service_role ejecuta las ocho y ningun rol de la API.
     foreach v_function in array v_functions loop
         if exists (select 1 from pg_roles where rolname = 'service_role'
                       and not has_function_privilege(rolname, v_function, 'EXECUTE'))
@@ -721,7 +781,8 @@ begin
         end if;
     end loop;
     if exists (select 1 from pg_roles where rolname in ('anon', 'authenticated', 'service_role')
-                  and has_table_privilege(rolname, 'public.meta_account_holds', 'SELECT')) then
+                  and (has_table_privilege(rolname, 'public.meta_account_holds', 'SELECT')
+                       or has_table_privilege(rolname, 'public.meta_account_hold_activations', 'SELECT'))) then
         raise exception using errcode = '55000',
             message = 'meta_account_holds_acl_unexpected', detail = 'tabla';
     end if;

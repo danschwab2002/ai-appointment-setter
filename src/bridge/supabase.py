@@ -2452,7 +2452,9 @@ class MetaFirstTouchRetryClaim:
 
 # ── El rechazo de la cuenta (meta-account-hold-retry-v1, E-348) ───────
 
-META_ACCOUNT_HOLD_OUTCOMES = frozenset({"held", "replayed", "not_eligible", "not_found", "too_late"})
+META_ACCOUNT_HOLD_OUTCOMES = frozenset({
+    "held", "replayed", "not_eligible", "not_found", "too_late", "not_enabled", "before_enabled",
+})
 META_ACCOUNT_HOLD_REQUEUE_OUTCOMES = frozenset({"requeued", "exhausted", "expired", "not_found"})
 # Lo que puede contestar claim_meta_account_hold_retry_v1: claimed reserva; el
 # resto no manda nada (los blocked_* y purchase_already_approved quedan
@@ -10578,6 +10580,18 @@ class SupabaseClient:
         return _required_enum(rows[0], "outcome", {"blocked", "not_found"}, operation=operation)
 
     # ── El rechazo de la cuenta (meta-account-hold-retry-v1, E-348) ───
+
+    async def mark_meta_account_hold_enabled(self, *, chatwoot_inbox_id: int, now: str) -> str:
+        """La marca de prendido de la bandeja (la primera gana): marked o replayed."""
+        operation = "meta_account_hold_mark"
+        rows = await self._meta_delivery_rpc(
+            "mark_meta_account_hold_enabled_v1",
+            {"p_chatwoot_inbox_id": chatwoot_inbox_id, "p_now": now},
+            operation=operation,
+        )
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return _required_enum(rows[0], "outcome", {"marked", "replayed"}, operation=operation)
 
     async def hold_meta_account_rejection(
         self, *, rejection_id: str, max_age_seconds: int, now: str

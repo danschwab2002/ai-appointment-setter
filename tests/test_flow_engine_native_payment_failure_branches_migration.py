@@ -38,7 +38,7 @@ def test_it_is_one_transaction_with_lock_timeout_and_the_last() -> None:
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
     # Despues, el aviso de derivaciones sin atender (20261103001000, E-309).
     # La etiqueta de un segmento en un flujo nativo (20261103001300, E-316): un reemplazo contado en la forma nativa.
-    # El rechazo de la cuenta espera a que la cuenta vuelva (20261107000100, E-348): una tabla y siete RPC de service_role.
+    # El rechazo de la cuenta espera a que la cuenta vuelva (20261107000100, E-348): dos tablas y ocho RPC de service_role.
     assert names[-1] == "20261107000100_meta_account_hold_retry_v1.sql"
     # El cierre del caso por el cupon de una campana (20261106000100, E-339): una RPC de service_role.
     assert names[-2] == "20261106000100_recovery_case_segment_coupon_close_v1.sql"

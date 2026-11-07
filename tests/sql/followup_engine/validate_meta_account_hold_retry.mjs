@@ -27,6 +27,7 @@ import { buildWorld, expectError, fail, one, root, sameSet } from './validate_fl
 
 const MIGRATION = '20261107000100_meta_account_hold_retry_v1.sql';
 const FUNCTIONS = [
+  'mark_meta_account_hold_enabled_v1(bigint,timestamp with time zone)',
   'hold_meta_account_rejection_v1(uuid,integer,timestamp with time zone)',
   'release_meta_account_holds_v1(bigint,text[],timestamp with time zone,timestamp with time zone)',
   'list_due_meta_account_hold_retries_v1(bigint,integer,timestamp with time zone)',
@@ -87,11 +88,13 @@ const snapshot = async (db) => new Map((await db.query(`
     `, [`public.${signature}`])).rows, signature);
     if (!acl.service || acl.anon || acl.authenticated || !acl.prosecdef) fail(`permisos de ${signature}`, acl);
   }
-  const tableAcl = one((await db.query(`
-    select bool_or(has_table_privilege(r, 'public.meta_account_holds', 'SELECT')) as any_select
-    from unnest(array['anon', 'authenticated', 'service_role']) r
-  `)).rows, 'tabla');
-  if (tableAcl.any_select) fail('meta_account_holds tiene permisos para la API');
+  for (const relation of ['public.meta_account_holds', 'public.meta_account_hold_activations']) {
+    const tableAcl = one((await db.query(`
+      select bool_or(has_table_privilege(r, $1, 'SELECT')) as any_select
+      from unnest(array['anon', 'authenticated', 'service_role']) r
+    `, [relation])).rows, relation);
+    if (tableAcl.any_select) fail(`${relation} tiene permisos para la API`);
+  }
   let error = null;
   try {
     await applyFile(db, join(root, 'supabase/migrations', MIGRATION));
@@ -151,6 +154,43 @@ const requeue = async (lead, retryId, now) => one(await sql('select * from publi
 const holdOf = async (lead) => one(await sql(
   'select * from public.meta_account_holds where chatwoot_inbox_id = $1 and chatwoot_message_id = $2',
   [A.inboxId, lead.messageId]), `${lead.label} espera`);
+
+// ---------------------------------------------------------------------------
+// 0b. La marca de prendido (H2 y H4 de la revision): sin marca no entra nada;
+//     con la marca, solo lo que Meta rechazo despues, aunque se registre en el
+//     primer barrido (que mira 72 h) o llegue como replayed.
+// ---------------------------------------------------------------------------
+const mark = async (now) => one(await sql('select * from public.mark_meta_account_hold_enabled_v1($1,$2)',
+  [A.inboxId, now]), 'marca');
+{
+  const early = await sentA1('cuenta-sin-marca');
+  const early1 = await record(early);
+  if ((await hold(early1.rejection_id, early.sentAt)).outcome !== 'not_enabled') fail('entro sin la marca');
+  // Se prende ahora: lo que sigue en este archivo es posterior a la marca.
+  const enabledAt = early.sentAt;
+  const marked = await mark(enabledAt);
+  const again = await mark(hours(early.sentAt, 5));
+  if (marked.outcome !== 'marked' || again.outcome !== 'replayed'
+      || new Date(again.enabled_at).getTime() !== enabledAt.getTime()) fail('la marca', { marked, again });
+  // El primer barrido registra (recorded) un 131042 de hace 2 h: retroactivo.
+  const old = await sentA1('cuenta-anterior');
+  const oldRow = await record(old, { at: hours(enabledAt, -2) });
+  if (oldRow.outcome !== 'recorded') fail('registrar el viejo', oldRow);
+  if ((await hold(oldRow.rejection_id, enabledAt)).outcome !== 'before_enabled') fail('entro uno anterior a la marca');
+  if ((await sql('select 1 from public.meta_account_holds where rejection_id = $1', [oldRow.rejection_id])).length !== 0) {
+    fail('quedo una fila anterior a la marca');
+  }
+  // Uno posterior a la marca que se registro y cuya espera fallo: el replayed entra.
+  const late = await sentA1('cuenta-reintentada');
+  await record(late);
+  const replay = await record(late);
+  if (replay.outcome !== 'replayed' || (await hold(replay.rejection_id, await dbNow())).outcome !== 'held') {
+    fail('el replayed posterior no entro');
+  }
+  await sql(`update public.meta_account_holds set status = 'blocked', reason = 'test_cleanup', settled_at = now()
+    where rejection_id = $1`, [replay.rejection_id]);
+  results.marca = { sin_marca: 'not_enabled', anterior: 'before_enabled', replayed: 'held' };
+}
 
 // ---------------------------------------------------------------------------
 // 1. La espera, la senal y los tres intentos.

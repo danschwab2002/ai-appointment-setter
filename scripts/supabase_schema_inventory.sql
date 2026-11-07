@@ -6713,11 +6713,21 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
               and not has_table_privilege('anon', c.oid, 'SELECT')
               and not has_table_privilege('authenticated', c.oid, 'SELECT')
         )::int
-        -- ... las siete funciones, solo para service_role ...
+        -- ... la marca de prendido, tambien sin lectura para la API ...
         + (
-            select count(*) = 7
+            select count(*) = 1
+            from pg_class c
+            where c.oid = to_regclass('public.meta_account_hold_activations')
+              and c.relrowsecurity
+              and not has_table_privilege('anon', c.oid, 'SELECT')
+              and not has_table_privilege('authenticated', c.oid, 'SELECT')
+        )::int
+        -- ... las ocho funciones, solo para service_role ...
+        + (
+            select count(*) = 8
             from functions
             where oid in (
+                to_regprocedure('public.mark_meta_account_hold_enabled_v1(bigint,timestamptz)'),
                 to_regprocedure('public.hold_meta_account_rejection_v1(uuid,integer,timestamptz)'),
                 to_regprocedure('public.release_meta_account_holds_v1(bigint,text[],timestamptz,timestamptz)'),
                 to_regprocedure('public.list_due_meta_account_hold_retries_v1(bigint,integer,timestamptz)'),
@@ -6740,7 +6750,7 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
               and position('blocked_pending_handoff' in definition) > 0
               and position('contact_opt_out_events' in definition) > 0
         )::int,
-        3,
+        4,
         'meta_account_hold_retry'
 )
 select
