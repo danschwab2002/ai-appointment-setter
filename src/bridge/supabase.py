@@ -2458,7 +2458,7 @@ META_ACCOUNT_HOLD_REQUEUE_OUTCOMES = frozenset({"requeued", "exhausted", "expire
 # resto no manda nada (los blocked_* y purchase_already_approved quedan
 # escritos en la base como blocked).
 META_ACCOUNT_HOLD_CLAIM_OUTCOMES = frozenset({
-    "claimed", "not_found", "not_released",
+    "claimed", "not_found", "not_released", "account_down_again",
     "blocked_too_late", "blocked_conversation", "blocked_pending_handoff",
     "blocked_contact", "blocked_opt_out", "purchase_already_approved",
     "blocked_case_closed",
@@ -2472,6 +2472,7 @@ class MetaAccountHoldRelease:
     released: int
     expired: int
     waiting: int
+    held_back: int = 0
 
 
 @dataclass(frozen=True)
@@ -10621,6 +10622,7 @@ class SupabaseClient:
             released=_required_nonnegative_int(row, "released", operation=operation),
             expired=_required_nonnegative_int(row, "expired", operation=operation),
             waiting=_required_nonnegative_int(row, "waiting", operation=operation),
+            held_back=_required_nonnegative_int(row, "held_back", operation=operation),
         )
 
     async def list_due_meta_account_hold_retries(

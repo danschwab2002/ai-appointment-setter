@@ -203,6 +203,7 @@ returns table (
     released integer,
     expired integer,
     waiting integer,
+    held_back integer,
     last_rejection_at timestamptz
 )
 language plpgsql
@@ -247,6 +248,25 @@ begin
     from public.meta_delivery_rejections rejection
     where rejection.chatwoot_inbox_id = p_chatwoot_inbox_id
       and rejection.meta_error_code = any(p_codes);
+
+    -- La cuenta volvio a caer despues de liberar (un reintento volvio con un
+    -- codigo de la cuenta): lo liberado con una senal anterior a ese rechazo
+    -- vuelve a esperar, sin gastar intentos.
+    held_back := 0;
+    if last_rejection_at is not null then
+        with back as (
+            update public.meta_account_holds hold
+            set status = 'waiting',
+                released_at = null,
+                release_signal_at = null,
+                updated_at = v_now
+            where hold.chatwoot_inbox_id = p_chatwoot_inbox_id
+              and hold.status = 'released'
+              and hold.release_signal_at < last_rejection_at
+            returning 1
+        )
+        select count(*)::integer into held_back from back;
+    end if;
 
     released := 0;
     if p_account_ok_at is not null and last_rejection_at is not null
@@ -381,6 +401,24 @@ begin
             settled_at = v_now, updated_at = v_now
         where hold.rejection_id = v_hold.rejection_id;
         outcome := 'blocked_too_late';
+        return next;
+        return;
+    end if;
+
+    -- La misma guarda que la liberacion, por si la cuenta volvio a caer entre
+    -- la liberacion y esta reserva: un rechazo con el mismo codigo posterior a
+    -- la senal devuelve la fila a la espera, sin gastar el intento.
+    if exists (
+        select 1 from public.meta_delivery_rejections rejection
+        where rejection.chatwoot_inbox_id = p_chatwoot_inbox_id
+          and rejection.meta_error_code = v_hold.meta_error_code
+          and rejection.message_created_at > v_hold.release_signal_at
+    ) then
+        update public.meta_account_holds hold
+        set status = 'waiting', released_at = null, release_signal_at = null,
+            updated_at = v_now
+        where hold.rejection_id = v_hold.rejection_id;
+        outcome := 'account_down_again';
         return next;
         return;
     end if;

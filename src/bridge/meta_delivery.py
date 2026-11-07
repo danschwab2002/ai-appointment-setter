@@ -727,6 +727,8 @@ class MetaDeliveryRejectionSweeper:
         )
         if result.expired:
             counts["hold_expired"] += result.expired
+        if result.held_back:
+            counts["hold_held_back"] += result.held_back
         if result.waiting:
             counts["hold_waiting"] += result.waiting
         if not result.released:

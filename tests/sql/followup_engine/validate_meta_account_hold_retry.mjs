@@ -246,6 +246,44 @@ const holdOf = async (lead) => one(await sql(
 }
 
 // ---------------------------------------------------------------------------
+// 2b. La cuenta vuelve a caer con filas liberadas (H1 de la revision).
+// ---------------------------------------------------------------------------
+{
+  const first = await sentA1('cuenta-recae-1');
+  const second = await sentA1('cuenta-recae-2');
+  const third = await sentA1('cuenta-recae-3');
+  for (const lead of [first, second, third]) await hold((await record(lead)).rejection_id, lead.sentAt);
+  // Despues de todo lo anterior (la seccion 2 libero con +40 h).
+  const signal = hours(third.sentAt, 50);
+  const freed = await release(signal, hours(third.sentAt, 50.1));
+  if (freed.released !== 3 || freed.held_back !== 0) fail('liberar las tres', freed);
+  const claimed = await claim(first, hours(third.sentAt, 50.1));
+  if (claimed.outcome !== 'claimed') fail('la primera', claimed);
+  await settle(claimed.rejection_id, 990_201, hours(third.sentAt, 50.2));
+  // La primera vuelve con 131042: la cuenta cayo otra vez.
+  const back = hours(third.sentAt, 50.3);
+  await record(first, { kind: 'first_touch_retry', messageId: 990_201, retryOf: first.messageId, at: back });
+  await requeue(first, 990_201, back);
+  // Sin senal nueva: las otras dos vuelven a esperar y no salen.
+  const after = await release(signal, hours(third.sentAt, 50.4));
+  if (after.held_back !== 2 || after.released !== 0 || after.waiting !== 3) fail('volver a esperar las liberadas', after);
+  if ((await claim(second, hours(third.sentAt, 50.4))).outcome !== 'not_released') fail('salio con la cuenta caida');
+  if ((await holdOf(second)).attempts !== 0) fail('gasto un intento', await holdOf(second));
+  // La guarda de la reserva: liberadas, y un rechazo de la cuenta entre la
+  // liberacion y la reserva.
+  const newSignal = hours(third.sentAt, 51);
+  if ((await release(newSignal, hours(third.sentAt, 51.1))).released !== 3) fail('liberar otra vez');
+  const other = await sentA1('cuenta-recae-otro');
+  await record(other, { at: hours(third.sentAt, 51.2) });
+  const guarded = await claim(third, hours(third.sentAt, 51.3));
+  if (guarded.outcome !== 'account_down_again' || (await holdOf(third)).status !== 'waiting'
+      || (await holdOf(third)).attempts !== 0) fail('la guarda de la reserva', guarded);
+  // Las demas siguen liberadas hasta la proxima liberacion, que las devuelve.
+  if ((await release(newSignal, hours(third.sentAt, 51.4))).held_back !== 2) fail('la liberacion siguiente');
+  results.recae = { liberadas: freed.released, devueltas: after.held_back, reserva: guarded.outcome };
+}
+
+// ---------------------------------------------------------------------------
 // 3. Lo que no entra.
 // ---------------------------------------------------------------------------
 {
