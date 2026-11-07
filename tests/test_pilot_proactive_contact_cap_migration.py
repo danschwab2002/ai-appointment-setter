@@ -152,6 +152,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261103001700",
         # El cierre del caso por el cupon de una campana (20261106000100, E-339): una RPC de service_role.
         "20261106000100",
+        # El rechazo de la cuenta espera a que la cuenta vuelva (20261107000100, E-348): dos tablas y ocho RPC de service_role.
+        "20261107000100",
     ]
 
     sql = _sql()

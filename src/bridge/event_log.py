@@ -57,6 +57,15 @@ LOGGED_INFO_EVENTS = frozenset(
         "meta_first_touch_retry",
         "meta_first_touch_retry_skipped",
         "meta_delivery_notice_already_admitted",
+        # el rechazo de la cuenta (bridge.meta_delivery, E-348): el resultado,
+        # el codigo, la plantilla y el numero de conversacion o de mensaje;
+        # cuantos se liberaron; nunca el telefono ni el texto
+        "meta_account_hold",
+        "meta_account_hold_requeue",
+        "meta_account_hold_released",
+        "meta_account_hold_notice_already_admitted",
+        "meta_account_hold_retry",
+        "meta_account_hold_retry_skipped",
         # si la persona ya es cliente (bridge.app, E-297): cuantos productos,
         # sus estados y fuentes, y el numero de conversacion; nunca el
         # telefono ni el mail

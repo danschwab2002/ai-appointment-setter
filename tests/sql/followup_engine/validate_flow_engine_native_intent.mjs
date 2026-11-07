@@ -132,7 +132,9 @@ if (JSON.stringify(names.slice(names.indexOf(MIGRATION) + 1)) !== JSON.stringify
   // El origen de un recorrido nativo para la campana por landing (20261103001700, E-321): una lectura de service_role.
   '20261103001700_flow_engine_native_campaign_origin_v1.sql',
   // El cierre del caso por el cupon de una campana (20261106000100, E-339): una RPC de service_role.
-  '20261106000100_recovery_case_segment_coupon_close_v1.sql'])) {
+  '20261106000100_recovery_case_segment_coupon_close_v1.sql',
+  // El rechazo de la cuenta espera a que la cuenta vuelva (20261107000100, E-348): dos tablas y ocho RPC de service_role.
+  '20261107000100_meta_account_hold_retry_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la del seguimiento a 24 h nativo`, names.slice(-3));
 }
 if (maribel.name !== 'maribel_retomar_proceso_01') fail('el fixture no es la plantilla de Maribel');

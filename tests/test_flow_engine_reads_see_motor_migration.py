@@ -138,6 +138,8 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
         "20261103001700_flow_engine_native_campaign_origin_v1.sql",
         # El cierre del caso por el cupon de una campana (20261106000100, E-339): una RPC de service_role.
         "20261106000100_recovery_case_segment_coupon_close_v1.sql",
+        # El rechazo de la cuenta espera a que la cuenta vuelva (20261107000100, E-348): dos tablas y ocho RPC de service_role.
+        "20261107000100_meta_account_hold_retry_v1.sql",
     ]
     native = (MIGRATIONS / "20261024000200_flow_engine_native_v1.sql").read_text(encoding="utf-8")
     assert "read_automation_expert_flows_v1" not in native
