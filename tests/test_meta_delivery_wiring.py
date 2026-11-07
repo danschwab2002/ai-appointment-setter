@@ -261,4 +261,5 @@ def test_the_account_hold_builds_into_the_sweeper_and_publishes_it(tmp_path: Pat
     assert sweeper.account_hold_enabled is True and sweeper.retry_enabled is False
     body = _get_ready(app)
     assert body["meta_account_hold_retry"] == "enabled"
+    assert body["meta_account_hold_last_error"] == "none"
     assert body["meta_first_touch_retry"] == "disabled"

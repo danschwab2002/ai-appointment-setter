@@ -556,6 +556,12 @@ class MetaDeliveryRejectionSweeper:
         # La marca de prendido de la bandeja (la escribe la base la primera vez).
         # Sin ella, este barrido no pone nada en espera.
         self._hold_marked = False
+        # N3: la marca de prendido es la hora de arranque de este proceso; si el
+        # primer latido falla, lo rechazado mientras tanto entra igual.
+        self._started_epoch = int(clock())
+        # N5: los barridos seguidos con un error de la espera, y el ultimo.
+        self._hold_error_streak = 0
+        self._hold_last_error = "none"
         # Los rechazos de la cuenta que ya tienen respuesta final de la base: no
         # se vuelve a preguntar en cada barrido.
         self._hold_settled: set[int] = set()
@@ -590,6 +596,23 @@ class MetaDeliveryRejectionSweeper:
     def account_hold_enabled(self) -> bool:
         return self._account_hold is not None
 
+    @property
+    def hold_max_gap_seconds(self) -> int:
+        """N1: el hueco de latido que se tolera: dos barridos y 10 minutos."""
+        return int(min(86_400, max(300, self._scan_interval_seconds * 2 + 600)))
+
+    @property
+    def account_hold_state(self) -> str:
+        """N5: ``degraded`` tras 3 barridos seguidos con un error de la espera."""
+        if self._account_hold is None:
+            return "disabled"
+        return "degraded" if self._hold_error_streak >= 3 else "enabled"
+
+    @property
+    def account_hold_last_error(self) -> str:
+        """El ultimo paso que fallo y el tipo de error (sin mensaje), o ``none``."""
+        return self._hold_last_error
+
     def _now_iso(self) -> str:
         return datetime.fromtimestamp(self._clock(), UTC).isoformat()
 
@@ -609,7 +632,10 @@ class MetaDeliveryRejectionSweeper:
             lookback = max(lookback, self._retry.max_age_seconds)
         if self._first_scan and self._account_hold is not None:
             lookback = max(lookback, self._account_hold.max_age_seconds)
-        if self._account_hold is not None and not self._hold_marked:
+        if self._account_hold is not None:
+            # N1: el latido de cada barrido; sin el de este barrido no se pone
+            # nada en espera (se repite en el siguiente).
+            self._hold_marked = False
             await self._guarded_hold_step("mark", self._mark_hold_enabled, counts)
         conversations = await self._chatwoot.list_recent_conversations_with_messages(  # type: ignore[attr-defined]
             expected_inbox_id=self._inbox_id,
@@ -640,6 +666,11 @@ class MetaDeliveryRejectionSweeper:
                 await self._guarded_hold_step("due", self._hold_due, counts)
             else:
                 counts["hold_outside_send_hours"] += 1
+            if counts["hold_error"]:
+                self._hold_error_streak += 1
+            else:
+                self._hold_error_streak = 0
+                self._hold_last_error = "none"
         self._last_scan_state = "healthy"
         self._last_scan_summary = (
             " ".join(f"{key}={value}" for key, value in sorted(counts.items())) or "nothing"
@@ -700,13 +731,19 @@ class MetaDeliveryRejectionSweeper:
             await run(counts)  # type: ignore[misc]
         except Exception as exc:  # noqa: BLE001
             counts["hold_error"] += 1
+            self._hold_last_error = f"{step}:{type(exc).__name__}"
             logger.warning(
                 "meta_account_hold_failed step=%s error=%s", step, type(exc).__name__
             )
 
     async def _mark_hold_enabled(self, counts: Counter[str]) -> None:
         outcome = await self._supabase.mark_meta_account_hold_enabled(  # type: ignore[attr-defined]
-            chatwoot_inbox_id=self._inbox_id, now=self._now_iso()
+            chatwoot_inbox_id=self._inbox_id,
+            enabled_since=datetime.fromtimestamp(
+                min(self._started_epoch, int(self._clock())), UTC
+            ).isoformat(),
+            now=self._now_iso(),
+            max_gap_seconds=self.hold_max_gap_seconds,
         )
         self._hold_marked = True
         counts[f"hold_enabled_{outcome}"] += 1
@@ -1018,6 +1055,7 @@ class MetaDeliveryRejectionSweeper:
                 chatwoot_message_id=plan.message_id,
                 external_user_id=plan.target_phone.removeprefix("+"),
                 contact_email=plan.contact_email,
+                codes=sorted(hold.codes),
                 now=self._now_iso(),
             )
             if claim.outcome != "claimed":

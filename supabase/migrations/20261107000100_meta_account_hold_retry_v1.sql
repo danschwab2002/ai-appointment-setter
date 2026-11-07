@@ -123,16 +123,30 @@ alter table public.meta_account_holds enable row level security;
 
 create table public.meta_account_hold_activations (
     chatwoot_inbox_id bigint primary key check (chatwoot_inbox_id > 0),
-    enabled_at timestamptz not null
+    enabled_at timestamptz not null,
+    -- El latido: cada barrido con el flag lo mueve. Si es mas viejo que el
+    -- hueco que pasa el bridge (el intervalo del barrido mas un margen), la
+    -- espera estuvo apagada y la marca se mueve: nada retroactivo al volver.
+    last_seen_at timestamptz not null,
+    check (last_seen_at >= enabled_at)
 );
 
 alter table public.meta_account_hold_activations enable row level security;
 
--- 1b. La marca de prendido (idempotente: la primera gana).
+-- 1b. La marca de prendido y el latido.
+--
+-- p_enabled_since es la hora de arranque del proceso del bridge (desde ahi la
+-- espera esta prendida en ese proceso); p_now, la del barrido. Sin fila:
+-- marked, con enabled_at = p_enabled_since. Con un latido mas viejo que
+-- p_max_gap_seconds: la espera estuvo apagada (o el bridge caido), remarked,
+-- y la marca pasa a p_enabled_since (nunca hacia atras). Si no: beat, solo el
+-- latido.
 
 create function public.mark_meta_account_hold_enabled_v1(
     p_chatwoot_inbox_id bigint,
-    p_now timestamptz default clock_timestamp()
+    p_enabled_since timestamptz,
+    p_now timestamptz,
+    p_max_gap_seconds integer
 )
 returns table (
     outcome text,
@@ -142,15 +156,36 @@ language plpgsql
 security definer
 set search_path = pg_catalog, public, pg_temp
 as $function$
+declare
+    v_activation public.meta_account_hold_activations%rowtype;
 begin
-    if p_chatwoot_inbox_id is null or p_chatwoot_inbox_id <= 0 then
+    if p_chatwoot_inbox_id is null or p_chatwoot_inbox_id <= 0
+       or p_enabled_since is null or p_now is null or p_enabled_since > p_now
+       or p_max_gap_seconds is null or p_max_gap_seconds not between 300 and 86400 then
         raise exception using errcode = '22023',
             message = 'mark_meta_account_hold_enabled_invalid_input';
     end if;
-    insert into public.meta_account_hold_activations (chatwoot_inbox_id, enabled_at)
-    values (p_chatwoot_inbox_id, coalesce(p_now, clock_timestamp()))
-    on conflict (chatwoot_inbox_id) do nothing;
-    outcome := case when found then 'marked' else 'replayed' end;
+    select activation.* into v_activation
+    from public.meta_account_hold_activations activation
+    where activation.chatwoot_inbox_id = p_chatwoot_inbox_id
+    for update;
+    if v_activation.chatwoot_inbox_id is null then
+        insert into public.meta_account_hold_activations (chatwoot_inbox_id, enabled_at, last_seen_at)
+        values (p_chatwoot_inbox_id, p_enabled_since, p_now)
+        on conflict (chatwoot_inbox_id) do nothing;
+        outcome := 'marked';
+    elsif v_activation.last_seen_at < p_now - make_interval(secs => p_max_gap_seconds) then
+        update public.meta_account_hold_activations activation
+        set enabled_at = greatest(activation.enabled_at, p_enabled_since),
+            last_seen_at = greatest(activation.last_seen_at, p_now)
+        where activation.chatwoot_inbox_id = p_chatwoot_inbox_id;
+        outcome := 'remarked';
+    else
+        update public.meta_account_hold_activations activation
+        set last_seen_at = greatest(activation.last_seen_at, p_now)
+        where activation.chatwoot_inbox_id = p_chatwoot_inbox_id;
+        outcome := 'beat';
+    end if;
     select activation.enabled_at into enabled_at
     from public.meta_account_hold_activations activation
     where activation.chatwoot_inbox_id = p_chatwoot_inbox_id;
@@ -401,6 +436,7 @@ create function public.claim_meta_account_hold_retry_v1(
     p_chatwoot_message_id bigint,
     p_external_user_id text,
     p_contact_email text,
+    p_codes text[],
     p_now timestamptz default clock_timestamp()
 )
 returns table (
@@ -422,6 +458,7 @@ declare
     v_phone_tail text;
     v_now timestamptz;
     v_block text;
+    v_newer_at timestamptz;
 begin
     if p_chatwoot_inbox_id is null or p_chatwoot_inbox_id <= 0
        or p_chatwoot_message_id is null or p_chatwoot_message_id <= 0
@@ -429,7 +466,10 @@ begin
        or p_external_user_id !~ '^[1-9][0-9]{7,14}$'
        or (nullif(btrim(p_contact_email), '') is not null
            and (length(btrim(p_contact_email)) > 320
-                or btrim(p_contact_email) !~ '^[^@\s]+@[^@\s]+$')) then
+                or btrim(p_contact_email) !~ '^[^@\s]+@[^@\s]+$'))
+       or p_codes is null or cardinality(p_codes) not between 1 and 10
+       or exists (select 1 from unnest(p_codes) code
+                  where code is null or code !~ '^[0-9]{3,6}$' or code in ('131049', '131026')) then
         raise exception using errcode = '22023',
             message = 'claim_meta_account_hold_retry_invalid_input';
     end if;
@@ -466,12 +506,14 @@ begin
     end if;
 
     -- La misma guarda que la liberacion, por si la cuenta volvio a caer entre
-    -- la liberacion y esta reserva: un rechazo con el mismo codigo posterior a
-    -- la senal devuelve la fila a la espera, sin gastar el intento.
+    -- la liberacion y esta reserva: un rechazo con cualquier codigo de la
+    -- cuenta (los mismos que la liberacion) posterior a la senal devuelve la
+    -- fila a la espera, sin gastar el intento.
     if exists (
         select 1 from public.meta_delivery_rejections rejection
         where rejection.chatwoot_inbox_id = p_chatwoot_inbox_id
-          and rejection.meta_error_code = v_hold.meta_error_code
+          and (rejection.meta_error_code = any(p_codes)
+               or rejection.meta_error_code = v_hold.meta_error_code)
           and rejection.message_created_at > v_hold.release_signal_at
     ) then
         update public.meta_account_holds hold
@@ -561,22 +603,39 @@ begin
         v_block := 'purchase_already_approved';
     end if;
 
-    -- La misma persona en otra conversacion: otra fila suya ya reservada o
-    -- mandada (dos primeros contactos rechazados al mismo telefono).
+    -- La misma persona en otra conversacion, dentro de la misma caida: otra
+    -- fila suya mandada, o reservada hace menos de una hora (una reserva vieja
+    -- trabada en claimed no frena), cuya vigencia se solapa con la de esta.
     if v_block is null and exists (
         select 1 from public.meta_account_holds other
         where other.chatwoot_inbox_id = p_chatwoot_inbox_id
           and other.rejection_id <> v_hold.rejection_id
           and other.phone_tail = v_phone_tail
-          and other.status in ('claimed', 'sent')
+          and (other.status = 'sent'
+               or (other.status = 'claimed' and other.claimed_at > v_now - interval '1 hour'))
+          and other.message_created_at < v_hold.expires_at
+          and other.expires_at > v_hold.message_created_at
     ) then
         v_block := 'blocked_same_person';
     end if;
 
+    if v_block is null and v_rejection.recovery_case_id is not null then
+        select recovery_case.status into v_case_status
+        from public.recovery_cases recovery_case
+        where recovery_case.id = v_rejection.recovery_case_id;
+        if v_case_status in (
+            'won', 'lost', 'cancelled', 'unreachable', 'error', 'expired', 'escalated') then
+            v_block := 'blocked_case_closed';
+        end if;
+    end if;
+
     -- Un contacto nuestro posterior al mismo telefono que Chatwoot acepto (otro
-    -- primer contacto, otro flujo): ya le llego algo despues, este no sale.
-    if v_block is null and exists (
-        select 1
+    -- primer contacto, otro flujo) y Meta no rechazo: ya le llego algo despues,
+    -- este no sale. Mientras ese contacto tiene menos de 2 h, Meta todavia
+    -- puede rechazarlo (el rechazo llega al barrido siguiente): newer_contact_pending,
+    -- sin escribir, y la fila sigue liberada.
+    if v_block is null then
+        select max(attempt.accepted_at) into v_newer_at
         from public.followup_delivery_attempts attempt
         join public.scheduled_actions action on action.id = attempt.action_id
         join public.recovery_cases recovery_case on recovery_case.id = action.recovery_case_id
@@ -589,18 +648,14 @@ begin
               select 1 from public.meta_delivery_rejections again
               where again.chatwoot_inbox_id = p_chatwoot_inbox_id
                 and again.chatwoot_message_id::text = attempt.remote_message_id
-          )
-    ) then
-        v_block := 'blocked_newer_contact';
-    end if;
-
-    if v_block is null and v_rejection.recovery_case_id is not null then
-        select recovery_case.status into v_case_status
-        from public.recovery_cases recovery_case
-        where recovery_case.id = v_rejection.recovery_case_id;
-        if v_case_status in (
-            'won', 'lost', 'cancelled', 'unreachable', 'error', 'expired', 'escalated') then
-            v_block := 'blocked_case_closed';
+          );
+        if v_newer_at is not null then
+            if v_newer_at > v_now - interval '2 hours' then
+                outcome := 'newer_contact_pending';
+                return next;
+                return;
+            end if;
+            v_block := 'blocked_newer_contact';
         end if;
     end if;
 
@@ -778,11 +833,11 @@ declare
     v_function text;
     v_role text;
     v_functions text[] := array[
-        'public.mark_meta_account_hold_enabled_v1(bigint,timestamptz)',
+        'public.mark_meta_account_hold_enabled_v1(bigint,timestamptz,timestamptz,integer)',
         'public.hold_meta_account_rejection_v1(uuid,integer,timestamptz)',
         'public.release_meta_account_holds_v1(bigint,text[],timestamptz,timestamptz)',
         'public.list_due_meta_account_hold_retries_v1(bigint,integer,timestamptz)',
-        'public.claim_meta_account_hold_retry_v1(bigint,bigint,text,text,timestamptz)',
+        'public.claim_meta_account_hold_retry_v1(bigint,bigint,text,text,text[],timestamptz)',
         'public.settle_meta_account_hold_retry_v1(uuid,text,bigint,text,timestamptz)',
         'public.block_meta_account_hold_retry_v1(uuid,text,timestamptz)',
         'public.requeue_meta_account_hold_v1(bigint,bigint,bigint,timestamptz)'

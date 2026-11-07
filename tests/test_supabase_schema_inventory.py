@@ -474,7 +474,7 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261107000100 (el rechazo de la cuenta, E-348) suma sus ocho: marcar el
     # prendido, esperar, liberar, listar, reservar, cerrar, frenar y volver a esperar.
     assert len(allowlisted) == 201
-    assert "mark_meta_account_hold_enabled_v1(bigint, timestamp with time zone)" in allowlisted
+    assert "mark_meta_account_hold_enabled_v1(bigint, timestamp with time zone, timestamp with time zone, integer)" in allowlisted
     assert "requeue_meta_account_hold_v1(bigint, bigint, bigint, timestamp with time zone)" in allowlisted
     assert "close_recovery_case_segment_coupon_v1(uuid, uuid, text, bigint, timestamp with time zone)" in allowlisted
     assert "flow_engine_native_campaign_origin_v1(uuid)" in allowlisted

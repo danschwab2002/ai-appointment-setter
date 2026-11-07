@@ -33,11 +33,11 @@ import { buildWorld, expectError, fail, one, root, sameSet } from './validate_fl
 
 const MIGRATION = '20261107000100_meta_account_hold_retry_v1.sql';
 const FUNCTIONS = [
-  'mark_meta_account_hold_enabled_v1(bigint,timestamp with time zone)',
+  'mark_meta_account_hold_enabled_v1(bigint,timestamp with time zone,timestamp with time zone,integer)',
   'hold_meta_account_rejection_v1(uuid,integer,timestamp with time zone)',
   'release_meta_account_holds_v1(bigint,text[],timestamp with time zone,timestamp with time zone)',
   'list_due_meta_account_hold_retries_v1(bigint,integer,timestamp with time zone)',
-  'claim_meta_account_hold_retry_v1(bigint,bigint,text,text,timestamp with time zone)',
+  'claim_meta_account_hold_retry_v1(bigint,bigint,text,text,text[],timestamp with time zone)',
   'settle_meta_account_hold_retry_v1(uuid,text,bigint,text,timestamp with time zone)',
   'block_meta_account_hold_retry_v1(uuid,text,timestamp with time zone)',
   'requeue_meta_account_hold_v1(bigint,bigint,bigint,timestamp with time zone)',
@@ -150,8 +150,9 @@ const release = async (okAt, now, codes = [CODE]) => one(await sql(
   'select * from public.release_meta_account_holds_v1($1,$2,$3,$4)', [A.inboxId, codes, okAt, now]), 'liberar');
 const due = async (now) => sql('select * from public.list_due_meta_account_hold_retries_v1($1,$2,$3)',
   [A.inboxId, 50, now]);
-const claim = async (lead, now, phone = lead.phone) => one(await sql('select * from public.claim_meta_account_hold_retry_v1($1,$2,$3,$4,$5)',
-  [A.inboxId, lead.messageId, phone, lead.email, now]), `${lead.label} reserva`);
+const claim = async (lead, now, phone = lead.phone, codes = [CODE]) => one(await sql(
+  'select * from public.claim_meta_account_hold_retry_v1($1,$2,$3,$4,$5,$6)',
+  [A.inboxId, lead.messageId, phone, lead.email, codes, now]), `${lead.label} reserva`);
 const settle = async (rejectionId, retryId, now) => one(await sql(
   'select * from public.settle_meta_account_hold_retry_v1($1,$2,$3,$4,$5)',
   [rejectionId, 'sent', retryId, null, now]), 'settle');
@@ -166,17 +167,19 @@ const holdOf = async (lead) => one(await sql(
 //     con la marca, solo lo que Meta rechazo despues, aunque se registre en el
 //     primer barrido (que mira 72 h) o llegue como replayed.
 // ---------------------------------------------------------------------------
-const mark = async (now) => one(await sql('select * from public.mark_meta_account_hold_enabled_v1($1,$2)',
-  [A.inboxId, now]), 'marca');
+// La marca y el latido: (desde cuando corre el proceso, ahora, hueco tolerado).
+const mark = async (since, now, gap = 1_800) => one(await sql(
+  'select * from public.mark_meta_account_hold_enabled_v1($1,$2,$3,$4)', [A.inboxId, since, now, gap]), 'marca');
 {
   const early = await sentA1('cuenta-sin-marca');
   const early1 = await record(early);
   if ((await hold(early1.rejection_id, early.sentAt)).outcome !== 'not_enabled') fail('entro sin la marca');
   // Se prende ahora: lo que sigue en este archivo es posterior a la marca.
   const enabledAt = early.sentAt;
-  const marked = await mark(enabledAt);
-  const again = await mark(hours(early.sentAt, 5));
-  if (marked.outcome !== 'marked' || again.outcome !== 'replayed'
+  const marked = await mark(enabledAt, enabledAt);
+  // El latido del barrido siguiente (10 min) no mueve la marca.
+  const again = await mark(enabledAt, hours(enabledAt, 1 / 6));
+  if (marked.outcome !== 'marked' || again.outcome !== 'beat'
       || new Date(again.enabled_at).getTime() !== enabledAt.getTime()) fail('la marca', { marked, again });
   // El primer barrido registra (recorded) un 131042 de hace 2 h: retroactivo.
   const old = await sentA1('cuenta-anterior');
@@ -352,9 +355,65 @@ const mark = async (now) => one(await sql('select * from public.mark_meta_accoun
   if (same.outcome !== 'blocked_same_person' || (await holdOf(one2)).reason !== 'blocked_same_person') {
     fail('dos envios a la misma persona', same);
   }
+  // N4: mientras el contacto posterior tiene menos de 2 h, Meta todavia puede
+  // rechazarlo: no es final y la fila sigue liberada.
+  await sql('update public.followup_delivery_attempts set accepted_at = $1 where remote_message_id = $2',
+    [hours(newer.sentAt, 59.5), String(newer.messageId)]);
+  const pending = await claim(older, hours(newer.sentAt, 60.1));
+  if (pending.outcome !== 'newer_contact_pending' || (await holdOf(older)).status !== 'released') {
+    fail('un contacto posterior reciente quedo final', pending);
+  }
+  await sql('update public.followup_delivery_attempts set accepted_at = $1 where remote_message_id = $2',
+    [hours(newer.sentAt, 57), String(newer.messageId)]);
   const later = await claim(older, hours(newer.sentAt, 60.1));
   if (later.outcome !== 'blocked_newer_contact') fail('un contacto posterior entregado', later);
-  results.misma_persona = { misma: same.outcome, posterior: later.outcome };
+  results.misma_persona = { misma: same.outcome, pendiente: pending.outcome, posterior: later.outcome };
+}
+
+// ---------------------------------------------------------------------------
+// 2e. La misma persona fuera de la misma caida, y una reserva vieja trabada
+//     (N2): no frenan.
+// ---------------------------------------------------------------------------
+{
+  const past = await sentA1('cuenta-otra-caida-1');
+  const stuck = await sentA1('cuenta-trabada-1');
+  const now1 = await sentA1('cuenta-otra-caida-2');
+  const now2 = await sentA1('cuenta-trabada-2');
+  for (const lead of [past, stuck, now1, now2]) await hold((await record(lead)).rejection_id, lead.sentAt);
+  const signal = hours(now2.sentAt, 61.5);
+  await release(signal, hours(now2.sentAt, 61.6));
+  // past: mandada en una caida anterior (sus fechas se corren 80 h atras).
+  const pastClaim = await claim(past, hours(now2.sentAt, 61.6));
+  await settle(pastClaim.rejection_id, 990_301, hours(now2.sentAt, 61.6));
+  await sql(`update public.meta_account_holds set message_created_at = $1, expires_at = $2
+    where rejection_id = $3`, [hours(now1.sentAt, -80), hours(now1.sentAt, -8), pastClaim.rejection_id]);
+  // stuck: reservada hace 2 h y nunca cerrada.
+  const stuckClaim = await claim(stuck, hours(now2.sentAt, 61.6));
+  await sql('update public.meta_account_holds set claimed_at = $1 where rejection_id = $2',
+    [hours(now2.sentAt, 59.5), stuckClaim.rejection_id]);
+  const otherFall = await claim(now1, hours(now2.sentAt, 61.6), past.phone);
+  const oldClaim = await claim(now2, hours(now2.sentAt, 61.6), stuck.phone);
+  if (otherFall.outcome !== 'claimed' || oldClaim.outcome !== 'claimed') {
+    fail('la misma persona fuera de la caida, o una reserva trabada, frenaron', { otherFall, oldClaim });
+  }
+  results.otra_caida = { otra_caida: otherFall.outcome, reserva_trabada: oldClaim.outcome };
+}
+
+// ---------------------------------------------------------------------------
+// 2f. La guarda de la reserva con todos los codigos de la cuenta (N6).
+// ---------------------------------------------------------------------------
+{
+  const lead = await sentA1('cuenta-otro-codigo');
+  await hold((await record(lead)).rejection_id, lead.sentAt);
+  const signal = hours(lead.sentAt, 62);
+  await release(signal, hours(lead.sentAt, 62.1), [CODE, '131031']);
+  if ((await holdOf(lead)).status !== 'released') fail('liberar 2f');
+  // La cuenta cae con el otro codigo de la lista despues de la senal.
+  const other = await sentA1('cuenta-131031');
+  await record(other, { code: '131031', at: hours(lead.sentAt, 62.2) });
+  const guarded = await claim(lead, hours(lead.sentAt, 62.3), lead.phone, [CODE, '131031']);
+  if (guarded.outcome !== 'account_down_again') fail('la guarda con el otro codigo', guarded);
+  results.otros_codigos = guarded.outcome;
 }
 
 // ---------------------------------------------------------------------------
@@ -473,10 +532,35 @@ const mark = async (now) => one(await sql('select * from public.mark_meta_accoun
     [A.inboxId, [], now, now]), { code: '22023', message: 'release_meta_account_holds_invalid_input' });
   await expectError(db, 'vencimiento', () => sql('select * from public.hold_meta_account_rejection_v1($1,$2,$3)',
     [row.rejection_id, 60, now]), { code: '22023', message: 'hold_meta_account_rejection_invalid_input' });
-  await expectError(db, 'telefono', () => sql('select * from public.claim_meta_account_hold_retry_v1($1,$2,$3,$4,$5)',
-    [A.inboxId, 1, '+5215500000000', null, now]), { code: '22023', message: 'claim_meta_account_hold_retry_invalid_input' });
+  await expectError(db, 'codigos de la reserva', () => sql('select * from public.claim_meta_account_hold_retry_v1($1,$2,$3,$4,$5,$6)',
+    [A.inboxId, 1, '5215500000000', null, ['131049'], now]), { code: '22023', message: 'claim_meta_account_hold_retry_invalid_input' });
+  await expectError(db, 'telefono', () => sql('select * from public.claim_meta_account_hold_retry_v1($1,$2,$3,$4,$5,$6)',
+    [A.inboxId, 1, '+5215500000000', null, [CODE], now]), { code: '22023', message: 'claim_meta_account_hold_retry_invalid_input' });
   results.bridge = first.outcome;
   results.entradas = 'ok';
+}
+
+// ---------------------------------------------------------------------------
+// 5. Apagar y volver a prender (N1): sin latido por mas que el hueco, la marca
+//    pasa a la hora de arranque del proceso nuevo; nunca hacia atras.
+// ---------------------------------------------------------------------------
+{
+  const base = await dbNow();
+  const restart = hours(base, 100);
+  const remarked = await mark(restart, restart);
+  if (remarked.outcome !== 'remarked' || new Date(remarked.enabled_at).getTime() !== restart.getTime()) {
+    fail('el latido viejo no movio la marca', remarked);
+  }
+  const off = await sentA1('cuenta-apagada');
+  const offRow = await record(off, { at: hours(base, 99) });
+  if ((await hold(offRow.rejection_id, restart)).outcome !== 'before_enabled') fail('entro lo rechazado con la espera apagada');
+  const back = await mark(hours(base, 50), hours(base, 200));
+  if (back.outcome !== 'remarked' || new Date(back.enabled_at).getTime() !== restart.getTime()) {
+    fail('la marca fue hacia atras', back);
+  }
+  await expectError(db, 'hueco', () => sql('select * from public.mark_meta_account_hold_enabled_v1($1,$2,$3,$4)',
+    [A.inboxId, restart, restart, 60]), { code: '22023', message: 'mark_meta_account_hold_enabled_invalid_input' });
+  results.reprendido = { marca: remarked.outcome, apagada: 'before_enabled' };
 }
 
 console.log(`meta_account_hold_retry=${JSON.stringify(results)}`);

@@ -2464,6 +2464,7 @@ META_ACCOUNT_HOLD_CLAIM_OUTCOMES = frozenset({
     "blocked_too_late", "blocked_conversation", "blocked_pending_handoff",
     "blocked_contact", "blocked_opt_out", "purchase_already_approved",
     "blocked_case_closed", "blocked_same_person", "blocked_newer_contact",
+    "newer_contact_pending",
 })
 
 
@@ -10581,17 +10582,26 @@ class SupabaseClient:
 
     # ── El rechazo de la cuenta (meta-account-hold-retry-v1, E-348) ───
 
-    async def mark_meta_account_hold_enabled(self, *, chatwoot_inbox_id: int, now: str) -> str:
-        """La marca de prendido de la bandeja (la primera gana): marked o replayed."""
+    async def mark_meta_account_hold_enabled(
+        self, *, chatwoot_inbox_id: int, enabled_since: str, now: str, max_gap_seconds: int
+    ) -> str:
+        """La marca de prendido y el latido: marked, remarked o beat."""
         operation = "meta_account_hold_mark"
         rows = await self._meta_delivery_rpc(
             "mark_meta_account_hold_enabled_v1",
-            {"p_chatwoot_inbox_id": chatwoot_inbox_id, "p_now": now},
+            {
+                "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                "p_enabled_since": enabled_since,
+                "p_now": now,
+                "p_max_gap_seconds": max_gap_seconds,
+            },
             operation=operation,
         )
         if len(rows) != 1:
             raise SupabaseError(f"{operation}_invalid_shape")
-        return _required_enum(rows[0], "outcome", {"marked", "replayed"}, operation=operation)
+        return _required_enum(
+            rows[0], "outcome", {"marked", "remarked", "beat"}, operation=operation
+        )
 
     async def hold_meta_account_rejection(
         self, *, rejection_id: str, max_age_seconds: int, now: str
@@ -10670,6 +10680,7 @@ class SupabaseClient:
         chatwoot_message_id: int,
         external_user_id: str,
         contact_email: str | None,
+        codes: list[str],
         now: str,
     ) -> MetaAccountHoldClaim:
         """Reservar el reintento con las barreras de la base."""
@@ -10681,6 +10692,7 @@ class SupabaseClient:
                 "p_chatwoot_message_id": chatwoot_message_id,
                 "p_external_user_id": external_user_id,
                 "p_contact_email": contact_email,
+                "p_codes": codes,
                 "p_now": now,
             },
             operation=operation,

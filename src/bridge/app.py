@@ -10532,8 +10532,11 @@ def create_app(
                 "meta_unreachable_close": (
                     "enabled" if meta_delivery_sweeper.close_unreachable else "disabled"
                 ),
-                "meta_account_hold_retry": (
-                    "enabled" if meta_delivery_sweeper.account_hold_enabled else "disabled"
+                # N5 (E-348): degraded tras 3 barridos seguidos con un error
+                # de la espera; el ultimo error, solo el paso y el tipo.
+                "meta_account_hold_retry": meta_delivery_sweeper.account_hold_state,
+                "meta_account_hold_last_error": (
+                    meta_delivery_sweeper.account_hold_last_error
                 ),
             }
         if handoff_wait_alert_sweeper is not None:

@@ -289,25 +289,39 @@ class FakeSupabase:
         self._claim = claim
         self.fail_mark = 0
         self.fail_hold = 0
-        self.hold_outcome = "held"
+        # Lo que contestaria la base: por defecto la bandeja ya tenia la marca
+        # de antes del 04/11 (la espera prendida hace dias); None = sin marca.
+        self.enabled_at: datetime | None = datetime(2026, 11, 1, tzinfo=UTC)
+        self.message_created_at: dict[str, datetime] = {}
 
     async def record_meta_delivery_rejection(self, **kwargs: object) -> MetaDeliveryRejectionRecord:
         self.calls.append(("record", kwargs))
+        self.message_created_at[ID] = datetime.fromisoformat(str(kwargs["message_created_at"]))
         return MetaDeliveryRejectionRecord(self._record, ID, "none", None, False)
 
     async def mark_meta_account_hold_enabled(self, **kwargs: object) -> str:
+        """Como mark_meta_account_hold_enabled_v1: la primera marca es la hora de arranque."""
         self.calls.append(("mark", kwargs))
         if self.fail_mark:
             self.fail_mark -= 1
             raise SupabaseError("meta_account_hold_mark_failed: HTTP 503")
-        return "marked"
+        if self.enabled_at is None:
+            self.enabled_at = datetime.fromisoformat(str(kwargs["enabled_since"]))
+            return "marked"
+        return "beat"
 
     async def hold_meta_account_rejection(self, **kwargs: object) -> str:
+        """Como hold_meta_account_rejection_v1: corta por la marca de prendido."""
         self.calls.append(("hold", kwargs))
         if self.fail_hold:
             self.fail_hold -= 1
             raise SupabaseError("meta_account_hold_failed: HTTP 503")
-        return self.hold_outcome
+        if self.enabled_at is None:
+            return "not_enabled"
+        created = self.message_created_at.get(str(kwargs["rejection_id"]))
+        if created is not None and created < self.enabled_at:
+            return "before_enabled"
+        return "held"
 
     async def requeue_meta_account_hold(self, **kwargs: object) -> str:
         self.calls.append(("requeue", kwargs))
@@ -393,14 +407,16 @@ def test_a_replayed_rejection_asks_the_base_once_and_the_base_cuts_by_the_mark(t
     """H2 y H4: un replayed tambien se pregunta (una llamada fallida se repite), y
     lo anterior a la marca de prendido lo corta la base (D4)."""
     chatwoot, supabase = FakeChatwoot(_entry()), FakeSupabase(record="replayed")
-    supabase.hold_outcome = "before_enabled"
+    # La marca es posterior al rechazo del 04/11 15:00Z.
+    supabase.enabled_at = datetime(2026, 11, 5, tzinfo=UTC)
     sweeper = _sweeper(chatwoot, supabase, account_hold=_hold(tmp_path))
     counts = asyncio.run(sweeper.run_once())
     asyncio.run(sweeper.run_once())
     assert supabase.names().count("hold") == 1 and counts["hold_before_enabled"] == 1
-    # La marca se pide una vez por proceso, al primer barrido.
-    assert [name for name, _ in supabase.calls].count("mark") == 1
-    assert supabase.call("mark")["chatwoot_inbox_id"] == INBOX
+    # N1: el latido sale en cada barrido, con el hueco tolerado.
+    assert [name for name, _ in supabase.calls].count("mark") == 2
+    mark = supabase.call("mark")
+    assert mark["chatwoot_inbox_id"] == INBOX and mark["max_gap_seconds"] == 600 * 2 + 600
 
 
 def test_a_failed_hold_does_not_stop_the_scan_and_is_retried(tmp_path: Path) -> None:
@@ -435,6 +451,50 @@ def test_without_the_mark_nothing_is_held_and_the_mark_is_retried(tmp_path: Path
     supabase._record = "replayed"
     asyncio.run(sweeper.run_once())
     assert [name for name, _ in supabase.calls].count("mark") == 2 and "hold" in supabase.names()
+
+
+def test_a_failed_first_mark_still_holds_what_came_after_the_process_started(tmp_path: Path) -> None:
+    """N3: la marca es la hora de arranque del proceso, no la del primer latido
+    que salio bien: el 131042 del primer barrido entra en el segundo."""
+    supabase = FakeSupabase()
+    supabase.enabled_at = None  # la bandeja nunca tuvo la espera prendida
+    supabase.fail_mark = 1
+    clock = {"now": float(SENT_AT - 60)}  # el proceso arranca un minuto antes del rechazo
+    sweeper = _sweeper(FakeChatwoot(_entry()), supabase, account_hold=_hold(tmp_path),
+                       clock=lambda: clock["now"])
+    clock["now"] = float(SENT_AT + 300)
+    asyncio.run(sweeper.run_once())
+    clock["now"] = float(SENT_AT + 900)
+    supabase._record = "replayed"
+    counts = asyncio.run(sweeper.run_once())
+    assert counts["hold_held"] == 1, counts
+    assert supabase.enabled_at == datetime.fromtimestamp(SENT_AT - 60, UTC)
+
+
+def test_three_scans_with_hold_errors_degrade_the_state(tmp_path: Path) -> None:
+    """N5: un error persistente de la espera se ve en /ready."""
+    supabase = FakeSupabase()
+    supabase.fail_mark = 3
+    sweeper = _sweeper(FakeChatwoot(_entry()), supabase, account_hold=_hold(tmp_path))
+    assert sweeper.account_hold_state == "enabled" and sweeper.account_hold_last_error == "none"
+    for _ in range(2):
+        asyncio.run(sweeper.run_once())
+    assert sweeper.account_hold_state == "enabled"
+    assert sweeper.account_hold_last_error == "mark:SupabaseError"
+    asyncio.run(sweeper.run_once())
+    assert sweeper.account_hold_state == "degraded"
+    asyncio.run(sweeper.run_once())
+    assert sweeper.account_hold_state == "enabled" and sweeper.account_hold_last_error == "none"
+
+
+def test_the_claim_gets_the_account_codes(tmp_path: Path) -> None:
+    """N6: la guarda de la reserva mira los mismos codigos que la liberacion."""
+    hold = AccountHoldConfig(codes=frozenset({"131042", "131031"}), allowed_templates=frozenset({TEMPLATE}),
+                             send_hours=(0, 24), time_zone=ZoneInfo("UTC"),
+                             gate=FinalMetaEffectGate(enabled=True, evidence_dir=tmp_path / "g"))
+    supabase = FakeSupabase(record="replayed", due=True)
+    asyncio.run(_sweeper(FakeChatwoot(_entry()), supabase, account_hold=hold).run_once())
+    assert supabase.call("claim")["codes"] == ["131031", "131042"]
 
 
 def test_other_codes_are_not_held(tmp_path: Path) -> None:

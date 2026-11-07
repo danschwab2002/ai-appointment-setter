@@ -214,11 +214,11 @@ expected_service_role(signature) as (
         -- 20261106000100: el cierre del caso por el cupon de una campana (E-339).
         ('public.close_recovery_case_segment_coupon_v1(uuid, uuid, text, bigint, timestamp with time zone)'),
         -- 20261107000100: el rechazo de la cuenta espera a que la cuenta vuelva (E-348).
-        ('public.mark_meta_account_hold_enabled_v1(bigint, timestamp with time zone)'),
+        ('public.mark_meta_account_hold_enabled_v1(bigint, timestamp with time zone, timestamp with time zone, integer)'),
         ('public.hold_meta_account_rejection_v1(uuid, integer, timestamp with time zone)'),
         ('public.release_meta_account_holds_v1(bigint, text[], timestamp with time zone, timestamp with time zone)'),
         ('public.list_due_meta_account_hold_retries_v1(bigint, integer, timestamp with time zone)'),
-        ('public.claim_meta_account_hold_retry_v1(bigint, bigint, text, text, timestamp with time zone)'),
+        ('public.claim_meta_account_hold_retry_v1(bigint, bigint, text, text, text[], timestamp with time zone)'),
         ('public.settle_meta_account_hold_retry_v1(uuid, text, bigint, text, timestamp with time zone)'),
         ('public.block_meta_account_hold_retry_v1(uuid, text, timestamp with time zone)'),
         ('public.requeue_meta_account_hold_v1(bigint, bigint, bigint, timestamp with time zone)')

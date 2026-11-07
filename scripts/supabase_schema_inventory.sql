@@ -6727,11 +6727,11 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
             select count(*) = 8
             from functions
             where oid in (
-                to_regprocedure('public.mark_meta_account_hold_enabled_v1(bigint,timestamptz)'),
+                to_regprocedure('public.mark_meta_account_hold_enabled_v1(bigint,timestamptz,timestamptz,integer)'),
                 to_regprocedure('public.hold_meta_account_rejection_v1(uuid,integer,timestamptz)'),
                 to_regprocedure('public.release_meta_account_holds_v1(bigint,text[],timestamptz,timestamptz)'),
                 to_regprocedure('public.list_due_meta_account_hold_retries_v1(bigint,integer,timestamptz)'),
-                to_regprocedure('public.claim_meta_account_hold_retry_v1(bigint,bigint,text,text,timestamptz)'),
+                to_regprocedure('public.claim_meta_account_hold_retry_v1(bigint,bigint,text,text,text[],timestamptz)'),
                 to_regprocedure('public.settle_meta_account_hold_retry_v1(uuid,text,bigint,text,timestamptz)'),
                 to_regprocedure('public.block_meta_account_hold_retry_v1(uuid,text,timestamptz)'),
                 to_regprocedure('public.requeue_meta_account_hold_v1(bigint,bigint,bigint,timestamptz)')
@@ -6745,7 +6745,7 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         + (
             select count(*) = 1
             from functions
-            where oid = to_regprocedure('public.claim_meta_account_hold_retry_v1(bigint,bigint,text,text,timestamptz)')
+            where oid = to_regprocedure('public.claim_meta_account_hold_retry_v1(bigint,bigint,text,text,text[],timestamptz)')
               and position('purchase_already_approved' in definition) > 0
               and position('blocked_pending_handoff' in definition) > 0
               and position('contact_opt_out_events' in definition) > 0
