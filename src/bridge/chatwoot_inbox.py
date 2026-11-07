@@ -81,6 +81,7 @@ class ChatwootStalledConversationMonitor:
         self._stopping = asyncio.Event()
         self._last_scan_state = "never"
         self._has_completed_scan = False
+        self._last_scan_duration_seconds: float | None = None
 
     @property
     def last_scan_state(self) -> str:
@@ -91,13 +92,32 @@ class ChatwootStalledConversationMonitor:
         return self._has_completed_scan
 
     @property
+    def last_scan_duration_seconds(self) -> float | None:
+        return self._last_scan_duration_seconds
+
+    @property
     def ready(self) -> bool:
-        return (
-            self._task is not None
-            and not self._task.done()
-            and self._has_completed_scan
-            and self._last_scan_state == "healthy"
-        )
+        """El monitor esta corriendo; no espera a que un barrido termine.
+
+        E-342: antes exigia un barrido completo y sano. Con cientos de
+        conversaciones abiertas el primer barrido tarda mas que el
+        healthcheck de la imagen (3 x 30 s), el contenedor quedaba unhealthy
+        y no se relanzaba (Johanna, 2026-11-03 17:01Z). Un barrido lento o
+        fallido no le impide al bridge contestar los webhooks en vivo, igual
+        que los barredores de reactivacion y seguimiento: se publica en
+        ``readiness_state`` y no da 503. Solo un monitor que no arranco o
+        cuyo loop murio deja de estar listo.
+        """
+        return self._task is not None and not self._task.done()
+
+    @property
+    def readiness_state(self) -> str:
+        """Lo que /ready publica: ``starting``, ``healthy`` o ``error``."""
+        if self._last_scan_state == "error":
+            return "error"
+        if not self._has_completed_scan:
+            return "starting"
+        return self._last_scan_state
 
     async def start(self) -> None:
         if self._task is None or self._task.done():
@@ -145,6 +165,7 @@ class ChatwootStalledConversationMonitor:
 
     async def _run(self) -> None:
         while not self._stopping.is_set():
+            started_at = time.monotonic()
             try:
                 await self.run_once()
             except Exception as exc:
@@ -162,6 +183,7 @@ class ChatwootStalledConversationMonitor:
                         type(exc).__name__,
                         reason_code,
                     )
+            self._last_scan_duration_seconds = time.monotonic() - started_at
             try:
                 await asyncio.wait_for(
                     self._stopping.wait(),
@@ -815,6 +837,7 @@ class ChatwootWorker:
 
     async def _run(self) -> None:
         while not self._stopping.is_set():
+            started_at = time.monotonic()
             try:
                 await self.run_once()
             except Exception as exc:
