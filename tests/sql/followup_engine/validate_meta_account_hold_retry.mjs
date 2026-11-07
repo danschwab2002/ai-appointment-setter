@@ -144,8 +144,8 @@ const release = async (okAt, now, codes = [CODE]) => one(await sql(
   'select * from public.release_meta_account_holds_v1($1,$2,$3,$4)', [A.inboxId, codes, okAt, now]), 'liberar');
 const due = async (now) => sql('select * from public.list_due_meta_account_hold_retries_v1($1,$2,$3)',
   [A.inboxId, 50, now]);
-const claim = async (lead, now) => one(await sql('select * from public.claim_meta_account_hold_retry_v1($1,$2,$3,$4,$5)',
-  [A.inboxId, lead.messageId, lead.phone, lead.email, now]), `${lead.label} reserva`);
+const claim = async (lead, now, phone = lead.phone) => one(await sql('select * from public.claim_meta_account_hold_retry_v1($1,$2,$3,$4,$5)',
+  [A.inboxId, lead.messageId, phone, lead.email, now]), `${lead.label} reserva`);
 const settle = async (rejectionId, retryId, now) => one(await sql(
   'select * from public.settle_meta_account_hold_retry_v1($1,$2,$3,$4,$5)',
   [rejectionId, 'sent', retryId, null, now]), 'settle');
@@ -321,6 +321,34 @@ const mark = async (now) => one(await sql('select * from public.mark_meta_accoun
   // Las demas siguen liberadas hasta la proxima liberacion, que las devuelve.
   if ((await release(newSignal, hours(third.sentAt, 51.4))).held_back !== 2) fail('la liberacion siguiente');
   results.recae = { liberadas: freed.released, devueltas: after.held_back, reserva: guarded.outcome };
+}
+
+// ---------------------------------------------------------------------------
+// 2c. La misma persona en dos conversaciones (H3 de la revision).
+// ---------------------------------------------------------------------------
+{
+  const one1 = await sentA1('cuenta-misma-1');
+  const one2 = await sentA1('cuenta-misma-2');
+  for (const lead of [one1, one2]) await hold((await record(lead)).rejection_id, lead.sentAt);
+  // Otra persona rechazada, y despues un primer contacto nuestro aceptado (y no
+  // rechazado) al mismo telefono.
+  const older = await sentA1('cuenta-despues-1');
+  await hold((await record(older)).rejection_id, older.sentAt);
+  const newer = await sentA1('cuenta-despues-2');
+  await sql('update public.contacts set phone = $1 where id = $2', [`+${older.phone}`, newer.contact]);
+  const signal = hours(newer.sentAt, 60);
+  await release(signal, hours(newer.sentAt, 60.1));
+  for (const lead of [one1, one2, older]) if ((await holdOf(lead)).status !== 'released') fail('liberar 2c', lead.label);
+  const firstClaim = await claim(one1, hours(newer.sentAt, 60.1));
+  if (firstClaim.outcome !== 'claimed') fail('la primera de la misma persona', firstClaim);
+  // La segunda conversacion de la misma persona (Chatwoot da el mismo telefono).
+  const same = await claim(one2, hours(newer.sentAt, 60.1), one1.phone);
+  if (same.outcome !== 'blocked_same_person' || (await holdOf(one2)).reason !== 'blocked_same_person') {
+    fail('dos envios a la misma persona', same);
+  }
+  const later = await claim(older, hours(newer.sentAt, 60.1));
+  if (later.outcome !== 'blocked_newer_contact') fail('un contacto posterior entregado', later);
+  results.misma_persona = { misma: same.outcome, posterior: later.outcome };
 }
 
 // ---------------------------------------------------------------------------

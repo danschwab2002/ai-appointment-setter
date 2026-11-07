@@ -90,6 +90,9 @@ create table public.meta_account_holds (
     claimed_at timestamptz,
     settled_at timestamptz,
     retry_message_id bigint check (retry_message_id is null or retry_message_id > 0),
+    -- Los ultimos 9 digitos del telefono, desde la primera reserva: para no
+    -- escribirle dos veces a la misma persona desde dos conversaciones.
+    phone_tail text check (phone_tail is null or phone_tail ~ '^[0-9]{1,9}$'),
     updated_at timestamptz not null,
     unique (chatwoot_inbox_id, chatwoot_message_id),
     check (expires_at > message_created_at),
@@ -558,6 +561,39 @@ begin
         v_block := 'purchase_already_approved';
     end if;
 
+    -- La misma persona en otra conversacion: otra fila suya ya reservada o
+    -- mandada (dos primeros contactos rechazados al mismo telefono).
+    if v_block is null and exists (
+        select 1 from public.meta_account_holds other
+        where other.chatwoot_inbox_id = p_chatwoot_inbox_id
+          and other.rejection_id <> v_hold.rejection_id
+          and other.phone_tail = v_phone_tail
+          and other.status in ('claimed', 'sent')
+    ) then
+        v_block := 'blocked_same_person';
+    end if;
+
+    -- Un contacto nuestro posterior al mismo telefono que Chatwoot acepto (otro
+    -- primer contacto, otro flujo): ya le llego algo despues, este no sale.
+    if v_block is null and exists (
+        select 1
+        from public.followup_delivery_attempts attempt
+        join public.scheduled_actions action on action.id = attempt.action_id
+        join public.recovery_cases recovery_case on recovery_case.id = action.recovery_case_id
+        join public.contacts contact on contact.id = recovery_case.contact_id
+        where attempt.outcome = 'accepted_by_chatwoot'
+          and attempt.accepted_at > v_hold.message_created_at
+          and attempt.remote_message_id is distinct from v_hold.chatwoot_message_id::text
+          and right(regexp_replace(coalesce(contact.phone, ''), '[^0-9]', '', 'g'), 9) = v_phone_tail
+          and not exists (
+              select 1 from public.meta_delivery_rejections again
+              where again.chatwoot_inbox_id = p_chatwoot_inbox_id
+                and again.chatwoot_message_id::text = attempt.remote_message_id
+          )
+    ) then
+        v_block := 'blocked_newer_contact';
+    end if;
+
     if v_block is null and v_rejection.recovery_case_id is not null then
         select recovery_case.status into v_case_status
         from public.recovery_cases recovery_case
@@ -571,7 +607,8 @@ begin
     if v_block is not null then
         update public.meta_account_holds hold
         set status = 'blocked', reason = v_block, released_at = null,
-            release_signal_at = null, settled_at = v_now, updated_at = v_now
+            release_signal_at = null, settled_at = v_now, updated_at = v_now,
+            phone_tail = coalesce(hold.phone_tail, v_phone_tail)
         where hold.rejection_id = v_hold.rejection_id;
         outcome := v_block;
         return next;
@@ -581,6 +618,7 @@ begin
     update public.meta_account_holds hold
     set status = 'claimed',
         attempts = hold.attempts + 1,
+        phone_tail = coalesce(hold.phone_tail, v_phone_tail),
         claimed_at = v_now,
         settled_at = null,
         updated_at = v_now

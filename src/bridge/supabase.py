@@ -2463,7 +2463,7 @@ META_ACCOUNT_HOLD_CLAIM_OUTCOMES = frozenset({
     "claimed", "not_found", "not_released", "account_down_again",
     "blocked_too_late", "blocked_conversation", "blocked_pending_handoff",
     "blocked_contact", "blocked_opt_out", "purchase_already_approved",
-    "blocked_case_closed",
+    "blocked_case_closed", "blocked_same_person", "blocked_newer_contact",
 })
 
 
