@@ -10322,6 +10322,10 @@ def create_app(
             "chatwoot_stalled_monitor": "disabled",
         }
         if chatwoot_stalled_monitor is not None:
+            # E-342: el 503 queda para un monitor que no corre. Un barrido
+            # largo (cientos de abiertas tras un envio masivo) o uno que
+            # fallo no tumban el bridge: se publican. El estado sale de lo
+            # que ya esta en memoria; ningun numero ni nombre.
             if not chatwoot_stalled_monitor.ready:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -10332,8 +10336,20 @@ def create_app(
                 )
             stalled_monitor_readiness = {
                 **stalled_monitor_readiness,
-                "chatwoot_stalled_monitor": "healthy",
+                "chatwoot_stalled_monitor": (
+                    chatwoot_stalled_monitor.readiness_state
+                ),
             }
+            last_scan_duration = (
+                chatwoot_stalled_monitor.last_scan_duration_seconds
+            )
+            if last_scan_duration is not None:
+                stalled_monitor_readiness = {
+                    **stalled_monitor_readiness,
+                    "chatwoot_stalled_monitor_last_scan_seconds": (
+                        f"{last_scan_duration:.1f}"
+                    ),
+                }
         if conversation_reactivation_sweeper is not None:
             # Un barredor caido no responde 503: no atiende a nadie en vivo, y
             # tumbar el bridge entero por eso dejaria de contestarle a los leads

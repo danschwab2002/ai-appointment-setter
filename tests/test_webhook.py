@@ -785,12 +785,16 @@ def test_app_wires_enabled_stalled_monitor_and_reports_readiness(
     with TestClient(app) as client:
         deadline = time.monotonic() + 1
         response = client.get("/ready")
-        while response.status_code == 503 and time.monotonic() < deadline:
+        while (
+            response.json().get("chatwoot_stalled_monitor") != "healthy"
+            and time.monotonic() < deadline
+        ):
             time.sleep(0.01)
             response = client.get("/ready")
 
         assert response.status_code == 200
         assert response.json()["chatwoot_stalled_monitor"] == "healthy"
+        assert "chatwoot_stalled_monitor_last_scan_seconds" in response.json()
         assert chatwoot.stalled_scan_calls
         assert chatwoot.stalled_scan_calls[0] == {
             "expected_inbox_id": 7,
@@ -951,6 +955,173 @@ def test_stalled_monitor_recovers_through_real_worker_and_sender(
     assert len(sent) == (0 if pause_before_send else 1)
     assert all(message["conversation_id"] == 2 for message in sent)
     assert shadow.failures == []
+
+
+def _stalled_monitor_app(
+    tmp_path: Path,
+    chatwoot: "StubChatwootClient",
+) -> Any:
+    return create_app(
+        Settings(
+            webhook_secret="secret",
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=7,
+            automated_replies_enabled=True,
+            chatwoot_cut_b_admission_enabled=True,
+            chatwoot_cut_b_scope_key="libre-de-ansiedad-inbound",
+            chatwoot_cut_b_scope_version=1,
+            chatwoot_cut_b_agent_enabled=True,
+            chatwoot_stalled_monitor_enabled=True,
+            chatwoot_stalled_monitor_interval_seconds=3600,
+        ),
+        chatwoot_client=chatwoot,  # type: ignore[arg-type]
+        shadow_processor=StubShadowProcessor(),
+        supabase_client=StubInboundCommercialSupabase(),  # type: ignore[arg-type]
+    )
+
+
+class SlowStalledScanChatwootClient(StubChatwootClient):
+    """E-342: el barrido de Johanna del 2026-11-03, con 300 abiertas.
+
+    Cada conversacion abierta le cuesta al scanner real un show y una lectura
+    de mensajes contra Chatwoot. Aca cada una espera 10 ms sin bloquear el
+    loop: 300 abiertas son 3 s, mas que el plazo en que /ready tiene que
+    contestar en la prueba (el healthcheck de la imagen le da 3 s por pedido
+    y tres intentos de 30 s).
+    """
+
+    def __init__(self, *, open_conversations: int, per_conversation: float) -> None:
+        super().__init__()
+        self.open_conversations = open_conversations
+        self.per_conversation = per_conversation
+        self.scanned = 0
+
+    async def list_stalled_conversations(
+        self,
+        **kwargs: object,
+    ) -> list[StalledChatwootConversation]:
+        self.stalled_scan_calls.append(kwargs)
+        for _ in range(self.open_conversations):
+            await asyncio.sleep(self.per_conversation)
+            self.scanned += 1
+        return []
+
+
+def test_ready_does_not_wait_for_a_long_stalled_scan(tmp_path: Path) -> None:
+    chatwoot = SlowStalledScanChatwootClient(
+        open_conversations=300,
+        per_conversation=0.01,
+    )
+    app = _stalled_monitor_app(tmp_path, chatwoot)
+
+    with TestClient(app) as client:
+        started = time.monotonic()
+        response = client.get("/ready")
+        elapsed = time.monotonic() - started
+
+        assert response.status_code == 200, response.text
+        assert elapsed < 1.0
+        assert response.json()["chatwoot_stalled_monitor"] == "starting"
+        assert "chatwoot_stalled_monitor_last_scan_seconds" not in response.json()
+        # El barrido sigue en curso: /ready no lo espero ni lo corto.
+        assert chatwoot.stalled_scan_calls
+        assert chatwoot.scanned < chatwoot.open_conversations
+
+        deadline = time.monotonic() + 10
+        while (
+            response.json()["chatwoot_stalled_monitor"] != "healthy"
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.05)
+            response = client.get("/ready")
+        assert response.status_code == 200
+        assert response.json()["chatwoot_stalled_monitor"] == "healthy"
+        assert chatwoot.scanned == chatwoot.open_conversations
+        assert float(response.json()["chatwoot_stalled_monitor_last_scan_seconds"]) >= 3.0
+
+
+class FailingStalledScanChatwootClient(StubChatwootClient):
+    async def list_stalled_conversations(
+        self,
+        **kwargs: object,
+    ) -> list[StalledChatwootConversation]:
+        self.stalled_scan_calls.append(kwargs)
+        # Lo que da el scanner real con mas abiertas recientes que
+        # max_pages x 25 (ATT1 tras un envio masivo).
+        raise ChatwootProtocolError("conversation_scan_incomplete")
+
+
+def test_ready_publishes_a_failed_stalled_scan_without_503(tmp_path: Path) -> None:
+    chatwoot = FailingStalledScanChatwootClient()
+    app = _stalled_monitor_app(tmp_path, chatwoot)
+
+    with TestClient(app) as client:
+        deadline = time.monotonic() + 1
+        while not chatwoot.stalled_scan_calls and time.monotonic() < deadline:
+            time.sleep(0.01)
+        response = client.get("/ready")
+        while (
+            response.json().get("chatwoot_stalled_monitor") != "error"
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.01)
+            response = client.get("/ready")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["chatwoot_stalled_monitor"] == "error"
+
+
+def test_ready_is_503_when_the_stalled_monitor_is_not_running(tmp_path: Path) -> None:
+    app = _stalled_monitor_app(tmp_path, StubChatwootClient())
+
+    with TestClient(app) as client:
+        assert client.get("/ready").status_code == 200
+        assert client.portal is not None
+        client.portal.call(app.state.chatwoot_stalled_monitor.stop)
+        response = client.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "chatwoot_stalled_monitor_stopped"
+
+
+def test_stalled_monitor_is_ready_while_its_first_scan_runs(tmp_path: Path) -> None:
+    release = asyncio.Event()
+
+    async def scan() -> list[StalledChatwootConversation]:
+        await release.wait()
+        return []
+
+    monitor = ChatwootStalledConversationMonitor(
+        inbox=DurableChatwootInbox(tmp_path / ".work"),
+        scanner=scan,
+        scan_interval_seconds=3600,
+    )
+
+    async def exercise() -> list[tuple[bool, str]]:
+        observed = [(monitor.ready, monitor.readiness_state)]
+        await monitor.start()
+        await asyncio.sleep(0)
+        observed.append((monitor.ready, monitor.readiness_state))
+        release.set()
+        async with asyncio.timeout(1):
+            while not monitor.has_completed_scan:
+                await asyncio.sleep(0.01)
+        observed.append((monitor.ready, monitor.readiness_state))
+        await monitor.stop()
+        observed.append((monitor.ready, monitor.readiness_state))
+        return observed
+
+    assert asyncio.run(exercise()) == [
+        (False, "starting"),
+        (True, "starting"),
+        (True, "healthy"),
+        (False, "stopped"),
+    ]
+    assert monitor.last_scan_duration_seconds is not None
 
 
 def test_stalled_monitor_is_default_off(tmp_path: Path) -> None:
