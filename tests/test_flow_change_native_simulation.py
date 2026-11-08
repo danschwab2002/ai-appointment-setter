@@ -11,7 +11,7 @@ conteos, en cambio, contesto ``{"events": 59, "people": 59}`` para la compra en 
 dias: son los numeros que usa el doble de aca.
 
 Ahora un ``prender``, ``version``, ``volver`` o ``apagar`` de un flujo nativo
-cuenta los disparos de su evento con ``read_flow_engine_native_trigger_counts_v1``,
+(``version`` y ``volver`` desde E-353, Dan el 2026-11-08) cuenta los disparos de su evento con ``read_flow_engine_native_trigger_counts_v1``,
 en el bridge y en el comando del operador por igual. Lo del legado (el carrito de
 ATT1 y los demas flujos con ``legacy_kind``) sigue por la historia, sin cambios.
 """
@@ -132,8 +132,8 @@ def test_the_legacy_cart_still_goes_through_the_history(image: None) -> None:
     assert "read_flow_engine_native_trigger_counts_v1" not in functions
 
 
-def test_a_version_of_a_native_flow_still_goes_through_the_history(image: None) -> None:
-    # D6 (E-245): solo prender y apagar cuentan disparos; una version de un nativo sigue como antes.
+def test_a_version_of_a_native_flow_counts_its_event_without_the_cart_route(image: None) -> None:
+    # E-353 enmienda D6 de E-245: una version de un nativo tambien cuenta los disparos, asi se publica desde la pagina.
     emulator = WithoutCartRoute()
     emulator.new_flow_counts = dict(MARIBEL_COUNTS)
     emulator.flows.append(_welcome_flow())
@@ -146,9 +146,43 @@ def test_a_version_of_a_native_flow_still_goes_through_the_history(image: None) 
     saved = _propose(client, [item], {WELCOME_ID: {"active_version": 1}})
     assert saved.status_code == 201, saved.text
     out = _validate(client, saved.json()["data"]["proposal_id"]).json()["data"]
-    assert out["preview"]["simulacion"] == {"status": "failed", "reason_code": "flow_engine_unavailable"}
+    simulation = out["preview"]["simulacion"]
+    assert simulation["status"] == "built"
+    assert {key: simulation["summary"][key] for key in ("tipo", "estado_hoy", "queda_en", "alcance", "personas")} == {
+        "tipo": "version", "estado_hoy": "cohorte", "queda_en": "cohorte", "alcance": "cohorte", "personas": 59}
+    assert "mensajes_si_fuera_para_todos" not in simulation["summary"]
     functions = [function for function, _, _ in emulator.requests]
-    assert "read_flow_engine_native_trigger_counts_v1" not in functions
+    assert "read_flow_engine_native_trigger_counts_v1" in functions
+    assert "read_flow_engine_history_v1" not in functions
+
+
+@pytest.mark.parametrize(("state", "reach", "expected"), [
+    ("prendido", "todos", "esta versión les llegaría a quienes entren desde que se publique"),
+    ("cohorte", "cohorte", "hoy el flujo solo le llega a la cohorte de prueba"),
+    ("pausado", "nadie_hoy", "no va a mandar nada hasta prenderlo"),
+])
+def test_the_page_says_what_the_count_of_a_version_really_shows(state, reach, expected) -> None:
+    summary = {"flujo": "att1/bienvenida", "tipo": "version", "estado_hoy": state, "queda_en": state, "alcance": reach,
+               "disparador": "compra", "disparos": 59, "personas": 59}
+    html = _simulation_summary({"status": "built", "summary": summary})
+    assert expected in html
+    assert "versión nueva" in html and "59" in html
+    assert "Si fuera para todos" not in html
+    assert "lo que cambia paso por paso está en el detalle" in html
+
+
+def test_a_rollback_of_a_native_flow_names_its_version_and_keeps_the_state() -> None:
+    world = world_from_store({"flows": [{**_welcome_flow("prendido"), "active_version": 2,
+                                         "versions": {"1": _welcome_flow()["versions"]["1"],
+                                                      "2": _welcome_flow()["versions"]["1"]}}]})
+    [item] = parse_items([{"producto": "att1", "flujo": "bienvenida", "flow_id": WELCOME_ID, "tipo": "volver",
+                           "version": 1, "en_curso": "seguir"}])
+    built = build_native_flow_simulation({**MARIBEL_COUNTS, "product_ref": "att1", "trigger": "compra"}, [item],
+                                         world=world)
+    assert built["status"] == "built"
+    assert (built["summary"]["queda_en"], built["summary"]["alcance"], built["summary"]["vuelve_a_version"]) == (
+        "prendido", "todos", 1)
+    assert "volver a una versión anterior" in _simulation_summary(built)
 
 
 def test_the_replay_of_a_legacy_cart_version_does_not_change_next_to_a_native_flow(image: None) -> None:
@@ -212,10 +246,12 @@ CASES = [
     # (store, items, lo que se pide)
     (_store(NATIVE), [PRENDER], {"product_ref": "att1", "trigger": "compra"}),
     (_store(NATIVE), [{**PRENDER, "tipo": "apagar"}], {"product_ref": "att1", "trigger": "compra"}),
-    # D6 (E-245): una version o un volver de un nativo sigue por la historia, como antes.
-    (_store(NATIVE), [{**PRENDER, "tipo": "volver", "version": 1, "en_curso": "seguir"}], None),
+    # E-353: una version y un volver tambien; el evento es el de la definicion que va a quedar.
+    (_store(NATIVE), [{**PRENDER, "tipo": "volver", "version": 1, "en_curso": "seguir"}],
+     {"product_ref": "att1", "trigger": "carrito"}),
     (_store(NATIVE), [{**PRENDER, "tipo": "version", "en_curso": "seguir",
-                       "definicion": {"dispara": {"evento": "pago_fallido"}}}], None),
+                       "definicion": {"dispara": {"evento": "pago_fallido"}}}],
+     {"product_ref": "att1", "trigger": "pago_fallido"}),
     (_store(NATIVE), [{**PRENDER, "a": "cohorte"}], {"product_ref": "att1", "trigger": "compra"}),
     # En cohorte siempre es nativo, aunque el almacen viejo no traiga native.
     (_store({**NATIVE, "native": None}), [PRENDER], {"product_ref": "att1", "trigger": "compra"}),

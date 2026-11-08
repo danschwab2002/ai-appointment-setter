@@ -85,14 +85,18 @@ from .flow_definition import (
     trigger_of,
     CONDITION_CHAIN_MAX_LEVELS,
     ITEMS_MAX_BYTES,
+    ROUTE_MOTOR,
+    ROUTE_NOT_READ,
 )
 from .flow_engine import (
+    NATIVE_SILENCE_TRIGGER,
     NATIVE_UNSUPPORTED_PERMISSION,
     NATIVE_UNSUPPORTED_PRIORITY,
     NATIVE_UNSUPPORTED_REPEAT,
     NATIVE_UNSUPPORTED_TRIGGER,
     NOT_SUPPORTED,
     native_not_supported,
+    native_trigger_key,
 )
 from .flow_policy import PolicyCompileError, compile_policy
 # Las claves de los flujos del legado (E-207, D1 del mapa de M16): la lectura del AE descarta todos los
@@ -523,6 +527,36 @@ CHANGE_OUTSIDE_1B_SCOPE = _spec(
     "En la 1b el Automation Expert cambia las esperas y el plazo, la plantilla, los topes por día y total, el horario, y prende, pausa o apaga.",
     alternative="Pedírselo a un operador.",
 )
+# Un cambio que se publicaria sin cambiar ningun envio (E-353). Son bloqueos y no advertencias: una
+# advertencia el modelo la puede pasar por alto. El motivo y la alternativa son lo que el AE le dice al
+# dueno: no se arregla tocando la propuesta, y por eso la alternativa lo dice (crear-un-flujo.md le pide
+# corregir solo lo que vuelve frenado). Solo para el AE: el operador puede preparar un flujo antes de
+# prender lo que falta.
+CHANGE_WITHOUT_EFFECT_LEGACY_ROUTE = _spec(
+    "change_without_effect_legacy_route", None, KIND_CYCLE,
+    "Este flujo todavía lo manda el sistema anterior: una versión nueva quedaría guardada, pero los mensajes que salen no cambiarían.",
+    alternative="No se arregla cambiando la propuesta. Decile al dueño que, para cambiar estos mensajes, el equipo técnico tiene que pasar antes este flujo al sistema nuevo de mensajes.",
+)
+NATIVE_ENGINE_NOT_RUNNING = _spec(
+    "native_engine_not_running", None, KIND_CYCLE,
+    "En esta cuenta el sistema nuevo de mensajes está apagado: este flujo se publicaría y no mandaría ningún mensaje.",
+    alternative="No se arregla cambiando la propuesta. Decile al dueño que el equipo técnico tiene que prender el sistema nuevo de mensajes en su cuenta antes de publicarlo.",
+)
+NATIVE_FIRST_CONTACT_NOT_RUNNING = _spec(
+    "native_first_contact_not_running", None, KIND_CYCLE,
+    "Esta cuenta todavía no tiene prendido el primer contacto nuevo: los formularios seguirían saliendo como hoy y este flujo no mandaría ningún mensaje.",
+    alternative="No se arregla cambiando la propuesta. Decile al dueño que el equipo técnico tiene que prender el primer contacto nuevo en su cuenta antes de publicarlo.",
+)
+NATIVE_SILENCE_NOT_RUNNING = _spec(
+    "native_silence_not_running", None, KIND_CYCLE,
+    "Esta cuenta no tiene en marcha el seguimiento nuevo por silencio: si se publica, el seguimiento de hoy dejaría de salir y este no lo reemplazaría.",
+    alternative="No se arregla cambiando la propuesta. Decile al dueño que el equipo técnico tiene que poner en marcha el seguimiento nuevo en su cuenta antes de publicarlo.",
+)
+NATIVE_TRIGGER_OTHER_PRODUCT = _spec(
+    "native_trigger_other_product", None, KIND_CYCLE,
+    "El seguimiento nuevo por silencio corre solo en el producto principal de la cuenta: en este producto no mandaría ningún mensaje.",
+    alternative="No se arregla cambiando los mensajes. Decile al dueño que hoy esto solo se puede publicar en el producto principal.",
+)
 TRIGGER_CHANGE_IS_ANOTHER_FLOW = _spec(
     "trigger_change_is_another_flow", None, KIND_CYCLE,
     "Un disparador distinto es otro flujo: otro evento, o un silencio con otro lo_ultimo.",
@@ -631,6 +665,8 @@ _VALIDATOR_CODES: tuple[CodeSpec, ...] = (
     ENGINE_NOT_SUPPORTED_NATIVE_TRIGGER, ENGINE_NOT_SUPPORTED_NATIVE_PERMISSION,
     ENGINE_NOT_SUPPORTED_NATIVE_REPEAT, ENGINE_NOT_SUPPORTED_NATIVE_PRIORITY, ENGINE_NOT_SUPPORTED_NATIVE_SHAPE,
     ENGINE_NOT_SUPPORTED_ETIQUETAR, CHANGE_OUTSIDE_1B_SCOPE, TRIGGER_CHANGE_IS_ANOTHER_FLOW, FLOW_CHANGE_STALE_BASE,
+    CHANGE_WITHOUT_EFFECT_LEGACY_ROUTE, NATIVE_ENGINE_NOT_RUNNING, NATIVE_FIRST_CONTACT_NOT_RUNNING,
+    NATIVE_SILENCE_NOT_RUNNING, NATIVE_TRIGGER_OTHER_PRODUCT,
     ROLLBACK_TARGET_NOT_FOUND, ROLLBACK_TARGET_IS_ACTIVE, STATE_TRANSITION_INVALID,
     FLOW_HAS_NO_VERSION, EN_CURSO_NOT_SUPPORTED, CLIENT_PURCHASE_OK_MISSING,
     ALWAYS_WITH_MARKETING, RECOVERY_WITHOUT_CAP, SILENCE_WITHOUT_PURCHASE_EXIT,
@@ -1044,6 +1080,7 @@ class _Run:
         for subject in self.subjects:
             self._subject(subject)
         self._same_event_native()
+        self._without_effect()
         total = json_size([item.to_json() for item in self.normalized])
         if total is None or total > ITEMS_MAX_BYTES:
             self.blocks.append(INVALID_VALUE.at("", reason=(
@@ -1160,6 +1197,54 @@ class _Run:
         categories = self._rule13(emitter, active, flow)
         self._rule17(emitter, active, categories)
         self.blocks.extend(emitter.findings)
+
+    # -- Lo que se publicaria sin efecto (E-353) -----------------------------
+
+    def _without_effect(self) -> None:
+        """Lo que el AE publicaria sin cambiar ningun envio: la ruta del flujo y lo que corre la instancia.
+
+        Mira lo que promete mensajes (``nuevo``, ``version``, ``volver`` y ``prender``), nunca lo que los
+        saca: apagar un flujo del legado frena al legado, y eso si tiene efecto.
+
+        * Un flujo del legado solo cambia lo que sale con la ruta en ``motor``; con ``legado``, o sin ruta,
+          una version queda guardada y nadie la lee (el caso de E-198). Tampoco con la ruta en ``motor`` si
+          este bridge lo manda al legado: la unica ruta del legado que va a ``motor`` es la del carrito
+          (``flow_route_kind_not_supported``), y sin el motor o sin sus toques (``resolution.py``,
+          ``p_force_legacy``) sale por el legado. ``prender`` no se mira: sobre una ruta en legado abre lo
+          que la guarda del legado frena.
+        * De un flujo nativo, lo que la instancia corre (``InstanceRuntime``): el motor, el primer contacto
+          con su flag y el silencio con su barredor, en el producto principal (el primer contacto corre
+          tambien en los otros productos desde E-350). Un silencio
+          sin barredor es peor que no mandar: la barrera del legado (``blocked_native_flow``) le saca la
+          conversacion al seguimiento de hoy.
+        """
+        if self.actor != "automation_expert":
+            return
+        runtime = self.instance.runtime
+        for index, (item, flow) in enumerate(zip(self.items, self.flows)):
+            if item.tipo not in ("version", "volver", "prender") and not item.is_new_flow:
+                continue
+            at = finding_path((index,))
+            if not flow.is_native:
+                engine_sends_it = flow.route_executor == ROUTE_MOTOR and (
+                    runtime is None or (runtime.engine_enabled and runtime.cart_touches))
+                if item.tipo != "prender" and flow.active_version is not None \
+                        and flow.route_executor != ROUTE_NOT_READ and not engine_sends_it:
+                    self.blocks.append(CHANGE_WITHOUT_EFFECT_LEGACY_ROUTE.at(at))
+                continue
+            if runtime is None:
+                continue
+            if not runtime.engine_enabled:
+                self.blocks.append(NATIVE_ENGINE_NOT_RUNNING.at(at))
+                continue
+            definition = self.effective.get(flow.flow_id)
+            trigger = native_trigger_key(definition) if isinstance(definition, Mapping) else None
+            if trigger == "intencion" and not runtime.native_intent_enabled:
+                self.blocks.append(NATIVE_FIRST_CONTACT_NOT_RUNNING.at(at))
+            elif trigger == NATIVE_SILENCE_TRIGGER and not runtime.native_silence_sweeper:
+                self.blocks.append(NATIVE_SILENCE_NOT_RUNNING.at(at))
+            elif trigger == NATIVE_SILENCE_TRIGGER and flow.product_ref != runtime.main_product:
+                self.blocks.append(NATIVE_TRIGGER_OTHER_PRODUCT.at(at))
 
     def _switch_off(self, index: int, item: ProposalItem, flow: WorldFlow) -> None:
         if flow.state == "apagado":

@@ -92,6 +92,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from slack_correlation.catalog import NotificationCommand
 
 from .flow_change_operator import OperatorInputError, validate_proposal
+from .flow_definition import InstanceRuntime
 from .review_theme import REVIEW_BUTTONS_CSS, REVIEW_SHELL_CSS
 
 __all__ = [
@@ -966,7 +967,8 @@ def _render_change(change: Mapping[str, Any]) -> str:
     return f"<div>{head}</div>"
 
 
-_NATIVE_CHANGE_KINDS = {"prender": "prender", "apagar": "apagar"}
+_NATIVE_CHANGE_KINDS = {"prender": "prender", "apagar": "apagar", "version": "versión nueva",
+                        "volver": "volver a una versión anterior"}
 _FLOW_STATE_TEXT = {"cohorte": "en prueba, solo la cohorte", "prendido": "prendido para todos",
                     "pausado": "pausado", "apagado": "apagado"}
 
@@ -981,6 +983,19 @@ def _native_change_line(summary: Mapping[str, Any]) -> str | None:
     if isinstance(after, str):
         head += f" → queda {_esc(_FLOW_STATE_TEXT.get(after, after))}"
     return head + ".</p>"
+
+
+def _native_version_reach(summary: Mapping[str, Any], times: str, persons: str) -> str:
+    """Lo que mide el conteo de una version o un volver de un nativo (E-353): el evento, no los mensajes."""
+    head = f"<p>En los últimos 7 días el evento de este flujo llegó {times}, de {persons}"
+    reach = summary.get("alcance")
+    if reach == "todos":
+        head += ": esta versión les llegaría a quienes entren desde que se publique."
+    elif reach == "cohorte":
+        head += ": hoy el flujo solo le llega a la cohorte de prueba, no a todas esas personas."
+    else:
+        head += ": hoy el flujo no le llega a nadie, y no va a mandar nada hasta prenderlo."
+    return head + " El número no compara mensajes: lo que cambia paso por paso está en el detalle de la propuesta.</p>"
 
 
 def _simulation_summary(simulation: object, *, turns_off: bool = False) -> str:
@@ -1003,6 +1018,9 @@ def _simulation_summary(simulation: object, *, turns_off: bool = False) -> str:
             line = (native_change + f"<p>En los últimos 7 días el evento llegó {times}, de {persons}: al "
                     f"apagarlo, <strong>{_esc(people)}</strong> {'persona' if people == 1 else 'personas'} "
                     "dejarían de recibirlo.</p>")
+        elif native_change is not None and summary.get("tipo") in ("version", "volver"):
+            # Una version no «seria para todos»: el conteo es del evento, y dice a quien llega hoy (E-353).
+            line = native_change + _native_version_reach(summary, times, persons)
         elif native_change is not None:
             line = (native_change + f"<p>Si fuera para todos, en los últimos 7 días se habría disparado {times}, "
                     f"para {persons}.</p>")
@@ -1711,11 +1729,15 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
                                   environ: Mapping[str, str] | None = None,
                                   clock: Callable[[], datetime] | None = None,
                                   segment_labels: Callable[[], list[dict[str, str]]] | None = None,
+                                  runtime: InstanceRuntime | None = None,
                                   extra_routes: Callable[[FastAPI, PageTools], None] | None = None) -> None:
     """Las rutas de la pagina. Solo se llama con el flag prendido.
 
     ``segment_labels`` (E-316, segment-labels-v1): las etiquetas de segmento que acepta etiquetar,
     con su estado al revalidar. Sin el, solo cliente, como antes.
+
+    ``runtime`` (E-353): lo que ejecuta el bridge de la instancia, para que un flag apagado despues de
+    validar no publique sin efecto. Sin el, no se bloquea por eso.
 
     ``chatwoot`` e ``inbox_id`` dan el catalogo de plantillas para revalidar al
     publicar (sin ellos, publicar contesta ``template_catalog_unavailable``);
@@ -2105,7 +2127,8 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
             "simulation_unavailable": "publish_revalidation",
             "instance": {**instance, "products": sorted(products), "time_zone": time_zone,
                          # E-316: las etiquetas de segmento que acepta etiquetar, con su estado de ahora.
-                         "segment_labels": segment_labels() if segment_labels is not None else []},
+                         "segment_labels": segment_labels() if segment_labels is not None else [],
+                         **({"runtime": runtime.to_json()} if runtime is not None else {})},
             "store": snapshot,
             "proposal": {"id": proposal_id, "revision": found.get("revision"), "items": found.get("items"),
                          "draft_base": found.get("draft_base"), "purpose": found.get("purpose"),

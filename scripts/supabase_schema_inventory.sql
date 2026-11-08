@@ -6752,6 +6752,19 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         4,
         'meta_account_hold_retry'
+    union all
+    select
+        '20261108000100',
+        '20261108000100_flow_store_route_executor_v1.sql',
+        -- El almacen dice quien ejecuta cada flujo (E-353): una clave mas en la lectura.
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.read_flow_store_v1(jsonb)')
+              and position('flow_store_route_executor' in definition) > 0
+        )::int,
+        1,
+        'flow_store_route_executor'
 )
 select
     version,

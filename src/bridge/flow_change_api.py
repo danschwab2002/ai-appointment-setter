@@ -58,6 +58,7 @@ from .flow_change_operator import OperatorInputError, validate_proposal, world_f
 from .flow_change_preview import template_view
 from .flow_change_simulation import native_flow_counts_request, simulation_trigger
 from .flow_definition import (
+    InstanceRuntime,
     InstanceView,
     ProposalItemsInvalid,
     TemplateCatalog,
@@ -87,7 +88,8 @@ CONTRACT = "flow-change-cycle-v1"
 # 1.7.0 (el PR 4 del hito 4): el item nuevo, que crea un flujo nativo y lo publica en cohorte.
 # 1.9.0 (A′ PR 3b): el si se da en la pagina de aprobacion del bridge (flow_approval.py).
 # 1.10.0 (E-208, M16 P6, P7 y P9): el catalogo, la lista de propuestas y el mensaje en la vista previa.
-CONTRACT_VERSION = "1.10.0"
+# 1.11.0 (E-353): la simulacion de una version y un volver de un nativo, y los bloqueos de lo que no tendria efecto.
+CONTRACT_VERSION = "1.11.0"
 PREFIX = "/internal/automation-expert/v1"
 DB_ROLE = "automation_expert_change"
 MAX_BODY_BYTES = 256 * 1024
@@ -371,6 +373,8 @@ class _Context:
     git_sha: str
     # E-316 (segment-labels-v1): las etiquetas de segmento que acepta etiquetar, con su estado de ahora.
     segment_labels: Callable[[], list[dict[str, str]]] = field(default=lambda: [])
+    # E-353: lo que ejecuta el bridge de la instancia, para no publicar sin efecto. None: no se sabe.
+    runtime: InstanceRuntime | None = None
 
 
 def _instance_view(context: _Context, store: Mapping[str, Any]) -> InstanceView:
@@ -380,7 +384,8 @@ def _instance_view(context: _Context, store: Mapping[str, Any]) -> InstanceView:
     return InstanceView(tenant_ref=context.instance["tenant_ref"], ally_ref=context.instance["ally_ref"],
                         products=frozenset(products), time_zone=context.time_zone,
                         segment_labels=tuple((entry["etiqueta"], entry["estado"])
-                                             for entry in context.segment_labels()))
+                                             for entry in context.segment_labels()),
+                        runtime=context.runtime)
 
 
 def _finding(finding: Mapping[str, Any]) -> dict[str, Any]:
@@ -473,14 +478,18 @@ def _proposal_id(value: str) -> str:
 def register_flow_change_routes(app: FastAPI, *, token: str, store: FlowChangeStore, chatwoot: Any,
                                 tenant_ref: str, ally_ref: str, time_zone: str | None, inbox_id: int,
                                 git_sha: str | None = None,
-                                segment_labels: Callable[[], list[dict[str, str]]] | None = None) -> None:
+                                segment_labels: Callable[[], list[dict[str, str]]] | None = None,
+                                runtime: InstanceRuntime | None = None) -> None:
     """Las rutas, detras del flag (lo mira quien llama: con el flag apagado no existen).
 
     ``segment_labels`` (E-316): las etiquetas de segmento que acepta etiquetar, con su estado al
     validar. Sin el, solo cliente, como antes.
+
+    ``runtime`` (E-353): lo que ejecuta el bridge de la instancia. Sin el, no se bloquea por eso.
     """
     context = _Context(instance={"tenant_ref": tenant_ref, "ally_ref": ally_ref}, time_zone=time_zone,
                        inbox_id=inbox_id, git_sha=git_sha or os.getenv("GIT_SHA", "") or "unknown",
+                       runtime=runtime,
                        **({"segment_labels": segment_labels} if segment_labels is not None else {}))
     slots = asyncio.Semaphore(2)
 
@@ -662,6 +671,7 @@ def register_flow_change_routes(app: FastAPI, *, token: str, store: FlowChangeSt
                     **simulation_inputs,
                     "instance": {**context.instance, "products": sorted(view.products),
                                  "time_zone": context.time_zone,
+                                 **({"runtime": view.runtime.to_json()} if view.runtime is not None else {}),
                                  "segment_labels": [{"etiqueta": label, "estado": state}
                                                     for label, state in view.segment_labels]},
                     "store": snapshot,

@@ -1,7 +1,7 @@
 {
  "_generated": {
   "generator": "tests/test_flow_validator.py (test_the_bridge_json_with_the_base_is_the_one_in_the_repo)",
-  "date": "2026-11-03",
+  "date": "2026-11-08",
   "from": "los casos negativo y positivo de cada codigo de CASES, dos bordes del resultado y validator_json() con las dos fases y los dos actores",
   "regenerate": "FLOW_STORE_FIXTURE_DIR=tests/fixtures/flow_store uv run pytest tests/test_flow_validator.py"
  },
@@ -144,6 +144,43 @@
   },
   {
    "code": "change_outside_1b_scope",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "change_without_effect_legacy_route",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "change_without_effect_legacy_route",
+      "kind": "ciclo",
+      "path": "/0",
+      "reason": "Este flujo todavía lo manda el sistema anterior: una versión nueva quedaría guardada, pero los mensajes que salen no cambiarían.",
+      "alternative": "No se arregla cambiando la propuesta. Decile al dueño que, para cambiar estos mensajes, el equipo técnico tiene que pasar antes este flujo al sistema nuevo de mensajes."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "change_without_effect_legacy_route",
    "case": "positivo",
    "result": {
     "blocks": [],
@@ -1981,6 +2018,272 @@
     "rules_version": 1,
     "phase": "publish",
     "actor": "operador"
+   }
+  },
+  {
+   "code": "native_engine_not_running",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "native_engine_not_running",
+      "kind": "ciclo",
+      "path": "/0",
+      "reason": "En esta cuenta el sistema nuevo de mensajes está apagado: este flujo se publicaría y no mandaría ningún mensaje.",
+      "alternative": "No se arregla cambiando la propuesta. Decile al dueño que el equipo técnico tiene que prender el sistema nuevo de mensajes en su cuenta antes de publicarlo."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_engine_not_running",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_first_contact_not_running",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "native_first_contact_not_running",
+      "kind": "ciclo",
+      "path": "/0",
+      "reason": "Esta cuenta todavía no tiene prendido el primer contacto nuevo: los formularios seguirían saliendo como hoy y este flujo no mandaría ningún mensaje.",
+      "alternative": "No se arregla cambiando la propuesta. Decile al dueño que el equipo técnico tiene que prender el primer contacto nuevo en su cuenta antes de publicarlo."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_first_contact_not_running",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_silence_not_running",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 14,
+      "code": "motor_nativo:forma",
+      "kind": "todavia_no",
+      "path": "/0/definicion/entra/contesto_a",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "El motor nativo de esta versión no ejecuta eso (contesto_a).",
+      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+     },
+     {
+      "rule": 14,
+      "code": "motor_nativo:forma",
+      "kind": "todavia_no",
+      "path": "/0/definicion/termina/si",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "El motor nativo de esta versión no ejecuta eso (salida_compra_y_contesta).",
+      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+     },
+     {
+      "rule": 14,
+      "code": "motor_nativo:forma",
+      "kind": "todavia_no",
+      "path": "/0/definicion/pasos",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "El motor nativo de esta versión no ejecuta eso (boton_sin_cupon).",
+      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+     },
+     {
+      "rule": null,
+      "code": "native_silence_not_running",
+      "kind": "ciclo",
+      "path": "/0",
+      "reason": "Esta cuenta no tiene en marcha el seguimiento nuevo por silencio: si se publica, el seguimiento de hoy dejaría de salir y este no lo reemplazaría.",
+      "alternative": "No se arregla cambiando la propuesta. Decile al dueño que el equipo técnico tiene que poner en marcha el seguimiento nuevo en su cuenta antes de publicarlo."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_silence_not_running",
+   "case": "positivo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 14,
+      "code": "motor_nativo:forma",
+      "kind": "todavia_no",
+      "path": "/0/definicion/entra/contesto_a",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "El motor nativo de esta versión no ejecuta eso (contesto_a).",
+      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+     },
+     {
+      "rule": 14,
+      "code": "motor_nativo:forma",
+      "kind": "todavia_no",
+      "path": "/0/definicion/termina/si",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "El motor nativo de esta versión no ejecuta eso (salida_compra_y_contesta).",
+      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+     },
+     {
+      "rule": 14,
+      "code": "motor_nativo:forma",
+      "kind": "todavia_no",
+      "path": "/0/definicion/pasos",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "El motor nativo de esta versión no ejecuta eso (boton_sin_cupon).",
+      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_trigger_other_product",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 10,
+      "code": "product_required",
+      "kind": "forma",
+      "path": "/0/definicion/producto",
+      "reason": "La instancia tiene más de un producto: el flujo dice de cuál es.",
+      "alternative": "Escribir producto."
+     },
+     {
+      "rule": 14,
+      "code": "motor_nativo:forma",
+      "kind": "todavia_no",
+      "path": "/0/definicion/entra/contesto_a",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "El motor nativo de esta versión no ejecuta eso (contesto_a).",
+      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+     },
+     {
+      "rule": 14,
+      "code": "motor_nativo:forma",
+      "kind": "todavia_no",
+      "path": "/0/definicion/termina/si",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "El motor nativo de esta versión no ejecuta eso (salida_compra_y_contesta).",
+      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+     },
+     {
+      "rule": 14,
+      "code": "motor_nativo:forma",
+      "kind": "todavia_no",
+      "path": "/0/definicion/pasos",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "El motor nativo de esta versión no ejecuta eso (boton_sin_cupon).",
+      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+     },
+     {
+      "rule": null,
+      "code": "native_trigger_other_product",
+      "kind": "ciclo",
+      "path": "/0",
+      "reason": "El seguimiento nuevo por silencio corre solo en el producto principal de la cuenta: en este producto no mandaría ningún mensaje.",
+      "alternative": "No se arregla cambiando los mensajes. Decile al dueño que hoy esto solo se puede publicar en el producto principal."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_trigger_other_product",
+   "case": "positivo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 14,
+      "code": "motor_nativo:forma",
+      "kind": "todavia_no",
+      "path": "/0/definicion/entra/contesto_a",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "El motor nativo de esta versión no ejecuta eso (contesto_a).",
+      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+     },
+     {
+      "rule": 14,
+      "code": "motor_nativo:forma",
+      "kind": "todavia_no",
+      "path": "/0/definicion/termina/si",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "El motor nativo de esta versión no ejecuta eso (salida_compra_y_contesta).",
+      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+     },
+     {
+      "rule": 14,
+      "code": "motor_nativo:forma",
+      "kind": "todavia_no",
+      "path": "/0/definicion/pasos",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "El motor nativo de esta versión no ejecuta eso (boton_sin_cupon).",
+      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
    }
   },
   {

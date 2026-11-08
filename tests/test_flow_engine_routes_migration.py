@@ -143,6 +143,8 @@ def test_it_is_one_transaction_and_comes_right_after_the_t4b() -> None:
         "20261106000100_recovery_case_segment_coupon_close_v1.sql",
         # El rechazo de la cuenta espera a que la cuenta vuelva (20261107000100, E-348): dos tablas y ocho RPC de service_role.
         "20261107000100_meta_account_hold_retry_v1.sql",
+        # El almacen dice quien ejecuta cada flujo (20261108000100, E-353): una clave mas en read_flow_store_v1.
+        "20261108000100_flow_store_route_executor_v1.sql",
     ]
 
 

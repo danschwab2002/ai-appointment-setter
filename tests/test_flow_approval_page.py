@@ -46,6 +46,7 @@ from fastapi.testclient import TestClient
 
 from bridge import flow_approval
 from bridge.app import Settings, create_app
+from bridge.flow_definition import InstanceRuntime
 from bridge.instance_manifest import InstanceManifest
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -388,7 +389,7 @@ class _SlackRuntime:
 
 
 def _client(db: PostgrestEmulator | None = None, *, chatwoot: FakeChatwoot | None = None,
-            producer: FakeProducer | None = None,
+            producer: FakeProducer | None = None, runtime: InstanceRuntime | None = None,
             **overrides: object) -> tuple[TestClient, PostgrestEmulator, SlackEmulator, _Clock]:
     db = db or PostgrestEmulator()
     slack = SlackEmulator()
@@ -397,10 +398,15 @@ def _client(db: PostgrestEmulator | None = None, *, chatwoot: FakeChatwoot | Non
                                         transport=httpx.MockTransport(db.handler))
     oidc = flow_approval.SlackIdTokenClient(client_id=CLIENT_ID, client_secret=CLIENT_SECRET,
                                             transport=httpx.MockTransport(slack.handler), clock=lambda: clock.now)
-    app = create_app(_settings(**overrides), supabase_client=_NoSupabase(),  # type: ignore[arg-type]
+    settings = _settings(**overrides)
+    # E-353: una instancia que corre todo, salvo que la prueba diga otra cosa.
+    runtime = runtime or InstanceRuntime(engine_enabled=True, native_intent_enabled=True,
+                                         native_silence_sweeper=True, cart_touches=True,
+                                         main_product=settings.instance_manifest.funnel_ref)
+    app = create_app(settings, supabase_client=_NoSupabase(),  # type: ignore[arg-type]
                      chatwoot_client=chatwoot or FakeChatwoot(),  # type: ignore[arg-type]
                      slack_runtime=_SlackRuntime(producer) if producer is not None else None,  # type: ignore[arg-type]
-                     flow_approval_store=store, flow_approval_oidc=oidc)
+                     flow_approval_store=store, flow_approval_oidc=oidc, flow_change_runtime=runtime)
     return TestClient(app, base_url=ORIGIN), db, slack, clock
 
 

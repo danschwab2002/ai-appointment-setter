@@ -304,12 +304,13 @@ def build_new_flow_simulation(counts: Any, items: Sequence[ProposalItem], *,
 # evento con la misma lectura del nuevo.
 NATIVE_FLOW_MIXED = "simulation_native_flow_mixed"
 NATIVE_FLOW_COUNTS_INVALID = "simulation_native_flow_counts_invalid"
-# D6 (E-245, valor por defecto de la coordinadora hasta que decida Dan): por ahora solo prender y
-# apagar. Un conteo de disparos alcanza para pasar un flujo de la cohorte a todos o para apagarlo,
-# pero no muestra que cambia paso por paso: una version o un volver de un nativo sigue por la
-# historia (sin simulacion: lo publica el operador). Para ampliarlo, sumar el tipo aca y en la
-# gemela del script (_NATIVE_ITEM_TYPES); el evento de version y volver ya se calcula abajo.
-NATIVE_ITEM_TYPES = frozenset({"prender", "apagar"})
+# E-353 (Dan, 2026-11-08) enmienda D6 de E-245, que dejaba solo prender y apagar: una version y un volver
+# tambien cuentan los disparos de su evento, asi se publican desde la pagina sin operador. El conteo no
+# muestra que cambia paso por paso: eso lo muestra el diff de la vista previa (flow-change-cycle-v1 1.11.0).
+# La gemela del script es _NATIVE_ITEM_TYPES.
+NATIVE_ITEM_TYPES = frozenset({"prender", "apagar", "version", "volver"})
+# A quien llega hoy el flujo que cambia, para decir que mide el conteo de una version o un volver.
+_REACH_BY_STATE = {"prendido": "todos", "cohorte": "cohorte"}
 
 
 def _event_of(definition: object) -> object:
@@ -349,8 +350,7 @@ def native_flow_counts_request(store: Any, items: Any) -> dict[str, Any] | None:
     ``items``, los de la propuesta tal cual estan guardados. Devuelve:
 
     * ``None`` si algun item no es de un flujo nativo, o no es de un tipo de ``NATIVE_ITEM_TYPES``
-      (un ``nuevo``, y por D6 una ``version`` o un ``volver``): la simulacion sigue por la historia
-      del motor, como antes;
+      (un ``nuevo``): la simulacion sigue por la historia del motor, como antes;
     * ``{"product_ref", "trigger"}`` si hay un solo item, de un flujo nativo: el evento es el de la
       definicion que va a quedar (la del item en una ``version``, la del destino en un ``volver``,
       la activa en un ``prender`` o un ``apagar``);
@@ -391,14 +391,16 @@ def native_flow_counts_request(store: Any, items: Any) -> dict[str, Any] | None:
 
 def build_native_flow_simulation(counts: Any, items: Sequence[ProposalItem], *,
                                  world: FlowWorld | None) -> dict[str, Any]:
-    """La simulacion de un ``prender`` o un ``apagar`` de un flujo nativo (E-241, D6 de E-245).
+    """La simulacion de un ``prender``, ``apagar``, ``version`` o ``volver`` de un flujo nativo (E-241, E-353).
 
     ``counts`` es la respuesta de ``read_flow_engine_native_trigger_counts_v1`` para el evento del
     flujo en la ventana de la vista previa (7 dias). El evento se vuelve a sacar aca de ``world`` y
     los items (no se cree el que mando quien leyo) y la respuesta tiene que ser de ese producto y ese
     evento. Es la misma estimacion que la de un ``nuevo``: cuantos disparos hubo y de cuantas
     personas; el resumen dice ademas el flujo, el tipo de cambio y el estado de hoy, y nombra en
-    ``comparte_el_evento_con`` otro flujo nativo del producto, abierto, con el mismo evento.
+    ``comparte_el_evento_con`` otro flujo nativo del producto, abierto, con el mismo evento. Una
+    ``version`` o un ``volver`` no cambian el estado: dicen ademas a quien llega hoy el flujo (``alcance``),
+    porque lo que se cuenta son los eventos de todo el producto y no lo que cambia paso por paso.
     Nunca levanta.
     """
     try:
@@ -427,13 +429,18 @@ def build_native_flow_simulation(counts: Any, items: Sequence[ProposalItem], *,
             raise _Failed(NATIVE_FLOW_COUNTS_INVALID)
         summary: dict[str, Any] = {
             "flujo": f"{item.producto}/{item.flujo}", "tipo": item.tipo, "estado_hoy": flow.state,
-            "queda_en": "apagado" if item.tipo == "apagar" else (item.a or "prendido"),
+            "queda_en": flow.state if item.tipo in ("version", "volver")
+            else ("apagado" if item.tipo == "apagar" else (item.a or "prendido")),
             "disparador": trigger, "desde": counts.get("since"), "hasta": counts.get("until"),
             "disparos": events, "personas": people,
         }
         # Como el nuevo: el conteo es de todas las compras (o carritos) del producto, no de la cohorte.
         if item.tipo == "apagar":
             summary["dejarian_de_recibirlo"] = people
+        elif item.tipo in ("version", "volver"):
+            summary["alcance"] = _REACH_BY_STATE.get(flow.state, "nadie_hoy")
+            if item.tipo == "volver":
+                summary["vuelve_a_version"] = item.version
         else:
             summary["mensajes_si_fuera_para_todos"] = people
         own = f"{flow.product_ref}/{flow.flow_key}"

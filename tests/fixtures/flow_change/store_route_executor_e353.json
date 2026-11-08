@@ -1,0 +1,316 @@
+{
+  "products": [
+    "att1",
+    "att9"
+  ],
+  "flows": [
+    {
+      "flow_id": "00000001-0000-4000-8000-0000000e3530",
+      "product_ref": "att1",
+      "flow_key": "carrito",
+      "state": "prendido",
+      "active_version": 1,
+      "generation": 1,
+      "native": false,
+      "route_executor": "motor",
+      "versions": {
+        "1": {
+          "entra": {
+            "permiso": "formulario",
+            "contesto_a": []
+          },
+          "flujo": "carrito",
+          "pasos": [
+            {
+              "boton": {
+                "link": "checkout",
+                "cupon": "personal"
+              },
+              "idioma": "es_MX",
+              "plantilla": "att1_carrito_descuento_01",
+              "variables": [
+                "nombre",
+                "producto",
+                "cuando",
+                "precio",
+                "vence"
+              ]
+            },
+            {
+              "esperar": "1m"
+            },
+            {
+              "idioma": "es_MX",
+              "plantilla": "att1_carrito_dudas_01",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            },
+            {
+              "esperar": "2m"
+            },
+            {
+              "boton": {
+                "link": "checkout",
+                "cupon": "personal"
+              },
+              "idioma": "es_MX",
+              "plantilla": "att1_ultima_renovacion_01",
+              "variables": [
+                "nombre",
+                "producto",
+                "vence"
+              ]
+            }
+          ],
+          "topes": {
+            "bolsa": "att1-recuperacion",
+            "total": 900,
+            "por_dia": 400,
+            "repeticion": {
+              "una_por": "persona_y_oferta",
+              "otra_despues_de": "0m"
+            }
+          },
+          "estado": "publicada",
+          "nombre": "Carrito abandonado",
+          "dispara": {
+            "evento": "carrito"
+          },
+          "esquema": "setter-flujo/v1",
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "00:00",
+            "hasta": "23:59"
+          },
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          },
+          "version": 1,
+          "producto": "att1",
+          "prioridad": {
+            "le_gana_a": [],
+            "no_arranca_mientras": []
+          }
+        }
+      }
+    },
+    {
+      "flow_id": "00000002-0000-4000-8000-0000000e3530",
+      "product_ref": "att1",
+      "flow_key": "pago_fallido",
+      "state": "prendido",
+      "active_version": 1,
+      "generation": 1,
+      "native": false,
+      "route_executor": "legado",
+      "versions": {
+        "1": {
+          "entra": {
+            "permiso": "formulario",
+            "contesto_a": []
+          },
+          "flujo": "pago_fallido",
+          "pasos": [
+            {
+              "idioma": "es_MX",
+              "plantilla": "att1_compra_fallida_01",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "topes": {
+            "bolsa": "att1-recuperacion",
+            "total": 900,
+            "por_dia": 400,
+            "repeticion": {
+              "una_por": "persona_y_oferta",
+              "otra_despues_de": "0m"
+            }
+          },
+          "estado": "publicada",
+          "nombre": "Carrito abandonado",
+          "dispara": {
+            "evento": "pago_fallido"
+          },
+          "esquema": "setter-flujo/v1",
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "00:00",
+            "hasta": "23:59"
+          },
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          },
+          "version": 1,
+          "producto": "att1",
+          "prioridad": {
+            "le_gana_a": [],
+            "no_arranca_mientras": []
+          }
+        }
+      }
+    },
+    {
+      "flow_id": "00000003-0000-4000-8000-0000000e3530",
+      "product_ref": "att1",
+      "flow_key": "bienvenida",
+      "state": "cohorte",
+      "active_version": 1,
+      "generation": 2,
+      "native": true,
+      "route_executor": "motor",
+      "versions": {
+        "1": {
+          "entra": {
+            "permiso": "compra",
+            "contesto_a": []
+          },
+          "flujo": "bienvenida",
+          "pasos": [
+            {
+              "idioma": "es_MX",
+              "plantilla": "att1_bienvenida_01",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            },
+            {
+              "etiquetar": "cliente"
+            }
+          ],
+          "topes": {
+            "total": "sin_tope",
+            "por_dia": "sin_tope",
+            "repeticion": {
+              "una_por": "persona",
+              "otra_despues_de": "nunca"
+            }
+          },
+          "estado": "publicada",
+          "nombre": "Bienvenida despues de la compra",
+          "dispara": {
+            "evento": "compra"
+          },
+          "esquema": "setter-flujo/v1",
+          "horario": "siempre",
+          "termina": {
+            "si": [],
+            "vence": "1d"
+          },
+          "version": 1,
+          "producto": "att1",
+          "prioridad": {
+            "le_gana_a": [],
+            "no_arranca_mientras": []
+          }
+        }
+      }
+    },
+    {
+      "flow_id": "00000004-0000-4000-8000-0000000e3530",
+      "product_ref": "att9",
+      "flow_key": "carrito",
+      "state": "prendido",
+      "active_version": 1,
+      "generation": 1,
+      "native": false,
+      "route_executor": null,
+      "versions": {
+        "1": {
+          "entra": {
+            "permiso": "formulario",
+            "contesto_a": []
+          },
+          "flujo": "carrito",
+          "pasos": [
+            {
+              "boton": {
+                "link": "checkout",
+                "cupon": "personal"
+              },
+              "idioma": "es_MX",
+              "plantilla": "att1_carrito_descuento_01",
+              "variables": [
+                "nombre",
+                "producto",
+                "cuando",
+                "precio",
+                "vence"
+              ]
+            },
+            {
+              "esperar": "1m"
+            },
+            {
+              "idioma": "es_MX",
+              "plantilla": "att1_carrito_dudas_01",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            },
+            {
+              "esperar": "2m"
+            },
+            {
+              "boton": {
+                "link": "checkout",
+                "cupon": "personal"
+              },
+              "idioma": "es_MX",
+              "plantilla": "att1_ultima_renovacion_01",
+              "variables": [
+                "nombre",
+                "producto",
+                "vence"
+              ]
+            }
+          ],
+          "topes": {
+            "bolsa": "att9-recuperacion",
+            "total": 900,
+            "por_dia": 400,
+            "repeticion": {
+              "una_por": "persona_y_oferta",
+              "otra_despues_de": "0m"
+            }
+          },
+          "estado": "publicada",
+          "nombre": "Carrito abandonado",
+          "dispara": {
+            "evento": "carrito"
+          },
+          "esquema": "setter-flujo/v1",
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "00:00",
+            "hasta": "23:59"
+          },
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          },
+          "version": 1,
+          "producto": "att9",
+          "prioridad": {
+            "le_gana_a": [],
+            "no_arranca_mientras": []
+          }
+        }
+      }
+    }
+  ]
+}

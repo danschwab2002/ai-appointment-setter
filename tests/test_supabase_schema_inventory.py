@@ -2046,13 +2046,24 @@ def test_meta_account_hold_fingerprint_is_last() -> None:
     # La fila de 20261107000100 (el rechazo de la cuenta espera a que la cuenta
     # vuelva, E-348) es la ultima: la tabla sin lectura para la API, las siete
     # RPC solo para service_role y la reserva con las barreras del 131049.
-    fingerprint = sql.split("'20261107000100'", 1)[1].split("select\n    version,", 1)[0]
+    fingerprint = sql.split("'20261107000100'", 1)[1].split("'20261108000100'", 1)[0].rsplit("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261107000100_meta_account_hold_retry_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",4,'meta_account_hold_retry')")
+    assert compact_fingerprint.endswith(",4,'meta_account_hold_retry'")
     assert "to_regclass('public.meta_account_hold_activations')" in compact_fingerprint
     assert "to_regclass('public.meta_account_holds')" in compact_fingerprint
     assert "selectcount(*)=8" in compact_fingerprint
     assert "position('purchase_already_approved'indefinition)>0" in compact_fingerprint
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
+
+
+def test_schema_inventory_recognizes_the_route_executor_of_the_flow_store() -> None:
+    sql = (ROOT / "scripts" / "supabase_schema_inventory.sql").read_text(encoding="utf-8")
+    fingerprint = sql.split("'20261108000100'", 1)[1].split("select\n    version,", 1)[0]
+    compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261108000100_flow_store_route_executor_v1.sql'" in fingerprint
+    assert compact.endswith(",1,'flow_store_route_executor')")
+    assert "to_regprocedure('public.read_flow_store_v1(jsonb)')" in compact
+    assert "position('flow_store_route_executor'indefinition)>0" in compact

@@ -24,9 +24,11 @@ Subcomandos (``python -m bridge.flow_change_operator <subcomando>``):
 La entrada de ``validar``::
 
     {"instance": {"tenant_ref", "ally_ref", "products": [...], "time_zone",
-                  "segment_labels": [{"etiqueta", "estado"}]?},
+                  "segment_labels": [{"etiqueta", "estado"}]?,
+                  "runtime": {"engine_enabled", "native_intent_enabled",
+                              "native_silence_sweeper", "cart_touches", "main_product"}?},
      "store": {"flows": [{"flow_id", "product_ref", "flow_key", "state",
-                          "active_version", "generation",
+                          "active_version", "generation", "route_executor"?,
                           "versions": {"<n>": <definicion>}}]},
      "proposal": {"id", "revision", "items", "draft_base", "purpose",
                   "requested_by_kind"},
@@ -50,6 +52,8 @@ from .flow_change_preview import build_preview
 from .flow_change_simulation import build_native_flow_simulation, build_new_flow_simulation, build_simulation
 from .flow_definition import (
     FlowWorld,
+    ROUTE_NOT_READ,
+    InstanceRuntime,
     InstanceView,
     ProposalItemsInvalid,
     TemplateCatalog,
@@ -97,6 +101,15 @@ def instance_from_input(value: object) -> InstanceView:
         and isinstance(entry.get("estado"), str) for entry in raw_segments
     ):
         raise OperatorInputError("operator_instance_invalid")
+    # E-353: lo que ejecuta el bridge. Opcional: sin la clave (el comando del operador) no se sabe.
+    raw_runtime = data.get("runtime")
+    try:
+        runtime = None if raw_runtime is None else InstanceRuntime(
+            **{key: _mapping(raw_runtime, "operator_instance_invalid")[key] for key in (
+                "engine_enabled", "native_intent_enabled", "native_silence_sweeper", "cart_touches",
+                "main_product")})
+    except (KeyError, TypeError, ValueError) as error:
+        raise OperatorInputError("operator_instance_invalid") from error
     try:
         return InstanceView(
             tenant_ref=data.get("tenant_ref"),  # type: ignore[arg-type]
@@ -104,6 +117,7 @@ def instance_from_input(value: object) -> InstanceView:
             products=frozenset(products),
             time_zone=data.get("time_zone"),
             segment_labels=tuple((entry["etiqueta"], entry["estado"]) for entry in raw_segments),
+            runtime=runtime,
         )
     except (TypeError, ValueError) as error:
         raise OperatorInputError("operator_instance_invalid") from error
@@ -138,6 +152,8 @@ def world_from_store(value: object) -> FlowWorld:
                 generation=row.get("generation"),  # type: ignore[arg-type]
                 versions=versions,
                 native=row.get("native") is True,
+                # Sin la clave (la base todavia sin 20261108000100) no se sabe quien lo ejecuta.
+                route_executor=row.get("route_executor", ROUTE_NOT_READ),  # type: ignore[arg-type]
             ))
         return FlowWorld(built)
     except (TypeError, ValueError) as error:
