@@ -57,7 +57,7 @@ def test_the_list_asks_the_open_ones_with_the_role_key_and_answers_them() -> Non
     response = client.get(f"{PREFIX}/flow-changes", headers=AUTH)
     assert response.status_code == 200, response.text
     body = response.json()
-    assert (body["contract"], body["contract_version"]) == ("flow-change-cycle-v1", "1.11.0")
+    assert (body["contract"], body["contract_version"]) == ("flow-change-cycle-v1", "1.12.0")
     function, sent, headers = emulator.requests[-1]
     assert function == "list_flow_changes_v1"
     assert sent == {"p_instance": {"tenant_ref": "lancemos", "ally_ref": "att1"}, "p_only_open": True, "p_limit": 20}

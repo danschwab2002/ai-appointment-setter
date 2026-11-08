@@ -156,6 +156,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261107000100",
         # El almacen dice quien ejecuta cada flujo (20261108000100, E-353).
         "20261108000100",
+        # La base no publica una version nativa que el motor no ejecuta (20261108004100, E-357).
+        "20261108004100",
     ]
 
     sql = _sql()

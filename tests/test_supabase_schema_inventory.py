@@ -2060,10 +2060,22 @@ def test_meta_account_hold_fingerprint_is_last() -> None:
 
 def test_schema_inventory_recognizes_the_route_executor_of_the_flow_store() -> None:
     sql = (ROOT / "scripts" / "supabase_schema_inventory.sql").read_text(encoding="utf-8")
-    fingerprint = sql.split("'20261108000100'", 1)[1].split("select\n    version,", 1)[0]
+    fingerprint = sql.split("'20261108000100'", 1)[1].split("'20261108004100'", 1)[0].rsplit("union all", 1)[0]
     compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261108000100_flow_store_route_executor_v1.sql'" in fingerprint
-    assert compact.endswith(",1,'flow_store_route_executor')")
+    assert compact.endswith(",1,'flow_store_route_executor'")
     assert "to_regprocedure('public.read_flow_store_v1(jsonb)')" in compact
     assert "position('flow_store_route_executor'indefinition)>0" in compact
+
+
+def test_schema_inventory_recognizes_the_native_version_guard_of_publish() -> None:
+    # La fila de 20261108004100 (E-357) es la ultima: el chequeo de _flow_change_publish.
+    sql = (ROOT / "scripts" / "supabase_schema_inventory.sql").read_text(encoding="utf-8")
+    fingerprint = sql.split("'20261108004100'", 1)[1].split("select\n    version,", 1)[0]
+    compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261108004100_flow_change_publish_native_version_guard_v1.sql'" in fingerprint
+    assert compact.endswith(",1,'flow_change_publish_native_version_guard')")
+    assert "to_regprocedure('public._flow_change_publish(text,text,uuid,text,jsonb)')" in compact
+    assert "position('flow_change_publish_native_version_guard'indefinition)>0" in compact

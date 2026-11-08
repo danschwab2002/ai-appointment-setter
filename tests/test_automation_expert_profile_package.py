@@ -288,7 +288,7 @@ def test_the_replacement_of_a_native_flow_follows_an_order_the_validator_accepts
         BLOCK, SECOND_ID, WELCOME_ID, _apagar, _codes, _native, _prender)
     from test_flow_validator import check, native_catalog, new_item, welcome, world
 
-    text = _skill("flujos/cambiar-un-flujo").split("hoy se hace reemplazándolo", 1)[1].split("\n", 1)[0]
+    text = _skill("flujos/cambiar-un-flujo").split("son otro flujo: reemplazarlo", 1)[1].split("\n", 1)[0]
     steps = ["`same_event_native_flows`", "pausa el viejo", "un `nuevo` con otra clave",
              "prende el nuevo y apaga el viejo"]
     positions = [text.index(step) for step in steps]

@@ -93,6 +93,7 @@ from slack_correlation.catalog import NotificationCommand
 
 from .flow_change_operator import OperatorInputError, validate_proposal
 from .flow_definition import InstanceRuntime
+from .flow_validator import structural_changes
 from .review_theme import REVIEW_BUTTONS_CSS, REVIEW_SHELL_CSS
 
 __all__ = [
@@ -469,7 +470,19 @@ SECOND_STEP_TEXT = {
     "corta_en_curso": "corta lo que está en curso",
     "apaga": "apaga el flujo",
     "sin_clasificar": "no se sabe a quién llega hasta que se prenda: se pide el segundo paso",
+    # P28 (E-357): lo que cambia de la estructura de un flujo nativo, por campo (structural_changes).
+    "cambia_estructura:pasos": "cambia los pasos del flujo",
+    "cambia_estructura:topes/repeticion": "cambia cada cuánto se le puede volver a mandar a la misma persona: "
+                                          "también cuenta para quienes ya lo recibieron",
+    "cambia_estructura:prioridad/no_arranca_mientras": "cambia qué otro flujo tiene que terminar antes de que este arranque",
 }
+CHANGES_STRUCTURE = "cambia_estructura:"
+REPEAT_CHANGE = CHANGES_STRUCTURE + "topes/repeticion"
+
+
+def _version_after(item: Mapping[str, Any], versions: Mapping[str, Any]) -> object:
+    """La definicion que deja activa un item: la del ``version`` o la del destino de un ``volver``."""
+    return item.get("definicion") if item.get("tipo") == "version" else versions.get(str(item.get("version")))
 
 
 def second_step_reasons(items: object, flows: object) -> list[tuple[str, str]]:
@@ -510,6 +523,14 @@ def second_step_reasons(items: object, flows: object) -> list[tuple[str, str]]:
                 reasons.append((name, "llega_a_todos"))
             elif state != "cohorte":
                 reasons.append((name, "sin_clasificar"))
+            # P28 (E-357): cambiar la estructura de un nativo pide el segundo paso, tambien en cohorte. Con el
+            # legado y la ruta del motor no: esa estructura la cambia el operador y su circuito sigue igual.
+            if isinstance(flow, Mapping) and (flow.get("native") is True or state == "cohorte"):
+                versions = flow.get("versions") if isinstance(flow.get("versions"), Mapping) else {}
+                active = versions.get(str(flow.get("active_version")))
+                after = _version_after(item, versions)
+                if isinstance(active, Mapping) and isinstance(after, Mapping):
+                    reasons.extend((name, CHANGES_STRUCTURE + change) for change in structural_changes(active, after))
         else:
             reasons.append((name, "sin_clasificar"))
     return reasons
@@ -985,9 +1006,19 @@ def _native_change_line(summary: Mapping[str, Any]) -> str | None:
     return head + ".</p>"
 
 
+def _native_structure_line(summary: Mapping[str, Any]) -> str:
+    """Lo que cambia de la estructura, si cambia (P28, E-357): en palabras, nunca el campo."""
+    changes = summary.get("cambia_estructura")
+    if not isinstance(changes, list) or not changes:
+        return ""
+    said = dict.fromkeys(_second_step_text(CHANGES_STRUCTURE + str(change)) for change in changes)
+    return f"<p>Cambia la estructura del flujo: <strong>{_esc('; '.join(said))}</strong>.</p>"
+
+
 def _native_version_reach(summary: Mapping[str, Any], times: str, persons: str) -> str:
     """Lo que mide el conteo de una version o un volver de un nativo (E-353): el evento, no los mensajes."""
-    head = f"<p>En los últimos 7 días el evento de este flujo llegó {times}, de {persons}"
+    head = _native_structure_line(summary)
+    head += f"<p>En los últimos 7 días el evento de este flujo llegó {times}, de {persons}"
     reach = summary.get("alcance")
     if reach == "todos":
         head += ": esta versión les llegaría a quienes entren desde que se publique."
@@ -1440,6 +1471,12 @@ _DONE = {
     "validator_unavailable": "No se publicó: el validador no pudo correr. Probá en un rato.",
     "simulation_not_built": "No se publica sin simulación desde la página: la publica el operador con "
                             "--sin-simulacion.",
+    # La base frena una version de un nativo que el motor no ejecuta (E-357), si se le escapo al validador.
+    "motor_nativo:forma": "No se publicó: el sistema nuevo no ejecuta esa forma de flujo. Pedile al agente que la revise.",
+    "motor_nativo:disparador": "No se publicó: el sistema nuevo no ejecuta ese disparador. Pedile al agente que lo revise.",
+    "motor_nativo:permiso": "No se publicó: quién entra a este flujo no coincide con lo que lo dispara. Pedile al agente que lo revise.",
+    "motor_nativo:repeticion": "No se publicó: esa repetición no la ejecuta el sistema nuevo. Pedile al agente que la revise.",
+    "motor_nativo:prioridad": "No se publicó: esa prioridad no la ejecuta el sistema nuevo. Pedile al agente que la revise.",
     "flow_cohort_full": "No se cargó: la cohorte ya tiene el máximo de teléfonos.",
     "flow_cohort_needs_native_flow": "No se cargó: la cohorte es solo de un flujo nativo.",
     "flow_cohort_contact_not_found": "No se cargó: no hay un contacto con ese teléfono.",
@@ -1570,6 +1607,38 @@ DISCARD_HELP = ("Descarta este pedido, no el flujo: el flujo queda como está ah
                 "Para frenar un flujo ya, usá «Pausar».")
 
 
+def _second_step_why(reasons: list[tuple[str, str]]) -> str:
+    """Por que se pide el segundo paso: un cambio de estructura en la cohorte no llega a mas gente."""
+    if all(reason.startswith(CHANGES_STRUCTURE) for _, reason in reasons):
+        return "Este cambio cambia cómo funciona el flujo, no solo una espera o el mensaje: por eso se pide dos veces."
+    return "Este cambio llega a más gente que la cohorte de prueba o corta algo en curso: por eso se pide dos veces."
+
+
+def _second_step_text(reason: str) -> str:
+    """Lo que dice el segundo paso; un campo de estructura sin texto propio, en general (nunca el campo)."""
+    if reason in SECOND_STEP_TEXT:
+        return SECOND_STEP_TEXT[reason]
+    return "cambia cómo funciona el flujo" if reason.startswith(CHANGES_STRUCTURE) else reason
+
+
+def _repeat_reach_line(preview: Mapping[str, Any], reasons: list[tuple[str, str]]) -> str:
+    """A cuantas personas alcanza un cambio de repeticion: el conteo de la simulacion (P28, E-357).
+
+    La admision evalua los recorridos viejos con la regla de la version activa: quien ya lo recibio queda afuera
+    (o vuelve a entrar) sin haber hecho nada. El conteo es el de la simulacion: quienes dispararon el flujo en 7 dias, de todo el producto. No es un techo: quien
+    lo recibio antes de esos 7 dias y vuelve a dispararlo no esta contado.
+    """
+    if not any(reason == REPEAT_CHANGE for _, reason in reasons):
+        return ""
+    simulation = preview.get("simulacion") if isinstance(preview.get("simulacion"), Mapping) else {}
+    summary = simulation.get("summary") if isinstance(simulation.get("summary"), Mapping) else {}
+    people = summary.get("personas")
+    if not isinstance(people, int):
+        return ""
+    return (f"<li>En los últimos 7 días, {_esc(people)} personas dispararon este flujo. La regla nueva también "
+            "cuenta para quienes ya lo recibieron.</li>")
+
+
 def _render_second_step(proposal: Mapping[str, Any], *, proposal_id: str, csrf: str, confirm: str,
                         reasons: list[tuple[str, str]], others: list[Mapping[str, Any]]) -> str:
     validation = proposal.get("validation") if isinstance(proposal.get("validation"), Mapping) else {}
@@ -1577,15 +1646,15 @@ def _render_second_step(proposal: Mapping[str, Any], *, proposal_id: str, csrf: 
     in_flight = preview.get("en_curso") if isinstance(preview.get("en_curso"), Mapping) else {}
     count = in_flight.get("recorridos")
     yes = "Sí, aprobar y apagar el flujo" if only_turns_off(proposal.get("items")) else "Sí, aprobar y publicar"
-    lines = "".join(f"<li><strong>{_esc(name)}</strong>: {_esc(SECOND_STEP_TEXT.get(reason, reason))}</li>"
+    lines = "".join(f"<li><strong>{_esc(name)}</strong>: {_esc(_second_step_text(reason))}</li>"
                     for name, reason in reasons)
+    lines += _repeat_reach_line(preview, reasons)
     warn = ""
     if others:
         warn = ('<div class="notice notice--warn"><p>Hay otra propuesta abierta de este flujo. Si publicás esta, la '
                 "otra va a tener que validarse de nuevo.</p></div>")
     return ('<header class="page-header"><p class="meta">Segundo paso</p><h1>Confirmá antes de publicar</h1>'
-            '<p class="meta">Este cambio llega a más gente que la cohorte de prueba o corta algo en curso: por eso '
-            'se pide dos veces.</p></header><section class="confirm panel">'
+            f'<p class="meta">{_esc(_second_step_why(reasons))}</p></header><section class="confirm panel">'
             f'<div class="actions">{warn}<div class="notice notice--warn"><ul>{lines}</ul>'
             f"<p>Lo que está en curso: {_esc(count) + ' recorridos' if count is not None else 'sin contar'}.</p></div>"
             f'<form method="post" action="{PREFIX}/p/{_esc(proposal_id)}/publish">{_hidden("csrf_token", csrf)}'

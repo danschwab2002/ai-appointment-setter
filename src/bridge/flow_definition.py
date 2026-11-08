@@ -252,10 +252,11 @@ class CodeSpec:
     limit: str | None = None
     alternative: str | None = None
 
-    def at(self, path: str, *, reason: str | None = None) -> Finding:
+    def at(self, path: str, *, reason: str | None = None, alternative: str | None = None) -> Finding:
         return Finding(
             rule=self.rule, code=self.code, kind=self.kind, path=path, limit=self.limit,
-            reason=reason if reason is not None else self.reason, alternative=self.alternative,
+            reason=reason if reason is not None else self.reason,
+            alternative=alternative if alternative is not None else self.alternative,
         )
 
 

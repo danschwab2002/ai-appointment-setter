@@ -1789,8 +1789,8 @@
       "kind": "todavia_no",
       "path": "/0/definicion/dispara",
       "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
-      "reason": "El motor nativo de esta versión no ejecuta eso (disparo_ficha_impresa).",
-      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+      "reason": "Eso, en este flujo, hoy no se puede hacer.",
+      "alternative": "Sacá eso de la propuesta y decile al dueño que hoy no se puede."
      }
     ],
     "warnings": []
@@ -1827,8 +1827,8 @@
       "kind": "todavia_no",
       "path": "/0/definicion/pasos",
       "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
-      "reason": "El motor nativo de esta versión no ejecuta eso (variables_differ).",
-      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+      "reason": "Este mensaje solo puede usar el nombre de la persona y el producto.",
+      "alternative": "Corregilo en la propuesta."
      }
     ],
     "warnings": []
@@ -2021,6 +2021,309 @@
    }
   },
   {
+   "code": "native_change_entry",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "native_change_entry",
+      "kind": "ciclo",
+      "path": "/0/definicion/entra/permiso",
+      "reason": "Quién entra a este flujo lo fija lo que lo dispara: no se puede cambiar por separado.",
+      "alternative": "Sacá ese cambio de la propuesta (lo demás sigue) y decile al dueño, con este motivo, que hoy no se puede. Si el dueño quiere otra gente, es otro flujo, con otro disparador."
+     },
+     {
+      "rule": 3,
+      "code": "permission_trigger_mismatch",
+      "kind": "forma",
+      "path": "/0/definicion/entra/permiso",
+      "reason": "formulario va solo con un evento, conversacion solo con un silencio y compra solo con el disparador compra."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_change_entry",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_change_exits",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "native_change_exits",
+      "kind": "ciclo",
+      "path": "/0/definicion/termina/si",
+      "reason": "El primer contacto corta cuando la persona compra, abandona el carrito, se le rechaza el pago, se da de baja o la pasan a una persona, y esas son sus únicas salidas: no se pueden sumar otras.",
+      "alternative": "Sacá ese cambio de la propuesta (lo demás sigue) y decile al dueño, con este motivo, que hoy no se puede. Lo que sí se puede cambiar es cuánto tiempo sigue vigente el mensaje y cuánto se espera antes de mandarlo."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_change_exits",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_change_other",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "native_change_other",
+      "kind": "ciclo",
+      "path": "/0/definicion/dispara/silencio/conversaciones",
+      "reason": "Eso, en este flujo, hoy no se puede cambiar.",
+      "alternative": "Sacá ese cambio de la propuesta (lo demás sigue) y decile al dueño, con este motivo, que hoy no se puede. Sí se pueden cambiar las esperas, el mensaje, el plazo, los topes, el horario y, en casi todos, cada cuánto se repite."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_change_other",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_change_pool",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "native_change_pool",
+      "kind": "ciclo",
+      "path": "/0/definicion/topes/bolsa",
+      "reason": "El cupo de mensajes de un flujo es siempre el mismo: si se cambiara, la cuenta de lo enviado volvería a cero.",
+      "alternative": "Sacá ese cambio de la propuesta (lo demás sigue) y decile al dueño, con este motivo, que hoy no se puede. Para mandar más o menos, se cambia el tope por día o el total."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_change_pool",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_change_priority_ref",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "native_change_priority_ref",
+      "kind": "ciclo",
+      "path": "/0/definicion/prioridad/no_arranca_mientras/0",
+      "reason": "Un flujo solo puede esperar a otro del mismo producto y que corra en el sistema nuevo: con este no cambiaría nada.",
+      "alternative": "Sacá ese cambio de la propuesta (lo demás sigue) y decile al dueño, con este motivo, que hoy no se puede. Si el dueño quiere esperar a un flujo que corre en el sistema anterior, el equipo técnico tiene que pasarlo antes al sistema nuevo."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_change_priority_ref",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_change_priority_silence",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "native_change_priority_silence",
+      "kind": "ciclo",
+      "path": "/0/definicion/prioridad/no_arranca_mientras",
+      "reason": "El seguimiento no mira si la persona está en otro flujo: sale igual.",
+      "alternative": "Sacá ese cambio de la propuesta (lo demás sigue) y decile al dueño, con este motivo, que hoy no se puede. Para que no salga, se puede pausar o apagar."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_change_priority_silence",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_change_priority_wins",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "native_change_priority_wins",
+      "kind": "ciclo",
+      "path": "/0/definicion/prioridad/le_gana_a",
+      "reason": "Hoy un flujo no le puede ganar a otro. Lo que sí se puede decir es que este flujo no arranque mientras la persona está en otro.",
+      "alternative": "Cambiá el pedido a «que no arranque mientras está en ese otro flujo», en el flujo que tiene que esperar, y confirmalo con el dueño."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_change_priority_wins",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_change_repeat_silence",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "native_change_repeat_silence",
+      "kind": "ciclo",
+      "path": "/0/definicion/topes/repeticion",
+      "reason": "El seguimiento le llega una sola vez a cada conversación, y eso no se puede cambiar.",
+      "alternative": "Sacá ese cambio de la propuesta (lo demás sigue) y decile al dueño, con este motivo, que hoy no se puede. Lo que sí se puede cambiar es a qué altura del silencio sale, entre las 24 y las 72 horas, y su mensaje."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_change_repeat_silence",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "automation_expert"
+   }
+  },
+  {
    "code": "native_engine_not_running",
    "case": "negativo",
    "result": {
@@ -2105,8 +2408,8 @@
       "kind": "todavia_no",
       "path": "/0/definicion/entra/contesto_a",
       "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
-      "reason": "El motor nativo de esta versión no ejecuta eso (contesto_a).",
-      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+      "reason": "El seguimiento solo le escribe a quien ya contestó alguna plantilla: eso no se cambia.",
+      "alternative": "Corregilo en la propuesta."
      },
      {
       "rule": 14,
@@ -2114,8 +2417,8 @@
       "kind": "todavia_no",
       "path": "/0/definicion/termina/si",
       "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
-      "reason": "El motor nativo de esta versión no ejecuta eso (salida_compra_y_contesta).",
-      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+      "reason": "El seguimiento siempre corta si la persona compra o contesta: el flujo tiene que tener esas dos salidas.",
+      "alternative": "Poné las dos salidas, que compre y que conteste. Corregilo en la propuesta."
      },
      {
       "rule": 14,
@@ -2123,8 +2426,8 @@
       "kind": "todavia_no",
       "path": "/0/definicion/pasos",
       "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
-      "reason": "El motor nativo de esta versión no ejecuta eso (boton_sin_cupon).",
-      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+      "reason": "El seguimiento siempre lleva el botón de pago con su cupón.",
+      "alternative": "Corregilo en la propuesta."
      },
      {
       "rule": null,
@@ -2155,8 +2458,8 @@
       "kind": "todavia_no",
       "path": "/0/definicion/entra/contesto_a",
       "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
-      "reason": "El motor nativo de esta versión no ejecuta eso (contesto_a).",
-      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+      "reason": "El seguimiento solo le escribe a quien ya contestó alguna plantilla: eso no se cambia.",
+      "alternative": "Corregilo en la propuesta."
      },
      {
       "rule": 14,
@@ -2164,8 +2467,8 @@
       "kind": "todavia_no",
       "path": "/0/definicion/termina/si",
       "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
-      "reason": "El motor nativo de esta versión no ejecuta eso (salida_compra_y_contesta).",
-      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+      "reason": "El seguimiento siempre corta si la persona compra o contesta: el flujo tiene que tener esas dos salidas.",
+      "alternative": "Poné las dos salidas, que compre y que conteste. Corregilo en la propuesta."
      },
      {
       "rule": 14,
@@ -2173,8 +2476,8 @@
       "kind": "todavia_no",
       "path": "/0/definicion/pasos",
       "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
-      "reason": "El motor nativo de esta versión no ejecuta eso (boton_sin_cupon).",
-      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+      "reason": "El seguimiento siempre lleva el botón de pago con su cupón.",
+      "alternative": "Corregilo en la propuesta."
      }
     ],
     "warnings": []
@@ -2205,8 +2508,8 @@
       "kind": "todavia_no",
       "path": "/0/definicion/entra/contesto_a",
       "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
-      "reason": "El motor nativo de esta versión no ejecuta eso (contesto_a).",
-      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+      "reason": "El seguimiento solo le escribe a quien ya contestó alguna plantilla: eso no se cambia.",
+      "alternative": "Corregilo en la propuesta."
      },
      {
       "rule": 14,
@@ -2214,8 +2517,8 @@
       "kind": "todavia_no",
       "path": "/0/definicion/termina/si",
       "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
-      "reason": "El motor nativo de esta versión no ejecuta eso (salida_compra_y_contesta).",
-      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+      "reason": "El seguimiento siempre corta si la persona compra o contesta: el flujo tiene que tener esas dos salidas.",
+      "alternative": "Poné las dos salidas, que compre y que conteste. Corregilo en la propuesta."
      },
      {
       "rule": 14,
@@ -2223,8 +2526,8 @@
       "kind": "todavia_no",
       "path": "/0/definicion/pasos",
       "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
-      "reason": "El motor nativo de esta versión no ejecuta eso (boton_sin_cupon).",
-      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+      "reason": "El seguimiento siempre lleva el botón de pago con su cupón.",
+      "alternative": "Corregilo en la propuesta."
      },
      {
       "rule": null,
@@ -2255,8 +2558,8 @@
       "kind": "todavia_no",
       "path": "/0/definicion/entra/contesto_a",
       "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
-      "reason": "El motor nativo de esta versión no ejecuta eso (contesto_a).",
-      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+      "reason": "El seguimiento solo le escribe a quien ya contestó alguna plantilla: eso no se cambia.",
+      "alternative": "Corregilo en la propuesta."
      },
      {
       "rule": 14,
@@ -2264,8 +2567,8 @@
       "kind": "todavia_no",
       "path": "/0/definicion/termina/si",
       "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
-      "reason": "El motor nativo de esta versión no ejecuta eso (salida_compra_y_contesta).",
-      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+      "reason": "El seguimiento siempre corta si la persona compra o contesta: el flujo tiene que tener esas dos salidas.",
+      "alternative": "Poné las dos salidas, que compre y que conteste. Corregilo en la propuesta."
      },
      {
       "rule": 14,
@@ -2273,8 +2576,8 @@
       "kind": "todavia_no",
       "path": "/0/definicion/pasos",
       "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
-      "reason": "El motor nativo de esta versión no ejecuta eso (boton_sin_cupon).",
-      "alternative": "Dejar una sola plantilla con variables de entre nombre y producto, sin botón o con botones de URL fija, y etiquetar después si hace falta."
+      "reason": "El seguimiento siempre lleva el botón de pago con su cupón.",
+      "alternative": "Corregilo en la propuesta."
      }
     ],
     "warnings": []

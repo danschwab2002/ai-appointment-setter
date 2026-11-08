@@ -99,7 +99,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026110300100
   // El rechazo de la cuenta espera a que la cuenta vuelva (20261107000100, E-348): dos tablas y ocho RPC de service_role.
   '20261107000100_meta_account_hold_retry_v1.sql',
   // El almacen dice quien ejecuta cada flujo (20261108000100, E-353): una clave mas en read_flow_store_v1.
-  '20261108000100_flow_store_route_executor_v1.sql'])) {
+  '20261108000100_flow_store_route_executor_v1.sql',
+  // La base no publica una version nativa que el motor no ejecuta (20261108004100, E-357).
+  '20261108004100_flow_change_publish_native_version_guard_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la del aviso de derivaciones sin atender`, names.slice(position + 1));
 }
 if (TEMPLATES.length !== 4 || REFUSALS.length !== 3 || REFUSALS[1].persona !== REFUSALS[2].persona) {

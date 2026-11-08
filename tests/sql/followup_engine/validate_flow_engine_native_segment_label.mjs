@@ -31,7 +31,9 @@ const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.end
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Lo que venga despues no puede redefinir la forma nativa sin mirar esta prueba.
-for (const name of names.slice(position + 1)) {
+// La guarda de publicar (20261108004100, E-357) llama a _flow_engine_native_unsupported y no la cambia.
+const ONLY_CALLS = new Set(['20261108004100_flow_change_publish_native_version_guard_v1.sql']);
+for (const name of names.slice(position + 1).filter((candidate) => !ONLY_CALLS.has(candidate))) {
   if (readFileSync(join(root, 'supabase/migrations', name), 'utf8').includes('_flow_engine_native_unsupported')) {
     fail(`${name} toca _flow_engine_native_unsupported: revisar esta prueba`);
   }

@@ -89,7 +89,7 @@ CONTRACT = "flow-change-cycle-v1"
 # 1.9.0 (A′ PR 3b): el si se da en la pagina de aprobacion del bridge (flow_approval.py).
 # 1.10.0 (E-208, M16 P6, P7 y P9): el catalogo, la lista de propuestas y el mensaje en la vista previa.
 # 1.11.0 (E-353): la simulacion de una version y un volver de un nativo, y los bloqueos de lo que no tendria efecto.
-CONTRACT_VERSION = "1.11.0"
+CONTRACT_VERSION = "1.12.0"
 PREFIX = "/internal/automation-expert/v1"
 DB_ROLE = "automation_expert_change"
 MAX_BODY_BYTES = 256 * 1024
