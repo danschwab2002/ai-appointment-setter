@@ -20,6 +20,12 @@ Desde el ciclo 1.10.0 (M16 P6 y P7) suma dos lecturas: el catalogo de
 plantillas de la bandeja (``list_templates``) y las propuestas de la instancia
 con su estado (``list_flow_changes``).
 
+Desde la 0.6.0 (agent-campaigns-v1, E-355) suma las campanas: ver como queda
+(``preview_campaign``, sin guardar), guardar y validar. Publicarla y pausarla lo
+hace una persona de la lista en la pagina; el control de calidad lo corre el
+operador. Y ``create_chatwoot_label_macro``: un macro que solo suma una etiqueta.
+Sin ``AGENT_CAMPAIGNS_ENABLED`` el bridge no tiene esas rutas: ``campaigns_not_enabled``.
+
 Desde la 0.4.0 (automation-expert-chatwoot-v1, F-143) suma la herramienta
 acotada de Chatwoot: leer y crear etiquetas, sumarle una a una conversacion y
 leer los macros. No borra, no saca etiquetas y no manda mensajes; la lista
@@ -52,7 +58,7 @@ _SLACK_USER_RE = re.compile(r"[UW][A-Z0-9]{8,20}")
 _EMAIL_RE = re.compile(r"[^\s@]+@[^\s@]+")
 _PHONE_SEPARATORS = frozenset(" \t\n\r -.()+")
 # Los codigos que el bridge contesta; cualquier otro se cambia por uno generico.
-_DRAFT_BLOCKED = frozenset({"flow_change_draft_blocked", "template_request_draft_blocked"})
+_DRAFT_BLOCKED = frozenset({"flow_change_draft_blocked", "template_request_draft_blocked", "campaign_draft_blocked"})
 _BRIDGE_ERRORS = frozenset({
     "automation_expert_change_authentication_required",
     "invalid_body",
@@ -103,6 +109,20 @@ _BRIDGE_ERRORS = frozenset({
     "chatwoot_tool_response_invalid",
     "chatwoot_tool_response_too_large",
     "invalid_conversation_id",
+    "chatwoot_macro_rejected",
+    # Las campanas (agent-campaigns-v1, E-355).
+    "invalid_campaign_id",
+    "campaign_invalid",
+    "campaign_draft_blocked",
+    "agent_campaign_not_found",
+    "agent_campaign_open_limit",
+    "agent_campaign_revision_limit",
+    "agent_campaign_validation_limit",
+    "agent_campaign_revision_mismatch",
+    "agent_campaign_not_draft",
+    "agent_campaign_expired",
+    "agent_campaign_key_is_immutable",
+    "agent_campaign_draft_invalid",
 })
 
 
@@ -245,8 +265,13 @@ def _request(method: str, path: str, body: dict[str, object] | None = None) -> d
             return {"error": "template_requests_not_enabled"}
         # Las rutas de Chatwoot solo existen con AUTOMATION_EXPERT_CHATWOOT_ENABLED: sin el flag, el
         # bridge contesta el 404 generico de FastAPI.
-        if exc.code == 404 and detail == "Not Found" and path.startswith(f"{PREFIX}/chatwoot/"):
+        # Con ese flag pero sin las campanas, POST /macros da 405: GET /macros si existe.
+        if exc.code in (404, 405) and detail in ("Not Found", "Method Not Allowed") \
+                and path.startswith(f"{PREFIX}/chatwoot/"):
             return {"error": "chatwoot_tool_not_enabled"}
+        # Lo mismo con las campanas: sin AGENT_CAMPAIGNS_ENABLED sus rutas no existen.
+        if exc.code == 404 and detail == "Not Found" and path.startswith(CAMPAIGNS):
+            return {"error": "campaigns_not_enabled"}
         return {"error": "automation_expert_change_unavailable"}
     except (URLError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError, OSError):
         return {"error": "automation_expert_change_unavailable"}
@@ -502,3 +527,81 @@ def list_chatwoot_macros(params: dict[str, object], **kwargs: object) -> str:
     """Los macros de la cuenta de la instancia, con sus acciones. Solo lee."""
     del params, kwargs
     return _chatwoot("GET", "/macros")
+
+
+def create_chatwoot_label_macro(params: dict[str, object], **kwargs: object) -> str:
+    """Un macro que solo suma esa etiqueta, o el que ya lo hace. La usa una campana para entrar."""
+    del kwargs
+    try:
+        requested_by = _requested_by()
+    except ValueError as exc:
+        return _dumps({"error": str(exc)})
+    label = _label(params.get("label"))
+    if label is None:
+        return _dumps({"error": "invalid_body"})
+    if label.startswith("automation_") or label == "cliente":
+        return _dumps({"error": "chatwoot_label_reserved"})
+    return _chatwoot("POST", "/macros", {"label": label, "requested_by": requested_by})
+
+
+# agent-campaigns-v1 (E-355): armar una campana. No hay herramienta para publicarla ni pausarla: eso
+# lo hace un aprobador en la pagina, y el control de calidad lo corre el operador por comando.
+CAMPAIGNS = f"{PREFIX}/campaigns"
+
+
+def _campaign_requester() -> dict[str, str] | str:
+    try:
+        return _requested_by()
+    except ValueError as exc:
+        return _dumps({"error": str(exc)})
+
+
+def preview_campaign(params: dict[str, object], **kwargs: object) -> str:
+    del kwargs
+    return _dumps(_request("POST", f"{CAMPAIGNS}/preview", {"campaign": params.get("campaign")}))
+
+
+def propose_campaign(params: dict[str, object], **kwargs: object) -> str:
+    del kwargs
+    requested = _campaign_requester()
+    if isinstance(requested, str):
+        return requested
+    purpose = params.get("purpose")
+    if not isinstance(purpose, str) or not purpose.strip():
+        return _dumps({"error": "invalid_body"})
+    if looks_like_identifier(purpose):
+        return _dumps({"error": "identifier_not_allowed"})
+    body: dict[str, object] = {"campaign": params.get("campaign"), "purpose": purpose.strip(),
+                               "requested_by": requested}
+    for key in ("campaign_id", "revision"):
+        if params.get(key) is not None:
+            body[key] = params[key]
+    return _dumps(_request("POST", CAMPAIGNS, body))
+
+
+def validate_campaign(params: dict[str, object], **kwargs: object) -> str:
+    del kwargs
+    campaign_id = _uuid(params.get("campaign_id"))
+    if campaign_id is None:
+        return _dumps({"error": "invalid_campaign_id"})
+    requested = _campaign_requester()
+    if isinstance(requested, str):
+        return requested
+    return _dumps(_request("POST", f"{CAMPAIGNS}/{campaign_id}/validate",
+                           {"revision": params.get("revision"), "requested_by": requested}))
+
+
+def get_campaign(params: dict[str, object], **kwargs: object) -> str:
+    del kwargs
+    campaign_id = _uuid(params.get("campaign_id"))
+    if campaign_id is None:
+        return _dumps({"error": "invalid_campaign_id"})
+    return _dumps(_request("GET", f"{CAMPAIGNS}/{campaign_id}"))
+
+
+def list_campaigns(params: dict[str, object], **kwargs: object) -> str:
+    del kwargs
+    estado = params.get("estado", "abiertas")
+    if estado not in ("abiertas", "todas"):
+        return _dumps({"error": "invalid_query", "reason": {"field": "estado"}})
+    return _dumps(_request("GET", f"{CAMPAIGNS}?estado={estado}"))

@@ -40,7 +40,7 @@ from test_segment_bridge import (
     _SegmentShadow,
 )
 from test_webhook import StubChatwootClient, _post, _signed_headers
-from test_whatsapp_inbound_equivalence import FORM_ID, SECRET, _manifest_settings, _text_webhook
+from test_whatsapp_inbound_equivalence import FORM_ID, SECRET, WA_ID, _manifest_settings, _text_webhook
 
 from bridge import app as app_module
 from bridge.app import Settings, create_app
@@ -237,6 +237,38 @@ def test_an_inbound_first_message_without_the_keyword_gets_the_notice_last(tmp_p
     assert notice.kind == NOTICE_KIND and notice.key == LABEL
     assert QUESTION in notice.rendered and CAMPAIGN_ANSWER_KEY in notice.rendered
     assert supabase.records == []  # sin respuesta, nada
+
+
+@pytest.mark.parametrize("text", ["Hola! Vengo por la CAMPAÑA DE PRUEBA", "¿Qué precio tiene ahora?"])
+def test_an_opted_out_person_is_answered_normally_without_the_campaign(tmp_path: Path, text: str) -> None:
+    # El SOUL comun (F-036, D10): contestar normal. Ni la pregunta, ni la etiqueta, ni el cupon.
+    supabase = _Answers(identities=(FORM_ID,), stopped_user_ids=(WA_ID,))
+
+    shadow, chatwoot, _ = _turn(_settings(tmp_path), text=text, supabase=supabase)
+
+    assert chatwoot.macro_runs == []
+    [(_, context)] = shadow.calls
+    assert context["opted_out_contact"] is True
+    assert SEGMENT_CONTEXT_KEY not in context
+    assert shadow.extra == [()]
+    assert supabase.records == []
+
+
+def test_an_opted_out_person_with_the_label_already_gets_no_segment(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # E-355: la etiqueta puesta antes de la baja no abre la campana. Ni el bloque, ni el cupon.
+    caplog.set_level(logging.INFO, logger="bridge")
+    supabase = _Answers(identities=(FORM_ID,), stopped_user_ids=(WA_ID,))
+
+    shadow, chatwoot, _ = _turn(_settings(tmp_path), text="Hola", supabase=supabase, labels=[LABEL])
+
+    assert chatwoot.macro_runs == []
+    [(_, context)] = shadow.calls
+    assert context["opted_out_contact"] is True
+    assert SEGMENT_CONTEXT_KEY not in context
+    assert shadow.extra == [()]
+    assert f"segment_opted_out_skipped key={LABEL} conversation=200" in caplog.text
 
 
 def test_a_si_from_the_agent_puts_the_label_and_is_recorded(tmp_path: Path) -> None:

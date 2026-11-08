@@ -9,26 +9,38 @@ from .approval_button import ACTION_ID, ack_only
 from .schemas import (
     ADD_CHATWOOT_LABEL_TO_CONVERSATION,
     CREATE_CHATWOOT_LABEL,
+    CREATE_CHATWOOT_LABEL_MACRO,
+    GET_CAMPAIGN,
     GET_FLOW_CHANGE,
     GET_FLOW_DEFINITIONS,
     LIST_FLOW_CHANGES,
     LIST_CHATWOOT_LABELS,
     LIST_CHATWOOT_MACROS,
+    LIST_CAMPAIGNS,
     LIST_TEMPLATES,
+    PREVIEW_CAMPAIGN,
+    PROPOSE_CAMPAIGN,
     PROPOSE_FLOW_CHANGE,
+    VALIDATE_CAMPAIGN,
     VALIDATE_FLOW_CHANGE,
 )
 from .tools import (
     PROFILE_NAME,
     add_chatwoot_label_to_conversation,
     create_chatwoot_label,
+    create_chatwoot_label_macro,
+    get_campaign,
     get_flow_change,
     get_flow_definitions,
     list_chatwoot_labels,
+    list_campaigns,
     list_chatwoot_macros,
     list_flow_changes,
     list_templates,
+    preview_campaign,
+    propose_campaign,
     propose_flow_change,
+    validate_campaign,
     validate_flow_change,
 )
 
@@ -42,7 +54,9 @@ _TOOLS = frozenset({"get_flow_definitions", "propose_flow_change", "validate_flo
                     "list_flow_changes", "list_templates",
                     # automation-expert-chatwoot-v1 (F-143): la herramienta acotada de Chatwoot.
                     "list_chatwoot_labels", "create_chatwoot_label", "add_chatwoot_label_to_conversation",
-                    "list_chatwoot_macros"})
+                    "list_chatwoot_macros", "create_chatwoot_label_macro",
+                    # agent-campaigns-v1 (E-355): armar una campana; publicarla es de la pagina.
+                    "preview_campaign", "propose_campaign", "validate_campaign", "get_campaign", "list_campaigns"})
 
 
 def make_profile_guard(profile_name):
@@ -76,6 +90,12 @@ def register(ctx):
         ("add_chatwoot_label_to_conversation", ADD_CHATWOOT_LABEL_TO_CONVERSATION,
          add_chatwoot_label_to_conversation),
         ("list_chatwoot_macros", LIST_CHATWOOT_MACROS, list_chatwoot_macros),
+        ("create_chatwoot_label_macro", CREATE_CHATWOOT_LABEL_MACRO, create_chatwoot_label_macro),
+        ("preview_campaign", PREVIEW_CAMPAIGN, preview_campaign),
+        ("propose_campaign", PROPOSE_CAMPAIGN, propose_campaign),
+        ("validate_campaign", VALIDATE_CAMPAIGN, validate_campaign),
+        ("get_campaign", GET_CAMPAIGN, get_campaign),
+        ("list_campaigns", LIST_CAMPAIGNS, list_campaigns),
     ):
         ctx.register_tool(name=name, toolset="automation_expert_change", schema=schema, handler=handler)
     ctx.register_hook("pre_tool_call", make_profile_guard(getattr(ctx, "profile_name", None)))

@@ -100,7 +100,9 @@ def test_the_distribution_copies_the_plugin_and_names_its_variables() -> None:
                                         "propose_template", "validate_template", "list_template_requests",
                                         "get_template_request",
                                         "list_chatwoot_labels", "create_chatwoot_label",
-                                        "add_chatwoot_label_to_conversation", "list_chatwoot_macros"]
+                                        "add_chatwoot_label_to_conversation", "list_chatwoot_macros",
+                                        "create_chatwoot_label_macro", "preview_campaign", "propose_campaign",
+                                        "validate_campaign", "get_campaign", "list_campaigns"]
 
 
 def test_the_soul_never_asks_for_a_phone_or_a_mail() -> None:
@@ -113,7 +115,7 @@ def _skill(path: str) -> str:
     return (PROFILE / "skills" / path / "SKILL.md").read_text(encoding="utf-8")
 
 
-SKILLS = ("flujos/crear-un-flujo", "flujos/cambiar-un-flujo", "flujos/pasar-flujo-al-sistema-nuevo",
+SKILLS = ("flujos/armar-una-campana", "flujos/crear-un-flujo", "flujos/cambiar-un-flujo", "flujos/pasar-flujo-al-sistema-nuevo",
           "flujos/pedir-plantilla-a-meta",
           "plataformas/hotmart", "plataformas/ghl-formularios", "plataformas/chatwoot-whatsapp")
 
@@ -140,6 +142,16 @@ def test_the_skills_are_listable_and_only_ours() -> None:
             assert example in text, example
     placeholder = (PROFILE / "skills/autonomous-ai-agents/hermes-agent/SKILL.md").read_text(encoding="utf-8")
     assert yaml.safe_load(placeholder.split("---\n", 2)[1])["platforms"] == ["ninguna"]
+
+
+def test_the_campaign_skill_checks_they_are_on_before_creating_anything() -> None:
+    # E-355: con AGENT_CAMPAIGNS_ENABLED apagado, ni etiqueta ni macro en el Chatwoot del duenio.
+    text = _skill("flujos/armar-una-campana")
+    gate = text.index("`campaigns_not_enabled`")
+    assert gate < text.index("## Los pasos") and gate < text.index("`create_chatwoot_label`")
+    assert gate < text.index("queda andando sin subir nada")
+    assert "No crees la etiqueta ni el macro" in text
+    assert "`campaigns_not_enabled`" in (PROFILE / "SOUL.md").read_text(encoding="utf-8")
 
 
 def test_the_soul_keeps_the_rules_that_cannot_depend_on_a_skill() -> None:

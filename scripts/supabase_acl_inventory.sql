@@ -221,7 +221,11 @@ expected_service_role(signature) as (
         ('public.claim_meta_account_hold_retry_v1(bigint, bigint, text, text, text[], timestamp with time zone)'),
         ('public.settle_meta_account_hold_retry_v1(uuid, text, bigint, text, timestamp with time zone)'),
         ('public.block_meta_account_hold_retry_v1(uuid, text, timestamp with time zone)'),
-        ('public.requeue_meta_account_hold_v1(bigint, bigint, bigint, timestamp with time zone)')
+        ('public.requeue_meta_account_hold_v1(bigint, bigint, bigint, timestamp with time zone)'),
+        -- 20261108005000: las campanas del Automation Expert (E-355), el catalogo vivo y el comando del juez.
+        ('public.get_live_agent_campaigns_v1(jsonb)'),
+        ('public.operator_get_agent_campaign_v1(jsonb, uuid)'),
+        ('public.record_agent_campaign_check_v1(jsonb, uuid, text, jsonb, text)')
 ),
 functions as (
     select

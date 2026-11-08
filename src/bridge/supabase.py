@@ -4874,6 +4874,24 @@ class SupabaseClient:
         _required_enum(rows[0], "answer", {"si", "no"}, operation=operation)
         return _required_enum(rows[0], "outcome", {"recorded", "replayed"}, operation=operation)
 
+    async def get_live_agent_campaigns(self, instance: dict[str, str]) -> dict[str, object]:
+        """La campana publicada de la instancia (``get_live_agent_campaigns_v1``, E-355).
+
+        Solo lectura. Devuelve ``{"campaigns": [...]}``; lo demas lo decide el catalogo vivo.
+        """
+        operation = "live_agent_campaigns"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_live_agent_campaigns_v1",
+            content=json.dumps({"p_instance": instance}),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        payload = response.json()
+        if not isinstance(payload, dict) or not isinstance(payload.get("campaigns"), list):
+            raise SupabaseError(f"{operation}_invalid")
+        return payload
+
     async def claim_slack_handoff_notifications(
         self,
         *,

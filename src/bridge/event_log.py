@@ -89,11 +89,17 @@ LOGGED_INFO_EVENTS = frozenset(
         # warning y salen siempre.
         "segment_context",
         "segment_inactive",
+        # el segmento que la conversacion traia y no fue porque la persona se dio
+        # de baja (bridge.app, E-355): clave y numero de conversacion
+        "segment_opted_out_skipped",
         # la etiqueta que pone la palabra clave del primer mensaje
         # (bridge.campaign_inbound_entry, E-317; E-336): numero de conversacion,
         # clave y etiqueta del segmento y lo que hizo el macro; nunca el texto
         # del mensaje, el telefono ni el nombre
         "segment_label_by_keyword",
+        # la campana de la base que entra al catalogo (bridge.agent_campaigns,
+        # E-355): clave y version; nunca el contenido
+        "agent_campaign_served",
         # el cupon de la campana (bridge.app, E-338): la clave del segmento, el
         # producto (su clave de [[productos]]) y el numero de conversacion;
         # nunca el codigo del cupon

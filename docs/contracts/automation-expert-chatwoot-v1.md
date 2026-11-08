@@ -1,6 +1,6 @@
 # automation-expert-chatwoot-v1: la herramienta acotada de Chatwoot del Automation Expert
 
-Escrito al construir el PR de F-143 (E-256, 2026-11-01), antes del merge: el bridge contesta `automation-expert-chatwoot-v1` `1.0.0` (`CONTRACT_VERSION`, `src/bridge/automation_expert_chatwoot.py`). Describe la interfaz; no dice que nada esté desplegado ni activado.
+Escrito al construir el PR de F-143 (E-256, 2026-11-01), antes del merge: el bridge contesta `automation-expert-chatwoot-v1` `1.1.0` con `AGENT_CAMPAIGNS_ENABLED` prendido (crea el macro de una campaña; ver `agent-campaigns-v1`) y `1.0.0` sin ese flag (`CONTRACT_VERSION` y `CONTRACT_VERSION_WITHOUT_MACRO_CREATION`, `src/bridge/automation_expert_chatwoot.py`). Describe la interfaz; no dice que nada esté desplegado ni activado.
 
 ## Por qué
 
@@ -18,11 +18,12 @@ Chatwoot no da tokens con alcance fino: la clave de control (`CHATWOOT_CONTROL_A
 | `GET` | `/api/v1/accounts/{account}/conversations/{conversation}/labels` |
 | `POST` | `/api/v1/accounts/{account}/conversations/{conversation}/labels` |
 | `GET` | `/api/v1/accounts/{account}/macros` |
+| `POST` | `/api/v1/accounts/{account}/macros` (solo con `AGENT_CAMPAIGNS_ENABLED`; sin ese flag queda fuera de la lista) |
 
 - `{account}` es siempre la cuenta del manifiesto (`chatwoot.account_id`), fija en el patrón: una ruta de otra cuenta que la clave también administra se rechaza. El bridge no arranca con el flag si `CHATWOOT_ACCOUNT_ID` no es la del manifiesto.
 - `{conversation}` es un entero positivo sin ceros adelante. La ruta tiene que coincidir entera: sin query, sin `..`, sin barra final.
 - **Todo `DELETE` se rechaza** (`chatwoot_delete_not_allowed`), en cualquier ruta, antes de salir a la red. Cualquier otra combinación, `chatwoot_call_not_allowed`. Sumar una ruta a la lista es una decisión, no un arreglo.
-- No hay `PATCH`/`PUT` de una etiqueta, ni crear, cambiar o ejecutar un macro, ni mensajes, asignaciones o estados de conversación.
+- No hay `PATCH`/`PUT` de una etiqueta, ni cambiar o ejecutar un macro, ni mensajes, asignaciones o estados de conversación. Crear un macro es solo el de una campaña, con `AGENT_CAMPAIGNS_ENABLED`, y solo uno que suma una etiqueta.
 
 ## Las rutas del bridge
 
@@ -32,12 +33,13 @@ Existen solo con `AUTOMATION_EXPERT_CHATWOOT_ENABLED=true` (apagado por defecto;
 - **`POST /internal/automation-expert/v1/chatwoot/labels`** con `{title, description?, color?, show_on_sidebar?, requested_by: {slack_user}}`. El título se pasa a minúsculas (como Chatwoot) y es de 1 a 40 letras, números, guion o guion bajo; uno que parece un teléfono o un mail, `identifier_not_allowed`; uno que empieza con `automation_` (la pausa y la baja del bridge), `chatwoot_label_reserved`. La descripción, hasta 200 caracteres, sin teléfonos ni mails. El color, `#rrggbb` (default `#1f93ff`, el de Chatwoot). Lee las etiquetas primero: si ya existe, `200` con `created: false` y no escribe; si no, la crea y contesta `201` con `created: true`. Si Chatwoot contesta `422` porque otro la creó entre la lectura y la escritura, relee y contesta `created: false`.
 - **`POST /internal/automation-expert/v1/chatwoot/conversations/{n}/labels`** con `{label, requested_by}`. La etiqueta tiene que existir en la cuenta (`404 chatwoot_label_not_found`) y no ser reservada. La conversación tiene que ser de la bandeja del manifiesto: una de otra bandeja, o que no existe, es `404 chatwoot_conversation_not_found` (las dos igual). **Nunca saca una etiqueta:** el `POST` de Chatwoot reemplaza la lista entera (`update_labels`), así que el bridge lee la lista de la conversación y manda esa misma más la nueva. Si ya la tenía, no escribe (`changed: false`). Contesta `conversation_id`, `label`, `changed` y `labels` (la lista después).
 - **`GET /internal/automation-expert/v1/chatwoot/macros`**: `macros[]` con `id`, `name`, `visibility` y `actions` (`action_name`, `action_params`). Sin `created_by`, `updated_by`, `account_id` ni `files`; un parámetro que parece un teléfono o un mail (por ejemplo el de `send_email_transcript`) sale como `<oculto>`. Hasta 100.
+- **`POST /internal/automation-expert/v1/chatwoot/macros`** con `{label, requested_by}`, **solo con `AGENT_CAMPAIGNS_ENABLED`** (sin ese flag la ruta no existe: el `POST` contesta `405` porque `GET` sí está, y no sale nada a Chatwoot). Crea un macro global que solo suma esa etiqueta, o devuelve el que ya hace exactamente eso (`created: false`). La respuesta de Chatwoot tiene que traer esas mismas acciones (si no, `503 chatwoot_tool_response_invalid`).
 
 Los errores de entrada son `422` con `{detail, reason}` (`reason` nombra campos, nunca valores). Chatwoot caído o con una respuesta que no se reconoce, `503 chatwoot_tool_unavailable` (o `chatwoot_tool_response_invalid`, `chatwoot_tool_response_too_large`, `chatwoot_label_not_confirmed`, `chatwoot_label_rejected`). Dos pedidos a la vez como mucho (`503 automation_expert_change_busy`). El log lleva la ruta, el estado, el código y los conteos; nunca un título, una descripción ni una clave.
 
 ## Las herramientas del agente
 
-En el plugin `automation-expert-change` 0.4.0: `list_chatwoot_labels`, `create_chatwoot_label`, `add_chatwoot_label_to_conversation` y `list_chatwoot_macros`. Las de escritura ponen quién pide desde la sesión de Slack (nunca el modelo) y validan antes de salir a la red. Con un bridge sin el flag (el `404` genérico de FastAPI en una ruta de Chatwoot), contestan `chatwoot_tool_not_enabled`.
+En el plugin `automation-expert-change` 0.6.0: `list_chatwoot_labels`, `create_chatwoot_label`, `add_chatwoot_label_to_conversation`, `list_chatwoot_macros` y `create_chatwoot_label_macro`. Las de escritura ponen quién pide desde la sesión de Slack (nunca el modelo) y validan antes de salir a la red. Con un bridge sin el flag (el `404` genérico de FastAPI en una ruta de Chatwoot, o el `405` del `POST /macros` sin campañas), contestan `chatwoot_tool_not_enabled`.
 
 ## Decisiones con default (E-256)
 

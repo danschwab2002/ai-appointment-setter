@@ -281,6 +281,7 @@ def test_every_reviewed_event_is_a_hotmart_line_present_in_the_code() -> None:
             "handoff_wait_alerts.py",
             "campaign_inbound_entry.py",
             "followup_discount.py",
+            "agent_campaigns.py",
         )
     )
     for name in LOGGED_INFO_EVENTS:
@@ -292,6 +293,7 @@ def test_every_reviewed_event_is_a_hotmart_line_present_in_the_code() -> None:
                 "customer_status_",
                 "handoff_wait_",
                 "segment_",
+                "agent_campaign_",
                 "chatwoot_inbound_attachment_",
                 "safety_handoff_",
             )

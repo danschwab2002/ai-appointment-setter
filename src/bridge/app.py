@@ -168,6 +168,7 @@ from bridge.opt_out_confirmation import (
 )
 from bridge import automation_expert_chatwoot, flow_approval, flow_change_api
 from bridge import template_approval, template_request, template_request_api
+from bridge import agent_campaign_api, agent_campaigns, campaign_approval
 from bridge.meta_templates import MetaTemplatesClient
 from bridge.automation_expert_read import (
     CHATWOOT_MAX_MESSAGES_PER_CONVERSATION,
@@ -407,6 +408,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # conversacion tiene la etiqueta y el segmento esta vigente). La regla es
     # del producto; lo de cada aliada son sus [[agente.segmentos]].
     "agent_segments_enabled",
+    # E-355 (agent-campaigns-v1): la campana que arma el Automation Expert y que
+    # aprueba un duenio en la pagina, sin subir nada al servidor. Portable: por
+    # instancia, solo prenderlo.
+    "agent_campaigns_enabled",
     "hotmart_purchase_worker_enabled",
     "lead_precheckout_enabled",
     # El adaptador de GHL traduce el formulario a lead.precheckout y lo manda
@@ -971,6 +976,9 @@ class Settings:
     # Los segmentos aprobados de [[agente.segmentos]], cargados al arrancar con
     # el flag prendido. None con el flag apagado.
     agent_segment_catalog: SegmentCatalog | None = None
+    # E-355 (bridge/agent_campaigns.py, contrato agent-campaigns-v1): con el flag,
+    # el catalogo de segmentos suma la campana publicada desde la base.
+    agent_campaigns_enabled: bool = False
     precheckout_form_enabled: bool = False
     precheckout_form_token: str | None = None
     precheckout_max_age_seconds: int = 300
@@ -2327,6 +2335,9 @@ class Settings:
             agent_customer_status_enabled=agent_customer_status_enabled,
             agent_segments_enabled=agent_segments_enabled,
             agent_segment_catalog=agent_segment_catalog,
+            agent_campaigns_enabled=(
+                os.getenv("AGENT_CAMPAIGNS_ENABLED", "false").strip().lower() == "true"
+            ),
             precheckout_form_enabled=precheckout_form_enabled,
             precheckout_form_token=precheckout_form_token,
             precheckout_max_age_seconds=precheckout_max_age_seconds,
@@ -3691,6 +3702,21 @@ def _validate_agent_customer_status(settings: Settings) -> None:
         raise ValueError(f"{flag} requires CHATWOOT_ACCOUNT_ID and CHATWOOT_INBOX_ID")
 
 
+def _join_extra_routes(
+    *registers: Callable[[FastAPI, flow_approval.PageTools], None] | None,
+) -> Callable[[FastAPI, flow_approval.PageTools], None] | None:
+    """Las secciones extra de la pagina de aprobacion, las que esten prendidas."""
+    present = [register for register in registers if register is not None]
+    if not present:
+        return None
+
+    def register_all(app: FastAPI, tools: flow_approval.PageTools) -> None:
+        for register in present:
+            register(app, tools)
+
+    return register_all
+
+
 def _segment_context(
     catalog: SegmentCatalog,
     *,
@@ -4645,6 +4671,7 @@ def create_app(
     flow_change_runtime: InstanceRuntime | None = None,
     automation_expert_chatwoot_client: automation_expert_chatwoot.ScopedChatwoot | None = None,
     template_request_store: template_request_api.TemplateRequestStore | None = None,
+    agent_campaign_store: agent_campaign_api.CampaignStore | None = None,
     flow_approval_store: flow_approval.ApprovalStore | None = None,
     flow_approval_oidc: flow_approval.SlackIdTokenClient | None = None,
     meta_templates_client: MetaTemplatesClient | None = None,
@@ -4760,6 +4787,64 @@ def create_app(
     segment_catalog = (
         settings.agent_segment_catalog if settings.agent_segments_enabled else None
     )
+    # E-355 (agent-campaigns-v1): con el flag, el catalogo que usan el turno, el
+    # link y los frenos del cupon suma la campana publicada de la base, con cache
+    # corta. Apagado no se crea nada. La fila se lee recien en el arranque.
+    agent_campaigns_context: agent_campaigns.CampaignContext | None = None
+    agent_campaign_live: agent_campaigns.LiveSegmentCatalog | None = None
+    if settings.agent_campaigns_enabled:
+        agent_campaign_api.check_settings(settings)
+        assert settings.instance_manifest is not None
+        assert settings.commercial_knowledge is not None
+        assert settings.agent_segment_catalog is not None
+        campaign_manifest = settings.instance_manifest
+        agent_campaigns_context = agent_campaigns.CampaignContext(
+            manifest=campaign_manifest,
+            base=settings.commercial_knowledge,
+            manifest_catalog=settings.agent_segment_catalog,
+            reserved_macros=frozenset(
+                macro
+                for macro in (
+                    settings.chatwoot_pause_macro_id,
+                    settings.chatwoot_resume_macro_id,
+                    settings.chatwoot_opt_out_macro_id,
+                    settings.chatwoot_client_label_macro_id,
+                )
+                if macro is not None
+            ),
+        )
+
+        async def _fetch_live_campaigns() -> dict[str, object]:
+            assert shared_supabase is not None
+            return await shared_supabase.get_live_agent_campaigns(
+                {
+                    "tenant_ref": campaign_manifest.tenant_ref,
+                    "ally_ref": campaign_manifest.ally_ref,
+                }
+            )
+
+        async def _announce_campaign_not_served(key: str, reason: str) -> None:
+            # Una sola vez por campana y motivo. Sin conector de Slack queda el
+            # warning del log, /ready y la pagina.
+            if slack_runtime is None:
+                return
+            await slack_runtime.producer.admit(
+                flow_approval.approval_notice(
+                    event_code=flow_approval.NOTICE_PAUSED,
+                    what=f"campana_no_servida_{reason}"[:60],
+                    flow_key=key,
+                    user_id="sistema",
+                    key=f"{key}:{reason}",
+                    occurred_at=datetime.now(UTC),
+                )
+            )
+
+        agent_campaign_live = agent_campaigns.LiveSegmentCatalog(
+            context=agent_campaigns_context,
+            fetch=_fetch_live_campaigns,
+            notify=_announce_campaign_not_served,
+        )
+        segment_catalog = agent_campaign_live
     # Un binding por producto (paso 2c): el principal es el que ya carga el
     # bridge; con un solo producto es la unica ruta.
     commercial_ally_routes = ProductRoutes.build(
@@ -5030,6 +5115,8 @@ def create_app(
     flow_approval.check_settings(settings)
     # F-146: las solicitudes de plantilla exigen las rutas del agente y la pagina.
     template_request_api.check_settings(settings)
+    # E-355: las campanas exigen las rutas del agente, la pagina y la entrada.
+    agent_campaign_api.check_settings(settings)
     pilot_fields = (
         (settings.pilot_scope_key, "LANCEMOS_PILOT_SCOPE_KEY"),
         (settings.pilot_scope_version, "LANCEMOS_PILOT_SCOPE_VERSION"),
@@ -5495,10 +5582,20 @@ def create_app(
         shared_supabase,
         reset_command=CHATWOOT_CONVERSATION_RESET_COMMAND,
         reset_confirmation=CHATWOOT_CONVERSATION_RESET_CONFIRMATION,
+        campaigns_live=agent_campaign_live is not None,
     )
+    if agent_campaign_live is not None and campaign_inbound is not None:
+        # E-355: la campana de la base entra con su palabra clave y su pregunta,
+        # con el mismo patron de etiqueta que un segmento del manifiesto.
+        agent_campaign_live.bind_entry(
+            campaign_inbound,
+            make_labeler=lambda label, macro_id: ProductLabeler(
+                client=control_client, label=label, macro_id=macro_id
+            ),
+        )
     if (
         campaign_inbound is not None
-        and campaign_inbound.has_question
+        and (campaign_inbound.has_question or agent_campaign_live is not None)
         and not getattr(shadow_processor, "accepts_campaign_answers", False)
     ):
         raise ValueError(
@@ -6542,6 +6639,10 @@ def create_app(
                     "audience mode of the pilot scope must be readable"
                 )
         try:
+            if agent_campaign_live is not None:
+                # La primera lectura, antes de los workers. Si la base no
+                # contesta sigue con los segmentos del manifiesto y reintenta.
+                await agent_campaign_live.start()
             if resolution_worker is not None:
                 await resolution_worker.start()
             if hotmart_abandonment_timer_worker is not None:
@@ -6620,6 +6721,7 @@ def create_app(
                 ("recovery_coupon", recovery_coupon_worker),
                 ("hotmart_abandonment_timer", hotmart_abandonment_timer_worker),
                 ("resolution", resolution_worker),
+                ("agent_campaigns", agent_campaign_live),
             ):
                 if worker is None:
                     continue
@@ -7528,10 +7630,26 @@ def create_app(
             if message["actor"] == "assistant"
         )
         entry_turn = None
-        if campaign_inbound is not None:
+        if prior_opt_out:
+            # E-355: quien se dio de baja no recibe la oferta ni el cupon de una
+            # campana aunque ya tuviera la etiqueta: se le contesta normal (el
+            # SOUL comun, D10). Vale para toda entrada `segments`, de la base o
+            # del manifiesto; lo que lee la entrada del agente, el cupon del
+            # carrito y el link del agente sale de este mismo contexto.
+            dropped_segments = context.pop(SEGMENT_CONTEXT_KEY, None)
+            if isinstance(dropped_segments, list):
+                for entry in dropped_segments:
+                    logger.info(
+                        "segment_opted_out_skipped key=%s conversation=%s",
+                        entry.get("key") if isinstance(entry, dict) else None,
+                        conversation_id,
+                    )
+        if campaign_inbound is not None and not prior_opt_out:
             # E-317: la palabra clave del primer mensaje pone la etiqueta de la
             # campana antes de armar el pedido, y a quien escribio por su cuenta
-            # sin ella le va el aviso con la pregunta de entrada.
+            # sin ella le va el aviso con la pregunta de entrada. A quien se dio
+            # de baja no: se le contesta normal (el SOUL comun, D10), sin la
+            # pregunta, sin etiqueta y sin cupon.
             entry_turn = await campaign_inbound.turn(
                 conversation_id=conversation_id,
                 history=history,
@@ -9957,6 +10075,20 @@ def create_app(
                 inbox_id=change_manifest.chatwoot_inbox_id,
                 template_context=template_request.context_from_manifest(change_manifest),
             )
+        if settings.agent_campaigns_enabled:
+            # E-355 (agent-campaigns-v1): el agente arma y valida; nunca publica.
+            assert agent_campaigns_context is not None
+            agent_campaign_api.register_agent_campaign_routes(
+                app,
+                token=settings.automation_expert_change_token,
+                store=agent_campaign_store or agent_campaign_api.CampaignStore(
+                    base_url=settings.supabase_base_url or "",
+                    db_key=settings.automation_expert_change_db_key or "",
+                ),
+                chatwoot=control_client,
+                context=agent_campaigns_context,
+                approval_origin=settings.flow_approval_base_url or "",
+            )
 
     if settings.automation_expert_chatwoot_enabled:
         # automation-expert-chatwoot-v1 (F-143): su propio cliente, con la lista
@@ -9974,9 +10106,12 @@ def create_app(
                 account_id=scoped_manifest.chatwoot_account_id,
                 access_token=settings.chatwoot_control_api_access_token or "",
                 inbox_id=scoped_manifest.chatwoot_inbox_id,
+                # E-355: crear un macro es de las campanas; sin el flag, ni la ruta ni el permiso.
+                create_macros=settings.agent_campaigns_enabled,
             ),
             tenant_ref=scoped_manifest.tenant_ref,
             ally_ref=scoped_manifest.ally_ref,
+            create_macros=settings.agent_campaigns_enabled,
         )
 
     approval_config = flow_approval.check_settings(settings)
@@ -10011,7 +10146,7 @@ def create_app(
             # F-146 parte 3: la pagina de una solicitud de plantilla y el envio
             # a Meta. Con el flag apagado las rutas no existen, y el cliente de
             # Meta ni se crea.
-            extra_routes=(
+            extra_routes=_join_extra_routes(
                 template_approval.routes(
                     meta=meta_templates_client or MetaTemplatesClient(
                         access_token=settings.meta_templates_access_token or "",
@@ -10021,7 +10156,10 @@ def create_app(
                     daily_cap=settings.meta_templates_daily_cap,
                     product_name=settings.instance_manifest.product_name,
                 )
-                if settings.meta_templates_enabled else None
+                if settings.meta_templates_enabled else None,
+                # E-355: la pagina de una campana y su boton de publicar.
+                campaign_approval.routes(live=agent_campaign_live)
+                if agent_campaign_live is not None else None,
             ),
         )
 
@@ -10713,6 +10851,11 @@ def create_app(
             commercial_ally_readiness = {
                 **commercial_ally_readiness,
                 "agent_segments": segment_catalog.readiness(datetime.now(UTC)),
+            }
+        if agent_campaign_live is not None:
+            commercial_ally_readiness = {
+                **commercial_ally_readiness,
+                "agent_campaigns": agent_campaign_live.status_line(),
             }
         if product_labelers:
             # La etiqueta de producto no responde 503: no atiende a nadie, y un

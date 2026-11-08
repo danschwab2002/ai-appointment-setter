@@ -224,23 +224,13 @@ class CampaignEntry:
         reset_confirmation: str,
         clock: Any = lambda: datetime.now(UTC),
         remembered: int = DEFAULT_REMEMBERED_CONVERSATIONS,
+        allow_empty: bool = False,
     ) -> None:
         segments = tuple(segments)
-        if not segments or remembered < 1:
+        if (not segments and not allow_empty) or remembered < 1:
             raise CampaignEntryConfigError("campaign_entry_without_segments")
-        if any(segment.label not in labelers for segment in segments):
-            raise CampaignEntryConfigError("campaign_entry_segment_without_macro")
-        questions = [segment for segment in segments if segment.question is not None]
-        if questions and answers is None:
-            raise CampaignEntryConfigError("campaign_entry_question_requires_the_database")
-        for index, first in enumerate(questions):
-            for second in questions[index + 1 :]:
-                if first.overlaps(second):
-                    # D5: una sola campana con la pregunta prendida a la vez.
-                    raise CampaignEntryConfigError("campaign_entry_two_questions_overlap")
-        self.segments = segments
-        self._labelers = dict(labelers)
         self._answers = answers
+        self.segments, self._labelers = self._checked(segments, labelers)
         self._account_id = account_id
         self._inbox_id = inbox_id
         self._reset_command = reset_command
@@ -252,6 +242,33 @@ class CampaignEntry:
         self._entered: OrderedDict[int, tuple[str, ...]] = OrderedDict()
         # (conversacion, segmento) -> si | no, lo que ya se sabe de la base.
         self._answered: OrderedDict[tuple[int, str], str] = OrderedDict()
+
+    def _checked(
+        self, segments: tuple[EntrySegment, ...], labelers: Mapping[str, _Labeler]
+    ) -> tuple[tuple[EntrySegment, ...], dict[str, _Labeler]]:
+        if any(segment.label not in labelers for segment in segments):
+            raise CampaignEntryConfigError("campaign_entry_segment_without_macro")
+        questions = [segment for segment in segments if segment.question is not None]
+        if questions and self._answers is None:
+            raise CampaignEntryConfigError("campaign_entry_question_requires_the_database")
+        for index, first in enumerate(questions):
+            for second in questions[index + 1 :]:
+                if first.overlaps(second):
+                    # D5: una sola campana con la pregunta prendida a la vez.
+                    raise CampaignEntryConfigError("campaign_entry_two_questions_overlap")
+        seen = [keyword for segment in segments for keyword in segment.keywords]
+        if len(set(seen)) != len(seen):
+            raise CampaignEntryConfigError("campaign_entry_keyword_repeated")
+        return segments, dict(labelers)
+
+    def reload(self, segments: Iterable[EntrySegment], labelers: Mapping[str, _Labeler]) -> None:
+        """Las campanas de la base cambiaron (agent-campaigns-v1). Si no cierran, lanza y queda lo de antes."""
+
+        self.segments, self._labelers = self._checked(tuple(segments), labelers)
+
+    @property
+    def labelers(self) -> Mapping[str, _Labeler]:
+        return self._labelers
 
     @property
     def has_question(self) -> bool:
@@ -428,7 +445,18 @@ class CampaignEntry:
         if turn.pending is None or answer not in CAMPAIGN_ANSWERS:
             return None
         assert isinstance(answer, str) and self._answers is not None
-        segment = next(segment for segment in self.segments if segment.key == turn.pending)
+        segment = next((segment for segment in self.segments if segment.key == turn.pending), None)
+        if segment is None:
+            # La campana se pauso o termino mientras el modelo pensaba (el catalogo
+            # vivo recarga la entrada): la respuesta ya no abre nada y el turno sigue.
+            logger.info(
+                "segment_entry_answer_ignored conversation=%s segment=%s reason=segment_gone",
+                conversation_id,
+                turn.pending,
+            )
+            return None
+        # Antes de esperar a la base: una recarga en el medio puede sacar la etiqueta.
+        labeler = self._labelers[segment.label]
         try:
             outcome = await self._answers.record_segment_entry_answer(
                 chatwoot_account_id=self._account_id,
@@ -443,7 +471,7 @@ class CampaignEntry:
             self._remember_answer(conversation_id, segment.key, answer)
         label_outcome = "none"
         if answer == "si":
-            label_outcome = await self._labelers[segment.label].ensure(
+            label_outcome = await labeler.ensure(
                 conversation_id, source="segment_entry_question"
             )
             self._enter(conversation_id, segment.label)
@@ -479,6 +507,7 @@ def campaign_inbound_entry_setup(
     *,
     reset_command: str,
     reset_confirmation: str,
+    campaigns_live: bool = False,
 ) -> CampaignEntry | None:
     """La entrada a las campanas, o nada sin el flag. Falla cerrado.
 
@@ -490,6 +519,10 @@ def campaign_inbound_entry_setup(
     ademas la base (para el ``no``, D4) y que dos segmentos con la pregunta no se
     pisen en la vigencia (D5). El macro no puede ser el de la pausa, la
     reanudacion, la baja ni el de ``cliente``.
+
+    Con ``campaigns_live`` (``AGENT_CAMPAIGNS_ENABLED``, agent-campaigns-v1) puede
+    arrancar sin ningun segmento declarado: las campanas llegan despues, de la
+    base, y entonces la pregunta pide la base desde el arranque.
     """
 
     from .product_label import ProductLabeler
@@ -552,9 +585,9 @@ def campaign_inbound_entry_setup(
         labelers[declared.label] = ProductLabeler(
             client=control_client, label=declared.label, macro_id=macro_id
         )
-    if not segments:
+    if not segments and not campaigns_live:
         raise ValueError(f"{flag} requires palabras_clave or pregunta_entrada in [[agente.segmentos]]")
-    questions = any(segment.question is not None for segment in segments)
+    questions = campaigns_live or any(segment.question is not None for segment in segments)
     if questions and (
         supabase is None
         or not hasattr(supabase, "get_segment_entry_answers")
@@ -570,6 +603,7 @@ def campaign_inbound_entry_setup(
             inbox_id=inbox_id,
             reset_command=reset_command,
             reset_confirmation=reset_confirmation,
+            allow_empty=campaigns_live,
         )
     except CampaignEntryConfigError as exc:
         raise ValueError(f"{flag}: {exc}") from exc

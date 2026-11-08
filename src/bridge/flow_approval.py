@@ -150,6 +150,7 @@ _BROWSER_SECRET = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 # El state del OIDC de quien entra por el link de una plantilla: «t», el id y el secreto. La base solo acepta
 # volver a la lista o a una propuesta (20261028000100); el id viaja adentro del state, que la base consume por su
 # sha256, asi que nadie lo puede cambiar por el camino. Un state comun tiene 43 caracteres: no se confunde.
+_CAMPAIGN_STATE = re.compile(r"^c([0-9a-f-]{36})[A-Za-z0-9_-]{32,}$")
 _TEMPLATE_STATE = re.compile(r"^t([0-9a-f-]{36})[A-Za-z0-9_-]{32,}$")
 _CSP = ("default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; "
         "frame-ancestors 'none'")
@@ -453,6 +454,32 @@ class ApprovalStore:
             "p_instance": instance, "p_session_hash": session_hash, "p_request_id": request_id,
             "p_meta_template_id": meta_template_id, "p_meta_status": meta_status, "p_meta_category": meta_category,
             "p_error_code": error_code})
+
+    # -- las campanas del Automation Expert (agent-campaigns-v1, migracion 20261108005000). --
+
+    async def get_campaign(self, instance: Mapping[str, str], *, session_hash: str, campaign_id: str) -> dict[str, Any]:
+        return await self._rpc("approver_get_agent_campaign_v1", {
+            "p_instance": instance, "p_session_hash": session_hash, "p_campaign_id": campaign_id})
+
+    async def publish_campaign(self, instance: Mapping[str, str], *, session_hash: str, campaign_id: str,
+                               fingerprint: str, check_sha: str) -> dict[str, Any]:
+        return await self._rpc("approver_publish_agent_campaign_v1", {
+            "p_instance": instance, "p_session_hash": session_hash, "p_campaign_id": campaign_id,
+            "p_fingerprint": fingerprint, "p_check_sha": check_sha})
+
+    async def pause_campaign(self, instance: Mapping[str, str], *, session_hash: str, campaign_id: str,
+                             reason: str) -> dict[str, Any]:
+        return await self._rpc("approver_pause_agent_campaign_v1", {
+            "p_instance": instance, "p_session_hash": session_hash, "p_campaign_id": campaign_id, "p_reason": reason})
+
+    async def resume_campaign(self, instance: Mapping[str, str], *, session_hash: str, campaign_id: str) -> dict[str, Any]:
+        return await self._rpc("approver_resume_agent_campaign_v1", {
+            "p_instance": instance, "p_session_hash": session_hash, "p_campaign_id": campaign_id})
+
+    async def discard_campaign(self, instance: Mapping[str, str], *, session_hash: str, campaign_id: str,
+                               reason: str) -> dict[str, Any]:
+        return await self._rpc("approver_discard_agent_campaign_v1", {
+            "p_instance": instance, "p_session_hash": session_hash, "p_campaign_id": campaign_id, "p_reason": reason})
 
     async def cohort_add(self, instance: Mapping[str, str], *, session_hash: str, product_ref: str, flow_key: str,
                          phone: str, reason: str) -> dict[str, Any]:
@@ -767,9 +794,14 @@ def _page(title: str, message: str, status: int) -> HTMLResponse:
     return HTMLResponse(_shell(title, body), status_code=status)
 
 
-def _login(return_to: str | None, *, template: str | None = None) -> HTMLResponse:
-    query = f"?{urlencode({'t': template})}" if template else f"?{urlencode({'p': return_to})}" if return_to else ""
-    title, what, see = ("Aprobar plantillas de WhatsApp",
+def _login(return_to: str | None, *, template: str | None = None, campaign: str | None = None) -> HTMLResponse:
+    query = (f"?{urlencode({'c': campaign})}" if campaign
+             else f"?{urlencode({'t': template})}" if template
+             else f"?{urlencode({'p': return_to})}" if return_to else "")
+    title, what, see = ("Aprobar campañas",
+                        "Acá ves la campaña que armó el agente y decidís si queda andando.",
+                        "la campaña") if campaign else (
+                       "Aprobar plantillas de WhatsApp",
                         "Acá ves la plantilla que el agente propone pedirle a Meta y decidís si se manda.",
                         "la plantilla") if template else (
         "Aprobar cambios de flujos",
@@ -2013,13 +2045,19 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
     async def slack_start(request: Request) -> Response:
         target = request.query_params.get("p")
         template = request.query_params.get("t")
+        campaign = request.query_params.get("c")
         if target is not None and not _canonical_uuid(target):
             return _page("Entrar", "El link no es válido.", 404)
         if template is not None and (extra_routes is None or target is not None or not _canonical_uuid(template)):
             return _page("Entrar", "El link no es válido.", 404)
+        if campaign is not None and (extra_routes is None or target is not None or template is not None
+                                     or not _canonical_uuid(campaign)):
+            return _page("Entrar", "El link no es válido.", 404)
         state = secrets.token_urlsafe(32)
         if template is not None:
             state = f"t{template}{state}"
+        if campaign is not None:
+            state = f"c{campaign}{state}"
         nonce = secrets.token_urlsafe(32)
         return_path = f"{PREFIX}/p/{target}" if target else f"{PREFIX}/"
         try:
@@ -2082,6 +2120,10 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
         if extra_routes is not None and template_state is not None and return_path == f"{PREFIX}/" \
                 and _canonical_uuid(template_state.group(1)):
             return_path = f"{PREFIX}/t/{template_state.group(1)}"
+        campaign_state = _CAMPAIGN_STATE.fullmatch(state)
+        if extra_routes is not None and campaign_state is not None and return_path == f"{PREFIX}/" \
+                and _canonical_uuid(campaign_state.group(1)):
+            return_path = f"{PREFIX}/c/{campaign_state.group(1)}"
         logger.info("flow_approval route=callback session=created ok=%s", created.get("ok") is True)
         response = RedirectResponse(return_path, status_code=303)
         response.delete_cookie(STATE_COOKIE, path="/", secure=True, httponly=True, samesite="lax")
@@ -2112,16 +2154,18 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
 
     async def _write_form(request: Request, *, title: str, fields: set[str],
                           optional: frozenset[str] = frozenset(),
-                          template: str | None = None) -> tuple[str, str, dict[str, str]] | Response:
+                          template: str | None = None, campaign: str | None = None,
+                          ) -> tuple[str, str, dict[str, str]] | Response:
         """Origin, sesion viva y en la lista, formulario acotado y CSRF; o la respuesta que corta.
 
         ``template``: la solicitud de plantilla del formulario, para que quien perdio la sesion vuelva a ella.
+        ``campaign``: lo mismo, con una campana (agent-campaigns-v1).
         """
         if not _same_origin(request, config.origin):
             return _page(title, "Origen no autorizado.", 403)
         who = await _who(request)
         if who is None:
-            return _logged_out(_login(None, template=template))
+            return _logged_out(_login(None, template=template, campaign=campaign))
         user, secret = who
         try:
             form = await _bounded_form(request, max_fields=len(fields) + len(optional))

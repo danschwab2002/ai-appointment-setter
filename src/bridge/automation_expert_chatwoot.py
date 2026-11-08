@@ -16,6 +16,10 @@ rutas de Chatwoot, con la cuenta de la instancia fija en la ruta.
   lee la lista de la conversacion y se manda esa misma mas la nueva.
 * ``GET  /internal/automation-expert/v1/chatwoot/macros``: los macros que ve el
   usuario de la clave, sin quien los creo ni los archivos. Solo lee.
+* ``POST /internal/automation-expert/v1/chatwoot/macros``: crea un macro que solo
+  suma una etiqueta que ya existe (lo que exige ``ProductLabeler``), o devuelve el
+  que ya lo hace (decision de Dan del 2026-11-08, agent-campaigns-v1). Es la unica
+  forma de macro que sale de aca: ni otras acciones, ni editar, ni ejecutar.
 
 Las rutas existen solo con ``AUTOMATION_EXPERT_CHATWOOT_ENABLED`` (apagado por
 defecto) y piden la clave de cambio del agente (``AUTOMATION_EXPERT_CHANGE_TOKEN``).
@@ -25,6 +29,10 @@ Las formas de Chatwoot son las de v4.13.0, leidas en su codigo publico
 (``labels_controller.rb``, ``labels/index.json.jbuilder``,
 ``labels/create.json.jbuilder``, ``label_concern.rb``, ``labelable.rb``,
 ``macros/index.json.jbuilder``, ``models/_macro.json.jbuilder``) el 2026-11-01.
+La creacion de un macro, en v4.13.0 (``macros_controller.rb`` y
+``macros/create.json.jbuilder``, leidos el 2026-11-08): ``POST /macros`` con
+``name``, ``visibility`` y ``actions``; contesta ``{"payload": {...}}``. Un usuario
+``agent`` queda con visibilidad ``personal`` aunque se pida ``global``.
 
 El log lleva la ruta, el estado, el codigo y los conteos; nunca un titulo, una
 descripcion ni una clave.
@@ -62,7 +70,9 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 CONTRACT = "automation-expert-chatwoot-v1"
-CONTRACT_VERSION = "1.0.0"
+CONTRACT_VERSION = "1.1.0"
+# Lo que contesta una instancia sin campanas (AGENT_CAMPAIGNS_ENABLED apagado): sin crear macros.
+CONTRACT_VERSION_WITHOUT_MACRO_CREATION = "1.0.0"
 ROUTE_PREFIX = f"{PREFIX}/chatwoot"
 MAX_BODY_BYTES = 8 * 1024
 MAX_UPSTREAM_BYTES = 2 * 1024 * 1024
@@ -81,11 +91,17 @@ ALLOWED_CALLS: tuple[tuple[str, str], ...] = (
     ("GET", "/api/v1/accounts/{account}/conversations/{conversation}/labels"),
     ("POST", "/api/v1/accounts/{account}/conversations/{conversation}/labels"),
     ("GET", "/api/v1/accounts/{account}/macros"),
+    ("POST", "/api/v1/accounts/{account}/macros"),
 )
+# Crear un macro es de las campanas: sin AGENT_CAMPAIGNS_ENABLED esta ruta queda afuera de la lista.
+_MACRO_CREATION = ("POST", "/api/v1/accounts/{account}/macros")
 
 # Las etiquetas del control del bridge: ponerlas pausa o da de baja a una
 # persona, y eso no es de esta herramienta.
 _RESERVED_PREFIX = "automation_"
+# Un macro de esta herramienta no puede ser el de ``cliente`` (sigue por customer_status).
+_MACRO_FORBIDDEN_LABELS = frozenset({"cliente"})
+_MACRO_NAME_PREFIX = "campana-"
 # Chatwoot: UNICODE_CHARACTER_NUMBER_HYPHEN_UNDERSCORE, y el titulo se pasa a minusculas.
 _TITLE = re.compile(r"^[\w-]{1,40}$")
 _COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -109,9 +125,11 @@ class ChatwootToolUnavailable(Exception):
         self.http_status = http_status
 
 
-def _compile(account_id: int) -> tuple[tuple[str, re.Pattern[str]], ...]:
+def _compile(account_id: int, *, create_macros: bool) -> tuple[tuple[str, re.Pattern[str]], ...]:
     compiled = []
     for method, template in ALLOWED_CALLS:
+        if (method, template) == _MACRO_CREATION and not create_macros:
+            continue
         pattern = re.escape(template).replace(re.escape("{account}"), str(account_id)).replace(
             re.escape("{conversation}"), r"[1-9][0-9]{0,11}")
         compiled.append((method, re.compile(f"^{pattern}$")))
@@ -122,7 +140,8 @@ class ScopedChatwoot:
     """El cliente de Chatwoot del agente: solo la lista cerrada, en la cuenta y la bandeja de la instancia."""
 
     def __init__(self, *, base_url: str, account_id: int, access_token: str, inbox_id: int,
-                 transport: httpx.AsyncBaseTransport | None = None, timeout_seconds: float = 15.0) -> None:
+                 transport: httpx.AsyncBaseTransport | None = None, timeout_seconds: float = 15.0,
+                 create_macros: bool = False) -> None:
         if type(account_id) is not int or account_id <= 0 or type(inbox_id) is not int or inbox_id <= 0:
             raise ValueError("account and inbox must be positive integers")
         self._base_url = base_url.rstrip("/")
@@ -131,7 +150,7 @@ class ScopedChatwoot:
         self._inbox_id = inbox_id
         self._transport = transport
         self._timeout_seconds = timeout_seconds
-        self._allowed = _compile(account_id)
+        self._allowed = _compile(account_id, create_macros=create_macros)
 
     @property
     def account_id(self) -> int:
@@ -237,6 +256,26 @@ class ScopedChatwoot:
         if not isinstance(macros, list) or not all(isinstance(macro, dict) for macro in macros):
             raise ChatwootToolUnavailable("chatwoot_tool_response_invalid")
         return [_macro_view(macro) for macro in macros]
+
+    async def create_label_macro(self, *, label: str) -> tuple[dict[str, Any], bool]:
+        """Un macro global que solo suma la etiqueta. Si ya hay uno que hace exactamente eso, ese."""
+        if label not in {item["title"] for item in await self.list_labels()}:
+            raise ChatwootCallRefused("chatwoot_label_not_found")
+        wanted = [{"action_name": "add_label", "action_params": [label]}]
+        for macro in await self.list_macros():
+            if macro.get("actions") == wanted:
+                return macro, False
+        try:
+            payload = await self._call("POST", self._path("/macros"), {
+                "name": f"{_MACRO_NAME_PREFIX}{label}"[:120], "visibility": "global", "actions": wanted})
+        except ChatwootToolUnavailable as error:
+            if error.http_status in (403, 422):
+                raise ChatwootToolUnavailable("chatwoot_macro_rejected") from None
+            raise
+        created = payload.get("payload") if isinstance(payload, dict) else None
+        if not isinstance(created, dict) or type(created.get("id")) is not int or created.get("actions") != wanted:
+            raise ChatwootToolUnavailable("chatwoot_tool_response_invalid")
+        return _macro_view(created), True
 
 
 def _clean_text(value: Any, limit: int = 200) -> Any:
@@ -355,11 +394,16 @@ _REFUSED_STATUS = {
 
 def register_automation_expert_chatwoot_routes(app: FastAPI, *, token: str, chatwoot: ScopedChatwoot,
                                                tenant_ref: str, ally_ref: str,
-                                               git_sha: str | None = None) -> None:
-    """Las rutas, detras del flag (lo mira quien llama: con el flag apagado no existen)."""
+                                               git_sha: str | None = None, create_macros: bool = False) -> None:
+    """Las rutas, detras del flag (lo mira quien llama: con el flag apagado no existen).
+
+    ``create_macros`` (``AGENT_CAMPAIGNS_ENABLED``): sin las campanas, ``POST .../macros``
+    no existe y el contrato sigue en 1.0.0. Crear un macro solo sirve para una campana.
+    """
     instance = {"tenant_ref": tenant_ref, "ally_ref": ally_ref}
     sha = git_sha or os.getenv("GIT_SHA", "") or "unknown"
     slots = asyncio.Semaphore(2)
+    contract_version = CONTRACT_VERSION if create_macros else CONTRACT_VERSION_WITHOUT_MACRO_CREATION
 
     def authenticate(authorization: str | None) -> None:
         expected = f"Bearer {token}"
@@ -369,7 +413,7 @@ def register_automation_expert_chatwoot_routes(app: FastAPI, *, token: str, chat
                                 headers={"WWW-Authenticate": "Bearer"})
 
     def envelope(data: Mapping[str, Any]) -> dict[str, Any]:
-        return {"contract": CONTRACT, "contract_version": CONTRACT_VERSION, "instance": dict(instance),
+        return {"contract": CONTRACT, "contract_version": contract_version, "instance": dict(instance),
                 "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
                 "bridge_git_sha": sha, "data": dict(data)}
 
@@ -473,3 +517,30 @@ def register_automation_expert_chatwoot_routes(app: FastAPI, *, token: str, chat
             return out
         logger.info("automation_expert_chatwoot route=macros status=200 macros=%s", len(out))
         return envelope({"macros": out[:MACROS_MAX], "total": len(out), "truncated": len(out) > MACROS_MAX})
+
+    if not create_macros:
+        return
+
+    @app.post(f"{ROUTE_PREFIX}/macros")
+    async def create_macro(request: Request, authorization: str | None = Header(default=None)) -> Any:
+        authenticate(authorization)
+        try:
+            body = _check_body(await _body(request), required={"label", "requested_by"},
+                               allowed={"label", "requested_by"})
+            label = _title(body["label"], "label")
+            if label in _MACRO_FORBIDDEN_LABELS:
+                raise _Refused("chatwoot_label_reserved", {"field": "label", "problem": "client_label"})
+        except _Refused as error:
+            return refused("create_macro", error.code, error.reason)
+
+        async def call() -> Any:
+            return await chatwoot.create_label_macro(label=label)
+
+        out = await run("create_macro", call)
+        if isinstance(out, JSONResponse):
+            return out
+        macro, created = out
+        logger.info("automation_expert_chatwoot route=create_macro status=%s created=%s macro=%s",
+                    201 if created else 200, created, macro.get("id"))
+        return JSONResponse(status_code=201 if created else 200,
+                            content=envelope({"macro": macro, "created": created}))

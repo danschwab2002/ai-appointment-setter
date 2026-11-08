@@ -106,6 +106,12 @@ El aviso va en `segments` de la procedencia del turno con `kind: "aviso_de_campa
 4. `CAMPAIGN_INBOUND_ENTRY_ENABLED=true` (con `AGENT_SEGMENTS_ENABLED=true`).
 5. Prueba con el teléfono de un aprobador: `/nuevo` y el texto del botón → `segment_label_by_keyword … outcome=added` y `segment_context key=<clave>` en el mismo turno; `/nuevo` y «hola» → el agente pregunta; «sí» → `segment_entry_answer … answer=si outcome=recorded label=added`.
 
+## 8a. La palabra clave desde la base (`agent-campaigns-v1`, E-355)
+
+Con `AGENT_CAMPAIGNS_ENABLED`, la palabra clave y la pregunta de una campaña publicada salen de su fila (`palabras_clave`, `pregunta_entrada`), se recargan sin reiniciar y `CAMPAIGN_INBOUND_ENTRY_ENABLED` puede arrancar con cero segmentos (`campaigns_live`). Reemplaza al §8b: no se construyó el disparador `primer_mensaje` (contrato `agent-campaigns-v1`).
+
+A una persona dada de baja (`prior_opt_out`) no se le aplica la entrada: ni la pregunta, ni la etiqueta, ni el cupón (E-355). La misma regla corta el segmento que ya tenía por la etiqueta: `segment-knowledge-v1`, «En cada turno», punto 7.
+
 ## 8b. El camino del Automation Expert (encargo siguiente)
 
 Dan, 03/11: la palabra clave la tiene que poder configurar el Automation Expert, y la automatización la detecta. Hoy el AE cambia configuración por un solo camino, el ciclo de `flow-change-cycle-v1`: `propose_flow_change` arma una propuesta con ítems sobre flujos del almacén, `validate_flow_change` corre las 17 reglas, el sí lo da un aprobador en la página `flow_approval` (Sign in with Slack) y publicar es un paso atómico en la base. Diseño: la palabra clave entra por ese mismo camino como **un flujo de entrada**, sin un ciclo nuevo:
