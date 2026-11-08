@@ -689,6 +689,46 @@ def test_renderizar_un_profile_de_slack_frena_sin_admins_sin_slack_o_con_api_ser
         hi.renderizar_config({k: v for k, v in molde.items() if k != "slack"}, _plan_slack())
 
 
+def _profile_de_slack(tmp_path, monkeypatch):
+    """Una carpeta viva igual a la distribucion, salvo lo que cada prueba le cambie."""
+    d = _dentro_con(None)
+    monkeypatch.setattr(hi, "PROFILES", tmp_path / "profiles")
+    monkeypatch.setattr(d, "_estado_s6", lambda servicio: "down")
+    monkeypatch.setattr(d, "_estado_gateway", lambda carpeta: {})
+    carpeta, staged = tmp_path / "profiles" / "ae", tmp_path / "staged"
+    for raiz in (carpeta, staged):
+        raiz.mkdir(parents=True)
+        (raiz / "SOUL.md").write_text("x", encoding="utf-8")
+        (raiz / "config.yaml").write_text("a: 1\n", encoding="utf-8")
+        (raiz / "distribution.yaml").write_text(f"name: ae\nauthor: {hi.AUTOR}\n", encoding="utf-8")
+    d.esperado["ae"] = {"a": 1}
+    return d, carpeta, staged, {"staged": str(staged), "variables": [], "le_habla": "slack"}
+
+
+def test_sin_el_marker_se_reinstala_y_con_el_no(tmp_path, monkeypatch):
+    # E-349: una instancia sin .no-bundled-skills tiene que recibirlo aunque el resto este igual.
+    d, carpeta, staged, p = _profile_de_slack(tmp_path, monkeypatch)
+    (staged / hi.MARKER_SIN_SKILLS_DE_FABRICA).write_text("x", encoding="utf-8")
+    d._aplicar_profile("ae", p, simular=True)
+    assert any(".no-bundled-skills" in a and "charlas nuevas" in a for a in d.reporte.acciones), d.reporte.acciones
+    d.reporte.acciones.clear()
+    (carpeta / hi.MARKER_SIN_SKILLS_DE_FABRICA).write_text("otro texto", encoding="utf-8")
+    d._aplicar_profile("ae", p, simular=True)
+    assert not any(a.startswith("instalar la distribucion") for a in d.reporte.acciones), d.reporte.acciones
+
+
+def test_huella_de_carpeta_ignora_el_manifiesto_que_anota_hermes(tmp_path):
+    # skills_sync reescribe skills/.bundled_manifest en cada arranque, aunque no copie nada: no es un
+    # cambio de la distribucion (E-349).
+    (tmp_path / "a.md").write_text("x", encoding="utf-8")
+    antes = hi.huella_de_carpeta(tmp_path)
+    (tmp_path / ".bundled_manifest").write_text("hermes-agent:abc\n", encoding="utf-8")
+    assert hi.huella_de_carpeta(tmp_path) == antes
+    for anotado in (".bundled_manifest", ".usage.json", ".curator_state", "flujos/.curator_x"):
+        assert hi.se_ignora_al_comparar(Path(anotado)), anotado
+    assert not hi.se_ignora_al_comparar(Path("flujos/crear-un-flujo/SKILL.md"))
+
+
 def test_huella_de_carpeta_ve_el_contenido_y_saltea_los_caches(tmp_path):
     assert hi.huella_de_carpeta(tmp_path / "no-existe") is None
     (tmp_path / "p" / "x").mkdir(parents=True)
@@ -729,6 +769,11 @@ def test_el_paquete_lleva_los_plugins_y_solo_los_profiles_que_la_instancia_decla
     assert (ae / "plugins" / "automation-expert-read" / "tools.py").is_file()
     assert not list(ae.rglob("__pycache__"))
     assert hi.huella_de_carpeta(ae / "plugins") == hi.huella_de_carpeta(DISTRIBUCION_AE / "plugins")
+    # E-349: las skills y el marker viajan con la distribucion.
+    assert (ae / "skills" / "flujos" / "crear-un-flujo" / "SKILL.md").is_file()
+    assert hi.huella_de_carpeta(ae / "skills") == hi.huella_de_carpeta(DISTRIBUCION_AE / "skills")
+    assert (ae / hi.MARKER_SIN_SKILLS_DE_FABRICA).is_file()
+    assert not (solo / "profiles" / "agente-comercial" / hi.MARKER_SIN_SKILLS_DE_FABRICA).exists()
     plan = json.loads((con / "plan.json").read_text(encoding="utf-8"))
     p = plan["profiles"]["automation-expert"]
     assert (p["le_habla"], p["puerto"], p["herramientas"], p["administran"]) == ("slack", None, ["automation_expert_change", "automation_expert_read"], [ADMIN])

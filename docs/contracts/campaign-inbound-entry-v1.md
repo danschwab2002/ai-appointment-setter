@@ -118,7 +118,7 @@ pasos:
 
 - El esquema (`flow-definition-v1`) suma el disparador `primer_mensaje` con `palabra_clave` (1 a 8, normalizadas), que solo admite un paso `etiquetar` de segmento; el validador suma sus reglas (palabra clave repetida con otro flujo activo, segmento vencido, etiqueta sin macro). La página de aprobación lo muestra como una burbuja con la palabra clave y la etiqueta.
 - El bridge lee, con caché corta, los flujos `primer_mensaje` activos de la instancia (la misma lectura del almacén que usa `/flows`) y los suma a las palabras clave del manifiesto en `CampaignInboundEntry.turn`; lo demás de este contrato no cambia. La admisión nativa nunca recibe este disparador (no hay evento asíncrono): una migración de forma lo deja cerrado en `_flow_engine_native_unsupported`.
-- Lo que ve el AE: `list_flows` trae los flujos de entrada; la biblioteca suma cómo escribirlo. El SOUL del AE está al tope: va a la biblioteca.
+- Lo que ve el AE: `list_flows` trae los flujos de entrada; una skill del AE suma cómo escribirlo.
 - Tamaño: **1 a 1,5 días de cadena** (esquema y validador, migración de forma, lectura del bridge con caché, página, biblioteca y lectura del AE, tests y PGlite). Va como encargo propio después de este PR; la pregunta de entrada puede seguir en el manifiesto o pasar por el mismo camino en una segunda vuelta.
 
 ## 9. Decisiones (con su default)

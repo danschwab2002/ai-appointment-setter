@@ -27,7 +27,7 @@ puerto = 8642                                      # el del API server, adentro 
 le_habla = "bridge"
 
 [profiles.automation-expert]
-distribucion = "profiles/automation-expert"        # además, su carpeta plugins/
+distribucion = "profiles/automation-expert"        # además, sus carpetas plugins/ y skills/
 le_habla = "slack"                                 # sin API server ni puerto
 herramientas = ["automation_expert_read"]          # exactamente estas en Slack, ni una más
 obligatorio = false                                # la instancia puede no declararlo
@@ -39,7 +39,7 @@ Hay dos tipos de profile:
   Cero herramientas y ninguna otra plataforma.
 - **`le_habla = "slack"`** (el Automation Expert): atiende por mensaje directo de Slack y le habla al
   bridge por su plugin. No tiene API server. Tiene exactamente las `herramientas` declaradas en
-  Slack, y su carpeta `plugins/` se instala y se chequea por hash contra Git. Sus variables (los
+  Slack, y sus carpetas `plugins/` y `skills/` se instalan y se chequean por hash contra Git. Sus variables (los
   tokens de Slack) y sus plugins se leen solo al arrancar el gateway.
 
 Lista solo los profiles que esta versión trae. Lo que tiene que estar apagado no se declara: el
@@ -110,7 +110,9 @@ python3 scripts/hermes_instancia.py chequear --instancia /opt/setter-att1/instan
   nuevo sin arrastrar un cambio pendiente de otro: el 2026-10-21, el SOUL del comercial de ATT1 no era
   el de Git (le faltaba lo de varios productos) y el Automation Expert se instaló con `--solo`.
 - **`aplicar` es un deploy.** Hermes lee el SOUL y el `config.yaml` de un profile en cada pedido:
-  lo que escribe `aplicar` lo usa el agente desde el pedido siguiente, sin reiniciar.
+  lo que escribe `aplicar` lo usa el agente desde el pedido siguiente, sin reiniciar. El profile de
+  Slack guarda el system prompt en cada sesión y las sesiones no vencen solas: lo instalado llega a
+  las charlas nuevas, y una abierta sigue con lo de antes hasta `/new`.
   - crea lo que falta (`hermes profile create`, que registra el servicio en s6);
   - instala la distribución con `hermes profile install --force`, que pisa solo `SOUL.md` y
     `config.yaml`, nunca memorias, sesiones ni registros;

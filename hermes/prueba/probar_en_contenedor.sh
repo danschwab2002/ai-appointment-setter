@@ -259,6 +259,9 @@ instalador aplicar-ae 1 aplicar --instancia "$TMP/hermes-ae.toml" --solo automat
 contiene aplicar-ae "agente-comercial: no se mira (--solo automation-expert)"
 contiene aplicar-ae "instalar la distribucion en automation-expert"
 contiene aplicar-ae "automation-expert: plugins/ igual a Git"
+contiene aplicar-ae "automation-expert: skills/ igual a Git"
+contiene aplicar-ae "automation-expert: no se siembran las skills de fabrica"
+contiene aplicar-ae "automation-expert: el modelo recibe skill_view y no skill_manage"
 contiene aplicar-ae "automation-expert: en slack tiene exactamente [automation_expert_change, automation_expert_read]"
 contiene aplicar-ae "automation-expert: el gateway corre"
 contiene aplicar-ae "automation-expert: el gateway arranco despues de sus variables y sus plugins"
@@ -285,6 +288,14 @@ contiene repara-plugin "instalar la distribucion en automation-expert (plugins/)
 contiene repara-plugin "automation-expert: plugins/ igual a Git"
 contiene repara-plugin "automation-expert: el gateway arranco despues de sus variables y sus plugins"
 [ "$(pid_del_gateway automation-expert)" = "$PID_AE" ] || fallar "reparar el plugin reinicio al Automation Expert"
+
+paso "10c2. rojo a proposito: sin el marker, Hermes podria sembrar sus skills de fabrica"
+como_hermes "$C" rm /opt/data/profiles/automation-expert/.no-bundled-skills
+instalador rojo-marker 1 chequear --instancia "$TMP/hermes-ae.toml"
+contiene rojo-marker "automation-expert: falta .no-bundled-skills"
+instalador repara-marker 1 aplicar --instancia "$TMP/hermes-ae.toml"
+contiene repara-marker "instalar la distribucion en automation-expert (.no-bundled-skills)"
+contiene repara-marker "automation-expert: no se siembran las skills de fabrica"
 
 paso "10c2. rotar el token de Slack: el gateway lo lee solo al arrancar"
 python3 - "$TMP/secretos/automation-expert.variables" <<'PY'

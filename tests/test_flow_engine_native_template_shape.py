@@ -277,8 +277,8 @@ PROFILE = Path(__file__).resolve().parents[1] / "profiles" / "automation-expert"
 
 
 def test_the_soul_says_the_step_writes_its_variables() -> None:
-    soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
-    section = soul.split("**Creás un flujo nuevo cuando te lo piden**", 1)[1].split("- **No aprobás", 1)[0]
+    skill = (PROFILE / "skills" / "flujos" / "crear-un-flujo" / "SKILL.md").read_text(encoding="utf-8")
+    section = skill.split("## Qué hace hoy y cómo se escribe", 1)[1]
     # Lo que decia mal hasta la 1.19.0 (E-113): las variables no salen de la plantilla.
     assert "el idioma y las variables de la plantilla" not in section
     for phrase in ("`variables`", "una por cada marcador", "`[\"producto\"]`", "template_variable_count_mismatch",
@@ -287,8 +287,7 @@ def test_the_soul_says_the_step_writes_its_variables() -> None:
 
 
 def test_the_library_says_how_a_purchase_template_is_named_and_what_it_carries() -> None:
-    page = (PROFILE / "plugins" / "automation-expert-read" / "biblioteca" / "chatwoot-whatsapp.md").read_text(
-        encoding="utf-8")
+    page = (PROFILE / "skills" / "plataformas" / "chatwoot-whatsapp" / "SKILL.md").read_text(encoding="utf-8")
     for phrase in ("variables: [\"producto\"]", "una por marcador", "los da quien la pidió", "link fijo",
                    "respuesta rápida", "template_button_mismatch", "solo la nota"):
         assert phrase in page, phrase

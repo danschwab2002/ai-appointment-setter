@@ -1,4 +1,11 @@
+---
+name: ghl-formularios
+description: "Formularios de GHL: cómo llegan, permiso de WhatsApp, mail"
+---
+
 # Los formularios de GHL
+
+Cargala cuando preguntan cómo llega el formulario de la landing, qué permiso da o por qué no se atan una persona y su compra. Por ejemplo: «¿cómo llega el formulario?», «¿por qué no le escribió a alguien que dejó sus datos?».
 
 **Cómo llega.** Cuando alguien envía un formulario de la landing, un workflow de GHL con el disparador *Form submitted* y la acción *Webhook* le manda un POST al bridge, a `POST /webhooks/adapters/ghl/lead-precheckout` (`src/bridge/app.py`, `GHL_PRECHECKOUT_ADAPTER_PATH`). El adaptador lo traduce al evento canónico `lead.precheckout` (la intención) y lo admite por el mismo camino que un formulario de landing. Contrato: `docs/contracts/ghl-precheckout-adapter-v1.md`.
 

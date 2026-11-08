@@ -208,6 +208,9 @@ def test_the_preview_says_it_goes_back_to_the_cohort() -> None:
 # ------------------------------------------------------------- la biblioteca
 
 READ_PLUGIN = Path(__file__).resolve().parents[1] / "profiles" / "automation-expert" / "plugins" / "automation-expert-read"
+SKILLS = READ_PLUGIN.parents[1] / "skills"
+SKILL_NAMES = ("cambiar-un-flujo", "chatwoot-whatsapp", "crear-un-flujo", "ghl-formularios", "hotmart",
+               "pasar-flujo-al-sistema-nuevo")
 
 
 def _tools():  # el modulo del plugin, sin Hermes
@@ -219,16 +222,23 @@ def _tools():  # el modulo del plugin, sin Hermes
     return module
 
 
-def test_read_library_gives_the_index_and_each_page() -> None:
+def test_skill_view_gives_each_skill_and_nothing_else() -> None:
     tools = _tools()
-    index = json.loads(tools.read_library({}))
-    assert index["tema"] == "indice" and index["topics"] == ["hotmart", "ghl-formularios", "chatwoot-whatsapp", "crear-un-flujo"]
-    for topic in index["topics"]:
-        page = json.loads(tools.read_library({"tema": topic}))
-        assert page["tema"] == topic and page["page"].startswith("# ")
-        assert f"`{topic}`" in index["page"]
-    assert json.loads(tools.read_library({"tema": "../SOUL"}))["error"] == "library_topic_unknown"
-    assert json.loads(tools.read_library({"tema": "indice/../../x"}))["error"] == "library_topic_unknown"
+    for name in SKILL_NAMES:
+        page = json.loads(tools.skill_view({"name": name}))
+        assert page["name"] == name and page["content"].startswith("---\n")
+    for bad in ("../SOUL", "indice/../../x", "hermes-agent", "", None):
+        unknown = json.loads(tools.skill_view({"name": bad}))
+        assert unknown["error"] == "skill_not_found" and unknown["skills"] == sorted(SKILL_NAMES)
+
+
+def test_read_library_serves_the_sessions_opened_before_the_skills() -> None:
+    # Hermes reusa el system prompt de una sesion abierta: el SOUL viejo sigue pidiendo read_library (E-349).
+    tools = _tools()
+    page = json.loads(tools.read_library({"tema": "hotmart"}))
+    assert page["name"] == "hotmart" and "PURCHASE_APPROVED" in page["content"]
+    moved = json.loads(tools.read_library({}))
+    assert moved["error"] == "read_library_moved" and moved["use"] == "skill_view" and "hotmart" in moved["skills"]
 
 
 def test_the_library_matches_the_code() -> None:
@@ -238,8 +248,9 @@ def test_the_library_matches_the_code() -> None:
     from bridge.automation_expert_read import META_ERROR_EXPLANATIONS
     from bridge.flow_definition import EVENTS
 
-    pages = {path.stem: path.read_text(encoding="utf-8") for path in (READ_PLUGIN / "biblioteca").glob("*.md")}
-    assert set(pages) == {"indice", "hotmart", "ghl-formularios", "chatwoot-whatsapp", "crear-un-flujo"}
+    pages = {path.parent.name: path.read_text(encoding="utf-8")
+             for category in ("flujos", "plataformas") for path in (SKILLS / category).glob("*/SKILL.md")}
+    assert set(pages) == set(SKILL_NAMES)
     text = "\n".join(pages.values())
     events = set(re.findall(r"`(PURCHASE_[A-Z_]+)`", text))
     known = {hotmart.EVENT_CART_ABANDONMENT, hotmart.EVENT_PURCHASE_APPROVED, hotmart.EVENT_PURCHASE_CANCELED,
@@ -250,7 +261,7 @@ def test_the_library_matches_the_code() -> None:
     for code in re.findall(r"\(código (\d{6})\)|\(\w+ con (\d{6})\)", text):
         number = next(part for part in code if part)
         assert number in META_ERROR_EXPLANATIONS, number
-    for trigger in re.findall(r"^- `([a-z_]+)` \(", pages["indice"], flags=re.MULTILINE):
+    for trigger in re.findall(r"^- `([a-z_]+)` \(", pages["hotmart"], flags=re.MULTILINE):
         assert trigger in EVENTS, trigger
     # Sin datos de una persona ni de una instancia.
     assert "@" not in text

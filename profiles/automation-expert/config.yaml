@@ -16,8 +16,13 @@
 #   y validar un cambio de flujo, flow-change-cycle-v1; nunca aprueba, publica ni pausa), en Slack y
 #   en la terminal. no_mcp apaga los servidores MCP, que sin lista entran todos. disabled_toolsets
 #   resta todo lo demas al final.
-# - Lo que devuelve el bridge vive solo en la charla: sin memoria, sin skills, sin la revision en
-#   segundo plano y con las sesiones podadas a los 7 dias.
+# - Lo que devuelve el bridge vive solo en la charla: sin memoria, sin la revision en segundo plano
+#   y con las sesiones podadas a los 7 dias.
+# - Las skills (E-349) son solo de lectura: viven en skills/ del profile y el indice de Hermes las
+#   lista (agent/system_prompt.py:619), pero el toolset nativo `skills` NO se prende porque trae
+#   skill_manage. El plugin registra su propio skill_view con override (tools/registry.py, por eso
+#   plugins.entries abajo), y disabled_toolsets no lleva `skills`: restaria tambien ese skill_view
+#   por nombre (model_tools.py:491-492).
 _config_version: 39
 
 model:
@@ -69,7 +74,6 @@ agent:
     - tts
     - memory
     - session_search
-    - skills
     - delegation
     - cronjob
     - project
@@ -103,6 +107,10 @@ plugins:
   enabled:
     - automation-expert-read
     - automation-expert-change
+  entries:
+    automation-expert-read:
+      granted_capabilities:
+        - tools.override
 
 security:
   redact_secrets: true

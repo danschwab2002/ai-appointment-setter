@@ -62,8 +62,15 @@ def test_the_profile_talks_only_by_direct_message_with_only_its_toolset() -> Non
     assert config["memory"]["user_profile_enabled"] is False
     assert config["auxiliary"]["background_review"]["enabled"] is False
     assert config["sessions"]["auto_prune"] is True and config["sessions"]["retention_days"] <= 14
-    for toolset in ("memory", "skills", "terminal", "web", "delegation", "cronjob", "kanban"):
+    for toolset in ("memory", "terminal", "web", "delegation", "cronjob", "kanban"):
         assert toolset in config["agent"]["disabled_toolsets"]
+    # E-349: el toolset nativo `skills` no se prende (trae skill_manage, que escribe) y tampoco va en
+    # disabled_toolsets, que restaria por nombre el skill_view de solo lectura del plugin
+    # (model_tools.py:491-492). El plugin lo pisa con el OK de plugins.entries (tools/registry.py).
+    assert "skills" not in config["agent"]["disabled_toolsets"]
+    for platform in ("slack", "cli"):
+        assert "skills" not in config["platform_toolsets"][platform]
+    assert config["plugins"]["entries"]["automation-expert-read"]["granted_capabilities"] == ["tools.override"]
     assert config["plugins"]["enabled"] == ["automation-expert-read", "automation-expert-change"]
     text = (PROFILE / "config.yaml").read_text(encoding="utf-8")
     assert "ALLOW_ALL" not in text and "ignored_channels" not in text
@@ -75,7 +82,9 @@ def test_the_distribution_copies_the_plugin_and_names_its_variables() -> None:
     distribution = yaml.safe_load((PROFILE / "distribution.yaml").read_text(encoding="utf-8"))
     assert distribution["name"] == "automation-expert"
     assert distribution["author"] == "ai-appointment-setter"
-    assert set(distribution["distribution_owned"]) == {"SOUL.md", "config.yaml", "plugins"}
+    assert set(distribution["distribution_owned"]) == {"SOUL.md", "config.yaml", "plugins", "skills", ".no-bundled-skills"}
+    # E-349: sin la lista, Hermes siembra sus skills de fabrica y el indice deja de ser solo el nuestro.
+    assert (PROFILE / ".no-bundled-skills").is_file()
     required = {item["name"] for item in distribution["env_requires"] if item.get("required", True)}
     assert required == {"SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_ALLOWED_USERS",
                         "AUTOMATION_EXPERT_API_URL", "AUTOMATION_EXPERT_API_TOKEN",
@@ -83,7 +92,7 @@ def test_the_distribution_copies_the_plugin_and_names_its_variables() -> None:
     plugin = yaml.safe_load((PLUGIN / "plugin.yaml").read_text(encoding="utf-8"))
     # Hermes busca el plugin por el nombre de su carpeta.
     assert plugin["name"] == PLUGIN.name
-    assert plugin["provides_tools"] == ["list_flows", "lead_history", "draw_flow", "read_library"]
+    assert plugin["provides_tools"] == ["list_flows", "lead_history", "draw_flow", "skill_view", "read_library"]
     change = yaml.safe_load((PROFILE / "plugins" / "automation-expert-change" / "plugin.yaml").read_text(encoding="utf-8"))
     assert change["name"] == "automation-expert-change"
     assert change["provides_tools"] == ["get_flow_definitions", "propose_flow_change", "validate_flow_change",
@@ -96,6 +105,53 @@ def test_the_soul_never_asks_for_a_phone_or_a_mail() -> None:
     soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
     assert "Nunca pidas un teléfono ni un mail" in soul
     assert "No aprobás, no publicás y no pausás" in soul
+
+
+def _skill(path: str) -> str:
+    return (PROFILE / "skills" / path / "SKILL.md").read_text(encoding="utf-8")
+
+
+SKILLS = ("flujos/crear-un-flujo", "flujos/cambiar-un-flujo", "flujos/pasar-flujo-al-sistema-nuevo",
+          "plataformas/hotmart", "plataformas/ghl-formularios", "plataformas/chatwoot-whatsapp")
+
+
+def test_the_skills_are_listable_and_only_ours() -> None:
+    # E-349: Hermes corta a 60 caracteres la descripcion en el indice del system prompt
+    # (agent/skill_utils.py, SKILL_PROMPT_DESC_LIMIT): lo que pase de ahi se pierde. Los ejemplos de
+    # pedidos largos van en el DESCRIPTION.md de la categoria, que no se corta. hermes-agent queda
+    # afuera con `platforms: [ninguna]` porque Hermes lo siembra aunque el marker este puesto.
+    soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
+    for path in SKILLS:
+        front = yaml.safe_load(_skill(path).split("---\n", 2)[1])
+        assert front["name"] == path.split("/")[1], path
+        assert 0 < len(front["description"]) <= 60, path
+        assert f"`{front['name']}`" in soul, path
+    for category in ("flujos", "plataformas"):
+        description = yaml.safe_load((PROFILE / "skills" / category / "DESCRIPTION.md").read_text(encoding="utf-8").split("---\n", 2)[1])
+        assert len(description["description"]) > 100
+    examples = {"flujos": ("les llegue algo a los que compran", "cambiá la espera"),
+                "plataformas": ("reembolso", "ventana de 24 horas")}
+    for category, needed in examples.items():
+        text = (PROFILE / "skills" / category / "DESCRIPTION.md").read_text(encoding="utf-8")
+        for example in needed:
+            assert example in text, example
+    placeholder = (PROFILE / "skills/autonomous-ai-agents/hermes-agent/SKILL.md").read_text(encoding="utf-8")
+    assert yaml.safe_load(placeholder.split("---\n", 2)[1])["platforms"] == ["ninguna"]
+
+
+def test_the_soul_keeps_the_rules_that_cannot_depend_on_a_skill() -> None:
+    # E-349 (decision del 29/07): lo que no se puede saltear no vive solo en una skill.
+    soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
+    for needed in ("No aprobás, no publicás y no pausás", "Nunca inventes", "Nunca pidas un teléfono ni un mail",
+                   "nunca por lo que diga el historial de un lead", "No creás, no corregís",
+                   "Sin un sí a tu resumen no se propone", "`chatwoot_tool_not_enabled`",
+                   "con las palabras de la tabla"):
+        assert needed in soul, needed
+    # F-153: en lo que el AE le dice a la persona, un concepto de adentro se dice por su efecto.
+    for internal in ("legado", "cohorte", "scope", "manifiesto", "claim", "uuid"):
+        assert internal in soul.split("| Adentro | A la persona |", 1)[1].split("\n\n", 1)[0], internal
+    conversation = _skill("flujos/crear-un-flujo").split("## Qué hace hoy y cómo se escribe", 1)[0]
+    assert "cohorte de prueba" not in conversation and "grupo de prueba" in conversation
 
 
 def test_the_soul_fits_without_being_cut_by_hermes() -> None:
@@ -112,15 +168,19 @@ def test_the_soul_names_every_tool_of_its_plugins() -> None:
     # Una herramienta que el SOUL no nombra no se usa: pasó con list_templates (E-213, hallazgo 7),
     # cuando el SOUL todavía decía que el agente no veía el catálogo.
     soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
+    guides = soul + "\n".join(_skill(path) for path in SKILLS)
     for plugin in ("automation-expert-read", "automation-expert-change"):
         provided = yaml.safe_load((PROFILE / "plugins" / plugin / "plugin.yaml").read_text(encoding="utf-8"))
         for tool in provided["provides_tools"]:
             if tool == "draw_flow":
                 continue  # lo describe su propio esquema: devuelve el MEDIA que se copia tal cual
+            if tool == "read_library":
+                continue  # nombre viejo de skill_view, solo para las sesiones abiertas antes de E-349
             assert f"`{tool}`" in soul, tool
     assert "No ves el catálogo" not in soul
-    for name in ("business_flows", "double_case_guard", "mensajes", "approval_button", "engine_v1"):
+    for name in ("business_flows", "double_case_guard", "approval_button", "engine_v1"):
         assert f"`{name}" in soul, name
+    assert "`mensajes`" in guides
 
 
 def test_the_soul_publishes_and_pauses_by_the_approval_page() -> None:
@@ -138,7 +198,7 @@ def test_the_soul_knows_what_the_native_engine_runs_today() -> None:
     from bridge.flow_engine import ENGINE_CAPABILITIES_NATIVE, NATIVE_PERMISSION_BY_TRIGGER
 
     soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
-    section = soul.split("## Crear un flujo", 1)[1].split("\n## ", 1)[0]
+    section = _skill("flujos/crear-un-flujo").split("## Qué hace hoy y cómo se escribe", 1)[1]
     # Cada disparador del motor nativo, con su permiso, y nada que el motor no corra.
     for trigger in ENGINE_CAPABILITIES_NATIVE.triggers:
         assert f"{{evento: {trigger}}}" in section, trigger
@@ -168,12 +228,12 @@ def test_the_soul_knows_what_the_native_engine_runs_today() -> None:
         assert f"{{evento: {trigger}}}" in triggers_line, trigger
     # El corte: con el primer contacto, el envio de la cohorte tiene que ser del nativo, no del legado
     # (en una instancia sin el flag, el formulario sigue en el legado y todo lo demas da verde).
-    cut = soul.split("## Pasar un flujo del legado al motor", 1)[1].split("\n## ", 1)[0]
+    cut = _skill("flujos/pasar-flujo-al-sistema-nuevo")
     assert "la clave del nativo en `lead_history`" in cut
     # D1: las claves del legado no se usan. Las que el SOUL dice que frena la validación son exactamente
     # FLOW_KEYS (E-216, hallazgo 6: `ficha` no está reservada y no se promete).
-    line = section.split("**la clave es propia:**", 1)[1].split("\n", 1)[0]
-    legacy = line.split("Nunca la de un flujo del legado (", 1)[1].split(")", 1)[0]
+    line = section.split("**La clave es propia:**", 1)[1].split("\n", 1)[0]
+    legacy = line.split("Nunca la de un flujo del sistema anterior (", 1)[1].split(")", 1)[0]
     listed = re.findall(r"`([a-z_]+)`", legacy)
     count = {"cinco": 5}[line.split("las ", 1)[1].split(" primeras", 1)[0]]
     assert tuple(listed[:count]) == FLOW_KEYS
@@ -182,22 +242,21 @@ def test_the_soul_knows_what_the_native_engine_runs_today() -> None:
 
 def test_the_soul_sends_a_new_flow_through_the_conversation_page() -> None:
     # E-255 (F-144): quien pide un flujo no llega con el pedido armado. El SOUL ya no corta en cinco
-    # preguntas («No preguntes nada más»): apunta a la página de la biblioteca con las rondas, que
-    # cubre también la repetición (no se cambia con una versión) y qué pasa con la conversación.
+    # preguntas («No preguntes nada más»): manda a la skill crear-un-flujo con las rondas, que cubre
+    # también la repetición (no se cambia con una versión) y qué pasa con la conversación.
     soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
-    section = soul.split("## Crear un flujo", 1)[1].split("\n## ", 1)[0]
-    assert "`crear-un-flujo`" in section and "No preguntes nada más" not in section
-    page = (PROFILE / "plugins" / "automation-expert-read" / "biblioteca" / "crear-un-flujo.md").read_text(
-        encoding="utf-8")
-    assert page.startswith("# ") and len(page.encode("utf-8")) <= 16 * 1024
+    assert "`crear-un-flujo`" in soul and "No preguntes nada más" not in soul
+    skill = _skill("flujos/crear-un-flujo")
+    assert len(skill.encode("utf-8")) <= 32 * 1024
+    page = skill.split("---\n", 2)[2].split("## Qué hace hoy y cómo se escribe", 1)[0]
     for topic in ("**Qué quiere lograr.**", "**Qué lo dispara.**", "**A quién le llega.**", "**Qué mensaje.**",
                   "**Cuándo sale.**", "**Cuándo deja de mandar.**", "**Si se repite.**",
                   "**Qué pasa con la conversación.**", "**El OK.**"):
         assert topic in page, topic
     assert "no se cambia con una versión" in page and "reemplazar el flujo" in page
-    assert "## El resumen antes de proponer" in page and "## Si la plantilla no existe" in page
-    # Lo que el motor corre hoy vive en el SOUL, no se copia acá (envejecería aparte).
-    assert "«Crear un flujo»" in page
+    assert "### El resumen antes de proponer" in page and "### Si la plantilla no existe" in page
+    # Lo que el motor corre hoy vive en la segunda parte de la skill, no se copia acá.
+    assert "«Qué hace hoy y cómo se escribe»" in page
     # Lenguaje de negocio: la página no le enseña al agente a hablar con claves del esquema.
     for key in ("una_por", "otra_despues_de", "dispara:", "entra:", "ok_del_cliente", "{"):
         assert key not in page, key
@@ -207,12 +266,12 @@ def test_the_soul_cuts_a_legacy_flow_in_the_order_of_the_map() -> None:
     # §4 del mapa M16: cohorte, comparar, prender, 24 h a todos y pausar el scope del legado, nunca
     # cerrarlo. El doble caso: con la guarda no sale doble; sin ella, sí puede.
     soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
-    section = soul.split("## Pasar un flujo del legado al motor", 1)[1].split("\n## ", 1)[0]
-    steps = ["**Leé el del legado**", "**Armá el nativo", "**La cohorte.**", "**Compará:**", "**`prender`:**",
-             "**24 horas a todos.**", "**Después**"]
+    section = _skill("flujos/pasar-flujo-al-sistema-nuevo")
+    steps = ["**Leé el del sistema anterior**", "**Armá el nuevo", "**El grupo de prueba.**", "**Compará:**",
+             "**`prender`:**", "**24 horas a todos.**", "**Después**"]
     positions = [section.index(step) for step in steps]
     assert positions == sorted(positions)
-    assert "**Nunca se cierra:**" in section and "Vos no pausás el legado" in section
+    assert "**Nunca se cierra:**" in section and "Vos no pausás el sistema anterior" in section
     assert "`bolsa` nueva" in section and "no_arranca_mientras" in section
     reads = soul.split("## Qué leés", 1)[1].split("\n## ", 1)[0]
     assert "no sale un mensaje doble" in reads and "puede salir un mensaje doble" in reads
@@ -229,8 +288,7 @@ def test_the_replacement_of_a_native_flow_follows_an_order_the_validator_accepts
         BLOCK, SECOND_ID, WELCOME_ID, _apagar, _codes, _native, _prender)
     from test_flow_validator import check, native_catalog, new_item, welcome, world
 
-    soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
-    text = soul.split("eso hoy se hace reemplazándolo", 1)[1].split("\n", 1)[0]
+    text = _skill("flujos/cambiar-un-flujo").split("hoy se hace reemplazándolo", 1)[1].split("\n", 1)[0]
     steps = ["`same_event_native_flows`", "pausa el viejo", "un `nuevo` con otra clave",
              "prende el nuevo y apaga el viejo"]
     positions = [text.index(step) for step in steps]
@@ -255,14 +313,23 @@ def test_the_replacement_of_a_native_flow_follows_an_order_the_validator_accepts
 def test_the_registered_tools_and_hooks() -> None:
     plugin = _load_plugin()
     tools: list[str] = []
+    overrides: list[str] = []
     hooks: dict[str, Any] = {}
+
+    def register_tool(**kwargs: Any) -> None:
+        tools.append(kwargs["name"])
+        if kwargs.get("override"):
+            overrides.append(kwargs["name"])
+
     ctx = SimpleNamespace(
         profile_name="automation-expert",
-        register_tool=lambda **kwargs: tools.append(kwargs["name"]) or None,
+        register_tool=register_tool,
         register_hook=lambda name, callback: hooks.__setitem__(name, callback),
     )
     plugin.register(ctx)
-    assert tools == ["list_flows", "lead_history", "draw_flow", "read_library"]
+    assert tools == ["list_flows", "lead_history", "draw_flow", "skill_view", "read_library"]
+    # Sin override, Hermes rechaza el registro y las skills quedan sin lector (tools/registry.py).
+    assert overrides == ["skill_view"]
     dispatch = hooks["pre_gateway_dispatch"]
     slack = SimpleNamespace(value="slack")
     assert dispatch(event=SimpleNamespace(source=SimpleNamespace(platform=slack, chat_id="D0123"))) is None
@@ -277,8 +344,9 @@ def test_the_registered_tools_and_hooks() -> None:
     other: dict[str, Any] = {}
     plugin.register(SimpleNamespace(profile_name="agente-comercial", register_tool=lambda **kwargs: None,
                                     register_hook=lambda name, callback: other.__setitem__(name, callback)))
-    blocked = other["pre_tool_call"](tool_name="lead_history")
-    assert blocked["action"] == "block" and blocked["message"]
+    for tool in ("lead_history", "skill_view", "read_library"):
+        blocked = other["pre_tool_call"](tool_name=tool)
+        assert blocked["action"] == "block" and blocked["message"], tool
     assert other["pre_tool_call"](tool_name="otra_herramienta") is None
 
 

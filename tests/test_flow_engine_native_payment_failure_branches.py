@@ -418,12 +418,12 @@ def test_the_ae_reads_the_sales_of_each_branch() -> None:
 
 
 def test_the_library_says_how_the_ae_writes_the_branches() -> None:
-    library = Path(__file__).resolve().parents[1] / "profiles" / "automation-expert" / "plugins" / \
-        "automation-expert-read" / "biblioteca"
-    page = (library / "hotmart.md").read_text(encoding="utf-8")
+    profile = Path(__file__).resolve().parents[1] / "profiles" / "automation-expert"
+    page = (profile / "skills" / "plataformas" / "hotmart" / "SKILL.md").read_text(encoding="utf-8")
     for needed in ("descuento_previo", "rechazos", "tipo_de_rechazo", "si_no", "boton: {link: checkout, cupon: PROTOCOLO10}",
                    "by_branch", "maribel_pago_rechazado_banco_01"):
         assert needed in page, needed
-    soul = (library.parents[2] / "SOUL.md").read_text(encoding="utf-8")
-    assert "sin condiciones ni ramas (salvo el pago rechazado)" in soul
+    soul = (profile / "SOUL.md").read_text(encoding="utf-8")
+    crear = (profile / "skills" / "flujos" / "crear-un-flujo" / "SKILL.md").read_text(encoding="utf-8")
+    assert "sin condiciones ni ramas (salvo el pago rechazado)" in crear
     assert len(soul.strip()) <= 20_000

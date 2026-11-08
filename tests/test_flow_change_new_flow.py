@@ -375,9 +375,9 @@ _ENV = {"CONTENEDOR_DB": "att1-db", "CONTENEDOR_CHATWOOT_DB": "chatwoot-db", "BA
 
 
 def test_the_soul_of_the_agent_teaches_creating_a_flow_with_the_minimum() -> None:
-    soul = (Path(__file__).resolve().parents[1] / "profiles/automation-expert/SOUL.md").read_text(encoding="utf-8")
-    section = soul.split("**Creás un flujo nuevo cuando te lo piden**", 1)[1].split("- **No aprobás", 1)[0]
+    skill = (Path(__file__).resolve().parents[1] / "profiles/automation-expert/skills/flujos/crear-un-flujo/SKILL.md").read_text(encoding="utf-8")
+    section = skill.split("## Qué hace hoy y cómo se escribe", 1)[1]
     for phrase in ("qué evento lo dispara", "a quién le llega", "qué mensaje", "cuándo sale",
                    "cuándo deja de mandar", '"nuevo"', 'prender: "cohorte"', "Decí qué completó",
-                   "{a_crear: <nombre>}", "cohorte de prueba", "otra propuesta"):
+                   "{a_crear: <nombre>}", "grupo de prueba", "otra propuesta"):
         assert phrase in section, phrase
