@@ -32,7 +32,8 @@ Las rutas, todas bajo ``/flow-approval/`` y solo con ``FLOW_APPROVAL_ENABLED``
   nativo. El telefono no se guarda, no se loguea y no se muestra de vuelta.
 * ``GET /flow-approval/auth/slack/start?p=<proposal_id>``: el ``state`` y el
   ``nonce`` (la base guarda sus sha256, 10 minutos) y la vuelta al OIDC de
-  Slack con el scope ``openid``.
+  Slack con el scope ``openid``. Con ``?t=<id>`` vuelve a una solicitud de
+  plantilla (F-146, ``template_approval.py``, solo con ``META_TEMPLATES_ENABLED``).
 * ``GET /flow-approval/auth/slack/callback``: consume el ``state`` una vez,
   cambia el ``code`` por el token y valida el ``id_token`` (issuer, audiencia,
   vencimiento, ``nonce``, workspace y ``sub`` igual al ``user_id``). Recien
@@ -98,6 +99,7 @@ __all__ = [
     "PREFIX",
     "ApprovalStore",
     "FlowApprovalConfig",
+    "PageTools",
     "SessionInvalid",
     "SlackIdTokenClient",
     "SlackOidcError",
@@ -143,6 +145,10 @@ NOTICE_PUBLISHED = "OPS-005"
 NOTICE_PAUSED = "OPS-003"
 _NOTICE_NAMESPACE = UUID("6c1f4b3e-2f0a-4d7e-9a51-0d6f4a8b2c19")
 _BROWSER_SECRET = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
+# El state del OIDC de quien entra por el link de una plantilla: «t», el id y el secreto. La base solo acepta
+# volver a la lista o a una propuesta (20261028000100); el id viaja adentro del state, que la base consume por su
+# sha256, asi que nadie lo puede cambiar por el camino. Un state comun tiene 43 caracteres: no se confunde.
+_TEMPLATE_STATE = re.compile(r"^t([0-9a-f-]{36})[A-Za-z0-9_-]{32,}$")
 _CSP = ("default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; "
         "frame-ancestors 'none'")
 
@@ -414,6 +420,38 @@ class ApprovalStore:
             "p_instance": instance, "p_session_hash": session_hash, "p_proposal_id": proposal_id,
             "p_reason": reason})
 
+    # -- las solicitudes de plantilla (F-146 parte 3, migracion 20261102000200). -----
+
+    async def get_template_request(self, instance: Mapping[str, str], *, session_hash: str,
+                                   request_id: str) -> dict[str, Any]:
+        return await self._rpc("approver_get_meta_template_request_v1", {
+            "p_instance": instance, "p_session_hash": session_hash, "p_request_id": request_id})
+
+    async def approve_template_request(self, instance: Mapping[str, str], *, session_hash: str, request_id: str,
+                                       fingerprint: str) -> dict[str, Any]:
+        return await self._rpc("approver_approve_meta_template_request_v1", {
+            "p_instance": instance, "p_session_hash": session_hash, "p_request_id": request_id,
+            "p_fingerprint": fingerprint})
+
+    async def discard_template_request(self, instance: Mapping[str, str], *, session_hash: str, request_id: str,
+                                       reason: str) -> dict[str, Any]:
+        return await self._rpc("approver_discard_meta_template_request_v1", {
+            "p_instance": instance, "p_session_hash": session_hash, "p_request_id": request_id, "p_reason": reason})
+
+    async def begin_template_send(self, instance: Mapping[str, str], *, session_hash: str, request_id: str,
+                                  fingerprint: str, daily_cap: int) -> dict[str, Any]:
+        return await self._rpc("approver_begin_meta_template_send_v1", {
+            "p_instance": instance, "p_session_hash": session_hash, "p_request_id": request_id,
+            "p_fingerprint": fingerprint, "p_daily_cap": daily_cap})
+
+    async def record_template_sent(self, instance: Mapping[str, str], *, session_hash: str, request_id: str,
+                                   meta_template_id: str | None, meta_status: str | None,
+                                   meta_category: str | None, error_code: str | None) -> dict[str, Any]:
+        return await self._rpc("approver_record_meta_template_sent_v1", {
+            "p_instance": instance, "p_session_hash": session_hash, "p_request_id": request_id,
+            "p_meta_template_id": meta_template_id, "p_meta_status": meta_status, "p_meta_category": meta_category,
+            "p_error_code": error_code})
+
     async def cohort_add(self, instance: Mapping[str, str], *, session_hash: str, product_ref: str, flow_key: str,
                          phone: str, reason: str) -> dict[str, Any]:
         return await self._rpc("approver_flow_cohort_v1", {
@@ -682,13 +720,16 @@ _PAGE_CSS = (
 BRAND_NAME = "Recuperador"
 
 
-def _shell(title: str, body: str, *, user: str | None = None, csrf: str | None = None) -> str:
+def _shell(title: str, body: str, *, user: str | None = None, csrf: str | None = None,
+           show_user_id: bool = True) -> str:
     # Quien entro: el bridge pide solo el scope openid, asi que de la sesion sabe el id de Slack y no el
-    # nombre (los claims name/given_name vienen con el scope profile). Se muestra el id.
+    # nombre (los claims name/given_name vienen con el scope profile). Se muestra el id, salvo en las paginas que
+    # salen en capturas (show_user_id=False).
     right = '<span class="secure-badge">Acceso con Slack</span>'
     if user is not None and csrf is not None:
-        right = (f'<form method="post" action="{PREFIX}/logout" class="who"><span class="who-text">Entraste como '
-                 f'<code>{_esc(user)}</code></span><input type="hidden" name="csrf_token" value="{_esc(csrf)}">'
+        who_text = f"Entraste como <code>{_esc(user)}</code>" if show_user_id else "Entraste con Slack"
+        right = (f'<form method="post" action="{PREFIX}/logout" class="who"><span class="who-text">{who_text}'
+                 f'</span><input type="hidden" name="csrf_token" value="{_esc(csrf)}">'
                  '<button type="submit">Salir</button></form>')
     return f'''<!doctype html>
 <html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -704,11 +745,17 @@ def _page(title: str, message: str, status: int) -> HTMLResponse:
     return HTMLResponse(_shell(title, body), status_code=status)
 
 
-def _login(return_to: str | None) -> HTMLResponse:
-    query = f"?{urlencode({'p': return_to})}" if return_to else ""
-    body = ('<section class="auth panel"><div class="panel-heading"><h2>Aprobar cambios de flujos</h2>'
-            "<p>Acá ves lo que el agente propone cambiar en los mensajes automáticos y decidís si sale.</p></div>"
-            '<div class="panel-body"><p>Para ver la propuesta, entrá con tu cuenta de Slack.</p>'
+def _login(return_to: str | None, *, template: str | None = None) -> HTMLResponse:
+    query = f"?{urlencode({'t': template})}" if template else f"?{urlencode({'p': return_to})}" if return_to else ""
+    title, what, see = ("Aprobar plantillas de WhatsApp",
+                        "Acá ves la plantilla que el agente propone pedirle a Meta y decidís si se manda.",
+                        "la plantilla") if template else (
+        "Aprobar cambios de flujos",
+        "Acá ves lo que el agente propone cambiar en los mensajes automáticos y decidís si sale.",
+        "la propuesta")
+    body = (f'<section class="auth panel"><div class="panel-heading"><h2>{title}</h2>'
+            f"<p>{what}</p></div>"
+            f'<div class="panel-body"><p>Para ver {see}, entrá con tu cuenta de Slack.</p>'
             f'<a class="button primary" href="{PREFIX}/auth/slack/start{_esc(query)}">Entrar con Slack</a>'
             '<p class="meta">Solo entran las personas de la lista de aprobadores de esta instancia.</p></div></section>')
     return HTMLResponse(_shell("Entrar", body), status_code=401)
@@ -1643,12 +1690,28 @@ def _flows_of(snapshot: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return [flow for flow in flows if isinstance(flow, Mapping)] if isinstance(flows, list) else []
 
 
+@dataclass(frozen=True)
+class PageTools:
+    """Lo que una seccion de la pagina reusa: la misma sesion, las mismas puertas de escritura y el mismo PRG."""
+
+    config: FlowApprovalConfig
+    store: ApprovalStore
+    instance: dict[str, str]
+    time_zone: str | None
+    now: Callable[[], datetime]
+    who: Callable[[Request], Awaitable[tuple[str, str] | None]]
+    logged_out: Callable[[Response], Response]
+    write_form: Callable[..., Awaitable[tuple[str, str, dict[str, str]] | Response]]
+    back: Callable[..., RedirectResponse]
+
+
 def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, store: ApprovalStore,
                                   oidc: SlackIdTokenClient, chatwoot: Any = None, inbox_id: int | None = None,
                                   time_zone: str | None = None, producer: Any = None,
                                   environ: Mapping[str, str] | None = None,
                                   clock: Callable[[], datetime] | None = None,
-                                  segment_labels: Callable[[], list[dict[str, str]]] | None = None) -> None:
+                                  segment_labels: Callable[[], list[dict[str, str]]] | None = None,
+                                  extra_routes: Callable[[FastAPI, PageTools], None] | None = None) -> None:
     """Las rutas de la pagina. Solo se llama con el flag prendido.
 
     ``segment_labels`` (E-316, segment-labels-v1): las etiquetas de segmento que acepta etiquetar,
@@ -1658,7 +1721,8 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
     publicar (sin ellos, publicar contesta ``template_catalog_unavailable``);
     ``time_zone`` es la de la instancia; ``producer``, el del conector de Slack
     (None: la pagina no avisa y lo dice); ``environ``, la identidad de la imagen
-    que firma la revalidacion (``SETTER_VERSION`` y ``GIT_SHA``).
+    que firma la revalidacion (``SETTER_VERSION`` y ``GIT_SHA``). ``extra_routes``
+    suma rutas con la misma sesion (F-146: las de plantillas, solo con su flag).
     """
     now = clock or (lambda: datetime.now(tz=UTC))
     instance = dict(config.instance)
@@ -1857,9 +1921,14 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
     @app.get(PREFIX + "/auth/slack/start")
     async def slack_start(request: Request) -> Response:
         target = request.query_params.get("p")
+        template = request.query_params.get("t")
         if target is not None and not _canonical_uuid(target):
             return _page("Entrar", "El link no es válido.", 404)
+        if template is not None and (extra_routes is None or target is not None or not _canonical_uuid(template)):
+            return _page("Entrar", "El link no es válido.", 404)
         state = secrets.token_urlsafe(32)
+        if template is not None:
+            state = f"t{template}{state}"
         nonce = secrets.token_urlsafe(32)
         return_path = f"{PREFIX}/p/{target}" if target else f"{PREFIX}/"
         try:
@@ -1918,6 +1987,10 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
         if (not isinstance(return_path, str) or not (return_path == f"{PREFIX}/" or (
                 return_path.startswith(f"{PREFIX}/p/") and _canonical_uuid(return_path[len(PREFIX) + 3:])))):
             return_path = f"{PREFIX}/"
+        template_state = _TEMPLATE_STATE.fullmatch(state)
+        if extra_routes is not None and template_state is not None and return_path == f"{PREFIX}/" \
+                and _canonical_uuid(template_state.group(1)):
+            return_path = f"{PREFIX}/t/{template_state.group(1)}"
         logger.info("flow_approval route=callback session=created ok=%s", created.get("ok") is True)
         response = RedirectResponse(return_path, status_code=303)
         response.delete_cookie(STATE_COOKIE, path="/", secure=True, httponly=True, samesite="lax")
@@ -1947,13 +2020,17 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
     # -- las escrituras (A′ PR 3b) ------------------------------------------------
 
     async def _write_form(request: Request, *, title: str, fields: set[str],
-                          optional: frozenset[str] = frozenset()) -> tuple[str, str, dict[str, str]] | Response:
-        """Origin, sesion viva y en la lista, formulario acotado y CSRF; o la respuesta que corta."""
+                          optional: frozenset[str] = frozenset(),
+                          template: str | None = None) -> tuple[str, str, dict[str, str]] | Response:
+        """Origin, sesion viva y en la lista, formulario acotado y CSRF; o la respuesta que corta.
+
+        ``template``: la solicitud de plantilla del formulario, para que quien perdio la sesion vuelva a ella.
+        """
         if not _same_origin(request, config.origin):
             return _page(title, "Origen no autorizado.", 403)
         who = await _who(request)
         if who is None:
-            return _logged_out(_login(None))
+            return _logged_out(_login(None, template=template))
         user, secret = who
         try:
             form = await _bounded_form(request, max_fields=len(fields) + len(optional))
@@ -2153,6 +2230,10 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
         notice = await _notify(commands)
         logger.info("flow_approval route=publish proposal=%s result=published notice=%s", proposal_id, notice)
         return _back(secret, page, hecho="publicada", aviso=notice)
+
+    if extra_routes is not None:
+        extra_routes(app, PageTools(config=config, store=store, instance=instance, time_zone=time_zone, now=now,
+                                    who=_who, logged_out=_logged_out, write_form=_write_form, back=_back))
 
     @app.post(PREFIX + "/p/{proposal_id}/discard")
     async def discard(proposal_id: str, request: Request) -> Response:
