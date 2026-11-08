@@ -53,7 +53,7 @@
  },
  "preview": {
   "burbuja": {
-   "al_aprobar": "Se manda a Meta. Nadie recibe nada todavia. Cuando Meta conteste se avisa, y el flujo se aprueba aparte.",
+   "al_aprobar": "Se manda a Meta. Nadie recibe nada todavia. Lo que conteste Meta se mira en la cuenta de WhatsApp, y el flujo se aprueba aparte.",
    "botones": [
     {
      "link": "https://forms.gle/mzopWTpQae8TDBph9",

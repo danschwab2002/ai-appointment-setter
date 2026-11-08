@@ -1,13 +1,13 @@
 # template-request-v1: la solicitud de plantilla de Meta
 
-**Versión:** 1.1.0 (F-146, partes 1 a 3: la base, el validador, las rutas del Automation Expert, la página de aprobación y el envío a Meta).
+**Versión:** 1.2.0 (F-146, partes 1 a 3 y 5: la base, el validador, las rutas del Automation Expert, la página de aprobación, el envío a Meta, las herramientas del plugin y la skill `pedir-plantilla-a-meta`).
 **Migración:** `20261102000200_meta_template_requests_v1.sql`.
 **Código:** `src/bridge/template_request.py` (puro), `src/bridge/template_request_api.py` (las rutas del AE), `src/bridge/template_approval.py` (la página y el envío) y `src/bridge/meta_templates.py` (el cliente cerrado de Meta).
 **Flag:** `META_TEMPLATES_ENABLED`, apagado por defecto. Apagado, las rutas no existen, el cliente de Meta no se crea y nada cambia.
 
 Cuando un flujo necesita una plantilla de WhatsApp que no existe, el Automation Expert (AE) la redacta con el dueño y la deja como **solicitud**: un objeto del almacén hermano de la propuesta de flujo (`flow-change-cycle-v1`), con revisiones mientras es borrador, una validación que lo congela con su huella por 24 horas, la aprobación de una persona de la lista de la instancia, y después el envío a Meta y lo que Meta contesta.
 
-**Lo que esta versión no hace.** El sondeo del estado, los avisos al canal de alertas y la sincronización del catálogo de Chatwoot (parte 4), las herramientas del plugin y el SOUL (parte 5) y el script del token y el manifiesto de la instancia (parte 6) vienen después. Mientras no esté la parte 4, una plantilla mandada queda `en_revision` hasta que alguien la mire: el estado se lee en la página o en WhatsApp Manager.
+**Lo que esta versión no hace.** El sondeo del estado, los avisos al canal de alertas y la sincronización del catálogo de Chatwoot (parte 4) vienen después. Mientras no esté la parte 4, `record_meta_template_status_v1` no se llama desde el bridge: una plantilla mandada queda `en_revision` en la base **y en la página**, que nunca muestra lo que Meta contestó después de crearla. El resultado se ve en la cuenta de WhatsApp (WhatsApp Manager). El AE no avisa: cuando el dueño vuelve, lee `resolved.state` de `get_template_request` o de la lista, que el bridge ya cruzó con el catálogo (el catálogo lo actualiza Chatwoot, con hasta 3 horas de atraso; ver §3).
 
 ## 1. Los estados
 
@@ -81,8 +81,29 @@ Bajo `/internal/automation-expert/v1`, con `AUTOMATION_EXPERT_CHANGE_TOKEN`. El 
   - Si viene de una propuesta, el paso tiene que ser `{plantilla: {a_crear: <este nombre>}}`. Si no, bloquea con `template_flow_step_mismatch`.
   - Sin bloqueos, arma el pedido de Meta y la burbuja, y la base congela.
   - El validador lleva `SETTER_VERSION` y `GIT_SHA` de la imagen. Sin ellos, contesta 503.
-- **`GET /template-requests?estado=abiertas|todas&limit=1..50`**.
-- **`GET /template-requests/{id}`**: la solicitud, su vista previa y su resultado.
+- **`GET /template-requests?estado=abiertas|todas&limit=1..50`**. Cada fila suma `last_send_error`, `send_attempts`, `send_error_text` y `resolved`. La función de la base no trae el intento ni el borrador: el bridge relee, de a una y hasta 10, las filas `enviada` y las mandadas cuyo nombre está en el catálogo. Si una relectura falla corta ahí, y lo no leído queda `sin_confirmar` o con `catalog_checked: false`.
+- **`GET /template-requests/{id}`**: la solicitud, su vista previa, su resultado, `last_send_error`, `send_attempts`, `send_error_text` (el motivo en palabras, el mismo de la página) y `resolved`.
+
+**`resolved`, el estado ya cruzado** (`template_request.resolve_state`). `{state, catalog_checked, catalog_status, catalog_category}`. Lo cruza el bridge y no el modelo: dejárselo al modelo hacía que dijera «sigue en revisión» con la plantilla aprobada en la mano. Lo que nunca llegó a Meta se queda con su estado. Lo que se mandó, si está en el catálogo con el mismo nombre, idioma **y cuerpo**, toma el estado del catálogo: un nombre igual con otro cuerpo no presta su estado, y un `PENDING` del catálogo no pisa una respuesta ya guardada. Leer el catálogo espera hasta 5 segundos: si falla, la lectura contesta igual, con `catalog_checked: false`.
+
+| `state` | Qué quiere decir |
+|---|---|
+| `borrador` | Todavía no quedó validada. |
+| `esperando_que_la_manden` | `validada`: lista, nadie la mandó. |
+| `aprobada_sin_mandar` | `aprobada`: la aprobó una persona y **no se mandó a Meta** (por ejemplo, tope del día). |
+| `vencida`, `descartada` | No llegó a Meta. |
+| `mandandose` | `enviada` sin error: Meta todavía no confirmó. |
+| `no_llego_a_meta` | `enviada` con error: se puede volver a mandar desde la página. |
+| `no_llego_a_meta_sin_reintentos` | Con error y los 5 intentos gastados. |
+| `nombre_ocupado_en_meta` | `meta_name_taken_*`: hace falta el número siguiente. |
+| `sin_confirmar` | `enviada` de la que no se pudo leer el intento. |
+| `en_revision`, `sin_respuesta_de_meta` | Mandada; `PENDING` o `IN_APPEAL` en el catálogo, o todavía no está. |
+| `aprobada_lista` | `APPROVED` en el catálogo y de la categoría pedida: el flujo la puede usar. |
+| `aprobada_otro_tipo` | Aprobada con otra categoría que la pedida. |
+| `aprobada_falta_catalogo` | Meta la aprobó y todavía no llegó al catálogo. |
+| `rechazada` | La rechazó Meta. |
+| `pausada_en_meta`, `desactivada_en_meta` | `PAUSED` o `DISABLED` en el catálogo: no se puede usar. |
+| `estado_de_meta_desconocido` | Otro estado del catálogo: no se interpreta. |
 
 **El borrador (`template`).**
 
@@ -99,6 +120,8 @@ Bajo `/internal/automation-expert/v1`, con `AUTOMATION_EXPERT_CHANGE_TOKEN`. El 
   - `ficha`: la base de `[[ficha.medios]]`, con `medio` si hay más de una;
   - `url_fija`: con su `url`;
   - `respuesta`: una respuesta rápida.
+
+**Las herramientas del plugin** (`automation-expert-change`, F-146 parte 5). `propose_template` (`template`, `purpose`, opcionales `for_flow`, `request_id` y `revision`), `validate_template` (`request_id`, `revision`), `list_template_requests` (`estado`, `limit`) y `get_template_request` (`request_id`). Quien pide sale de la sesión de Slack, nunca del modelo. Ninguna habla con Meta ni llama a la página. Sin el flag (`404` genérico) contestan `template_requests_not_enabled`. Validada y sin bloqueos, `validate_template` postea en el DM el botón «Revisar y mandar a Meta», que abre `/flow-approval/t/{id}`, y suma `approval_button` a la respuesta (`posted` o `not_posted`, sin el link). Con `FLOW_APPROVAL_ENABLED` apagado en las variables del profile (distinto del flag del bridge) la respuesta no trae `approval_button`. El botón no se reemite: volver a validar contesta `meta_template_not_draft`, y `scripts/flow_change_operator.py` no maneja plantillas; una solicitud sin botón vence a las 24 horas y se guarda de nuevo con el mismo nombre. Lo usa la skill `flujos/pedir-plantilla-a-meta` del profile.
 
 ## 4. Las reglas (`template_request.check`)
 
@@ -126,7 +149,7 @@ Las del producto:
 - **Los datos:** solo los del vocabulario del flujo.
 - **Los botones de link:** uno solo, y primero.
 - **La ficha:** solo con un medio de `[[ficha.medios]]` habilitado.
-- **La URL fija:** solo de la lista de la instancia (D7). Hasta que el manifiesto la declare (`[plantillas].urls_fijas`, parte 6), la lista está vacía y ningún botón fijo pasa.
+- **La URL fija:** solo de la lista de la instancia, `[plantillas].urls_fijas` del manifiesto (D7). Sin la lista, ningún botón fijo pasa.
 - **El texto:** ni links (tampoco un dominio suelto, como `marca.com.mx`) ni teléfonos ni mails, en el cuerpo, el encabezado, el pie y los botones. La regla de los teléfonos es la de la lectura del AE (siete dígitos seguidos), así que un monto como `1.497.000` también bloquea.
 - **Encabezado, pie y botones:** en una sola línea, y el texto de un botón sin llaves (el bridge no llena datos en un botón). Formato o emojis en el encabezado dan un aviso: que Meta los rechace está a verificar.
 - **Para un paso de flujo** (`for_flow`, al validar): el paso la espera con `{a_crear: <nombre>}`; si nombra idioma o variables, son los del borrador; su botón (`checkout` o `ficha`) es el primero de la plantilla, y sin botón en el paso la plantilla no lleva un link que cambia por persona; `precio` y `vence` van solo con cupón; y una de marketing no va en un flujo con permiso de compra.

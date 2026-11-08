@@ -255,7 +255,8 @@ def test_the_plugin_acks_the_url_button_click_and_adds_no_tool(world: SimpleName
         register_slack_action_handler=lambda action_id, callback: actions.append((action_id, callback)),
     ))
     assert tools == ["get_flow_definitions", "propose_flow_change", "validate_flow_change", "get_flow_change",
-                     "list_flow_changes", "list_templates", "list_chatwoot_labels", "create_chatwoot_label",
+                     "list_flow_changes", "list_templates", "propose_template", "validate_template",
+                     "list_template_requests", "get_template_request", "list_chatwoot_labels", "create_chatwoot_label",
                      "add_chatwoot_label_to_conversation", "list_chatwoot_macros"]
     [(action_id, callback)] = actions
     assert action_id == "flow_approval_open"
@@ -269,3 +270,105 @@ def test_the_plugin_acks_the_url_button_click_and_adds_no_tool(world: SimpleName
     # Un Hermes sin ese registro sigue cargando el plugin.
     world.plugin.register(SimpleNamespace(profile_name="automation-expert", register_tool=lambda **kwargs: None,
                                           register_hook=lambda name, callback: None))
+
+
+# --- la pagina de una plantilla (template-request-v1, F-146 parte 5)
+
+
+REQUEST = "7a1c2b9e-1f3a-4b6c-8d7e-9f0a1b2c3d4f"
+
+
+def _validated_template(status: str = "validada", blocks: list[object] | None = None) -> dict[str, object]:
+    return {"contract": "template-request-v1", "contract_version": "1.1.0",
+            "data": {"request_id": REQUEST, "status": status, "fingerprint": "f" * 64,
+                     "expires_at": "2026-11-09T12:00:00Z", "blocks": blocks or [], "warnings": []}}
+
+
+def _template_route(payload: dict[str, object]) -> None:
+    _Server.routes[f"POST {PREFIX}/template-requests/{REQUEST}/validate"] = (200, payload)
+
+
+def _validate_template(tools: ModuleType) -> dict[str, Any]:
+    return json.loads(tools.validate_template({"request_id": REQUEST, "revision": 1}))
+
+
+def test_a_validated_template_posts_its_own_button_without_promising_a_notice(world: SimpleNamespace) -> None:
+    _template_route(_validated_template())
+    _slack()
+    out = _validate_template(world.tools)
+    assert out["data"]["approval_button"]["status"] == "posted"
+    posted = json.loads(_slack_calls()[0]["body"])
+    button = posted["blocks"][1]["elements"][0]
+    assert button["url"] == f"https://bridge.example.org/flow-approval/t/{REQUEST}"
+    assert button["text"]["text"] == "Revisar y mandar a Meta"
+    text = posted["blocks"][0]["text"]["text"]
+    assert "24 horas" in text and "avis" not in text.lower()
+
+
+def test_a_template_with_blocks_gets_no_button(world: SimpleNamespace) -> None:
+    _template_route(_validated_template(status="borrador", blocks=[{"code": "x"}]))
+    _slack()
+    out = _validate_template(world.tools)
+    assert "approval_button" not in out["data"] and _slack_calls() == []
+
+
+def test_slack_refusing_a_template_button_reports_not_posted(world: SimpleNamespace) -> None:
+    _template_route(_validated_template())
+    _slack(ok=False)
+    assert _validate_template(world.tools)["data"]["approval_button"]["status"] == "not_posted"
+
+
+def test_with_the_page_off_the_template_answer_has_no_button(
+    world: SimpleNamespace, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FLOW_APPROVAL_ENABLED", "false")
+    _template_route(_validated_template())
+    assert "approval_button" not in _validate_template(world.tools)["data"] and _slack_calls() == []
+
+
+@pytest.mark.parametrize("name,value", [
+    ("FLOW_APPROVAL_BASE_URL", "http://bridge.example.org"),
+    ("FLOW_APPROVAL_BASE_URL", "https://bridge.example.org/otra/ruta"),
+    ("FLOW_APPROVAL_BASE_URL", ""),
+    ("HERMES_SESSION_CHAT_ID", "C0123456789"),
+    ("HERMES_SESSION_CHAT_ID", ""),
+    ("SLACK_BOT_TOKEN", "xoxp-un-token-de-usuario"),
+    ("SLACK_BOT_TOKEN", ""),
+])
+def test_a_template_button_without_a_safe_destination_is_not_posted(
+    world: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, name: str, value: str,
+) -> None:
+    _template_route(_validated_template())
+    _slack()
+    monkeypatch.setenv(name, value)
+    assert _validate_template(world.tools)["data"]["approval_button"] == world.button.TEMPLATE_NOT_POSTED
+    assert _slack_calls() == []
+
+
+def test_a_template_button_outside_slack_is_not_posted(world: SimpleNamespace) -> None:
+    # La herramienta ya corta antes (requested_by_unavailable): el boton tampoco sale solo.
+    session = {"HERMES_SESSION_PLATFORM": "cli", "HERMES_SESSION_CHAT_ID": DM}
+    settings = {"FLOW_APPROVAL_ENABLED": "true", "FLOW_APPROVAL_BASE_URL": "https://bridge.example.org",
+                "SLACK_BOT_TOKEN": BOT_TOKEN}
+    assert world.button.post_template_after_validation(
+        REQUEST, setting=lambda name: settings.get(name, ""), session=lambda name: session.get(name, ""),
+    ) == world.button.TEMPLATE_NOT_POSTED
+    assert _slack_calls() == []
+
+
+def test_a_template_button_goes_to_the_thread_only_with_a_real_ts(
+    world: SimpleNamespace, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _template_route(_validated_template())
+    _slack()
+    _validate_template(world.tools)
+    assert json.loads(str(_slack_calls()[-1]["body"]))["thread_ts"] == THREAD
+    for thread in ("", "no-es-un-ts"):
+        monkeypatch.setenv("HERMES_SESSION_THREAD_ID", thread)
+        assert _validate_template(world.tools)["data"]["approval_button"] == world.button.TEMPLATE_POSTED
+        assert "thread_ts" not in json.loads(str(_slack_calls()[-1]["body"]))
+
+
+def test_not_posted_does_not_send_the_agent_down_a_road_that_does_not_exist(world: SimpleNamespace) -> None:
+    note = world.button.TEMPLATE_NOT_POSTED["note"]
+    assert "operador" not in note and "no se reemite" in note

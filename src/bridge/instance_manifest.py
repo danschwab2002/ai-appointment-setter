@@ -81,6 +81,9 @@ FLOWS = ("inbound", "precheckout", "carrito", "pago_fallido", "reactivacion", "d
 # apagado y ``flows`` no la trae, asi que un manifiesto anterior carga y se lee
 # igual que antes. ``flow_enabled`` los lee a los dos.
 OPTIONAL_FLOWS = ("ficha",)
+# La lista de URLs fijas que un boton de una plantilla pedida al AE puede llevar (template-request-v1, D7).
+FIXED_URLS_KEY = "urls_fijas"
+_FIXED_TEMPLATE_URL = re.compile(r"https://[^\s{}#\"'<>]+")
 TEMPLATE_SLOTS = (
     "precheckout", "carrito", "pago_fallido", "reactivacion", "descuento", "ficha",
     "ficha_vence_manana", "ficha_vence_hoy",
@@ -378,6 +381,9 @@ class InstanceManifest:
     # Las campanas que entran por landing u oferta ([[campanas]], E-321). Vacio =
     # ninguna: el motor no pone etiquetas por la landing.
     campaigns: tuple[Campaign, ...] = ()
+    # Las URLs que un boton fijo de una plantilla pedida al AE puede llevar
+    # ([plantillas].urls_fijas, template-request-v1, D7). Vacia = ningun boton fijo pasa.
+    template_fixed_urls: tuple[str, ...] = ()
 
     def flow_enabled(self, flow: str) -> bool:
         """Si ``flow`` esta prendido; un flujo opcional sin declarar, no."""
@@ -622,6 +628,7 @@ class InstanceManifest:
         client_ok = _client_ok(consentimiento.get("ok_del_cliente"))
 
         templates = _templates(_table(payload, "plantillas"))
+        template_fixed_urls = _template_fixed_urls(_table(payload, "plantillas"))
 
         agente = _table(payload, "agente")
         _exact_keys("agente", agente, {"modelo", "conocimiento"}, {"segmentos"})
@@ -686,6 +693,7 @@ class InstanceManifest:
             inbound_scope_version=_positive_int(inbound, "scope_version", "inbound.scope_version"),
             consent_copy_version=_str(consentimiento, "copy_version", "consentimiento.copy_version"),
             templates=templates,
+            template_fixed_urls=template_fixed_urls,
             agent_model_name=_str(agente, "modelo", "agente.modelo"),
             agent_knowledge_path=knowledge_path,
             events=events,
@@ -1358,9 +1366,11 @@ def _offers(value: object, field: str = "hotmart.ofertas") -> tuple[Offer, ...]:
 
 
 def _templates(table: Mapping[str, Any]) -> Mapping[str, Template]:
-    _exact_keys("plantillas", table, set(), set(TEMPLATE_SLOTS))
+    _exact_keys("plantillas", table, set(), {*TEMPLATE_SLOTS, FIXED_URLS_KEY})
     templates = {}
     for slot, raw in table.items():
+        if slot == FIXED_URLS_KEY:
+            continue
         where = f"plantillas.{slot}"
         if not isinstance(raw, dict):
             raise ManifestError(f"{where} debe ser una tabla {{ nombre, idioma }}")
@@ -1394,6 +1404,22 @@ def _templates(table: Mapping[str, Any]) -> Mapping[str, Template]:
                 f"plantillas.{slot} es un recordatorio de la ficha: exige plantillas.ficha"
             )
     return MappingProxyType(templates)
+
+
+def _template_fixed_urls(table: Mapping[str, Any]) -> tuple[str, ...]:
+    """``[plantillas].urls_fijas``: las URLs que un boton fijo de una plantilla pedida al AE puede llevar (F-146)."""
+    if FIXED_URLS_KEY not in table:
+        return ()
+    where = f"plantillas.{FIXED_URLS_KEY}"
+    urls = table[FIXED_URLS_KEY]
+    if not isinstance(urls, list) or len(urls) > 20 or any(not isinstance(url, str) for url in urls):
+        raise ManifestError(f"{where} debe ser una lista de hasta 20 URLs")
+    for url in urls:
+        if len(url) > 2000 or _FIXED_TEMPLATE_URL.fullmatch(url) is None:
+            raise ManifestError(f"{where} debe traer URLs con https://, sin espacios ni datos")
+    if len(set(urls)) != len(urls):
+        raise ManifestError(f"{where} tiene URLs repetidas")
+    return tuple(urls)
 
 
 def _template_parameters(

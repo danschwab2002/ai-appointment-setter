@@ -52,6 +52,7 @@ _SLACK_USER_RE = re.compile(r"[UW][A-Z0-9]{8,20}")
 _EMAIL_RE = re.compile(r"[^\s@]+@[^\s@]+")
 _PHONE_SEPARATORS = frozenset(" \t\n\r -.()+")
 # Los codigos que el bridge contesta; cualquier otro se cambia por uno generico.
+_DRAFT_BLOCKED = frozenset({"flow_change_draft_blocked", "template_request_draft_blocked"})
 _BRIDGE_ERRORS = frozenset({
     "automation_expert_change_authentication_required",
     "invalid_body",
@@ -76,6 +77,18 @@ _BRIDGE_ERRORS = frozenset({
     "flow_already_registered",
     "new_flow_must_start_in_cohort",
     "template_catalog_unavailable",
+    # La solicitud de plantilla de Meta (template-request-v1, F-146 parte 5).
+    "template_request_invalid",
+    "template_request_draft_blocked",
+    "invalid_request_id",
+    "meta_template_open_limit",
+    "meta_template_revision_limit",
+    "meta_template_validation_limit",
+    "meta_template_revision_mismatch",
+    "meta_template_not_draft",
+    "meta_template_request_expired",
+    "meta_template_name_taken",
+    "meta_template_request_not_found",
     "automation_expert_change_unavailable",
     "automation_expert_change_busy",
     # La herramienta acotada de Chatwoot (automation-expert-chatwoot-v1, F-143).
@@ -162,6 +175,8 @@ def looks_like_identifier(value: str) -> bool:
 
 
 _REASON_TEXT = re.compile(r"^[<>a-z0-9_]{1,40}$")
+# El campo y el problema de un borrador de plantilla son mas largos (template.botones.0.texto).
+_REASON_FIELD = re.compile(r"^[<>a-z0-9_.]{1,60}$")
 
 
 def _reason(value: object) -> dict[str, object] | None:
@@ -174,7 +189,7 @@ def _reason(value: object) -> dict[str, object] | None:
     out: dict[str, object] = {}
     for key in ("field", "code", "problem"):
         text = value.get(key)
-        if isinstance(text, str) and _REASON_TEXT.fullmatch(text):
+        if isinstance(text, str) and _REASON_FIELD.fullmatch(text):
             out[key] = text
     item = value.get("item")
     if type(item) is int and 0 <= item < 100:
@@ -215,7 +230,7 @@ def _request(method: str, path: str, body: dict[str, object] | None = None) -> d
             out: dict[str, object] = {"error": detail}
             # Los bloqueos de un borrador vuelven para que el agente los corrija.
             data_out = error_payload.get("data") if isinstance(error_payload, dict) else None
-            if detail == "flow_change_draft_blocked" and isinstance(data_out, dict):
+            if detail in _DRAFT_BLOCKED and isinstance(data_out, dict):
                 out["blocks"] = data_out.get("blocks", [])
                 out["warnings"] = data_out.get("warnings", [])
             # Y el motivo de un pedido que no cierra: que campo, que item y que claves.
@@ -225,6 +240,9 @@ def _request(method: str, path: str, body: dict[str, object] | None = None) -> d
             return out
         if exc.code == 401:
             return {"error": "automation_expert_change_authentication_required"}
+        # Las rutas de plantillas solo existen con META_TEMPLATES_ENABLED: sin el flag, el 404 generico.
+        if exc.code == 404 and detail == "Not Found" and path.startswith(f"{PREFIX}/template-requests"):
+            return {"error": "template_requests_not_enabled"}
         # Las rutas de Chatwoot solo existen con AUTOMATION_EXPERT_CHATWOOT_ENABLED: sin el flag, el
         # bridge contesta el 404 generico de FastAPI.
         if exc.code == 404 and detail == "Not Found" and path.startswith(f"{PREFIX}/chatwoot/"):
@@ -333,6 +351,77 @@ def list_templates(params: dict[str, object], **kwargs: object) -> str:
     """El catalogo de plantillas de la bandeja, con el texto de cada una. Solo lee."""
     del params, kwargs
     return _dumps(_request("GET", f"{PREFIX}/templates"))
+
+
+def propose_template(params: dict[str, object], **kwargs: object) -> str:
+    """Guarda (o rehace) el borrador de una plantilla. Con bloqueos no guarda y los devuelve. No habla con Meta."""
+    del kwargs
+    try:
+        requested_by = _requested_by()
+    except ValueError as exc:
+        return _dumps({"error": str(exc)})
+    purpose = params.get("purpose")
+    if not isinstance(purpose, str) or not purpose.strip():
+        return _dumps({"error": "invalid_body"})
+    if looks_like_identifier(purpose):
+        return _dumps({"error": "identifier_not_allowed"})
+    body: dict[str, object] = {"template": params.get("template"), "purpose": purpose.strip(),
+                               "requested_by": requested_by}
+    if params.get("for_flow") is not None:
+        body["for_flow"] = params["for_flow"]
+    if params.get("request_id") is not None or params.get("revision") is not None:
+        request_id = _uuid(params.get("request_id"))
+        revision = params.get("revision")
+        if request_id is None or type(revision) is not int:
+            return _dumps({"error": "invalid_body"})
+        body.update(request_id=request_id, revision=revision)
+    return _dumps(_request("POST", f"{PREFIX}/template-requests", body))
+
+
+def validate_template(params: dict[str, object], **kwargs: object) -> str:
+    """Valida un borrador de plantilla y deja el boton de la pagina. No lo manda a Meta."""
+    del kwargs
+    try:
+        requested_by = _requested_by()
+    except ValueError as exc:
+        return _dumps({"error": str(exc)})
+    request_id = _uuid(params.get("request_id"))
+    revision = params.get("revision")
+    if request_id is None or type(revision) is not int:
+        return _dumps({"error": "invalid_body"})
+    out = _request("POST", f"{PREFIX}/template-requests/{request_id}/validate",
+                   {"revision": revision, "requested_by": requested_by})
+    _maybe_post_template_button(request_id, out)
+    return _dumps(out)
+
+
+def _maybe_post_template_button(request_id: str, out: dict[str, object]) -> None:
+    """Con la solicitud validada y sin bloqueos, el boton de la pagina de la plantilla (template-request-v1)."""
+    data = out.get("data")
+    if "error" in out or not isinstance(data, dict) or data.get("status") != "validada" or data.get("blocks"):
+        return
+    button = approval_button.post_template_after_validation(request_id, setting=_profile_setting, session=_session)
+    if button is not None:
+        data["approval_button"] = button
+
+
+def list_template_requests(params: dict[str, object], **kwargs: object) -> str:
+    """Las solicitudes de plantilla de la instancia, con su estado. Solo lee."""
+    del kwargs
+    estado = params.get("estado", "abiertas")
+    limit = params.get("limit", 20)
+    if estado not in LIST_STATES or type(limit) is not int or not 1 <= limit <= 50:
+        return _dumps({"error": "invalid_query"})
+    return _dumps(_request("GET", f"{PREFIX}/template-requests?estado={estado}&limit={limit}"))
+
+
+def get_template_request(params: dict[str, object], **kwargs: object) -> str:
+    """Relee una solicitud de plantilla. Solo lee."""
+    del kwargs
+    request_id = _uuid(params.get("request_id"))
+    if request_id is None:
+        return _dumps({"error": "invalid_request_id"})
+    return _dumps(_request("GET", f"{PREFIX}/template-requests/{request_id}"))
 
 
 def get_flow_change(params: dict[str, object], **kwargs: object) -> str:

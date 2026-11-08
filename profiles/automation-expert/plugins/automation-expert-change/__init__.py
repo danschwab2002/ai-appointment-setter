@@ -32,6 +32,12 @@ from .tools import (
     validate_flow_change,
 )
 
+# template-request-v1 (F-146, parte 5): pedirle una plantilla a Meta. Guardan y validan; ninguna manda.
+from .schemas import GET_TEMPLATE_REQUEST, LIST_TEMPLATE_REQUESTS, PROPOSE_TEMPLATE, VALIDATE_TEMPLATE  # noqa: E402
+from .tools import get_template_request, list_template_requests, propose_template, validate_template  # noqa: E402
+
+_TEMPLATE_TOOLS = frozenset({"propose_template", "validate_template", "list_template_requests",
+                             "get_template_request"})
 _TOOLS = frozenset({"get_flow_definitions", "propose_flow_change", "validate_flow_change", "get_flow_change",
                     "list_flow_changes", "list_templates",
                     # automation-expert-chatwoot-v1 (F-143): la herramienta acotada de Chatwoot.
@@ -43,7 +49,7 @@ def make_profile_guard(profile_name):
     """pre_tool_call: las herramientas solo corren en el profile automation-expert."""
 
     def refuse_outside_profile(**kwargs):
-        if kwargs.get("tool_name") in _TOOLS and profile_name != PROFILE_NAME:
+        if kwargs.get("tool_name") in (_TOOLS | _TEMPLATE_TOOLS) and profile_name != PROFILE_NAME:
             return {
                 "action": "block",
                 "message": "Estas herramientas solo corren en el profile automation-expert.",
@@ -61,6 +67,10 @@ def register(ctx):
         ("get_flow_change", GET_FLOW_CHANGE, get_flow_change),
         ("list_flow_changes", LIST_FLOW_CHANGES, list_flow_changes),
         ("list_templates", LIST_TEMPLATES, list_templates),
+        ("propose_template", PROPOSE_TEMPLATE, propose_template),
+        ("validate_template", VALIDATE_TEMPLATE, validate_template),
+        ("list_template_requests", LIST_TEMPLATE_REQUESTS, list_template_requests),
+        ("get_template_request", GET_TEMPLATE_REQUEST, get_template_request),
         ("list_chatwoot_labels", LIST_CHATWOOT_LABELS, list_chatwoot_labels),
         ("create_chatwoot_label", CREATE_CHATWOOT_LABEL, create_chatwoot_label),
         ("add_chatwoot_label_to_conversation", ADD_CHATWOOT_LABEL_TO_CONVERSATION,

@@ -184,12 +184,12 @@ class TemplateResult:
         return {"blocks": [f.to_json() for f in self.blocks], "warnings": [f.to_json() for f in self.warnings]}
 
 
-def context_from_manifest(manifest: Any, *, fixed_urls: Sequence[str] = ()) -> TemplateContext:
+def context_from_manifest(manifest: Any, *, fixed_urls: Sequence[str] | None = None) -> TemplateContext:
     """El contexto del validador, del manifiesto de la instancia (``InstanceManifest``).
 
     El idioma es el de sus plantillas, si es uno solo; la oferta del ejemplo, la
-    oferta por defecto. Las URLs fijas todavia no estan en el manifiesto (parte 6):
-    hasta entonces llegan vacias y ningun boton fijo pasa.
+    oferta por defecto. Las URLs fijas son las de ``[plantillas].urls_fijas``:
+    sin la lista, ningun boton fijo pasa. ``fixed_urls`` las reemplaza (pruebas).
     """
     languages = {template.language for template in manifest.templates.values()}
     offer = next((o for o in manifest.offers if o.default), manifest.offers[0] if manifest.offers else None)
@@ -201,7 +201,7 @@ def context_from_manifest(manifest: Any, *, fixed_urls: Sequence[str] = ()) -> T
         offer_code=offer.code if offer is not None else "",
         price=manifest.price,
         currency=manifest.currency,
-        fixed_urls=tuple(fixed_urls),
+        fixed_urls=tuple(manifest.template_fixed_urls if fixed_urls is None else fixed_urls),
         slip_buttons=tuple((method.medio, method.tienda, method.button_url_template)
                            for method in manifest.payment_slip_methods if method.habilitada),
     )
@@ -227,6 +227,109 @@ def _text(raw: Mapping[str, Any], key: str, *, required: bool) -> str | None:
     if "\x00" in value:
         raise _invalid(f"template.{key}", "not_a_text")
     return value
+
+
+# El estado de una solicitud, ya cruzado con el catalogo de la bandeja: lo que el agente le cuenta al duenio.
+# La solicitud sola no alcanza (sin la parte 4 nadie la mueve despues de mandarla), y dejarle el cruce al modelo
+# hacia que contestara «sigue en revision» con la plantilla aprobada en la mano (suite de E-356, caso i).
+SEND_ATTEMPTS_MAX = 5
+RESOLVED_STATES = (
+    "borrador", "esperando_que_la_manden", "aprobada_sin_mandar", "vencida", "descartada",
+    "mandandose", "no_llego_a_meta", "no_llego_a_meta_sin_reintentos", "nombre_ocupado_en_meta", "sin_confirmar",
+    "en_revision", "sin_respuesta_de_meta",
+    "aprobada_lista", "aprobada_otro_tipo", "aprobada_falta_catalogo",
+    "rechazada", "pausada_en_meta", "desactivada_en_meta", "estado_de_meta_desconocido",
+)
+_NEVER_REACHED_META = {"borrador": "borrador", "validada": "esperando_que_la_manden",
+                       "aprobada": "aprobada_sin_mandar", "vencida": "vencida", "descartada": "descartada"}
+_NAME_TAKEN_ERRORS = ("meta_name_taken_other_text", "meta_name_taken_unusable")
+# Lo que ya tiene una respuesta de Meta: un PENDING del catalogo (con atraso) no la pisa.
+_ANSWERED = frozenset({"aprobada_meta", "rechazada", "en_catalogo"})
+RESOLVES_AGAINST_CATALOG = frozenset({"enviada", "en_revision", "sin_respuesta_de_meta"}) | _ANSWERED
+
+
+def _catalog_body(template: Mapping[str, Any]) -> str | None:
+    components = template.get("components")
+    for component in components if isinstance(components, list) else []:
+        if isinstance(component, Mapping) and component.get("type") == "BODY" and isinstance(component.get("text"), str):
+            return component["text"].strip()
+    return None
+
+
+def _catalog_entry(stored: Mapping[str, Any], catalog: Sequence[Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    """La plantilla del catalogo que es ESTA solicitud: mismo nombre, idioma y cuerpo.
+
+    Un nombre igual con otro cuerpo no es ella (``meta_name_taken_other_text``): no le presta su estado.
+    """
+    draft = stored.get("draft")
+    body = draft.get("cuerpo") if isinstance(draft, Mapping) else None
+    if not isinstance(body, str):
+        return None
+    numbered = number_body(body)[0].strip()
+    for template in catalog:
+        language = template.get("language")
+        if (template.get("name") == stored.get("template_name") and isinstance(language, str)
+                and language.strip() == stored.get("language") and _catalog_body(template) == numbered):
+            return template
+    return None
+
+
+def _resolved_from_catalog(stored: Mapping[str, Any], entry: Mapping[str, Any]) -> str | None:
+    status, category = entry.get("status"), entry.get("category")
+    if status == "APPROVED":
+        if not isinstance(category, str):
+            return "estado_de_meta_desconocido"
+        return "aprobada_lista" if category == stored.get("category_requested") else "aprobada_otro_tipo"
+    if status == "REJECTED":
+        return "rechazada"
+    if status == "PAUSED":
+        return "pausada_en_meta"
+    if status == "DISABLED":
+        return "desactivada_en_meta"
+    if status in ("PENDING", "IN_APPEAL"):
+        return None if stored.get("status") in _ANSWERED else "en_revision"
+    return "estado_de_meta_desconocido"
+
+
+def _resolved_without_catalog(stored: Mapping[str, Any], status: object) -> str:
+    recategorized = stored.get("recategorized") is True
+    if status == "enviada":
+        error, attempts = stored.get("last_send_error"), stored.get("send_attempts")
+        if type(attempts) is not int:
+            return "sin_confirmar"  # la lista no trae el intento: quien no lo leyo no afirma nada
+        if not isinstance(error, str):
+            return "mandandose"
+        if error in _NAME_TAKEN_ERRORS:
+            return "nombre_ocupado_en_meta"
+        return "no_llego_a_meta_sin_reintentos" if attempts >= SEND_ATTEMPTS_MAX else "no_llego_a_meta"
+    if status in ("aprobada_meta", "en_catalogo"):
+        if recategorized:
+            return "aprobada_otro_tipo"
+        return "aprobada_falta_catalogo" if status == "aprobada_meta" else "aprobada_lista"
+    if status in ("en_revision", "sin_respuesta_de_meta", "rechazada"):
+        return str(status)
+    return "estado_de_meta_desconocido"
+
+
+def resolve_state(stored: Mapping[str, Any], catalog: Sequence[Mapping[str, Any]] | None) -> dict[str, Any]:
+    """El estado que se le cuenta al duenio, cruzado por codigo con el catalogo (``None``: no se pudo leer).
+
+    Lo que nunca llego a Meta se queda con su estado: el catalogo no le aplica. Lo que se mando, si esta en el
+    catalogo con su mismo cuerpo, toma lo que dice el catalogo. ``catalog_checked`` en falso: no se pudo comparar.
+    """
+    status = stored.get("effective_status") or stored.get("status")
+    entry = None
+    checked = catalog is not None and isinstance(stored.get("draft"), Mapping)
+    if status in _NEVER_REACHED_META:
+        state = _NEVER_REACHED_META[str(status)]
+    else:
+        if checked and status in RESOLVES_AGAINST_CATALOG:
+            entry = _catalog_entry(stored, catalog or ())
+        from_catalog = _resolved_from_catalog(stored, entry) if entry is not None else None
+        state = from_catalog or _resolved_without_catalog(stored, status)
+    return {"state": state, "catalog_checked": checked,
+            "catalog_status": entry.get("status") if entry is not None else None,
+            "catalog_category": entry.get("category") if entry is not None else None}
 
 
 def number_body(body: str) -> tuple[str, tuple[str, ...]]:
@@ -579,8 +682,8 @@ def bubble(draft: Draft, context: TemplateContext) -> dict[str, Any]:
         "botones": buttons,
         "categoria": draft.category,
         "categoria_explicada": CATEGORY_MEANING[draft.category],
-        "al_aprobar": ("Se manda a Meta. Nadie recibe nada todavia. Cuando Meta conteste se avisa, y el flujo se "
-                       "aprueba aparte."),
+        "al_aprobar": ("Se manda a Meta. Nadie recibe nada todavia. Lo que conteste Meta se mira en la cuenta de "
+                       "WhatsApp, y el flujo se aprueba aparte."),
     }
 
 
