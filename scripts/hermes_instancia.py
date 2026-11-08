@@ -20,7 +20,9 @@ Hay dos tipos de profile (``le_habla`` en hermes/declaracion.toml):
 - ``bridge`` (el agente comercial): API server en su puerto, cero herramientas, ninguna otra
   plataforma. La clave del API server se lee solo al arrancar.
 - ``slack`` (el Automation Expert): sin API server, exactamente las herramientas declaradas en
-  Slack, y su carpeta ``plugins/``. La instancia dice quien administra sus comandos
+  Slack, y sus carpetas ``plugins/`` y ``skills/``. Guarda el system prompt en la sesion: lo
+  instalado llega a las charlas nuevas, y una abierta sigue con lo de antes hasta ``/new``. La
+  instancia dice quien administra sus comandos
   (``administran``). Sus variables (los tokens de Slack) y sus plugins se leen solo al arrancar:
   si cambian con el gateway andando, ``aplicar --reiniciar`` lo reinicia. Que Slack conecte no se
   espera al arrancar; lo dice ``chequear``.
@@ -117,7 +119,24 @@ class Imagen:
 LE_HABLA = ("bridge", "slack")
 # Las carpetas que una distribucion puede traer ademas de los tres archivos, si su
 # distribution.yaml las lista en distribution_owned. Hermes reemplaza la carpeta entera al instalar.
-CARPETAS_DISTRIBUCION = ("plugins",)
+CARPETAS_DISTRIBUCION = ("plugins", "skills")
+# skills/ la crea y la siembra Hermes en todo profile: se compara solo si la distribucion la trae.
+CARPETAS_QUE_SIEMBRA_HERMES = ("skills",)
+# Un archivo opcional de la distribucion: el marker de Hermes para no sembrar sus skills de fabrica
+# en un profile que trae las suyas (tools/skills_sync.py). Va si la distribucion lo tiene.
+MARKER_SIN_SKILLS_DE_FABRICA = ".no-bundled-skills"
+# Lo que Hermes anota solo adentro de skills/: el manifiesto en cada arranque (skills_sync), el uso
+# de cada skill (skill_usage) y el estado del curador.
+ANOTADO_POR_HERMES = (".bundled_manifest", ".usage.json")
+# Se le pasa a PYTHON_HERMES: lo que el modelo recibe con estos toolsets, sin hablar con ningun modelo.
+PRUEBA_HERRAMIENTAS_OFRECIDAS = """
+import json, sys
+from hermes_cli.plugins import discover_plugins
+discover_plugins()
+from model_tools import get_tool_definitions
+definiciones = get_tool_definitions(enabled_toolsets=json.loads(sys.argv[1]), quiet_mode=True)
+print("OFRECIDAS " + json.dumps(sorted(d["function"]["name"] for d in definiciones)))
+"""
 ID_DE_SLACK = re.compile(r"^[UW][A-Z0-9]{6,}$")
 MARGEN_DE_ARRANQUE = 2.0  # segundos
 ARRANQUE = ".setter-arranque.json"  # en la carpeta del profile de Slack
@@ -444,6 +463,8 @@ def armar_paquete(carpeta: Path, destino: str, modo: str, declaracion: Declaraci
             if fuente.is_symlink():
                 raise Freno(f"{fuente} es un enlace: Hermes no instala distribuciones con enlaces")
             shutil.copyfile(fuente, dist / archivo)
+        if (producto.distribucion / MARKER_SIN_SKILLS_DE_FABRICA).is_file():
+            shutil.copyfile(producto.distribucion / MARKER_SIN_SKILLS_DE_FABRICA, dist / MARKER_SIN_SKILLS_DE_FABRICA)
         for sub in CARPETAS_DISTRIBUCION:
             fuente = producto.distribucion / sub
             if not fuente.is_dir():
@@ -703,15 +724,21 @@ def verificar_duenio(stack: str, marca: dict | None, presentes: list[str], decla
             )
 
 
+def se_ignora_al_comparar(rel: Path) -> bool:
+    """Los caches de Python y lo que Hermes anota solo adentro de skills/ al arrancar."""
+    return ("__pycache__" in rel.parts or rel.suffix == ".pyc" or rel.name in ANOTADO_POR_HERMES
+            or rel.name.startswith(".curator"))
+
+
 def huella_de_carpeta(raiz: Path) -> str | None:
-    """Un hash del contenido de una carpeta (rutas relativas y bytes), sin los caches de Python.
-    None si la carpeta no existe."""
+    """Un hash del contenido de una carpeta (rutas relativas y bytes), sin los caches de Python ni
+    lo que Hermes anota solo. None si la carpeta no existe."""
     if not raiz.is_dir():
         return None
     h = hashlib.sha256()
     for ruta in sorted(p for p in raiz.rglob("*") if p.is_file()):
         rel = ruta.relative_to(raiz)
-        if "__pycache__" in rel.parts or ruta.suffix == ".pyc":
+        if se_ignora_al_comparar(rel):
             continue
         h.update(str(rel).encode("utf-8") + b"\0" + hashlib.sha256(ruta.read_bytes()).digest())
     return h.hexdigest()
@@ -902,6 +929,8 @@ class Dentro:
             for sub in CARPETAS_DISTRIBUCION if (staged / sub).is_dir()
         }
         cambian_carpetas = sorted(sub for sub, igual in carpetas_iguales.items() if not igual)
+        # El marker se mira por presencia: una instancia creada con --no-skills ya lo tiene, con otro texto.
+        falta_marker = (staged / MARKER_SIN_SKILLS_DE_FABRICA).is_file() and not (carpeta / MARKER_SIN_SKILLS_DE_FABRICA).is_file()
         if de_slack and not simular:
             # Si el gateway que corre no lo arranco este script, lo que hay ahora en disco es lo mejor
             # que se sabe de lo que cargo: se anota antes de cambiar nada, para que despues se vea
@@ -913,10 +942,15 @@ class Dentro:
                 anotado = {}
             if pid is not None and anotado.get("pid") != pid:
                 self._anotar_arranque(nombre, pid)
-        if not (soul_igual and config_igual and dist_nuestra and not cambian_carpetas):
+        if not (soul_igual and config_igual and dist_nuestra and not cambian_carpetas and not falta_marker):
             que = [x for x, igual in (("SOUL.md", soul_igual), ("config.yaml", config_igual), ("distribution.yaml", dist_nuestra)) if not igual]
             que += [f"{sub}/" for sub in cambian_carpetas]
-            acciones.append(f"instalar la distribucion en {nombre} ({', '.join(que)}): el agente la usa desde el pedido siguiente")
+            que += [MARKER_SIN_SKILLS_DE_FABRICA] if falta_marker else []
+            # El profile de Slack guarda el system prompt en la sesion (agent/conversation_loop.py:965) y
+            # sus sesiones no vencen solas (SessionResetPolicy "none"): una charla abierta sigue con lo de antes.
+            cuando = ("el agente la usa en las charlas nuevas; una charla abierta sigue con lo de antes hasta /new"
+                      if de_slack else "el agente la usa desde el pedido siguiente")
+            acciones.append(f"instalar la distribucion en {nombre} ({', '.join(que)}): {cuando}")
             if not simular:
                 self._hermes("profile", "install", str(staged), "--name", nombre, "--force", "-y")
                 if self._sha(carpeta / "SOUL.md") != self._sha(staged / "SOUL.md"):
@@ -1028,7 +1062,7 @@ class Dentro:
             if raiz.is_dir():
                 marcas += [
                     p.stat().st_mtime for p in raiz.rglob("*")
-                    if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc"
+                    if p.is_file() and not se_ignora_al_comparar(p.relative_to(raiz))
                 ]
         return cambiado_despues(self._inicio_del_proceso(f"gateway-{nombre}"), marcas)
 
@@ -1177,12 +1211,17 @@ class Dentro:
             r.ok(f"{nombre}: config.yaml igual a lo declarado")
         de_slack = p.get("le_habla", "bridge") == "slack"
         for sub in CARPETAS_DISTRIBUCION:
-            if (staged / sub).is_dir() or (carpeta / sub).is_dir():
+            if (staged / sub).is_dir() or (sub not in CARPETAS_QUE_SIEMBRA_HERMES and (carpeta / sub).is_dir()):
                 h_vivo, h_git = huella_de_carpeta(carpeta / sub), huella_de_carpeta(staged / sub)
                 if h_vivo == h_git:
                     r.ok(f"{nombre}: {sub}/ igual a Git ({(h_git or '')[:12]})")
                 else:
                     r.diferencia(f"{nombre}: {sub}/ distinto de Git ({(h_vivo or 'sin carpeta')[:12]} contra {(h_git or 'sin carpeta')[:12]})")
+        if (staged / MARKER_SIN_SKILLS_DE_FABRICA).is_file():
+            if (carpeta / MARKER_SIN_SKILLS_DE_FABRICA).is_file():
+                r.ok(f"{nombre}: no se siembran las skills de fabrica")
+            else:
+                r.diferencia(f"{nombre}: falta {MARKER_SIN_SKILLS_DE_FABRICA}: Hermes puede sembrar sus skills de fabrica")
         plataforma = "slack" if de_slack else "api_server"
         herramientas = self._herramientas_efectivas(carpeta, vivo, plataforma)
         esperadas = sorted(p.get("herramientas") or [])
@@ -1197,6 +1236,14 @@ class Dentro:
         else:
             r.ok(f"{nombre}: cero herramientas en el API server")
         vivas = self._variables(nombre)
+        if (staged / "skills").is_dir():
+            ofrecidas = self._herramientas_ofrecidas(carpeta, esperadas, vivas)
+            if ofrecidas is None:
+                r.diferencia(f"{nombre}: no se pudo calcular que herramientas recibe el modelo")
+            elif "skill_view" in ofrecidas and not {"skill_manage", "skills_list"} & set(ofrecidas):
+                r.ok(f"{nombre}: el modelo recibe skill_view y no skill_manage")
+            else:
+                r.diferencia(f"{nombre}: el modelo recibe [{', '.join(ofrecidas)}]: tiene que estar skill_view y no skill_manage")
         for var in p["variables"]:
             if var not in vivas:
                 r.diferencia(f"{nombre}: falta {var} en sus variables")
@@ -1257,6 +1304,20 @@ class Dentro:
             with mock.patch.object(tools_config, "_get_plugin_toolset_keys", return_value=claves):
                 return sorted(tools_config._get_platform_tools(config, plataforma))
         except Exception:
+            return None
+
+    def _herramientas_ofrecidas(self, carpeta: Path, toolsets: list[str], variables: dict[str, str]) -> list[str] | None:
+        """Las herramientas que recibe el modelo de este profile. Si el plugin no carga o el override
+        no se autoriza, skill_view no esta y las skills quedan mudas: eso tiene que verse."""
+        try:
+            salida = subprocess.run(
+                [PYTHON_HERMES, "-c", PRUEBA_HERRAMIENTAS_OFRECIDAS, json.dumps(toolsets)],
+                capture_output=True, text=True, timeout=120, cwd="/opt/hermes",
+                env={**os.environ, **variables, "HERMES_HOME": str(carpeta)},
+            )
+            linea = [x for x in salida.stdout.splitlines() if x.startswith("OFRECIDAS ")][-1]
+            return json.loads(linea.split(" ", 1)[1])
+        except (OSError, IndexError, ValueError, subprocess.SubprocessError):
             return None
 
     def _probar_api(self, puerto: int, clave: str) -> tuple[int, int]:

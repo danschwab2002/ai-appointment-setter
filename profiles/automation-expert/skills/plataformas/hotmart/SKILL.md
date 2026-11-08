@@ -1,12 +1,27 @@
+---
+name: hotmart
+description: "Avisos de Hotmart: compra, carrito, pago rechazado, ficha"
+---
+
 # Hotmart
+
+Cargala cuando no sabés si un aviso de Hotmart existe, cómo llega o qué dispara. Por ejemplo: «¿esto se puede disparar con un reembolso?», «¿qué pasa cuando rechazan un pago?», «¿la compra del bump cuenta?». También para escribir las versiones del pago rechazado.
+
+**Los momentos, en una línea cada uno:**
+
+- `compra` (Hotmart `PURCHASE_APPROVED`): dispara un flujo del sistema nuevo, después de cortar lo que la persona tenía abierto.
+- `carrito` (Hotmart `PURCHASE_OUT_OF_SHOPPING_CART`): el carrito abandonado.
+- `pago_fallido` (Hotmart `PURCHASE_CANCELED` con un método de la tabla de configuración de la instancia): el pago rechazado.
+- `ficha_impresa` (Hotmart `PURCHASE_BILLET_PRINTED`) y `ficha_vencida` (Hotmart `PURCHASE_EXPIRED`): la ficha de pago (OXXO y parecidos), se guarda para su seguimiento.
+- `intencion` (el formulario de GHL o de la landing): el primer contacto.
 
 **Cómo llega.** Hotmart manda un webhook por evento a `POST /webhooks/hotmart` del bridge, en la versión 2.0.0 del formato (`src/bridge/hotmart.py`, `EVENT_VERSION`). El bridge lo guarda en la base y el worker lo procesa después.
 
 **Los eventos que importan** (`src/bridge/hotmart.py`):
 
-- `PURCHASE_APPROVED`, la compra aprobada. Primero corta los casos abiertos de la persona (deja de mandarle la recuperación) y después arranca los flujos nativos que dispara la compra, como la bienvenida (`src/bridge/worker.py`, el paso de la compra). Una venta sin caso del recuperador también los dispara.
+- `PURCHASE_APPROVED`, la compra aprobada. Primero corta los casos abiertos de la persona (deja de mandarle la recuperación) y después arranca los flujos del sistema nuevo que dispara la compra, como la bienvenida (`src/bridge/worker.py`, el paso de la compra). Una venta sin caso del recuperador también los dispara.
 - `PURCHASE_OUT_OF_SHOPPING_CART`, el carrito abandonado: el disparador del carrito.
-- `PURCHASE_CANCELED`, la compra cancelada: con un método de pago de la tabla del manifiesto es el pago rechazado; si no, se guarda y no dispara nada. Del rechazo salen los datos con los que el pago rechazado elige su versión (`crear-un-flujo`): el motivo que manda Hotmart da `tipo_de_rechazo` (saldo insuficiente es `sin_saldo`; cualquier otro, `banco`), y dos rechazos o más del mismo pago dan `rechazos: varios`.
+- `PURCHASE_CANCELED`, la compra cancelada: con un método de pago de la tabla de configuración de la instancia es el pago rechazado; si no, se guarda y no dispara nada. Del rechazo salen los datos con los que el pago rechazado elige su versión (guía `crear-un-flujo`): el motivo que manda Hotmart da `tipo_de_rechazo` (saldo insuficiente es `sin_saldo`; cualquier otro, `banco`), y dos rechazos o más del mismo pago dan `rechazos: varios`.
 - `PURCHASE_BILLET_PRINTED` y `PURCHASE_EXPIRED`, la ficha de pago (OXXO y parecidos) que se generó o que venció sin pagarse: se guardan para el seguimiento de la ficha.
 - Cualquier otro tipo queda en la base como `failed` con `unsupported_persisted_event_type` y no dispara nada (lo lista `list_flows` en `events_without_flow`).
 
@@ -16,12 +31,12 @@
 
 **El pago rechazado, con sus versiones (cómo se escribe).**
 
-Es el único flujo nativo con condiciones (`flow-engine-v2` §27). Un solo mensaje por persona: la condición elige cuál.
+Es el único flujo del sistema nuevo con condiciones (`flow-engine-v2` §27). Un solo mensaje por persona: la condición elige cuál.
 
 - **Se escribe como una cadena** al final de los pasos, después de la espera: una `condicion` con su `entonces`, y en el `si_no`, como único paso, la condición siguiente; el último `si_no` es «todos los demás». Hasta tres condiciones (cuatro versiones). Gana la primera que se cumple, así que el orden es el de ATT1: primero el descuento, después los dos rechazos, después el saldo.
 - **Los tres datos** (solo con el pago rechazado): `descuento_previo` (`si` | `no`: si ya le mandamos un mensaje con el descuento antes de este rechazo), `rechazos` (`uno` | `varios`: los rechazos de este pago, también los que llegaron seguidos) y `tipo_de_rechazo` (`sin_saldo` | `banco`: sin saldo o sin límite, o cualquier otro motivo del banco).
 - **Cada versión es una sola plantilla**, sin esperas adentro: la espera va antes de la cadena y es la misma para todas.
-- **El botón del checkout** (`boton: {link: checkout, cupon: <código>}`): nuestro link al pago, con el cupón fijo de la instancia sumado (en Maribel, `PROTOCOLO10`). La plantilla tiene que traer el botón de link al pago primero y, si lo tiene, «No más mensajes» después. El cupón por persona (`personal`) todavía no va en un flujo nativo.
+- **El botón del checkout** (`boton: {link: checkout, cupon: <código>}`): nuestro link al pago, con el cupón fijo de la instancia sumado (en Maribel, `PROTOCOLO10`). La plantilla tiene que traer el botón de link al pago primero y, si lo tiene, «No más mensajes» después. El cupón por persona (`personal`) todavía no va en un flujo del sistema nuevo.
 - Así queda el de Maribel:
 
 ```yaml

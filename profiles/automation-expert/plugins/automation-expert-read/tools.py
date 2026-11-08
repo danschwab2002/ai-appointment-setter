@@ -317,28 +317,44 @@ def draw_flow(params: dict[str, object], **kwargs: object) -> str:
     })
 
 
-# La biblioteca (automation-expert-read-v1 1.2.0, el PR 5 del hito 4): paginas
-# fijas que viajan con el plugin, sin red. El indice lista los temas.
-LIBRARY_DIR = Path(__file__).resolve().parent / "biblioteca"
-# crear-un-flujo (E-255, F-144): como se conversa un flujo nuevo con quien no lo trae armado.
-LIBRARY_TOPICS = ("hotmart", "ghl-formularios", "chatwoot-whatsapp", "crear-un-flujo")
-LIBRARY_MAX_BYTES = 16 * 1024
+# Las skills del agente (E-349): SKILL.md del profile, en profiles/automation-expert/skills/, que Hermes
+# lista en el system prompt. Esta es la unica herramienta para leerlas: el toolset nativo `skills` trae
+# tambien `skill_manage`, que escribe, asi que aca se pisa solo `skill_view` y `skill_manage` no existe
+# para el agente (docs/contracts/automation-expert-read-v1.md).
+SKILLS_DIR = Path(__file__).resolve().parents[2] / "skills"
+SKILL_CATEGORIES = ("flujos", "plataformas")  # autonomous-ai-agents/ es de Hermes: no se lee
+SKILL_MAX_BYTES = 32 * 1024
+
+
+def _skill_files() -> dict[str, Path]:
+    """Las skills del producto, por nombre."""
+    return {path.parent.name: path for category in SKILL_CATEGORIES for path in (SKILLS_DIR / category).glob("*/SKILL.md")}
+
+
+def skill_view(params: dict[str, object], **kwargs: object) -> str:
+    """El contenido de una skill del profile. Solo lee; el nombre se busca en una lista cerrada."""
+    del kwargs
+    files = _skill_files()
+    name = params.get("name")
+    if not isinstance(name, str) or name not in files:
+        return _dumps({"error": "skill_not_found", "skills": sorted(files)})
+    try:
+        text = files[name].read_text(encoding="utf-8")
+    except OSError:
+        return _dumps({"error": "skill_unavailable"})
+    if len(text.encode("utf-8")) > SKILL_MAX_BYTES:
+        return _dumps({"error": "skill_too_large"})
+    return _dumps({"success": True, "name": name, "content": text})
 
 
 def read_library(params: dict[str, object], **kwargs: object) -> str:
-    """El indice de la biblioteca, o la pagina de un tema. Solo lee archivos del plugin."""
-    del kwargs
+    """El nombre viejo de skill_view, para las sesiones abiertas antes de E-349.
+
+    Hermes reusa el system prompt de una sesion abierta (agent/conversation_loop.py:965), asi que esas
+    charlas siguen pidiendo read_library, y los temas de antes se llaman igual que las skills. Se saca
+    cuando ninguna instancia tenga sesiones anteriores a E-349 (retention_days, 7 dias despues de subir).
+    """
     tema = params.get("tema")
-    if tema is None:
-        name = "indice"
-    elif isinstance(tema, str) and tema in LIBRARY_TOPICS:
-        name = tema
-    else:
-        return _dumps({"error": "library_topic_unknown", "topics": list(LIBRARY_TOPICS)})
-    try:
-        text = (LIBRARY_DIR / f"{name}.md").read_text(encoding="utf-8")
-    except OSError:
-        return _dumps({"error": "library_unavailable"})
-    if len(text.encode("utf-8")) > LIBRARY_MAX_BYTES:
-        return _dumps({"error": "library_page_too_large"})
-    return _dumps({"tema": name, "topics": list(LIBRARY_TOPICS), "page": text})
+    if isinstance(tema, str) and tema in _skill_files():
+        return skill_view({"name": tema}, **kwargs)
+    return _dumps({"error": "read_library_moved", "use": "skill_view", "skills": sorted(_skill_files())})

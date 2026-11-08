@@ -104,24 +104,27 @@ LEAD_HISTORY = {
 
 READ_LIBRARY = {
     "name": "read_library",
+    "description": "Nombre viejo de skill_view, solo para charlas anteriores: usá skill_view.",
+    "parameters": {
+        "type": "object",
+        "properties": {"tema": {"type": "string", "description": "El nombre de la guía."}},
+        "additionalProperties": False,
+    },
+}
+
+SKILL_VIEW = {
+    "name": "skill_view",
     "description": (
-        "La biblioteca de plataformas: sin tema devuelve el índice (los temas y los eventos en una "
-        "línea); con tema, la página: hotmart (los eventos y el producto por ID), ghl-formularios "
-        "(cómo llega el formulario con permiso de WhatsApp) o chatwoot-whatsapp (plantillas, "
-        "categorías, la ventana de 24 h y las etiquetas). Usala antes de armar un flujo nuevo para "
-        "saber si el evento existe y llega. crear-un-flujo es cómo se conversa un flujo nuevo con "
-        "quien no lo trae armado: las rondas, los valores propuestos y el resumen antes de proponer. "
-        "No trae nada de la instancia ni de una persona. Solo lee."
+        "Carga una de las guías de la lista de skills del sistema, por su nombre: cómo crear, cambiar "
+        "o pasar un flujo, y qué hay que saber de Hotmart, los formularios de GHL, Chatwoot y WhatsApp. "
+        "No trae nada de la instancia ni de una persona. Solo lee: las guías no se crean ni se corrigen."
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "tema": {
-                "type": "string",
-                "enum": ["hotmart", "ghl-formularios", "chatwoot-whatsapp", "crear-un-flujo"],
-                "description": "El tema; sin tema, el índice.",
-            }
+            "name": {"type": "string", "description": "El nombre de la guía, como figura en la lista de skills."},
         },
+        "required": ["name"],
         "additionalProperties": False,
     },
 }

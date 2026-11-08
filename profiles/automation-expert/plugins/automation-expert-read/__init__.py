@@ -1,9 +1,9 @@
 """Registro del plugin de lectura del Automation Expert en Hermes."""
 
-from .schemas import DRAW_FLOW, LEAD_HISTORY, LIST_FLOWS, READ_LIBRARY
-from .tools import PROFILE_NAME, draw_flow, lead_history, list_flows, read_library
+from .schemas import DRAW_FLOW, LEAD_HISTORY, LIST_FLOWS, READ_LIBRARY, SKILL_VIEW
+from .tools import PROFILE_NAME, draw_flow, lead_history, list_flows, read_library, skill_view
 
-_TOOLS = frozenset({"list_flows", "lead_history", "draw_flow", "read_library"})
+_TOOLS = frozenset({"list_flows", "lead_history", "draw_flow", "skill_view", "read_library"})
 
 
 def only_one_to_one_dms(**kwargs):
@@ -59,6 +59,17 @@ def register(ctx):
         schema=DRAW_FLOW,
         handler=draw_flow,
     )
+    # override: reemplaza al skill_view nativo de Hermes (toolset `skills`), con el OK de config.yaml
+    # (plugins.entries.automation-expert-read.allow_tool_override). El toolset nativo no se prende: trae
+    # tambien skill_manage, que crea y edita skills.
+    ctx.register_tool(
+        name="skill_view",
+        toolset="automation_expert_read",
+        schema=SKILL_VIEW,
+        handler=skill_view,
+        override=True,
+    )
+    # Solo para las sesiones abiertas antes de E-349: ver tools.read_library.
     ctx.register_tool(
         name="read_library",
         toolset="automation_expert_read",
