@@ -167,7 +167,8 @@ from bridge.opt_out_confirmation import (
     validate_opt_out_confirmation_text,
 )
 from bridge import automation_expert_chatwoot, flow_approval, flow_change_api
-from bridge import template_request, template_request_api
+from bridge import template_approval, template_request, template_request_api
+from bridge.meta_templates import MetaTemplatesClient
 from bridge.automation_expert_read import (
     CHATWOOT_MAX_MESSAGES_PER_CONVERSATION,
     CHATWOOT_READ_TIMEOUT_SECONDS,
@@ -1134,6 +1135,14 @@ class Settings:
     # F-146 (template-request-v1, partes 1 y 2): el agente redacta y valida
     # solicitudes de plantilla. Apagado, las rutas no existen. Nada llama a Meta.
     meta_templates_enabled: bool = False
+    # F-146 parte 3: el envio a Meta. Un token solo para plantillas
+    # (whatsapp_business_management), distinto del del inbox de Chatwoot, para
+    # revocarlo sin cortar WhatsApp. El WABA, la version de la Graph API y el
+    # tope de envios por dia y por instancia (D8).
+    meta_templates_access_token: str | None = None
+    meta_waba_id: str | None = None
+    meta_graph_api_version: str = "v23.0"
+    meta_templates_daily_cap: int = 5
     # flow-engine-v1, seccion 8: el bridge del motor de flujos (la T2.4).
     # Apagado, el bridge no lee nada del motor y hace exactamente lo de hoy.
     flow_engine_enabled: bool = False
@@ -2634,6 +2643,22 @@ class Settings:
             ),
             meta_templates_enabled=(
                 os.getenv("META_TEMPLATES_ENABLED", "false").lower() == "true"
+            ),
+            meta_templates_access_token=(
+                os.getenv("META_TEMPLATES_ACCESS_TOKEN", "").strip() or None
+            ),
+            meta_waba_id=(os.getenv("META_WABA_ID", "").strip() or None),
+            meta_graph_api_version=(
+                os.getenv("META_GRAPH_API_VERSION", "").strip() or "v23.0"
+            ),
+            # Con el flag apagado no se mira: un valor roto no puede frenar el
+            # arranque de una funcion que no corre.
+            meta_templates_daily_cap=(
+                template_request_api.parse_daily_cap(
+                    os.getenv("META_TEMPLATES_DAILY_CAP", "")
+                )
+                if os.getenv("META_TEMPLATES_ENABLED", "false").lower() == "true"
+                else template_request_api.DAILY_CAP_DEFAULT
             ),
             flow_engine_enabled=(
                 os.getenv("FLOW_ENGINE_ENABLED", "false").lower() == "true"
@@ -4605,6 +4630,7 @@ def create_app(
     template_request_store: template_request_api.TemplateRequestStore | None = None,
     flow_approval_store: flow_approval.ApprovalStore | None = None,
     flow_approval_oidc: flow_approval.SlackIdTokenClient | None = None,
+    meta_templates_client: MetaTemplatesClient | None = None,
 ) -> FastAPI:
     configure_bridge_event_log()  # los info revisados, al log (E-084)
     boolean_fields = [
@@ -9936,6 +9962,21 @@ def create_app(
             time_zone=settings.instance_manifest.time_zone,
             producer=slack_runtime.producer if slack_runtime is not None else None,
             segment_labels=lambda: segment_labels_setup.validator_labels(datetime.now(UTC)),
+            # F-146 parte 3: la pagina de una solicitud de plantilla y el envio
+            # a Meta. Con el flag apagado las rutas no existen, y el cliente de
+            # Meta ni se crea.
+            extra_routes=(
+                template_approval.routes(
+                    meta=meta_templates_client or MetaTemplatesClient(
+                        access_token=settings.meta_templates_access_token or "",
+                        waba_id=settings.meta_waba_id or "",
+                        graph_version=settings.meta_graph_api_version,
+                    ),
+                    daily_cap=settings.meta_templates_daily_cap,
+                    product_name=settings.instance_manifest.product_name,
+                )
+                if settings.meta_templates_enabled else None
+            ),
         )
 
     if settings.automation_expert_read_enabled:

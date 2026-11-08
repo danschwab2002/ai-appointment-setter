@@ -1,13 +1,13 @@
 # template-request-v1: la solicitud de plantilla de Meta
 
-**Versión:** 1.0.0 (F-146, partes 1 y 2: la base, el validador y las rutas del Automation Expert).
+**Versión:** 1.1.0 (F-146, partes 1 a 3: la base, el validador, las rutas del Automation Expert, la página de aprobación y el envío a Meta).
 **Migración:** `20261102000200_meta_template_requests_v1.sql`.
-**Código:** `src/bridge/template_request.py` (puro) y `src/bridge/template_request_api.py` (las rutas).
-**Flag:** `META_TEMPLATES_ENABLED`, apagado por defecto. Apagado, las rutas no existen y nada cambia.
+**Código:** `src/bridge/template_request.py` (puro), `src/bridge/template_request_api.py` (las rutas del AE), `src/bridge/template_approval.py` (la página y el envío) y `src/bridge/meta_templates.py` (el cliente cerrado de Meta).
+**Flag:** `META_TEMPLATES_ENABLED`, apagado por defecto. Apagado, las rutas no existen, el cliente de Meta no se crea y nada cambia.
 
 Cuando un flujo necesita una plantilla de WhatsApp que no existe, el Automation Expert (AE) la redacta con el dueño y la deja como **solicitud**: un objeto del almacén hermano de la propuesta de flujo (`flow-change-cycle-v1`), con revisiones mientras es borrador, una validación que lo congela con su huella por 24 horas, la aprobación de una persona de la lista de la instancia, y después el envío a Meta y lo que Meta contesta.
 
-**Lo que esta versión no hace.** Nada llama a Meta, ni para leer. La página que muestra la solicitud y la manda (parte 3), el cliente cerrado de Meta, el sondeo del estado y la sincronización del catálogo de Chatwoot (parte 4), las herramientas del plugin y el SOUL (parte 5) y el token y el manifiesto de la instancia (parte 6) vienen después. La base ya tiene las funciones que esas partes van a llamar.
+**Lo que esta versión no hace.** El sondeo del estado, los avisos al canal de alertas y la sincronización del catálogo de Chatwoot (parte 4), las herramientas del plugin y el SOUL (parte 5) y el script del token y el manifiesto de la instancia (parte 6) vienen después. Mientras no esté la parte 4, una plantilla mandada queda `en_revision` hasta que alguien la mire: el estado se lee en la página o en WhatsApp Manager.
 
 ## 1. Los estados
 
@@ -133,7 +133,7 @@ Las del producto:
 
 **El seguimiento con cupón** (E-272, decisión de Dan del 2026-11-02: toda plantilla de marketing del recuperador lleva «No más mensajes», sin excepción). Se pide con el botón `checkout` primero y la respuesta `No más mensajes` después, la forma que `parse_followup_template` acepta desde E-272; sin la respuesta, la de marketing se sigue frenando con `template_marketing_without_opt_out`. No hay salida para una de marketing sin la baja.
 
-**El pedido de Meta** (`template_request.meta_request`) es el de `meta_plantillas.pedido`, posicional y con `parameter_format: POSITIONAL` (es lo que Meta devuelve en los catálogos; que lo acepte al crear se confirma antes de la parte 3, y si no se omite: lo de Meta por defecto es posicional). La base compara su cuerpo con el del borrador numerado y su encabezado con el del borrador antes de congelarlo. Los ejemplos los pone el bridge:
+**El pedido de Meta** (`template_request.meta_request`) es el de `meta_plantillas.pedido`, posicional y con `parameter_format: POSITIONAL` (es lo que Meta devuelve en los catálogos; la documentación de Meta lo muestra en el ejemplo de creación de v23.0, leída el 2026-11-08; el envío real lo confirma el primer día en Maribel). La base compara su cuerpo con el del borrador numerado y su encabezado con el del borrador antes de congelarlo. Los ejemplos los pone el bridge:
 
 - el nombre genérico fijo «María»;
 - el producto, la oferta y el precio del manifiesto;
@@ -143,6 +143,28 @@ Las del producto:
 
 Contra el catálogo capturado de ATT1, el pedido de `att1_pago_efectivo_confirmado_01` y el de `att1_bienvenida_01` salen idénticos a lo que Meta aprobó.
 
-## 5. Los permisos al arrancar
+## 5. La página y el envío (parte 3)
 
-Con `META_TEMPLATES_ENABLED=true` el bridge exige el manifiesto, `AUTOMATION_EXPERT_CHANGE_ENABLED` y `FLOW_APPROVAL_ENABLED`: sin la página no hay quien apruebe. Validar exige además `SETTER_VERSION` y `GIT_SHA` en la imagen (si faltan, la validación contesta 503; el arranque no lo mira, igual que las rutas de cambio de flujos). El tope por día no es del validador: lo aplica la base al empezar el envío. El token de Meta y el WABA los exigirá la parte 3, que es la que los usa.
+Con la misma sesión de «Entrar con Slack» y la misma lista de aprobadores que la página de flujos. La página sale en capturas, así que muestra la plantilla y su estado en lenguaje de negocio: sin el id, la huella, el id de Slack ni el nombre técnico a la vista (el nombre va plegado, para buscarla en WhatsApp Manager una vez mandada).
+
+- **`GET /flow-approval/t/{id}`**: la burbuja guardada al validar, qué significa la categoría, los avisos del validador y el estado. Entrando por el link, vuelve a la solicitud: el id viaja adentro del `state` del OIDC, porque la base solo acepta volver a la lista o a una propuesta.
+- **`POST /flow-approval/t/{id}/send`** con `csrf_token` y `fingerprint`. Origin, sesión viva y en la lista, CSRF y huella. Aprueba (`approver_approve_meta_template_request_v1`), empieza el envío con el tope por día, y recién ahí habla con Meta. Lo mandado es el `meta_request` congelado, nunca algo del formulario.
+- **`POST /flow-approval/t/{id}/discard`** con `csrf_token` y `motivo` (opcional). Solo si no llegó a Meta.
+
+**La idempotencia por nombre.** Antes de crear, se recorre la lista de plantillas de la cuenta y se busca el nombre con su idioma, porque la referencia de Meta no documenta un filtro por nombre en esa ruta. Si está con el mismo encabezado, cuerpo, pie y botones, se adopta y no se crea otra: un reintento después de un timeout no duplica. Si difiere en cualquiera de esos (`meta_name_taken_other_text`) o pausada o desactivada (`meta_name_taken_unusable`), no se adopta. Si la lista no se puede leer hasta el final, no se crea.
+
+**Los errores.** Se guarda solo el código (`last_send_error`): `meta:<code>`, `meta:<code>:<subcode>`, `meta_http:<status>`, `meta_unreachable`, `meta_unexpected_answer`, `meta_list_too_long`, `meta_name_taken_*`. Ningún texto de Meta sale de `meta_templates.py`. La página los traduce (`describe_send_error`) y nunca muestra el código. Con error la solicitud queda `enviada` y se puede volver a mandar a los 2 minutos, hasta 5 intentos.
+
+**El cliente de Meta** (`meta_templates.py`) tiene tres llamadas: crear (el único POST), buscar por nombre y leer por id. Una prueba falla si aparece otra ruta u otro verbo. El token va en el header, y la página siguiente se pide con el cursor: no se sigue la URL `paging.next`.
+
+| Variable | Qué es |
+|---|---|
+| `META_TEMPLATES_ENABLED` | El flag, `false` por defecto. |
+| `META_TEMPLATES_ACCESS_TOKEN` | Secreto, solo con `whatsapp_business_management`, distinto de todo otro valor. Mínimo 32 caracteres. |
+| `META_WABA_ID` | El id de la cuenta de WhatsApp. |
+| `META_GRAPH_API_VERSION` | `v23.0` por defecto. |
+| `META_TEMPLATES_DAILY_CAP` | De 1 a 20, 5 por defecto (D8). |
+
+## 6. Los permisos al arrancar
+
+Con `META_TEMPLATES_ENABLED=true` el bridge exige el manifiesto, `AUTOMATION_EXPERT_CHANGE_ENABLED`, `FLOW_APPROVAL_ENABLED` (sin la página no hay quien apruebe), el token, el WABA, la versión de la Graph API y el tope. Validar exige además `SETTER_VERSION` y `GIT_SHA` en la imagen (si faltan, la validación contesta 503; el arranque no lo mira, igual que las rutas de cambio de flujos). El tope por día no es del validador: lo aplica la base al empezar el envío.

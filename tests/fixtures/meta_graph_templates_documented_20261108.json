@@ -1,0 +1,15 @@
+{
+  "_capture": {
+    "fecha": "2026-11-08",
+    "origen_create_ok": "CAPTURADO INDIRECTO. Valores reales que contesto POST /{WABA}/message_templates a meta_plantillas.py subir (johanna_testimonios_01, 2026-11-03T16:33Z), guardados en productos/soporte-infoproductores/documentacion/plantillas-meta-johanna.estado.json del vault del OS. El script guarda id, status y category de la respuesta; no se guardo el JSON crudo.",
+    "origen_list": "La pagina se arma en los tests con plantillas CAPTURADAS que Chatwoot copia de Meta (tests/fixtures/chatwoot_inbox_11_message_templates_20261010.json). El envoltorio data + paging.cursors es la forma DOCUMENTADA (referencia de Meta, Message Template API, GET /{WABA-ID}/message_templates, MessageTemplatesResponse y CursorPaging, leida el 2026-11-08), y meta_plantillas.py ya recorrio esa lista en real siguiendo paging.next.",
+    "origen_errors": "NO CAPTURADO. Forma documentada por Meta (WhatsApp Business Platform, Error codes, leida el 2026-11-08): error.message, type, code, error_data, error_subcode, fbtrace_id. Los mensajes de abajo son de ejemplo. Meta da error_subcode por deprecado desde v16.0, y aun asi lista los 2388xxx de plantillas: se acepta el 2388xxx como code y como error_subcode.",
+    "reemplazar": "El primer error real de Meta al crear (parte 6, cuando se prenda en Maribel) y el JSON crudo de una creacion se capturan y reemplazan estas formas. Si la forma real difiere, el codigo traduce con el fallback y falla cerrado."
+  },
+  "create_ok": {"id": "4596630157247420", "status": "PENDING", "category": "MARKETING"},
+  "error_expired_token": {"error": {"message": "(#190) Error validating access token", "type": "OAuthException", "code": 190, "fbtrace_id": "AbCdEfGh123"}},
+  "error_permission": {"error": {"message": "(#10) Application does not have permission for this action", "type": "OAuthException", "code": 10, "fbtrace_id": "AbCdEfGh124"}},
+  "error_rate_limit": {"error": {"message": "(#4) Application request limit reached", "type": "OAuthException", "code": 4, "fbtrace_id": "AbCdEfGh125"}},
+  "error_limit_templates": {"error": {"message": "(#2388019) Message Template Limit Exceeded", "type": "OAuthException", "code": 2388019, "fbtrace_id": "AbCdEfGh126"}},
+  "error_body_too_long": {"error": {"message": "Character limit exceeded", "type": "OAuthException", "code": 100, "error_subcode": 2388040, "fbtrace_id": "AbCdEfGh127"}}
+}

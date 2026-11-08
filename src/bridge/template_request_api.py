@@ -34,7 +34,7 @@ import logging
 import os
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -62,18 +62,23 @@ __all__ = [
     "DAILY_CAP_DEFAULT",
     "TemplateRequestStore",
     "check_settings",
+    "parse_daily_cap",
     "register_template_request_routes",
 ]
 
 logger = logging.getLogger(__name__)
 
 CONTRACT = rules.CONTRACT
-CONTRACT_VERSION = "1.0.0"
+CONTRACT_VERSION = "1.1.0"
 LIST_DEFAULT_LIMIT = 20
 LIST_MAX_LIMIT = 50
 LIST_STATES = {"abiertas": True, "todas": False}
-# D8: las solicitudes que se mandan a Meta por dia y por instancia. Lo usa el envio (parte 3).
+# D8: las solicitudes que se mandan a Meta por dia y por instancia. La base acepta de 1 a 20.
 DAILY_CAP_DEFAULT = 5
+DAILY_CAP_MAX = 20
+_ACCESS_TOKEN_MIN_CHARS = 32
+_WABA_ID = re.compile(r"^[0-9]{6,32}$")
+_GRAPH_VERSION = re.compile(r"^v[0-9]{1,3}\.[0-9]{1,2}$")
 _PRODUCT_VERSION = re.compile(r"^v?[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$")
 _GIT_SHA = re.compile(r"^[0-9a-f]{7,40}$")
 _POINTER = re.compile(r"^(/[a-z0-9_]{1,40}){1,16}$")
@@ -121,8 +126,9 @@ def check_settings(settings: Any) -> None:
     """Lo que exige el flag al arrancar (diseno de F-146, §8).
 
     Sin la pagina de aprobacion no hay quien apruebe, y sin las rutas de cambio
-    del agente no hay quien redacte. El token de Meta y el WABA los exige la
-    parte 3, que es la que los usa: hoy nada llama a Meta.
+    del agente no hay quien redacte. El envio a Meta (parte 3) exige ademas el
+    token, solo de plantillas y distinto de todo otro valor de la configuracion,
+    el WABA, la version de la Graph API y el tope por dia.
     """
     if not getattr(settings, "meta_templates_enabled", False):
         return
@@ -132,6 +138,36 @@ def check_settings(settings: Any) -> None:
         raise ValueError("META_TEMPLATES_ENABLED requires FLOW_APPROVAL_ENABLED")
     if settings.instance_manifest is None:
         raise ValueError("META_TEMPLATES_ENABLED requires an instance manifest")
+    token = getattr(settings, "meta_templates_access_token", None) or ""
+    if len(token) < _ACCESS_TOKEN_MIN_CHARS or any(character.isspace() for character in token):
+        raise ValueError("META_TEMPLATES_ENABLED requires META_TEMPLATES_ACCESS_TOKEN")
+    if not _WABA_ID.fullmatch(getattr(settings, "meta_waba_id", None) or ""):
+        raise ValueError("META_TEMPLATES_ENABLED requires META_WABA_ID")
+    if not _GRAPH_VERSION.fullmatch(getattr(settings, "meta_graph_api_version", "") or ""):
+        raise ValueError("META_GRAPH_API_VERSION must look like v23.0")
+    cap = getattr(settings, "meta_templates_daily_cap", DAILY_CAP_DEFAULT)
+    if type(cap) is not int or not 1 <= cap <= DAILY_CAP_MAX:
+        raise ValueError("META_TEMPLATES_DAILY_CAP must be between 1 and 20")
+    if is_dataclass(settings):
+        clashing = sorted(
+            other.name for other in fields(settings)
+            if other.name != "meta_templates_access_token"
+            and isinstance(value := getattr(settings, other.name), str) and value
+            and hmac.compare_digest(token.encode("utf-8", "surrogatepass"), value.encode("utf-8", "surrogatepass"))
+        )
+        if clashing:
+            raise ValueError("META_TEMPLATES_ACCESS_TOKEN must differ from every other secret and value of the "
+                             "bridge configuration; it equals " + ", ".join(clashing))
+
+
+def parse_daily_cap(raw: str) -> int:
+    """``META_TEMPLATES_DAILY_CAP``, vacio el valor por defecto. Lo que no es un entero en el rango no arranca."""
+    text = raw.strip()
+    if not text:
+        return DAILY_CAP_DEFAULT
+    if not (text.isascii() and text.isdigit()) or not 1 <= int(text) <= DAILY_CAP_MAX:
+        raise ValueError("META_TEMPLATES_DAILY_CAP must be between 1 and 20")
+    return int(text)
 
 
 def _request_id(value: str) -> str:

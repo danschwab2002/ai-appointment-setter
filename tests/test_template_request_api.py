@@ -45,6 +45,7 @@ APPROVAL = {
     "flow_approval_slack_team_id": "T0LANCEMOS01", "flow_approval_slack_approvers": "U0DANSCHWAB1",
     "flow_approval_slack_client_id": "1234567890.987654321", "flow_approval_slack_client_secret": "s" * 40,
     "flow_approval_session_secret": "k" * 48, "flow_change_approver_db_key": _jwt("flow_change_approver"),
+    "meta_templates_access_token": "EAAtoken-solo-de-plantillas-" + "y" * 40, "meta_waba_id": "1234567890123",
 }
 
 
@@ -185,7 +186,7 @@ def test_proposing_saves_the_normalized_draft_with_the_role_key_and_answers_the_
     response = client.post(f"{PREFIX}/template-requests", headers=AUTH, json=_body())
     assert response.status_code == 201, response.text
     body = response.json()
-    assert (body["contract"], body["contract_version"]) == ("template-request-v1", "1.0.0")
+    assert (body["contract"], body["contract_version"]) == ("template-request-v1", "1.1.0")
     data = body["data"]
     assert data["status"] == "borrador" and data["revision"] == 1 and data["variables"] == ["nombre", "producto"]
     assert data["burbuja"]["cuerpo"].startswith("Hola, [nombre]. Se confirmó tu pago de [producto].")
