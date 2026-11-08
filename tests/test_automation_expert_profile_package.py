@@ -97,6 +97,8 @@ def test_the_distribution_copies_the_plugin_and_names_its_variables() -> None:
     assert change["name"] == "automation-expert-change"
     assert change["provides_tools"] == ["get_flow_definitions", "propose_flow_change", "validate_flow_change",
                                         "get_flow_change", "list_flow_changes", "list_templates",
+                                        "propose_template", "validate_template", "list_template_requests",
+                                        "get_template_request",
                                         "list_chatwoot_labels", "create_chatwoot_label",
                                         "add_chatwoot_label_to_conversation", "list_chatwoot_macros"]
 
@@ -112,6 +114,7 @@ def _skill(path: str) -> str:
 
 
 SKILLS = ("flujos/crear-un-flujo", "flujos/cambiar-un-flujo", "flujos/pasar-flujo-al-sistema-nuevo",
+          "flujos/pedir-plantilla-a-meta",
           "plataformas/hotmart", "plataformas/ghl-formularios", "plataformas/chatwoot-whatsapp")
 
 
@@ -507,3 +510,161 @@ def test_the_settings_come_from_the_profile_secret_scope(monkeypatch: pytest.Mon
     scoped["AUTOMATION_EXPERT_API_TOKEN"] = "corto"
     with pytest.raises(ValueError, match="automation_expert_api_token_invalid"):
         _tools()._api_settings()
+
+
+def test_crear_un_flujo_hands_a_missing_template_to_the_meta_skill() -> None:
+    text = _skill("flujos/crear-un-flujo")
+    assert "`pedir-plantilla-a-meta`" in text
+    # Ya no dice que el AE no la puede mandar: el camino a mano quedo en la skill, para la instancia sin el flag.
+    assert "Vos todavía no la podés crear" not in text
+
+
+def _meta_skill_section(title: str) -> str:
+    text = _skill("flujos/pedir-plantilla-a-meta")
+    return text.split(f"## {title}\n", 1)[1].split("\n## ", 1)[0]
+
+
+def _meta_skill_state(state: str) -> str:
+    """La rama de un estado: la linea que empieza con ese estado."""
+    for line in _meta_skill_section("Cuando el dueño vuelve: cómo va").splitlines():
+        if line.startswith(f"- **`{state}`**"):
+            return line
+    raise AssertionError(f"la guia no tiene rama para {state}")
+
+
+def _meta_skill_closing() -> str:
+    return _meta_skill_section("Cómo se guarda").split("4. **El cierre", 1)[1]
+
+
+def test_the_meta_skill_keeps_its_promises() -> None:
+    text = _skill("flujos/pedir-plantilla-a-meta")
+    # Sin la parte 4 no hay sondeo ni aviso: dice que no avisa, y las palabras de aviso solo aparecen para prohibirlas.
+    assert "No te voy a avisar" in text
+    forbidden = "En ningún momento digas «te aviso», «te confirmo cuando esté» ni «quedo atento a Meta»"
+    assert forbidden in text
+    assert not re.search(r"te (aviso|avisamos|confirmo)", text.replace(forbidden, ""))
+    # Las reglas de Dan: la baja en marketing, las URLs de la lista, sin imagen, y el numero siguiente.
+    assert "No más mensajes" in text
+    assert "lista de la instancia" in text
+    assert "Imagen o video no" in text
+    assert "número siguiente" in text
+    # El destrabe es una revision del borrador, con el nombre y las variables en orden.
+    assert "`proposal_id` y `revision`" in text and "`variables` en ese orden" in text
+    # Y el camino de la instancia con el flag apagado.
+    assert "template_requests_not_enabled" in text
+    # El AE no manda: no nombra ninguna herramienta que lo haga.
+    assert "send_template" not in text and "/send" not in text
+
+
+def test_the_meta_skill_has_a_branch_for_every_resolved_state_and_no_other() -> None:
+    from bridge.template_request import RESOLVED_STATES  # noqa: PLC0415
+
+    section = _meta_skill_section("Cuando el dueño vuelve: cómo va")
+    written = set(re.findall(r"^- \*\*`([a-z_]+)`\*\*", section, flags=re.MULTILINE))
+    # sin_confirmar va en su propio parrafo, antes de la lista: no es un estado que se le cuenta a nadie.
+    assert written | {"sin_confirmar"} == set(RESOLVED_STATES)
+    assert "Con `sin_confirmar`, volvé a leerla" in section
+
+
+def test_the_meta_skill_reads_the_resolved_state_and_not_the_raw_one() -> None:
+    section = _meta_skill_section("Cuando el dueño vuelve: cómo va")
+    intro = section.split("- **`", 1)[0]
+    assert "`resolved.state`" in intro and "No lo deduzcas de `status` ni de `list_templates`" in intro
+    assert "traé la solicitud con `get_template_request`" in intro
+
+
+@pytest.mark.parametrize("state", ["aprobada_sin_mandar", "no_llego_a_meta", "mandandose", "nombre_ocupado_en_meta",
+                                   "no_llego_a_meta_sin_reintentos"])
+def test_what_did_not_reach_meta_is_never_told_as_in_review_or_approved_by_it(state: str) -> None:
+    line = _meta_skill_state(state)
+    told = re.sub(r"(nunca|no) digas [^.]*\.", "", line, flags=re.IGNORECASE)
+    assert "Sigue en revisión" not in told and "Meta la aprobó" not in told and "se aprobó" not in told
+
+
+def test_the_branches_say_what_the_owner_has_to_hear() -> None:
+    # Con la plantilla aprobada se destraba; nunca «sigue en revision».
+    assert "«Destrabar el flujo»" in _meta_skill_state("aprobada_lista")
+    assert "Nunca digas que sigue en revisión" in _meta_skill_state("aprobada_lista")
+    assert "«Si Meta la cambió de tipo»" in _meta_skill_state("aprobada_otro_tipo")
+    assert "«Si Meta la rechaza»" in _meta_skill_state("rechazada")
+    assert "Sigue en revisión" in _meta_skill_state("en_revision")
+    # Una persona la aprobo y Meta no la vio.
+    person = _meta_skill_state("aprobada_sin_mandar")
+    assert "todavía no se mandó a Meta" in person and "Volver a mandar" in person
+    assert "nunca digas que la aprobó Meta ni que está en revisión" in person
+    # El motivo sale del texto que da el sistema, no de lo que suponga el modelo.
+    failed = _meta_skill_state("no_llego_a_meta")
+    assert "`send_error_text`" in failed and "Volver a mandar" in failed and "no digas que está en revisión" in failed
+    assert "No le agregues una causa tuya" in failed
+    assert "No le agregues una causa tuya" in _meta_skill_section("Si Meta la rechaza")
+    assert "No propongas otra plantilla" in person and "No calcules vos si venció" in person
+    assert "Tampoco ofrezcas avisar" in _meta_skill_closing()
+    assert "número siguiente" in _meta_skill_state("no_llego_a_meta_sin_reintentos")
+    assert "número siguiente" in _meta_skill_state("nombre_ocupado_en_meta")
+    assert "descartó" in _meta_skill_state("descartada")
+    # Una pausada no se usa: no se la da por aprobada.
+    assert "no se puede usar" in _meta_skill_state("pausada_en_meta")
+    assert "No la des por aprobada" in _meta_skill_state("pausada_en_meta")
+    assert "el flujo no la puede usar" in _meta_skill_state("aprobada_falta_catalogo")
+    assert "No inventes un estado" in _meta_skill_state("estado_de_meta_desconocido")
+
+
+def test_the_meta_skill_tells_the_result_where_it_really_is() -> None:
+    closing = _meta_skill_closing()
+    # La pagina se queda en «En revision» hasta la parte 4: no promete ver ahi el resultado.
+    assert "El resultado se ve en la cuenta de WhatsApp" in closing
+    assert "página de la plantilla" not in _skill("flujos/pedir-plantilla-a-meta")
+    contract = (ROOT / "docs" / "contracts" / "template-request-v1.md").read_text(encoding="utf-8")
+    does_not = contract.split("**Lo que esta versión no hace.**", 1)[1].split("## 1.", 1)[0]
+    assert "se lee en la página" not in does_not and "nunca muestra lo que Meta contestó" in does_not
+
+
+def test_the_meta_skill_does_not_send_a_missing_button_to_a_road_that_does_not_exist() -> None:
+    closing = _meta_skill_closing()
+    not_posted = closing.split("**`status: not_posted`**", 1)[1].split("\n", 1)[0]
+    assert "nadie la puede mandar" in not_posted and "no la vuelvas a validar" in not_posted
+    assert "operador" not in not_posted
+    no_button = closing.split("**Sin `approval_button`**", 1)[1].split("\n", 1)[0]
+    assert "no está prendido" in no_button and "equipo técnico" in no_button
+
+
+def test_a_blocked_validation_redoes_the_same_request_and_moves_the_step_first() -> None:
+    saving = _meta_skill_section("Cómo se guarda")
+    blocked = saving.split("**Si vuelve con `blocks`** (sigue `borrador`)", 1)[1].split("\n", 1)[0]
+    assert "mandando su `request_id` y su `revision`" in blocked and "Nunca una nueva" in blocked
+    by_name = saving.split("**Si el bloqueo es por el nombre**", 1)[1].split("\n", 1)[0]
+    # El orden importa: el validador compara con el paso que la espera (template_flow_step_mismatch).
+    assert by_name.index("primero el paso del flujo") < by_name.index("después la plantilla")
+    taken = next(line for line in _meta_skill_section("Errores, en simple").splitlines()
+                 if line.startswith("- `meta_template_name_taken`"))
+    assert "rehacelo con su `request_id` y su `revision`" in taken
+    assert taken.index("primero el paso del flujo") < taken.index("después la plantilla")
+
+
+@pytest.mark.parametrize("skill", ["flujos/crear-un-flujo", "flujos/pedir-plantilla-a-meta"])
+def test_a_missing_button_detail_does_not_stop_the_flow(skill: str) -> None:
+    assert ("pedilo una vez, pero no te frenes por eso: con el sí al resumen, guardá la propuesta con la plantilla "
+            "pendiente y decí que ese dato va cuando se pida la plantilla a Meta") in _skill(skill)
+
+
+def test_the_template_tools_are_in_the_soul_routing() -> None:
+    soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
+    # La guia va antes que las herramientas: sin esa frase, el AE contestaba sin cargarla (suite E-356).
+    assert "`pedir-plantilla-a-meta`" in soul and "nunca las uses sin antes cargar la guía" in soul
+    assert len(soul) < 20_000
+
+
+def test_the_soul_routes_any_question_about_a_template_to_the_guide_first() -> None:
+    # Sin esta linea, el AE contestaba con solo el nombre de la herramienta (primera corrida de la suite de E-356).
+    soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
+    routing = next(line for line in soul.splitlines() if line.startswith("- **Antes de contestar cualquier cosa sobre"))
+    assert "una plantilla que no existe o que se pidió a Meta" in routing
+    assert "cargá `pedir-plantilla-a-meta`" in routing and "aunque ya sepas qué herramienta llamar" in routing
+    # Y va entre las guias, antes de lo que lee: se aplica antes de usar una herramienta.
+    assert soul.index(routing) < soul.index("## Qué leés")
+
+
+def test_the_tools_say_that_a_request_approved_by_a_person_did_not_reach_meta() -> None:
+    schemas = (PROFILE / "plugins" / "automation-expert-change" / "schemas.py").read_text(encoding="utf-8")
+    assert "«aprobada» ahí quiere decir que la aprobó una persona y NO se " in schemas
+    assert "resolved.state: cómo va de verdad" in schemas

@@ -254,6 +254,29 @@ def test_loading_does_not_mutate_the_input_mapping() -> None:
 # ----------------------------------------------------- parametros de plantilla
 
 
+def test_the_fixed_urls_of_a_template_are_optional_and_checked() -> None:
+    # template-request-v1 (D7, E-356): la lista de links fijos que un boton puede llevar.
+    assert InstanceManifest.from_mapping(_payload("att1")).template_fixed_urls == ()
+    payload = _payload("att1")
+    payload["plantillas"]["urls_fijas"] = ["https://chat.whatsapp.com/ABC", "https://ejemplo.com/formulario"]
+    manifest = InstanceManifest.from_mapping(payload)
+    assert manifest.template_fixed_urls == ("https://chat.whatsapp.com/ABC", "https://ejemplo.com/formulario")
+    assert "urls_fijas" not in manifest.templates
+    # Los topes dejan pasar el borde: 20 URLs y 2.000 caracteres.
+    payload["plantillas"]["urls_fijas"] = [f"https://a.com/{index}" for index in range(20)]
+    assert len(InstanceManifest.from_mapping(payload).template_fixed_urls) == 20
+    payload["plantillas"]["urls_fijas"] = ["https://a.com/" + "x" * 1986]
+    assert len(InstanceManifest.from_mapping(payload).template_fixed_urls[0]) == 2000
+    for bad, message in ((["http://sin-tls.com"], "https://"), (["https://a.com/{{1}}"], "https://"),
+                         (["https://a.com", "https://a.com"], "repetidas"), ("https://a.com", "lista"),
+                         ([1], "lista"),
+                         ([f"https://a.com/{index}" for index in range(21)], "hasta 20"),
+                         (["https://a.com/" + "x" * 1987], "https://")):
+        payload["plantillas"]["urls_fijas"] = bad
+        with pytest.raises(ManifestError, match=message):
+            InstanceManifest.from_mapping(payload)
+
+
 def test_templates_without_parametros_send_the_two_variables_of_today() -> None:
     for name in ("att1", "johanna"):
         manifest = InstanceManifest.from_toml_file(FIXTURES / name / "instancia.toml")

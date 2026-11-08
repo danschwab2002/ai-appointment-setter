@@ -92,7 +92,7 @@
             }
           ],
           "categoria": "UTILITY",
-          "al_aprobar": "Se manda a Meta. Nadie recibe nada todavia. Cuando Meta conteste se avisa, y el flujo se aprueba aparte.",
+          "al_aprobar": "Se manda a Meta. Nadie recibe nada todavia. Lo que conteste Meta se mira en la cuenta de WhatsApp, y el flujo se aprueba aparte.",
           "encabezado": "Notificación",
           "cuerpo_con_ejemplo": "Tu inscripción en Alimenta tu Tiroides ha sido confirmada.\n\nTe escribimos del equipo de la Dra. Nina.\n\nAccesos: se enviarán al correo con el que compraste.\n\nPara completar tu perfil y personalizar el programa, ingresa aquí:",
           "categoria_explicada": "Utilidad: sobre algo que la persona ya hizo (su compra, su pago, su turno). Si Meta entiende que vende, la aprueba como marketing y un flujo que la pide de utilidad no la puede usar."

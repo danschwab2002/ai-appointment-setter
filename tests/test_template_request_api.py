@@ -11,6 +11,7 @@ reales de ATT1 (plantillas_reales_att1_maribel_20261102.json).
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import copy
 import json
@@ -186,7 +187,7 @@ def test_proposing_saves_the_normalized_draft_with_the_role_key_and_answers_the_
     response = client.post(f"{PREFIX}/template-requests", headers=AUTH, json=_body())
     assert response.status_code == 201, response.text
     body = response.json()
-    assert (body["contract"], body["contract_version"]) == ("template-request-v1", "1.1.0")
+    assert (body["contract"], body["contract_version"]) == ("template-request-v1", "1.2.0")
     data = body["data"]
     assert data["status"] == "borrador" and data["revision"] == 1 and data["variables"] == ["nombre", "producto"]
     assert data["burbuja"]["cuerpo"].startswith("Hola, [nombre]. Se confirmó tu pago de [producto].")
@@ -400,3 +401,147 @@ def test_reading_one_gives_its_state_and_the_preview() -> None:
     assert data["request_id"] == request_id and data["template_name"] == "att1_pago_efectivo_confirmado_02"
     assert data["preview"]["burbuja"]["categoria"] == "UTILITY" and data["result"] == {"blocks": [], "warnings": []}
     assert "requested_by_ref" not in data and "approved_by_ref" not in data
+
+
+# ------------------------------------------------------------------- el estado ya cruzado con el catalogo
+# La plantilla real de ATT1 esta en el catalogo capturado: APPROVED y UTILITY, con el mismo cuerpo que el borrador.
+SENT_NAME = "att1_pago_efectivo_confirmado_01"
+
+
+def _sent(emulator: TemplateEmulator, *, name: str = SENT_NAME, draft: dict | None = None, **row: object) -> str:
+    request_id = str(uuid4())
+    stored = copy.deepcopy(OUTPUTS["got"])
+    template = draft or parse_template(copy.deepcopy(REAL[SENT_NAME])).to_json()
+    stored.update(request_id=request_id, status="en_revision", effective_status="en_revision", template_name=name,
+                  language="es_MX", category_requested="UTILITY", draft=template, send_attempts=1,
+                  last_send_error=None, sent_at="2026-11-02T12:00:00+00:00", meta_status="PENDING")
+    stored.update(row)
+    emulator.template_requests[request_id] = stored
+    return request_id
+
+
+def _read(client: TestClient, request_id: str) -> dict:
+    response = client.get(f"{PREFIX}/template-requests/{request_id}", headers=AUTH)
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
+def test_reading_one_crosses_the_catalog_in_the_bridge() -> None:
+    client, emulator = _client()
+    data = _read(client, _sent(emulator))
+    # La solicitud sigue diciendo en_revision, y el catalogo la trae aprobada: el estado resuelto es el del catalogo.
+    assert data["status"] == "en_revision"
+    assert data["resolved"] == {"state": "aprobada_lista", "catalog_checked": True, "catalog_status": "APPROVED",
+                                "catalog_category": "UTILITY"}
+
+
+def test_a_failed_send_is_not_in_review_and_says_why_in_words() -> None:
+    client, emulator = _client()
+    # El nombre no esta en el catalogo: Meta nunca la recibio.
+    data = _read(client, _sent(emulator, name="att1_nunca_llego_01", status="enviada", effective_status="enviada",
+                               last_send_error="meta:100", send_attempts=2))
+    assert data["resolved"]["state"] == "no_llego_a_meta"
+    assert (data["last_send_error"], data["send_attempts"]) == ("meta:100", 2)
+    assert data["send_error_text"] == "Meta no aceptó el pedido tal como salió. Pedile al agente que revise la plantilla."
+
+
+def test_a_template_approved_by_a_person_is_not_read_as_approved_by_meta() -> None:
+    client, emulator = _client()
+    # Aun con el mismo nombre aprobado en el catalogo: esta solicitud no salio, y el catalogo no le aplica.
+    data = _read(client, _sent(emulator, status="aprobada", effective_status="aprobada", send_attempts=0))
+    assert data["resolved"]["state"] == "aprobada_sin_mandar" and data["resolved"]["catalog_status"] is None
+    assert data["send_error_text"] is None
+
+
+def test_without_chatwoot_the_read_answers_without_confirming() -> None:
+    client, emulator = _client(chatwoot=FakeChatwoot(failure=RuntimeError("chatwoot caido")))
+    data = _read(client, _sent(emulator))
+    assert data["resolved"]["state"] == "en_revision" and data["resolved"]["catalog_checked"] is False
+
+
+def test_a_chatwoot_that_hangs_does_not_stop_the_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Hanging(FakeChatwoot):
+        async def get_inbox(self, *, inbox_id: int) -> dict:
+            await asyncio.sleep(0.5)  # contesta tarde, y con el catalogo: si no se cortara, se lo creeria
+            return await super().get_inbox(inbox_id=inbox_id)
+
+    monkeypatch.setattr(template_request_api, "CATALOG_READ_TIMEOUT_SECONDS", 0.01)
+    client, emulator = _client(chatwoot=Hanging())
+    assert _read(client, _sent(emulator))["resolved"]["catalog_checked"] is False
+
+
+def test_the_catalog_is_not_read_for_what_never_reached_meta() -> None:
+    chatwoot = FakeChatwoot()
+    client, emulator = _client(chatwoot=chatwoot)
+    data = _read(client, _sent(emulator, status="validada", effective_status="validada", send_attempts=0))
+    assert data["resolved"]["state"] == "esperando_que_la_manden" and chatwoot.inboxes == []
+
+
+class _ListEmulator(TemplateEmulator):
+    """Como la base: la lista no trae ni el intento ni el borrador."""
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("list_meta_template_requests_v1"):
+            body = json.loads(request.content)
+            self.requests.append(("list_meta_template_requests_v1", body, dict(request.headers)))
+            rows = [{key: value for key, value in row.items()
+                     if key not in ("send_attempts", "last_send_error", "draft", "validation", "events")}
+                    for row in self.template_requests.values()]
+            return httpx.Response(200, json={"requests": rows, "open": len(rows), "open_limit": 10,
+                                             "database_at": "2026-11-08T12:00:00Z"})
+        return super().handler(request)
+
+
+def _rows(client: TestClient) -> dict[str, dict]:
+    response = client.get(f"{PREFIX}/template-requests?estado=todas", headers=AUTH)
+    assert response.status_code == 200, response.text
+    return {row["request_id"]: row for row in response.json()["data"]["requests"]}
+
+
+def test_the_list_brings_the_send_error_and_the_resolved_state() -> None:
+    emulator = _ListEmulator()
+    client, _ = _client(emulator)
+    failed = _sent(emulator, name="att1_nunca_llego_01", status="enviada", effective_status="enviada",
+                   last_send_error="meta_unreachable", send_attempts=5)
+    approved = _sent(emulator)
+    waiting = _sent(emulator, name="att1_todavia_no_01")
+    person = _sent(emulator, name="att1_una_persona_01", status="aprobada", effective_status="aprobada", send_attempts=0)
+    rows = _rows(client)
+    assert rows[failed]["resolved"]["state"] == "no_llego_a_meta_sin_reintentos"
+    assert (rows[failed]["last_send_error"], rows[failed]["send_attempts"]) == ("meta_unreachable", 5)
+    assert rows[failed]["send_error_text"].startswith("Meta no contestó")
+    assert rows[approved]["resolved"]["state"] == "aprobada_lista"
+    assert rows[waiting]["resolved"]["state"] == "en_revision"
+    assert rows[person]["resolved"]["state"] == "aprobada_sin_mandar"
+    assert "draft" not in rows[approved]  # el borrador se relee para comparar, y no viaja en la lista
+    # Solo se relee lo que hace falta: la enviada y la que esta en el catalogo, no las otras dos.
+    assert sorted(call["p_request_id"] for call in _calls(emulator, "get_meta_template_request_v1")) == sorted(
+        [failed, approved])
+
+
+def test_the_list_rereads_a_bounded_number_and_never_claims_what_it_did_not_read() -> None:
+    emulator = _ListEmulator()
+    client, _ = _client(emulator)
+    ids = [_sent(emulator, name=f"att1_envio_{index:02}", status="enviada", effective_status="enviada")
+           for index in range(template_request_api.LIST_DETAIL_MAX + 2)]
+    rows = _rows(client)
+    assert len(_calls(emulator, "get_meta_template_request_v1")) == template_request_api.LIST_DETAIL_MAX
+    assert {rows[item]["resolved"]["state"] for item in ids} == {"mandandose", "sin_confirmar"}
+    assert sum(rows[item]["resolved"]["state"] == "sin_confirmar" for item in ids) == 2
+
+
+def test_a_list_reread_that_fails_stops_and_stays_unconfirmed() -> None:
+    class Failing(_ListEmulator):
+        def handler(self, request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("get_meta_template_request_v1"):
+                self.requests.append(("get_meta_template_request_v1", json.loads(request.content), {}))
+                return httpx.Response(503, json={"message": "caida"})
+            return super().handler(request)
+
+    emulator = Failing()
+    client, _ = _client(emulator)
+    ids = [_sent(emulator, name=f"att1_envio_{index:02}", status="enviada", effective_status="enviada")
+           for index in range(3)]
+    rows = _rows(client)
+    assert {rows[item]["resolved"]["state"] for item in ids} == {"sin_confirmar"}
+    assert len(_calls(emulator, "get_meta_template_request_v1")) == 1

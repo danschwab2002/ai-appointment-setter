@@ -55,6 +55,7 @@ from .flow_change_api import (
     looks_like_identifier,
 )
 from .flow_definition import TemplateCatalog
+from .template_approval import describe_send_error
 
 __all__ = [
     "CONTRACT",
@@ -69,10 +70,14 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 CONTRACT = rules.CONTRACT
-CONTRACT_VERSION = "1.1.0"
+CONTRACT_VERSION = "1.2.0"
 LIST_DEFAULT_LIMIT = 20
 LIST_MAX_LIMIT = 50
 LIST_STATES = {"abiertas": True, "todas": False}
+# La lista no trae el intento ni el borrador: se releen, de a una y con tope, solo las que los necesitan.
+LIST_DETAIL_MAX = 10
+# Leer el estado no espera a un Chatwoot lento: sin catalogo, se contesta sin confirmar.
+CATALOG_READ_TIMEOUT_SECONDS = 5.0
 # D8: las solicitudes que se mandan a Meta por dia y por instancia. La base acepta de 1 a 20.
 DAILY_CAP_DEFAULT = 5
 DAILY_CAP_MAX = 20
@@ -268,8 +273,36 @@ def register_template_request_routes(app: FastAPI, *, token: str, store: Templat
         except Exception:  # noqa: BLE001 - un Chatwoot caido: al validar no se sigue, al proponer si
             if required:
                 raise HTTPException(status_code=503, detail="template_catalog_unavailable") from None
-            logger.info("template_request route=propose catalog=unavailable")
+            logger.info("template_request catalog=unavailable required=false")
             return None
+
+    async def catalog_for_read() -> tuple[Mapping[str, Any], ...] | None:
+        try:
+            found = await asyncio.wait_for(catalog(required=False), CATALOG_READ_TIMEOUT_SECONDS)
+        except TimeoutError:
+            logger.info("template_request route=read catalog=timeout")
+            return None
+        return None if found is None else found.templates
+
+    def send_error_text(stored: Mapping[str, Any]) -> str | None:
+        code = stored.get("last_send_error")
+        return describe_send_error(code) if isinstance(code, str) else None
+
+    async def read_details(rows: list[Mapping[str, Any]],
+                           templates: tuple[Mapping[str, Any], ...] | None) -> dict[str, dict[str, Any]]:
+        """El intento y el borrador de las filas que los necesitan. Una falla corta: las demas quedan sin confirmar."""
+        named = {template.get("name") for template in templates or ()}
+        wanted = [row for row in rows if row.get("status") == "enviada"
+                  or (row.get("status") in rules.RESOLVES_AGAINST_CATALOG and row.get("template_name") in named)]
+        details: dict[str, dict[str, Any]] = {}
+        for row in wanted[:LIST_DETAIL_MAX]:
+            try:
+                details[str(row.get("request_id"))] = await store.get_request(context.instance,
+                                                                              str(row.get("request_id")))
+            except (StoreUnavailable, StoreRejected):
+                logger.info("template_request route=list detail=unavailable")
+                break
+        return details
 
     def findings(result: rules.TemplateResult) -> dict[str, Any]:
         return result.to_json()
@@ -397,9 +430,22 @@ def register_template_request_routes(app: FastAPI, *, token: str, store: Templat
                                                    limit=int(limit))
             except (StoreUnavailable, StoreRejected) as error:
                 raise failure(error, "list") from None
-        rows = listed.get("requests")
-        if not isinstance(rows, list):
-            raise failure(StoreUnavailable(), "list")
+            rows = listed.get("requests")
+            if not isinstance(rows, list):
+                raise failure(StoreUnavailable(), "list")
+            rows = [row for row in rows if isinstance(row, Mapping)]
+            needs_catalog = any(row.get("status") in rules.RESOLVES_AGAINST_CATALOG for row in rows)
+            templates = await catalog_for_read() if needs_catalog else None
+            details = await read_details(rows, templates) if needs_catalog else {}
+        answered = []
+        for row in rows:
+            detail = details.get(str(row.get("request_id")), {})
+            merged = {**row, "last_send_error": detail.get("last_send_error"),
+                      "send_attempts": detail.get("send_attempts"), "draft": detail.get("draft")}
+            answered.append({**row, "last_send_error": merged["last_send_error"],
+                             "send_attempts": merged["send_attempts"], "send_error_text": send_error_text(merged),
+                             "resolved": rules.resolve_state(merged, templates)})
+        rows = answered
         logger.info("template_request route=list status=200 estado=%s requests=%s", estado, len(rows))
         return envelope({"estado": estado, "requests": rows, "open": listed.get("open"),
                          "open_limit": listed.get("open_limit"), "database_at": listed.get("database_at")})
@@ -414,14 +460,18 @@ def register_template_request_routes(app: FastAPI, *, token: str, store: Templat
                 stored = await store.get_request(context.instance, checked)
             except (StoreUnavailable, StoreRejected) as error:
                 raise failure(error, "read", checked) from None
+            templates = await catalog_for_read() if stored.get("status") in rules.RESOLVES_AGAINST_CATALOG else None
         logger.info("template_request route=read request_id=%s status=200", checked)
         keys = ("request_id", "status", "effective_status", "revision", "template_name", "language",
                 "category_requested", "draft", "purpose", "proposal_id", "step_pointer", "fingerprint",
-                "validated_at", "expires_at", "approved_at", "approved_by_kind", "sent_at", "meta_status",
+                "validated_at", "expires_at", "approved_at", "approved_by_kind", "sent_at", "send_attempts",
+                "last_send_error", "meta_status",
                 "meta_category", "recategorized", "meta_rejected_reason", "in_catalog_at", "closed_at",
                 "created_at", "events")
         data = {key: stored.get(key) for key in keys}
         validation = stored.get("validation")
         data["preview"] = validation.get("preview") if isinstance(validation, Mapping) else None
         data["result"] = validation.get("result") if isinstance(validation, Mapping) else None
+        data["send_error_text"] = send_error_text(stored)
+        data["resolved"] = rules.resolve_state(stored, templates)
         return envelope(data)

@@ -120,6 +120,110 @@ LIST_TEMPLATES = {
     "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
 }
 
+# template-request-v1 (F-146, parte 5): pedirle una plantilla a Meta. Guarda y valida; quien la manda es
+# una persona de la lista, desde la pagina. Ninguna de estas habla con Meta.
+_REQUEST_ID = {"type": "string", "format": "uuid"}
+
+PROPOSE_TEMPLATE = {
+    "name": "propose_template",
+    "description": (
+        "Guarda el borrador de una plantilla de WhatsApp que todavía no existe, para mandarla a aprobar a "
+        "Meta (template-request-v1). Corre las reglas: con bloqueos no guarda y los devuelve para "
+        "corregirlos. La respuesta trae request_id, revision, variables (el orden en que quedan, el mismo "
+        "que va en el paso del flujo), warnings y burbuja (el mensaje como lo ve la persona). No manda "
+        "nada a Meta. Sin el flag de la instancia contesta template_requests_not_enabled. Para rehacer un "
+        "borrador, mandá su request_id y su revision. La guía es pedir-plantilla-a-meta."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "template": {
+                "type": "object",
+                "description": "nombre (<prefijo de la instancia>_<para qué>_01), idioma (el de las plantillas de "
+                               "la instancia), categoria (UTILITY o MARKETING), cuerpo (con los datos entre "
+                               "llaves y con nombre: {{nombre}}, {{producto}}), encabezado y pie (opcionales, "
+                               "texto fijo) y botones: lista de {tipo: checkout, texto}, {tipo: ficha, texto}, "
+                               "{tipo: url_fija, texto, url} o {tipo: respuesta, texto}. El de link va primero.",
+            },
+            "purpose": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500,
+                "description": "Para qué es la plantilla, en una línea, como lo pidió la persona. Sin teléfonos ni mails.",
+            },
+            "for_flow": {
+                "type": "object",
+                "description": "Si es para un flujo guardado: {proposal_id, step}, con step el JSON Pointer del paso "
+                               "que la espera con {a_crear: <este nombre>}, por ejemplo /items/0/definicion/pasos/0.",
+                "properties": {"proposal_id": _FLOW_ID, "step": {"type": "string"}},
+                "required": ["proposal_id", "step"],
+                "additionalProperties": False,
+            },
+            "request_id": {**_REQUEST_ID, "description": "Para rehacer un borrador: su id."},
+            "revision": {"type": "integer", "minimum": 1, "description": "Para rehacer: la revisión que leíste."},
+        },
+        "required": ["template", "purpose"],
+        "additionalProperties": False,
+    },
+}
+
+VALIDATE_TEMPLATE = {
+    "name": "validate_template",
+    "description": (
+        "Valida un borrador guardado y lo congela por 24 horas para que una persona de la lista lo revise "
+        "y lo mande a Meta desde la página. Si queda validada y sin bloqueos, deja en el chat el botón "
+        "para abrir esa página (approval_button). No manda nada a Meta."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "request_id": {**_REQUEST_ID, "description": "El id de la solicitud."},
+            "revision": {"type": "integer", "minimum": 1, "description": "La revisión del borrador."},
+        },
+        "required": ["request_id", "revision"],
+        "additionalProperties": False,
+    },
+}
+
+LIST_TEMPLATE_REQUESTS = {
+    "name": "list_template_requests",
+    "description": (
+        "Lista las solicitudes de plantilla de la instancia, de la más nueva a la más vieja. Lo que le contás "
+        "a la persona sale de resolved.state, que el sistema ya cruzó con el catálogo de WhatsApp; status es "
+        "el estado interno y no se lo digas: «aprobada» ahí quiere decir que la aprobó una persona y NO se "
+        "mandó a Meta, y «enviada» puede ser un envío que falló (last_send_error). resolved.state sin_confirmar "
+        "o catalog_checked en falso: traela con get_template_request antes de afirmar nada. Con estado: "
+        "abiertas (el default) trae las vivas; todas, también las cerradas. Solo lee. Antes de contestar con "
+        "esto, cargá la guía pedir-plantilla-a-meta."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "estado": {"type": "string", "enum": ["abiertas", "todas"], "description": "abiertas (default) o todas."},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Cuántas, de 1 a 50 (default 20)."},
+        },
+        "additionalProperties": False,
+    },
+}
+
+GET_TEMPLATE_REQUEST = {
+    "name": "get_template_request",
+    "description": (
+        "Relee una solicitud de plantilla: el borrador con sus variables en orden, para qué flujo es, la "
+        "categoría que pidió y la que dio Meta, el motivo de un rechazo si se conoce, la burbuja, y "
+        "resolved.state: cómo va de verdad, ya cruzado con el catálogo de WhatsApp. Lo que le contás a la "
+        "persona sale de resolved.state, no de status («aprobada» en status quiere decir que la aprobó una "
+        "persona y NO se mandó a Meta). Si el envío falló trae last_send_error, send_attempts y "
+        "send_error_text (el motivo en palabras). Solo lee. La guía es pedir-plantilla-a-meta."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"request_id": {**_REQUEST_ID, "description": "El id de la solicitud."}},
+        "required": ["request_id"],
+        "additionalProperties": False,
+    },
+}
+
 GET_FLOW_CHANGE = {
     "name": "get_flow_change",
     "description": "Relee una propuesta: su estado, sus ítems, su vista previa y sus últimos eventos. Solo lee.",

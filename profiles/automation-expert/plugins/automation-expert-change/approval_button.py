@@ -51,6 +51,22 @@ POSTED = {"status": "posted",
 NOT_POSTED = {"status": "not_posted",
               "note": "El botón no salió. El sí lo da el operador, como hasta ahora."}
 
+# La pagina de una solicitud de plantilla (template-request-v1, F-146 parte 3). Mismo boton de URL, mismo
+# DM: lo postea este codigo, nunca el modelo. El texto es fijo y no promete un aviso de Meta (parte 4).
+TEMPLATE_PAGE_PREFIX = "/flow-approval/t/"
+TEMPLATE_BUTTON_TEXT = "Revisar y mandar a Meta"
+TEMPLATE_MESSAGE_TEXT = (
+    "*La plantilla quedó lista para revisar.* La revisa una persona de la lista de aprobadores y, si le "
+    "cierra, la manda a Meta desde la página que abre el botón. Hasta que la mande, no pasa nada. "
+    "El botón vale 24 horas."
+)
+TEMPLATE_FALLBACK_TEXT = "La plantilla quedó lista para revisar. Revisar y mandar a Meta:"
+TEMPLATE_POSTED = {"status": "posted",
+                   "note": "El botón «Revisar y mandar a Meta» ya quedó en este chat: la manda un aprobador desde ahí."}
+TEMPLATE_NOT_POSTED = {"status": "not_posted",
+                       "note": "El botón no salió y no se reemite: quedó guardada 24 horas, pero nadie la puede abrir desde "
+                               "el chat. Que lo revise el equipo técnico."}
+
 _DM_CHANNEL_RE = re.compile(r"D[A-Z0-9]{8,20}")
 _THREAD_TS_RE = re.compile(r"[0-9]{1,12}\.[0-9]{1,8}")
 
@@ -67,7 +83,7 @@ def enabled(setting: Callable[[str], str]) -> bool:
     return setting(ENABLED_SETTING).strip().lower() == "true"
 
 
-def approval_url(base_url: str, proposal_id: str) -> str:
+def approval_url(base_url: str, proposal_id: str, *, page_prefix: str = PAGE_PREFIX) -> str:
     """El link de la pagina. Solo https, solo el dominio, y un UUID canonico al final."""
     base = base_url.strip().rstrip("/")
     parsed = urlparse(base)
@@ -82,21 +98,22 @@ def approval_url(base_url: str, proposal_id: str) -> str:
         or parsed.fragment
     ):
         raise ValueError("flow_approval_base_url_invalid")
-    return f"{base}{PAGE_PREFIX}{UUID(proposal_id)}"
+    return f"{base}{page_prefix}{UUID(proposal_id)}"
 
 
-def build_message(*, channel: str, thread_ts: str | None, url: str) -> dict[str, object]:
+def build_message(*, channel: str, thread_ts: str | None, url: str, message_text: str = MESSAGE_TEXT,
+                  fallback_text: str = FALLBACK_TEXT, button_text: str = BUTTON_TEXT) -> dict[str, object]:
     """El cuerpo de chat.postMessage: texto fijo y un boton de URL."""
     message: dict[str, object] = {
         "channel": channel,
-        "text": f"{FALLBACK_TEXT} {url}",
+        "text": f"{fallback_text} {url}",
         "blocks": [
-            {"type": "section", "text": {"type": "mrkdwn", "text": MESSAGE_TEXT}},
+            {"type": "section", "text": {"type": "mrkdwn", "text": message_text}},
             {"type": "actions", "block_id": BLOCK_ID, "elements": [{
                 "type": "button",
                 "action_id": ACTION_ID,
                 "style": "primary",
-                "text": {"type": "plain_text", "text": BUTTON_TEXT},
+                "text": {"type": "plain_text", "text": button_text},
                 "url": url,
             }]},
         ],
@@ -151,6 +168,37 @@ def post_after_validation(
                  endpoint or SLACK_POST_MESSAGE):
         return dict(NOT_POSTED)
     return dict(POSTED)
+
+
+def post_template_after_validation(
+    request_id: str,
+    *,
+    setting: Callable[[str], str],
+    session: Callable[[str], str],
+    endpoint: str | None = None,
+) -> dict[str, str] | None:
+    """El boton de la pagina de una plantilla. None si la pagina esta apagada."""
+    if not enabled(setting):
+        return None
+    try:
+        url = approval_url(setting(BASE_URL_SETTING), request_id, page_prefix=TEMPLATE_PAGE_PREFIX)
+    except ValueError:
+        return dict(TEMPLATE_NOT_POSTED)
+    channel = session("HERMES_SESSION_CHAT_ID").strip()
+    token = setting(BOT_TOKEN_SETTING).strip()
+    if (
+        session("HERMES_SESSION_PLATFORM").strip().lower() != "slack"
+        or not _DM_CHANNEL_RE.fullmatch(channel)
+        or not token.startswith("xoxb-")
+    ):
+        return dict(TEMPLATE_NOT_POSTED)
+    thread = session("HERMES_SESSION_THREAD_ID").strip()
+    thread_ts = thread if _THREAD_TS_RE.fullmatch(thread) else None
+    message = build_message(channel=channel, thread_ts=thread_ts, url=url, message_text=TEMPLATE_MESSAGE_TEXT,
+                            fallback_text=TEMPLATE_FALLBACK_TEXT, button_text=TEMPLATE_BUTTON_TEXT)
+    if not _post(message, token, endpoint or SLACK_POST_MESSAGE):
+        return dict(TEMPLATE_NOT_POSTED)
+    return dict(TEMPLATE_POSTED)
 
 
 async def ack_only(ack, body, action) -> None:

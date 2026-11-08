@@ -27,6 +27,8 @@ PREFIX = "/internal/automation-expert/v1"
 TOOLS = ["get_flow_definitions", "propose_flow_change", "validate_flow_change", "get_flow_change",
          # Ciclo 1.10.0 (E-208): las dos lecturas del catalogo y de las propuestas.
          "list_flow_changes", "list_templates",
+         # template-request-v1 (E-356, F-146 parte 5): guardan y validan, ninguna manda a Meta.
+         "propose_template", "validate_template", "list_template_requests", "get_template_request",
          # automation-expert-chatwoot-v1 (E-256, F-143): la herramienta acotada de Chatwoot.
          "list_chatwoot_labels", "create_chatwoot_label", "add_chatwoot_label_to_conversation",
          "list_chatwoot_macros"]
@@ -338,3 +340,105 @@ def test_the_closed_codes_of_the_chatwoot_routes_come_back_as_they_are(bridge: t
     bridge.routes[f"POST {CHATWOOT}/conversations/50/labels"] = (404, {"detail": code})
     result = json.loads(_tools().add_chatwoot_label_to_conversation({"conversation_id": 50, "label": "cliente"}))
     assert result == {"error": code}
+
+
+# ----------------------------------------------------------------- plantillas (template-request-v1, F-146 parte 5)
+
+
+REQUEST = "7a1c2b9e-1f3a-4b6c-8d7e-9f0a1b2c3d4f"
+
+
+def _tpl(data: object) -> dict[str, object]:
+    return {"contract": "template-request-v1", "contract_version": "1.1.0", "data": data}
+
+
+def _template() -> dict[str, object]:
+    return {"nombre": "att1_comunidad_01", "idioma": "es_MX", "categoria": "UTILITY",
+            "cuerpo": "Hola {{nombre}}, te esperamos en la comunidad de {{producto}}. Entrá con el botón."}
+
+
+def test_proposing_a_template_sends_who_asks_from_the_session_and_its_flow(bridge: type[_Bridge]) -> None:
+    bridge.routes[f"POST {PREFIX}/template-requests"] = (201, _tpl({"request_id": REQUEST, "revision": 1}))
+    for_flow = {"proposal_id": PROPOSAL, "step": "/items/0/definicion/pasos/0"}
+    out = json.loads(_tools().propose_template({"template": _template(), "purpose": " la comunidad ", "for_flow": for_flow}))
+    assert out["data"]["request_id"] == REQUEST
+    sent = json.loads(bridge.seen[0]["body"])
+    assert sent == {"template": _template(), "purpose": "la comunidad", "for_flow": for_flow,
+                    "requested_by": {"slack_user": "U0123456789"}}
+    assert bridge.seen[0]["authorization"] == f"Bearer {TOKEN}"
+
+
+def test_redoing_a_template_draft_needs_its_id_and_revision(bridge: type[_Bridge]) -> None:
+    bridge.routes[f"POST {PREFIX}/template-requests"] = (201, _tpl({"request_id": REQUEST, "revision": 2}))
+    _tools().propose_template({"template": _template(), "purpose": "x", "request_id": REQUEST, "revision": 1})
+    sent = json.loads(bridge.seen[0]["body"])
+    assert (sent["request_id"], sent["revision"]) == (REQUEST, 1)
+    bridge.seen.clear()
+    assert json.loads(_tools().propose_template({"template": _template(), "purpose": "x", "revision": 1})) == {
+        "error": "invalid_body"}
+    assert bridge.seen == []
+
+
+@pytest.mark.parametrize(("params", "error"), [
+    ({"template": {}}, "invalid_body"),
+    ({"template": {}, "purpose": "  "}, "invalid_body"),
+    ({"template": {}, "purpose": "pedido de ana@mail.com"}, "identifier_not_allowed"),
+])
+def test_a_bad_template_purpose_never_reaches_the_network(bridge: type[_Bridge], params: dict[str, object],
+                                                          error: str) -> None:
+    assert json.loads(_tools().propose_template(params)) == {"error": error}
+    assert bridge.seen == []
+
+
+def test_a_blocked_template_comes_back_with_its_blocks(bridge: type[_Bridge]) -> None:
+    blocks = [{"code": "template_marketing_without_opt_out", "path": "/botones", "reason": "..."}]
+    bridge.routes[f"POST {PREFIX}/template-requests"] = (422, {
+        "detail": "template_request_draft_blocked", **_tpl({"blocks": blocks, "warnings": []})})
+    out = json.loads(_tools().propose_template({"template": _template(), "purpose": "x"}))
+    assert out == {"error": "template_request_draft_blocked", "blocks": blocks, "warnings": []}
+
+
+def test_a_template_that_does_not_close_says_which_field(bridge: type[_Bridge]) -> None:
+    bridge.routes[f"POST {PREFIX}/template-requests"] = (422, {
+        "detail": "template_request_invalid", "reason": {"field": "template.botones.0", "problem": "keys"}})
+    out = json.loads(_tools().propose_template({"template": _template(), "purpose": "x"}))
+    assert out == {"error": "template_request_invalid", "reason": {"field": "template.botones.0", "problem": "keys"}}
+
+
+def test_without_the_flag_the_template_tools_say_it_is_not_on(bridge: type[_Bridge]) -> None:
+    # Sin META_TEMPLATES_ENABLED las rutas no existen: el 404 generico de FastAPI.
+    bridge.routes[f"GET {PREFIX}/template-requests?estado=todas&limit=20"] = (404, {"detail": "Not Found"})
+    assert json.loads(_tools().list_template_requests({"estado": "todas"})) == {
+        "error": "template_requests_not_enabled"}
+    bridge.routes[f"POST {PREFIX}/template-requests"] = (404, {"detail": "Not Found"})
+    assert json.loads(_tools().propose_template({"template": _template(), "purpose": "x"})) == {
+        "error": "template_requests_not_enabled"}
+
+
+def test_the_template_reads_check_before_the_network(bridge: type[_Bridge]) -> None:
+    assert json.loads(_tools().get_template_request({"request_id": "x"})) == {"error": "invalid_request_id"}
+    assert json.loads(_tools().list_template_requests({"estado": "otra"})) == {"error": "invalid_query"}
+    assert json.loads(_tools().list_template_requests({"limit": 0})) == {"error": "invalid_query"}
+    assert json.loads(_tools().validate_template({"request_id": REQUEST})) == {"error": "invalid_body"}
+    assert bridge.seen == []
+
+
+def test_reading_a_request_and_its_not_found_are_closed(bridge: type[_Bridge]) -> None:
+    bridge.routes[f"GET {PREFIX}/template-requests/{REQUEST}"] = (200, _tpl({"request_id": REQUEST}))
+    assert json.loads(_tools().get_template_request({"request_id": REQUEST}))["data"]["request_id"] == REQUEST
+    bridge.routes[f"GET {PREFIX}/template-requests/{REQUEST}"] = (404, {"detail": "meta_template_request_not_found"})
+    assert json.loads(_tools().get_template_request({"request_id": REQUEST})) == {
+        "error": "meta_template_request_not_found"}
+
+
+@pytest.mark.parametrize("code", ["meta_template_open_limit", "meta_template_name_taken",
+                                  "meta_template_revision_mismatch", "meta_template_not_draft"])
+def test_the_closed_codes_of_the_template_routes_come_back_as_they_are(bridge: type[_Bridge], code: str) -> None:
+    bridge.routes[f"POST {PREFIX}/template-requests"] = (409, {"detail": code})
+    assert json.loads(_tools().propose_template({"template": _template(), "purpose": "x"})) == {"error": code}
+
+
+def test_the_template_tools_have_no_route_to_meta_nor_to_the_page() -> None:
+    source = (PLUGIN / "tools.py").read_text(encoding="utf-8")
+    assert "graph.facebook.com" not in source
+    assert "/send" not in source and "/discard" not in source

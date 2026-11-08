@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,9 @@ import pytest
 
 from bridge.instance_manifest import InstanceManifest
 from bridge.template_request import (
+    RESOLVED_STATES,
+    SEND_ATTEMPTS_MAX,
+    resolve_state,
     EXAMPLE_NAME,
     TemplateResult,
     check_for_step,
@@ -446,3 +450,111 @@ def test_the_phone_rule_starts_at_seven_digits() -> None:
     seven = _with(cuerpo="Hola, {{nombre}}. Tu orden 123 4567 de {{producto}} quedo lista para pagar hoy.")
     assert "identifier_not_allowed" not in _codes(check(parse_template(six), ATT1).blocks)
     assert "identifier_not_allowed" in _codes(check(parse_template(seven), ATT1).blocks)
+
+
+def test_the_fixed_urls_come_from_the_manifest_when_nothing_overrides_them() -> None:
+    # E-356, F-146 parte 6: el camino de produccion, sin el argumento de las pruebas.
+    manifest = replace(InstanceManifest.from_toml_file(FIXTURES / "instances" / "att1" / "instancia.toml"),
+                       template_fixed_urls=("https://ejemplo.com/f",))
+    assert context_from_manifest(manifest).fixed_urls == ("https://ejemplo.com/f",)
+    assert context_from_manifest(manifest, fixed_urls=()).fixed_urls == ()
+
+
+# ---- E-356: el estado ya resuelto. Lo que el AE le cuenta al duenio sale de aca, nunca del estado crudo.
+_DRAFT = {"cuerpo": "Hola {{nombre}}, ya sos parte de {{producto}}."}
+_BODY = "Hola {{1}}, ya sos parte de {{2}}."
+
+
+def _row(status: str, **extra: Any) -> dict[str, Any]:
+    return {"status": status, "effective_status": status, "template_name": "demo_comunidad_01", "language": "es_MX",
+            "category_requested": "UTILITY", "draft": _DRAFT, "send_attempts": 1, "last_send_error": None,
+            "recategorized": False, **extra}
+
+
+def _entry(status: str = "APPROVED", category: str = "UTILITY", body: str = _BODY, name: str = "demo_comunidad_01",
+           language: str = "es_MX") -> dict[str, Any]:
+    return {"name": name, "status": status, "category": category, "language": language,
+            "components": [{"type": "BODY", "text": body}]}
+
+
+@pytest.mark.parametrize("status,state", [
+    ("borrador", "borrador"), ("validada", "esperando_que_la_manden"), ("aprobada", "aprobada_sin_mandar"),
+    ("vencida", "vencida"), ("descartada", "descartada"),
+])
+def test_what_never_reached_meta_does_not_take_the_state_of_the_catalog(status: str, state: str) -> None:
+    resolved = resolve_state(_row(status), [_entry()])
+    assert resolved["state"] == state and resolved["catalog_status"] is None
+
+
+def test_an_expired_request_is_expired_whatever_its_status_says() -> None:
+    assert resolve_state(_row("aprobada", effective_status="vencida"), [])["state"] == "vencida"
+
+
+@pytest.mark.parametrize("row,state", [
+    (_row("enviada"), "mandandose"),
+    (_row("enviada", last_send_error="meta_unreachable"), "no_llego_a_meta"),
+    (_row("enviada", last_send_error="meta:100", send_attempts=5), "no_llego_a_meta_sin_reintentos"),
+    (_row("enviada", last_send_error="meta_name_taken_other_text"), "nombre_ocupado_en_meta"),
+    (_row("enviada", last_send_error="meta_name_taken_unusable", send_attempts=5), "nombre_ocupado_en_meta"),
+    (_row("enviada", send_attempts=None), "sin_confirmar"),
+    (_row("en_revision"), "en_revision"),
+    (_row("sin_respuesta_de_meta"), "sin_respuesta_de_meta"),
+    (_row("aprobada_meta"), "aprobada_falta_catalogo"),
+    (_row("aprobada_meta", recategorized=True), "aprobada_otro_tipo"),
+    (_row("en_catalogo"), "aprobada_lista"),
+    (_row("rechazada"), "rechazada"),
+    (_row("un_estado_nuevo"), "estado_de_meta_desconocido"),
+])
+def test_what_was_sent_and_is_not_in_the_catalog(row: dict[str, Any], state: str) -> None:
+    assert resolve_state(row, [])["state"] == state
+    assert state in RESOLVED_STATES
+
+
+@pytest.mark.parametrize("entry,state", [
+    (_entry(), "aprobada_lista"),
+    (_entry(category="MARKETING"), "aprobada_otro_tipo"),
+    (_entry("REJECTED"), "rechazada"),
+    (_entry("PENDING"), "en_revision"),
+    (_entry("IN_APPEAL"), "en_revision"),
+    (_entry("PAUSED"), "pausada_en_meta"),
+    (_entry("DISABLED"), "desactivada_en_meta"),
+    (_entry("PENDING_DELETION"), "estado_de_meta_desconocido"),
+])
+def test_the_catalog_decides_over_a_request_that_stood_still(entry: dict[str, Any], state: str) -> None:
+    resolved = resolve_state(_row("en_revision"), [entry])
+    assert resolved["state"] == state and resolved["catalog_checked"] is True
+    assert resolved["catalog_status"] == entry["status"]
+
+
+@pytest.mark.parametrize("entry", [
+    _entry(body="Otro texto con el mismo nombre {{1}} aca."), _entry(language="en_US"), _entry(name="otra_cosa_01"),
+])
+def test_only_the_same_name_language_and_body_lend_their_state(entry: dict[str, Any]) -> None:
+    # Con el nombre tomado por otro texto (meta_name_taken_other_text), el catalogo tiene un APPROVED que no es ella.
+    row = _row("enviada", last_send_error="meta_name_taken_other_text")
+    resolved = resolve_state(row, [entry])
+    assert resolved["state"] == "nombre_ocupado_en_meta" and resolved["catalog_status"] is None
+
+
+def test_a_send_that_timed_out_and_meta_did_take_is_what_the_catalog_says() -> None:
+    row = _row("enviada", last_send_error="meta_unreachable")
+    assert resolve_state(row, [_entry("PENDING")])["state"] == "en_revision"
+
+
+@pytest.mark.parametrize("status", ["aprobada_meta", "rechazada", "en_catalogo"])
+def test_a_late_pending_of_the_catalog_does_not_undo_an_answer(status: str) -> None:
+    assert resolve_state(_row(status), [_entry("PENDING")])["state"] != "en_revision"
+
+
+def test_without_the_catalog_or_the_draft_it_says_it_did_not_check() -> None:
+    assert resolve_state(_row("en_revision"), None) == {"state": "en_revision", "catalog_checked": False,
+                                                        "catalog_status": None, "catalog_category": None}
+    # La fila de la lista sin releer: tiene nombre pero no borrador, asi que no se le presta el estado.
+    resolved = resolve_state(_row("en_revision", draft=None), [_entry()])
+    assert resolved == {"state": "en_revision", "catalog_checked": False, "catalog_status": None,
+                        "catalog_category": None}
+
+
+def test_the_attempts_limit_is_the_one_of_the_page() -> None:
+    from bridge.template_approval import SEND_ATTEMPTS_MAX as PAGE_MAX  # noqa: PLC0415
+    assert SEND_ATTEMPTS_MAX == PAGE_MAX
