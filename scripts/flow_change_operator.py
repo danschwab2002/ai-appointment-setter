@@ -412,7 +412,9 @@ SQL_STORE = f"""select coalesce(jsonb_agg(jsonb_build_object(
     'versions', coalesce((select jsonb_object_agg(d.version::text, d.definition)
                             from public.flow_definitions d where d.flow_id = c.flow_id), '{{}}'::jsonb),
     'native', exists (select 1 from public.flow_engine_routes native_route
-                       where native_route.flow_id = c.flow_id and native_route.legacy_kind is null))
+                       where native_route.flow_id = c.flow_id and native_route.legacy_kind is null),
+    'route_executor', (select executor_route.executor from public.flow_engine_routes executor_route
+                        where executor_route.flow_id = c.flow_id))
     order by c.product_ref, c.flow_key), '[]'::jsonb)::text
   from public.flow_controls c
  where c.tenant_ref = {_arg('tenant')} and c.ally_ref = {_arg('ally')};"""
@@ -479,8 +481,8 @@ ENGINE_PAGES_MAX = 10
 # La gemela de bridge.flow_change_simulation.native_flow_counts_request (E-241), sin importar el
 # bridge: este script corre con la libreria estandar. test_flow_change_native_simulation.py fija que
 # las dos contesten lo mismo.
-# D6 (E-245): por ahora solo prender y apagar, como NATIVE_ITEM_TYPES del bridge.
-_NATIVE_ITEM_TYPES = frozenset({"prender", "apagar"})
+# E-353 enmienda D6 de E-245: tambien version y volver, como NATIVE_ITEM_TYPES del bridge.
+_NATIVE_ITEM_TYPES = frozenset({"prender", "apagar", "version", "volver"})
 
 
 def _simulation_trigger(definition: object) -> str | None:

@@ -294,6 +294,7 @@ from bridge.customer_status import (
     is_customer_of_anything,
 )
 from bridge.event_log import configure_bridge_event_log, hotmart_log_fields
+from bridge.flow_definition import InstanceRuntime
 from bridge.flow_engine_runtime import (
     DivergenceNotifier,
     FlowEngineRuntime,
@@ -3457,6 +3458,21 @@ def flow_engine_cart_touches_enabled(settings: Settings) -> bool:
     )
 
 
+def instance_runtime_from(
+    settings: Settings, *, native_silence_sweeper: bool
+) -> InstanceRuntime | None:
+    """Lo que este bridge ejecuta de verdad (E-353), para que el AE no publique sin efecto."""
+    if settings.instance_manifest is None:
+        return None
+    return InstanceRuntime(
+        engine_enabled=settings.flow_engine_enabled,
+        native_intent_enabled=settings.flow_engine_native_intent_enabled,
+        native_silence_sweeper=native_silence_sweeper,
+        cart_touches=flow_engine_cart_touches_enabled(settings),
+        main_product=settings.instance_manifest.funnel_ref,
+    )
+
+
 def _validate_flow_engine(settings: Settings) -> None:
     """Startup gates of the flow engine bridge (flow-engine-v1, section 8).
 
@@ -4626,6 +4642,7 @@ def create_app(
     lead_first_name_client: FirstNameInferenceClient | None = None,
     audio_transcriber: AudioTranscriber | None = None,
     flow_change_store: flow_change_api.FlowChangeStore | None = None,
+    flow_change_runtime: InstanceRuntime | None = None,
     automation_expert_chatwoot_client: automation_expert_chatwoot.ScopedChatwoot | None = None,
     template_request_store: template_request_api.TemplateRequestStore | None = None,
     flow_approval_store: flow_approval.ApprovalStore | None = None,
@@ -9896,6 +9913,9 @@ def create_app(
                 ) from exc
             return {"resolution": resolution}
 
+    instance_runtime = flow_change_runtime or instance_runtime_from(
+        settings, native_silence_sweeper=native_silence_sweepers is not None
+    )
     if settings.automation_expert_change_enabled:
         # flow-change-cycle-v1: el agente propone y valida; nunca aprueba ni
         # publica. Con el flag apagado las rutas no existen y dan 404.
@@ -9917,6 +9937,8 @@ def create_app(
             time_zone=change_manifest.time_zone,
             inbox_id=change_manifest.chatwoot_inbox_id,
             segment_labels=lambda: segment_labels_setup.validator_labels(datetime.now(UTC)),
+            # E-353: lo que este bridge corre de verdad, para que el AE no publique sin efecto.
+            runtime=instance_runtime,
         )
         if settings.meta_templates_enabled:
             # F-146 (template-request-v1): el agente redacta y valida una
@@ -9985,6 +10007,7 @@ def create_app(
             time_zone=settings.instance_manifest.time_zone,
             producer=slack_runtime.producer if slack_runtime is not None else None,
             segment_labels=lambda: segment_labels_setup.validator_labels(datetime.now(UTC)),
+            runtime=instance_runtime,
             # F-146 parte 3: la pagina de una solicitud de plantilla y el envio
             # a Meta. Con el flag apagado las rutas no existen, y el cliente de
             # Meta ni se crea.

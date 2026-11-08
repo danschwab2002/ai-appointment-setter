@@ -718,6 +718,35 @@ def loads_strict(text: str | bytes) -> Any:
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
+class InstanceRuntime:
+    """Lo que el bridge de esta instancia ejecuta de verdad (E-353).
+
+    La definicion puede ser valida y el flujo no salir nunca: el primer contacto nativo solo corre con
+    ``FLOW_ENGINE_NATIVE_INTENT_ENABLED``, el silencio nativo solo con su barredor y en el producto
+    principal, y un carrito con ruta en ``motor`` va al legado si el bridge no corre sus toques. Lo arma ``create_app`` con su configuracion; ``None`` en la vista (el comando del
+    operador, que corre afuera del bridge) es «no se sabe», y el validador no bloquea por lo que no sabe.
+    """
+
+    engine_enabled: bool
+    native_intent_enabled: bool
+    native_silence_sweeper: bool
+    cart_touches: bool
+    main_product: str
+
+    def __post_init__(self) -> None:
+        if not all(isinstance(value, bool) for value in (
+                self.engine_enabled, self.native_intent_enabled, self.native_silence_sweeper, self.cart_touches)):
+            raise ValueError("instance_runtime_invalid")
+        if not is_product_ref(self.main_product):
+            raise ValueError("instance_runtime_invalid")
+
+    def to_json(self) -> dict[str, Any]:
+        return {"engine_enabled": self.engine_enabled, "native_intent_enabled": self.native_intent_enabled,
+                "native_silence_sweeper": self.native_silence_sweeper, "cart_touches": self.cart_touches,
+                "main_product": self.main_product}
+
+
+@dataclass(frozen=True)
 class InstanceView:
     """La instancia: el par (tenant, aliada), sus productos y la zona por defecto.
 
@@ -732,6 +761,8 @@ class InstanceView:
     # E-316: las etiquetas de segmento que puede poner etiquetar, cada una con su estado a la hora de
     # armar la vista (el validador no mira el reloj). Vacio: solo cliente, como antes.
     segment_labels: tuple[tuple[str, str], ...] = ()
+    # E-353: lo que ejecuta el bridge de la instancia. None: no se sabe, y no se bloquea por eso.
+    runtime: InstanceRuntime | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.tenant_ref, str) or not _REF.fullmatch(self.tenant_ref):
@@ -815,6 +846,15 @@ class TemplateCatalog:
         return tuple(found)
 
 
+# Quien ejecuta un flujo, como lo dice ``read_flow_store_v1`` desde 20261108000100 (``route_executor``): el
+# motor, el legado o nadie (None: el flujo no tiene ruta). ``ROUTE_NOT_READ`` es una foto sin ese dato
+# (la base todavia sin la migracion, o una prueba): no se sabe, y el validador no bloquea por lo que no sabe.
+ROUTE_MOTOR = "motor"
+ROUTE_LEGACY = "legado"
+ROUTE_NOT_READ = "no_leida"
+_ROUTE_EXECUTORS = (ROUTE_MOTOR, ROUTE_LEGACY, ROUTE_NOT_READ, None)
+
+
 @dataclass(frozen=True)
 class WorldFlow:
     """Un flujo de la instancia en el almacen: su control y sus versiones publicadas.
@@ -838,8 +878,12 @@ class WorldFlow:
     # Un flujo nativo (flow-engine-v2 §2): nacio en el motor, sin legado. La regla 14 se mira con las
     # capacidades del motor nativo y la 16 no aplica. Un flujo en cohorte siempre es nativo.
     native: bool = False
+    # Quien ejecuta el flujo hoy (E-353): ver ``ROUTE_MOTOR`` y los demas.
+    route_executor: str | None = ROUTE_NOT_READ
 
     def __post_init__(self) -> None:
+        if self.route_executor not in _ROUTE_EXECUTORS:
+            raise ValueError("world_flow_route_executor_invalid")
         if not is_flow_id(self.flow_id):
             raise ValueError("world_flow_id_invalid")
         if not is_product_ref(self.product_ref) or not is_flow_key(self.flow_key):

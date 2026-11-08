@@ -172,7 +172,9 @@ if (JSON.stringify(names.slice(position + 1))
   // El cierre del caso por el cupon de una campana (20261106000100, E-339): una RPC de service_role.
   '20261106000100_recovery_case_segment_coupon_close_v1.sql',
   // El rechazo de la cuenta espera a que la cuenta vuelva (20261107000100, E-348): dos tablas y ocho RPC de service_role.
-  '20261107000100_meta_account_hold_retry_v1.sql'])) {
+  '20261107000100_meta_account_hold_retry_v1.sql',
+  // El almacen dice quien ejecuta cada flujo (20261108000100, E-353): una clave mas en read_flow_store_v1.
+  '20261108000100_flow_store_route_executor_v1.sql'])) {
   fail(`despues de ${MIGRATION} van solo la de F-036, la del bridge nativo, la del AE que crea flujos y la de sus lecturas`,
     names.slice(position + 1));
 }

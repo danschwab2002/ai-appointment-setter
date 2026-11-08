@@ -44,6 +44,7 @@ import os
 import re
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,7 @@ from bridge import flow_validator as fv
 from bridge.flow_definition import (
     Finding,
     FlowWorld,
+    InstanceRuntime,
     InstanceView,
     ProposalItem,
     ProposalItemsInvalid,
@@ -288,6 +290,30 @@ def _duplicate_key_negative() -> list[Finding]:
 def _duplicate_key_positive() -> list[Finding]:
     definition = fd.loads_strict(json.dumps(flow_def("carrito")))
     return run(definition)
+
+
+def _routed(executor: str | None) -> WorldFlow:
+    """El carrito publicado con la ruta que dice la base (E-353)."""
+    return replace(live("carrito"), route_executor=executor)
+
+
+def _running(*, engine: bool = True, intent: bool = True, sweeper: bool = True, main: str = "att1") -> InstanceView:
+    return InstanceView("lancemos", "att1", frozenset({"att1", "att9"}) if main != "att1" else frozenset({"att1"}),
+                        "America/Mexico_City",
+                        runtime=InstanceRuntime(engine_enabled=engine, native_intent_enabled=intent,
+                                                native_silence_sweeper=sweeper, cart_touches=True,
+                                                main_product=main))
+
+
+def _form() -> dict[str, Any]:
+    return welcome(nombre="Primer contacto tras el formulario", dispara={"evento": "intencion"},
+                   entra={"permiso": "formulario"}, pasos=[copy.deepcopy(CONFIRMED_STEP)])
+
+
+def _follow_up() -> dict[str, Any]:
+    return welcome(nombre="Seguimiento", dispara={"silencio": {"lo_ultimo": "agente", "desde": "24h", "hasta": "72h",
+                                                               "conversaciones": ["abierta"]}},
+                   entra={"permiso": "conversacion"}, pasos=[copy.deepcopy(CONFIRMED_STEP)])
 
 
 def _rollback(version: int) -> list[Finding]:
@@ -638,6 +664,27 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
         lambda: run(draft_of("carrito", lambda d: d["topes"].update(por_dia=90)),
                     actor="automation_expert", in_world=world(live("carrito"))),
     ),
+    # E-353: un cambio que se publicaria sin cambiar ningun envio.
+    "change_without_effect_legacy_route": (
+        lambda: run(draft_of("carrito"), actor="automation_expert", in_world=world(_routed("legado"))),
+        lambda: run(draft_of("carrito"), actor="automation_expert", in_world=world(_routed("motor"))),
+    ),
+    "native_engine_not_running": (
+        lambda: run_new(instance=_running(engine=False)),
+        lambda: run_new(instance=_running()),
+    ),
+    "native_first_contact_not_running": (
+        lambda: run_new(_form(), "primer_contacto", instance=_running(intent=False)),
+        lambda: run_new(_form(), "primer_contacto", instance=_running()),
+    ),
+    "native_silence_not_running": (
+        lambda: run_new(_follow_up(), "seguimiento", instance=_running(sweeper=False)),
+        lambda: run_new(_follow_up(), "seguimiento", instance=_running()),
+    ),
+    "native_trigger_other_product": (
+        lambda: run_new(_follow_up(), "seguimiento", instance=_running(main="att9")),
+        lambda: run_new(_follow_up(), "seguimiento", instance=_running(main="att1")),
+    ),
     "trigger_change_is_another_flow": (
         lambda: run(draft_of("carrito", lambda d: d["dispara"].update(evento="pago_fallido")),
                     in_world=world(live("carrito"))),
@@ -868,7 +915,9 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         "rollback_target_is_active", "state_transition_invalid", "flow_has_no_version",
         "en_curso_not_supported", "identifier_not_allowed", "client_purchase_ok_missing",
         "flow_already_registered", "new_flow_must_start_in_cohort", "prender_a_cohorte_needs_paused_native",
-        "same_event_native_flows", "flow_key_reserved_for_legacy",
+        "same_event_native_flows", "flow_key_reserved_for_legacy", "change_without_effect_legacy_route",
+        "native_engine_not_running", "native_first_contact_not_running", "native_silence_not_running",
+        "native_trigger_other_product",
     }
     assert all(pairs == {(None, "advertencia")} for code, pairs in fv.CODE_RULES.items()
                if code in fv.WARNING_CODES)

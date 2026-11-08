@@ -30,7 +30,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from bridge import flow_change_api
-from bridge.app import Settings, create_app
+from bridge.app import Settings, create_app, instance_runtime_from
+from bridge.flow_definition import InstanceRuntime
 from bridge.instance_manifest import InstanceManifest
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -226,12 +227,20 @@ def _settings(**overrides: object) -> Settings:
 
 
 def _client(emulator: PostgrestEmulator | None = None, chatwoot: FakeChatwoot | None = None,
-            spy: SharedSupabaseSpy | None = None, **overrides: object) -> tuple[TestClient, PostgrestEmulator]:
+            spy: SharedSupabaseSpy | None = None, runtime: InstanceRuntime | None = None,
+            **overrides: object) -> tuple[TestClient, PostgrestEmulator]:
     emulator = emulator or PostgrestEmulator()
     store = flow_change_api.FlowChangeStore(base_url="https://att1-rest.internal", db_key=DB_KEY,
                                             transport=httpx.MockTransport(emulator.handler))
-    app = create_app(_settings(**overrides), supabase_client=spy or SharedSupabaseSpy(),  # type: ignore[arg-type]
-                     chatwoot_client=chatwoot or FakeChatwoot(), flow_change_store=store)  # type: ignore[arg-type]
+    settings = _settings(**overrides)
+    # E-353: una instancia que corre todo, salvo que la prueba diga otra cosa. Este bridge de prueba no levanta
+    # el motor (exige los flags de la frontera), y lo que ejecuta la instancia se mira aparte.
+    runtime = runtime or InstanceRuntime(engine_enabled=True, native_intent_enabled=True,
+                                         native_silence_sweeper=True, cart_touches=True,
+                                         main_product=settings.instance_manifest.funnel_ref)
+    app = create_app(settings, supabase_client=spy or SharedSupabaseSpy(),  # type: ignore[arg-type]
+                     chatwoot_client=chatwoot or FakeChatwoot(), flow_change_store=store,  # type: ignore[arg-type]
+                     flow_change_runtime=runtime)
     return TestClient(app), emulator
 
 
@@ -301,7 +310,7 @@ def test_proposing_a_wait_in_the_cart_saves_the_normalized_draft_with_the_role_k
     assert response.status_code == 201, response.text
     body = response.json()
     # 1.7.0: el item nuevo (el PR 4 del hito 4); la version que contesta el bridge la fija esta prueba.
-    assert (body["contract"], body["contract_version"]) == ("flow-change-cycle-v1", "1.10.0")
+    assert (body["contract"], body["contract_version"]) == ("flow-change-cycle-v1", "1.11.0")
     assert body["instance"] == {"tenant_ref": "lancemos", "ally_ref": "att1"}
     assert body["data"]["status"] == "borrador" and body["data"]["revision"] == 1
     [read, save] = emulator.requests
@@ -623,3 +632,41 @@ def test_the_touches_stop_where_the_lead_decides() -> None:
     assert touch_times({"pasos": [{"plantilla": "a"}, {"esperar": "a_medir"}, {"plantilla": "b"}]}) == [
         {"paso": 1, "plantilla": "a", "horas_desde_el_primero": 0}]
     assert touch_times({}) == []
+
+
+# -- lo que ejecuta la instancia (E-353): de sus flags, no inyectado --------------
+
+
+_CART_TOUCHES = {"recovery_discount_first_touch_enabled": True, "recovery_cart_followups_enabled": True}
+
+
+@pytest.mark.parametrize(("overrides", "sweeper", "expected"), [
+    ({}, False, (False, False, False, False)),
+    ({"flow_engine_enabled": True}, False, (True, False, False, False)),
+    ({"flow_engine_native_intent_enabled": True}, False, (False, True, False, False)),
+    ({}, True, (False, False, True, False)),
+    (_CART_TOUCHES, False, (False, False, False, True)),
+    # Con un solo toque, el carrito con ruta en motor sigue yendo al legado.
+    ({"recovery_cart_followups_enabled": True}, False, (False, False, False, False)),
+])
+def test_the_runtime_is_built_from_the_flags_of_the_bridge(overrides, sweeper, expected) -> None:
+    settings = _settings(**overrides)
+    runtime = instance_runtime_from(settings, native_silence_sweeper=sweeper)
+    assert (runtime.engine_enabled, runtime.native_intent_enabled, runtime.native_silence_sweeper,
+            runtime.cart_touches) == expected
+    assert runtime.main_product == settings.instance_manifest.funnel_ref
+    assert instance_runtime_from(replace(settings, instance_manifest=None), native_silence_sweeper=sweeper) is None
+
+
+def test_create_app_passes_the_runtime_of_its_flags_to_the_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+    original = flow_change_api.register_flow_change_routes
+
+    def spy(*args: object, **kwargs: object) -> None:
+        seen.update(kwargs)
+        original(*args, **kwargs)
+
+    monkeypatch.setattr(flow_change_api, "register_flow_change_routes", spy)
+    settings = _settings()
+    create_app(settings, supabase_client=SharedSupabaseSpy(), chatwoot_client=FakeChatwoot())  # type: ignore[arg-type]
+    assert seen["runtime"] == instance_runtime_from(settings, native_silence_sweeper=False)
