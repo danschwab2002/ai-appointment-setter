@@ -346,7 +346,11 @@ async def admit_native_cart(
     for row in rows:
         if row.outcome == "motor_no_arranca" and row.reason not in NATIVE_CART_UNCLAIMED_REASONS:
             return NativeCartAdmission(NATIVE_CART_REFUSED, reason=row.reason)
-    return NativeCartAdmission(NATIVE_CART_UNCLAIMED)
+    # E-350: con la razon, para que un evento ``native_only`` diga por que no entro. Solo se loguea.
+    return NativeCartAdmission(
+        NATIVE_CART_UNCLAIMED,
+        reason=next((row.reason for row in rows if row.reason), None),
+    )
 
 
 async def resolve_purchase_contact(

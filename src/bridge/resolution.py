@@ -216,6 +216,7 @@ async def resolve_event(
     flow_engine: FlowEngineRuntime | None = None,
     native_cart_product_ref: str | None = None,
     native_payment_failure_product_ref: str | None = None,
+    native_only: bool = False,
 ) -> SituationReport:
     """Resolve identity for one webhook event and return a situation report.
 
@@ -234,6 +235,11 @@ async def resolve_event(
     first to the native admission, and the legacy (or the engine of the cart)
     plans only what no native flow takes. None is exactly today's path. Same
     with ``native_payment_failure_product_ref`` and a payment failure (E-207).
+
+    ``native_only`` (E-350) is the event of a product that is not the principal:
+    only its native flows can take it. What no native flow takes ends
+    ``ignored``, with no legacy plan and no case: the legacy scopes are the
+    principal's. Only with several products.
     """
     if event_type == EVENT_PURCHASE_CANCELED:
         buyer = (
@@ -451,6 +457,7 @@ async def resolve_event(
             # evento abre un solo caso: si el nativo lo toma, el legado no
             # planifica. Sin ese flujo, ninguna llamada nueva.
             native_cart = None
+            native_unclaimed_reason: str | None = None
             # flow-engine-v2 2.11.0 (E-207): el pago rechazado, igual, con su
             # flujo nativo del producto prendido o en cohorte.
             native_product_ref: str | None = None
@@ -507,12 +514,29 @@ async def resolve_event(
                     )
                     raise ResolutionError(error)
                 if native_cart.outcome != NATIVE_CART_STARTED:
+                    native_unclaimed_reason = native_cart.reason
                     native_cart = None
             # flow-engine-v1, seccion 8: solo con el flag, solo el carrito, y
             # solo con la ruta del scope de la frontera en motor. Con la ruta
             # en legado, sin ruta, sin lectura buena o sin flag, la llamada es
             # exactamente la de hoy.
             engine_pilot_boundary = pilot_boundary
+            if native_only and native_cart is None:
+                # E-350: ni el motor v1 ni el legado (son del principal). El
+                # motivo queda en el evento. Lo que la base rechazo o no contesto
+                # (forzado_al_legado, un 22023) no es «no aplica»: queda failed.
+                from bridge.native_flows import NATIVE_CART_UNCLAIMED_REASONS
+
+                if native_unclaimed_reason is None:
+                    status, error = "ignored", "product_without_recovery_flows"
+                elif native_unclaimed_reason in NATIVE_CART_UNCLAIMED_REASONS:
+                    status, error = "ignored", f"product_native_not_claimed:{native_unclaimed_reason}"
+                else:
+                    status, error = "failed", f"product_native_unavailable:{native_unclaimed_reason}"
+                await supabase.update_event_status(
+                    event_id=webhook_event_id, status=status, error=error
+                )
+                raise ResolutionError(error)
             if native_cart is not None:
                 assert native_cart.recovery_case_id is not None
                 recovery_case_id = native_cart.recovery_case_id

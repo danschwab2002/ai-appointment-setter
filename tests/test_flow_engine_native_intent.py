@@ -772,9 +772,10 @@ def test_ghl_gets_the_same_200_and_the_log_carries_only_codes(
         assert value not in everything
 
 
-def test_on_a_form_of_another_product_is_only_admitted_in_its_funnel(att1_instance: Path) -> None:
-    # Como el legado (paso 2c-2): un producto que no es el principal no tiene primer contacto, tampoco
-    # con el flag. La landing D movida al segundo producto de prueba (test_product_routing).
+def test_on_a_form_of_another_product_goes_to_its_native_flows_without_the_legacy_scope(att1_instance: Path) -> None:
+    # E-350: con el flag, un producto que no es el principal entra a sus flujos nativos; lo que no reclaman
+    # queda solo admitido, sin el scope del legado, que es del principal. La landing D movida al segundo
+    # producto de prueba (test_product_routing).
     base = _native(_first_contact_through_ghl(att1_instance))
     assert base.instance_manifest is not None
     # Los flujos del manifiesto del primer contacto (con precheckout), con los dos productos.
@@ -788,9 +789,25 @@ def test_on_a_form_of_another_product_is_only_admitted_in_its_funnel(att1_instan
     response = _post(_first_contact_app(settings, authority), _landing_d())
 
     assert response.status_code == 200
-    assert authority.route_calls == [] and authority.plan_calls == []
-    [call] = authority.admission_calls
+    assert authority.plan_calls == [] and authority.admission_calls == []
+    [call] = authority.route_calls
     assert call["config"].funnel_ref == "att2"  # type: ignore[attr-defined]
+    assert call["legacy_scope_key"] is None and call["legacy_scope_version"] is None
+
+
+def test_the_dispatcher_built_by_create_app_knows_the_two_products(att1_instance: Path) -> None:
+    # E-350: sin product_routes en el alambrado, el recorrido del segundo producto muere con
+    # followup_recipient_not_allowlisted, y ningun doble lo ve.
+    base = _native(_first_contact_through_ghl(att1_instance))
+    assert base.instance_manifest is not None
+    manifest = replace(_ghl_manifest(), ghl_risk_acceptance=TEST_RISK_ACCEPTANCE, flows=base.instance_manifest.flows)
+    settings = replace(base, instance_manifest=manifest, commercial_ally_config=manifest.to_commercial_ally_config(),
+                       commercial_knowledge=_by_product("att1", "att2"))
+
+    app = _first_contact_app(settings, _RouteAuthority())
+
+    routes = app.state.durable_dispatcher._dispatch_product_routes  # type: ignore[attr-defined]
+    assert routes is not None and {route.key for route in routes} == {"att1", "att2"}
 
 
 class _NoRouteRpc(_RouteAuthority):

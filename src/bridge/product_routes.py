@@ -61,6 +61,23 @@ def _hotmart_product_and_offer(payload: object) -> tuple[str | None, int | None,
     return event_type, product_id, offer_code
 
 
+def followup_product_labels(
+    manifest: InstanceManifest | None,
+) -> tuple[frozenset[str], str | None]:
+    """Las etiquetas para que el barredor del principal no le escriba a otro producto (E-350).
+
+    Devuelve las de los otros productos y la del principal. Sin dos productos,
+    ``(frozenset(), None)``: el barredor queda como estaba.
+    """
+
+    if manifest is None or len(manifest.products) < 2:
+        return frozenset(), None
+    others = frozenset(
+        product.chatwoot_label for product in manifest.products[1:] if product.chatwoot_label
+    )
+    return others, manifest.products[0].chatwoot_label
+
+
 @dataclass(frozen=True)
 class ProductRoute:
     """Un producto y su binding.
@@ -139,6 +156,17 @@ class ProductRoutes:
             (route for route in self._routes if route.config.funnel_ref == funnel_ref),
             None,
         )
+
+    def by_product_name(self, product_name: object) -> ProductRoute | None:
+        """El producto con ese nombre de Hotmart, si es uno solo (E-350).
+
+        Lo que el envio sabe de un recorrido es el nombre del caso. Dos
+        productos pueden compartirlo (el mismo producto de Hotmart partido por
+        oferta): entonces ninguno, y quien llama hace lo de un solo producto.
+        """
+
+        owners = [route for route in self._routes if route.config.product_name == product_name]
+        return owners[0] if len(owners) == 1 else None
 
     def for_hotmart(self, payload: object) -> ProductRoute | HotmartUnrouted:
         """El producto de un evento de Hotmart, por producto y oferta (paso 2c-2).
