@@ -40,6 +40,7 @@ from test_whatsapp_inbound_equivalence import (
     FORM_ID,
     PAYMENT_LINK_PROPOSAL,
     SECRET,
+    WA_ID,
     _manifest_settings,
     _PaymentLinkSupabase,
     _text_webhook,
@@ -258,6 +259,22 @@ def test_without_a_segment_coupon_the_link_is_the_one_of_today(
     tmp_path: Path, labels: list[str], kwargs: dict[str, Any]
 ) -> None:
     assert _link(tmp_path, _settings(tmp_path, **kwargs), labels) == BASE_LINK
+
+
+def test_an_opted_out_person_with_the_label_asks_for_the_link_and_it_goes_without_the_campaign(
+    tmp_path: Path,
+) -> None:
+    """E-355: con la baja, la etiqueta de antes no abre el bloque ni pone el cupon (segmento del manifiesto)."""
+
+    shadows: list[_SegmentShadow] = []
+    supabase = _PaymentLinkSupabase(identities=(FORM_ID,), stopped_user_ids=(WA_ID,))
+
+    assert _link(tmp_path, _settings(tmp_path), [LABEL], supabase=supabase, shadow_out=shadows) == BASE_LINK
+
+    [(_, context)] = shadows[0].calls
+    assert context["opted_out_contact"] is True
+    assert SEGMENT_CONTEXT_KEY not in context
+    assert shadows[0].extra == [()]
 
 
 def test_the_segment_coupon_replaces_the_fixed_coupon_of_the_instance(tmp_path: Path) -> None:

@@ -133,17 +133,22 @@ const executable = (await db.query(`select p.proname || '(' || oidvectortypes(p.
 // un flujo nuevo (20261024000600, flow-engine-v2 seccion 14), y la lista de las
 // propuestas (20261030000300, E-208, flow-change-cycle-v1 1.10.0).
 require(JSON.stringify(executable) === JSON.stringify([
+  // Las cuatro de las campanas del Automation Expert (20261108005000, E-355), en su orden alfabetico.
+  'get_agent_campaign_v1(jsonb, uuid)',
   'get_flow_change_proposal_v1(jsonb, uuid)',
   // Las cuatro de las solicitudes de plantilla (20261102000200, E-268, template-request-v1).
   'get_meta_template_request_v1(jsonb, uuid)',
+  'list_agent_campaigns_v1(jsonb, boolean, integer)',
   'list_flow_changes_v1(jsonb, boolean, integer)',
   'list_meta_template_requests_v1(jsonb, boolean, integer)',
   'read_flow_engine_history_v1(jsonb, text, timestamp with time zone)',
   'read_flow_engine_native_trigger_counts_v1(jsonb, text, text, timestamp with time zone)',
   'read_flow_engine_v1(jsonb, text)',
   'read_flow_store_v1(jsonb)',
+  'record_agent_campaign_validation_v1(jsonb, uuid, integer, jsonb, jsonb, jsonb, text)',
   'record_flow_change_validation_v1(jsonb, uuid, integer, jsonb, jsonb, jsonb, jsonb, text)',
   'record_meta_template_request_validation_v1(jsonb, uuid, integer, jsonb, jsonb, jsonb, jsonb, text)',
+  'save_agent_campaign_draft_v1(jsonb, uuid, integer, jsonb, text, text)',
   'save_flow_change_draft_v1(jsonb, uuid, integer, jsonb, jsonb, text, text)',
   'save_meta_template_request_draft_v1(jsonb, uuid, integer, jsonb, text, uuid, text, text)',
 ]), `the role executes: ${JSON.stringify(executable)}`);

@@ -158,6 +158,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261108000100",
         # La base no publica una version nativa que el motor no ejecuta (20261108004100, E-357).
         "20261108004100",
+        # Las campanas del Automation Expert como dato (20261108005000, E-355).
+        "20261108005000",
     ]
 
     sql = _sql()

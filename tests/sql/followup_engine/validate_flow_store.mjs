@@ -668,7 +668,7 @@ const lockTimeouts = (await query(`
   select p.proname from pg_proc p
    where p.pronamespace = 'public'::regnamespace and p.proconfig @> array['lock_timeout=5s']
    order by 1`)).map((row) => row.proname);
-check(sameJson(lockTimeouts, [
+check(sameJson([...lockTimeouts].sort(), [
   '_flow_change_approve', '_flow_change_pause', '_flow_change_publish', '_flow_change_record_validation',
   // _flow_cohort_change y operator_flow_cohort_v1 (20261024000600, 20261028000100) bloquean el control del
   // flujo para cargar su cohorte.
@@ -687,7 +687,10 @@ check(sameJson(lockTimeouts, [
   'operator_publish_flow_change_v1', 'operator_record_flow_change_validation_v1',
   'purge_identity_recycles_v1',
   'record_meta_template_request_validation_v1', 'record_meta_template_status_v1',
-]), '2: lock_timeout de 5 s en las que esperan locks', lockTimeouts);
+  // Las campanas del Automation Expert (20261108005000, E-355).
+  'approver_discard_agent_campaign_v1', 'approver_pause_agent_campaign_v1', 'approver_publish_agent_campaign_v1',
+  'approver_resume_agent_campaign_v1', 'record_agent_campaign_check_v1', 'record_agent_campaign_validation_v1',
+].sort()), '2: lock_timeout de 5 s en las que esperan locks', lockTimeouts);
 
 // ===========================================================================
 // 3. El ciclo entero por las funciones del operador.

@@ -65,6 +65,7 @@ Portable: la regla es del producto y por instancia solo se prende.
 
 5. **El pedido a Hermes** lleva un `system` por segmento, en ese orden, **después** del conocimiento base y antes del mensaje `user`. Sin segmentos (o con el flag apagado) el pedido es **byte a byte** el de antes. La clave de idempotencia y el digest del resultado salen del delivery y no cambian.
 6. **La procedencia del turno** (`agent_turn_provenance.context_added`) suma `segments` con `key`, `version`, `sha256` y `agent_replies_before` de cada segmento que fue (ver «La etiqueta antes del primer turno»). Sin segmentos, `context_added` es el de antes.
+7. **A quien se dio de baja no le va** (E-355). Con la misma señal que la entrada a una campaña (`prior_opt_out`, la baja anterior de esa persona), el turno se arma sin `segments`, como si la conversación no tuviera la etiqueta: sin el bloque y sin el cupón de la campaña en el link. Se le contesta normal (el SOUL común, D10) y queda `segment_opted_out_skipped`. Vale para todo segmento, del manifiesto o de la base. Solo se ve con el flag prendido y un segmento vigente con la etiqueta.
 
 La etiqueta queda en Chatwoot como historia: el bridge no la pone ni la saca.
 
@@ -103,6 +104,7 @@ Con el flag, `agent_segments` lista cada segmento declarado como `clave:vN:sha25
 
 - `segment_context key=… version=… sha256=<12> conversation=…`: un segmento que fue en el turno.
 - `segment_inactive key=… version=… reason=expired|not_started conversation=…`: la conversación tiene la etiqueta y el segmento no está vigente.
+- `segment_opted_out_skipped key=… conversation=…`: la conversación tenía el segmento y no fue porque la persona se dio de baja (E-355).
 - `segment_dropped_max_per_turn …` y `segment_dropped_size …` (warning): un segmento vigente que no fue por los topes del turno.
 - `segment_after_agent_replies key=… version=… agent_replies_before=… conversation=…` (warning): un segmento que fue en una conversación donde el agente ya había respondido.
 - `segment_link_coupon key=… conversation=…`: el link del agente salió con el cupón de ese segmento (nunca el código).
@@ -118,6 +120,10 @@ Con el flag, `agent_segments` lista cada segmento declarado como `clave:vN:sha25
 `segment_recovery_coupon_skipped` también sale cuando el botón «Quiero mi 10 %» no adelanta Z.
 
 Nunca el teléfono, el mail ni el texto de los mensajes.
+
+## El segmento que nace como dato (`agent-campaigns-v1`, E-355)
+
+Con `AGENT_CAMPAIGNS_ENABLED`, una campaña que el Automation Expert armó y un aprobador publicó entra al catálogo desde la base, con este mismo esquema y el mismo `chequeo_sha`. Lo que cambia es la regla del sha: una campaña de la base cuyo `chequeo_sha` no calza **no se sirve, avisa y el bridge sigue** (decisión de Dan del 2026-11-08). La regla de arriba (no arranca) queda para los archivos del manifiesto. Contrato: [agent-campaigns-v1.md](agent-campaigns-v1.md).
 
 ## Lo que no hace (todavía)
 

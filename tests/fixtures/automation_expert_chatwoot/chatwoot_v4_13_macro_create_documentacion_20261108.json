@@ -1,0 +1,13 @@
+{
+  "_procedencia": "FORMA DOCUMENTADA, NO CAPTURADA. Leida el 2026-11-08 del codigo publico de Chatwoot v4.13.0 (app/controllers/api/v1/accounts/macros_controller.rb, app/models/macro.rb, app/views/api/v1/accounts/macros/create.json.jbuilder, app/views/api/v1/models/_macro.json.jbuilder). No se llamo a una cuenta real. El primer dia en una instancia se confirma contra Chatwoot; si no acepta, el macro lo crea el operador (plan B en alta.md).",
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/accounts/{account}/macros",
+    "body": {"name": "campana-black-november", "visibility": "global",
+             "actions": [{"action_name": "add_label", "action_params": ["black-november"]}]}
+  },
+  "response_200": {"payload": {"id": 9001, "name": "campana-black-november", "visibility": "global", "account_id": 2,
+    "actions": [{"action_name": "add_label", "action_params": ["black-november"]}]}},
+  "notas": ["Un usuario con rol agent queda con visibilidad personal aunque pida global (Macro#set_visibility).",
+            "ACTIONS_ATTRS incluye add_label."]
+}

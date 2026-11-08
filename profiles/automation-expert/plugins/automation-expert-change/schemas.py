@@ -300,3 +300,111 @@ LIST_CHATWOOT_MACROS = {
     ),
     "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
 }
+
+CREATE_CHATWOOT_LABEL_MACRO = {
+    "name": "create_chatwoot_label_macro",
+    "description": (
+        "Crea en Chatwoot un macro que solo suma una etiqueta que ya existe (creala antes con "
+        "create_chatwoot_label). Si ya hay un macro que hace exactamente eso, lo devuelve con created: false. "
+        "Devuelve su id: es macro_etiqueta de una campaña. No crea otro tipo de macro. "
+        "Llamala solo después de que list_campaigns contestó: sin campañas prendidas, no existe."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"label": _LABEL_TITLE},
+        "required": ["label"],
+        "additionalProperties": False,
+    },
+}
+
+_CAMPAIGN = {
+    "type": "object",
+    "description": (
+        "La campaña: clave (corta, minúsculas y guiones), nombre (lo que titula el bloque), etiqueta y "
+        "macro_etiqueta (de create_chatwoot_label_macro), desde y hasta (fecha y hora con zona, por ejemplo "
+        "2026-11-20T00:00:00-06:00; hasta es exclusivo), palabras_clave (lista de 1 a 8) y/o pregunta_entrada "
+        "(una línea). instruccion (opcional, hasta 600 caracteres); oferta (opcional: producto, precio y moneda "
+        "juntos, precio_antes, cupon, incluye, garantia, medios, reemplaza); asesoramiento (lista, obligatoria); "
+        "se_puede_decir, no_confirmado, promesas_prohibidas (listas opcionales); faq y preguntas_del_alta "
+        "(listas de {pregunta, respuesta, fuente}). Los precios por país van adentro de la oferta o de "
+        "se_puede_decir, no en otra campaña."
+    ),
+}
+
+PREVIEW_CAMPAIGN = {
+    "name": "preview_campaign",
+    "description": (
+        "Valida una campaña contra esta instancia y muestra cómo la va a leer el agente, sin guardar nada. "
+        "Vuelve con ok, blocks (qué corregir), warnings y preview (render, vigencia, palabras clave y el link de "
+        "WhatsApp para el botón)."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"campaign": _CAMPAIGN},
+        "required": ["campaign"],
+        "additionalProperties": False,
+    },
+}
+
+PROPOSE_CAMPAIGN = {
+    "name": "propose_campaign",
+    "description": (
+        "Guarda o rehace el borrador de una campaña. No la publica: nadie la recibe hasta que un aprobador la "
+        "apruebe en la página. Para rehacer, mandá campaign_id y revision; una validada también se puede rehacer "
+        "(por ejemplo, si el control de calidad dejó preguntas)."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "campaign": _CAMPAIGN,
+            "purpose": {"type": "string", "minLength": 1, "maxLength": 500,
+                        "description": "Para qué es, en una línea, como lo pidió la persona. Sin teléfonos ni mails."},
+            "campaign_id": {"type": "string", "format": "uuid"},
+            "revision": {"type": "integer", "minimum": 1},
+        },
+        "required": ["campaign", "purpose"],
+        "additionalProperties": False,
+    },
+}
+
+VALIDATE_CAMPAIGN = {
+    "name": "validate_campaign",
+    "description": (
+        "Valida el borrador guardado: revisa la instancia y que el macro sume exactamente la etiqueta. Sin "
+        "bloqueos queda congelado 24 horas y hay que correrle el control de calidad (lo hace el equipo). Después, "
+        "un aprobador la abre en la página y la publica. Solo valida."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"campaign_id": {"type": "string", "format": "uuid"}, "revision": {"type": "integer", "minimum": 1}},
+        "required": ["campaign_id", "revision"],
+        "additionalProperties": False,
+    },
+}
+
+GET_CAMPAIGN = {
+    "name": "get_campaign",
+    "description": (
+        "Relee una campaña: su estado, la vista previa, lo que dio el control de calidad (check_report, con las "
+        "preguntas abiertas) y si quedó limpia. Solo lee."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"campaign_id": {"type": "string", "format": "uuid"}},
+        "required": ["campaign_id"],
+        "additionalProperties": False,
+    },
+}
+
+LIST_CAMPAIGNS = {
+    "name": "list_campaigns",
+    "description": (
+        "Las campañas de la instancia y en qué estado están. estado: abiertas (por defecto) o todas. Solo lee. "
+        "Con campaigns_not_enabled las campañas no están prendidas en esta instancia: no crees etiqueta ni macro."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"estado": {"type": "string", "enum": ["abiertas", "todas"]}},
+        "additionalProperties": False,
+    },
+}

@@ -144,6 +144,8 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
         "20261108000100_flow_store_route_executor_v1.sql",
         # La base no publica una version nativa que el motor no ejecuta (20261108004100, E-357).
         "20261108004100_flow_change_publish_native_version_guard_v1.sql",
+        # Las campanas del Automation Expert como dato (20261108005000, E-355).
+        "20261108005000_agent_campaigns_v1.sql",
     ]
     native = (MIGRATIONS / "20261024000200_flow_engine_native_v1.sql").read_text(encoding="utf-8")
     assert "read_automation_expert_flows_v1" not in native

@@ -376,6 +376,43 @@ def _settle(entry: CampaignEntry, turn: Any, answer: object) -> object:
     return asyncio.run(entry.settle(conversation_id=9, turn=turn, answer=answer))
 
 
+def test_a_campaign_gone_while_the_model_was_thinking_does_not_break_the_turn(caplog: pytest.LogCaptureFixture) -> None:
+    # La recarga del catalogo vivo (agent-campaigns-v1) saca el segmento entre el turno y la respuesta.
+    caplog.set_level(logging.INFO, logger="bridge")
+    entry, labeler, answers = _entry()
+    turn = _run(entry, _inbound("Hola"))
+    assert turn.pending == KEY
+
+    entry.reload([], {})
+
+    assert _settle(entry, turn, "si") is None
+    assert answers.records == [] and labeler.calls == []
+    assert f"segment_entry_answer_ignored conversation=9 segment={KEY} reason=segment_gone" in caplog.text
+
+
+def test_a_reload_in_the_middle_of_the_answer_still_labels_who_said_yes() -> None:
+    entry, labeler, answers = _entry()
+    turn = _run(entry, _inbound("Hola"))
+    recording = answers.record_segment_entry_answer
+
+    async def record_and_reload(**kwargs: Any) -> str:
+        entry.reload([], {})
+        return await recording(**kwargs)
+
+    answers.record_segment_entry_answer = record_and_reload  # type: ignore[method-assign]
+    assert _settle(entry, turn, "si") == "si"
+    assert labeler.calls == [(9, "segment_entry_question")]
+
+
+def test_two_segments_with_the_same_keyword_are_refused_and_the_last_good_stays() -> None:
+    first = _segment()
+    entry, labeler, _ = _entry(first)
+    twin = _segment(key="otra", label="otra", question=None)
+    with pytest.raises(CampaignEntryConfigError, match="campaign_entry_keyword_repeated"):
+        entry.reload([first, twin], {LABEL: labeler, "otra": labeler})
+    assert entry.segments == (first,)
+
+
 def test_a_si_puts_the_label_records_it_and_the_next_turn_has_the_segment(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO, logger="bridge")
     entry, labeler, answers = _entry()

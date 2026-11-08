@@ -31,7 +31,10 @@ TOOLS = ["get_flow_definitions", "propose_flow_change", "validate_flow_change", 
          "propose_template", "validate_template", "list_template_requests", "get_template_request",
          # automation-expert-chatwoot-v1 (E-256, F-143): la herramienta acotada de Chatwoot.
          "list_chatwoot_labels", "create_chatwoot_label", "add_chatwoot_label_to_conversation",
-         "list_chatwoot_macros"]
+         "list_chatwoot_macros",
+         # agent-campaigns-v1 (E-355): armar una campana. Publicarla es de la pagina.
+         "create_chatwoot_label_macro", "preview_campaign", "propose_campaign", "validate_campaign",
+         "get_campaign", "list_campaigns"]
 
 
 def _load_plugin() -> ModuleType:
@@ -442,3 +445,37 @@ def test_the_template_tools_have_no_route_to_meta_nor_to_the_page() -> None:
     source = (PLUGIN / "tools.py").read_text(encoding="utf-8")
     assert "graph.facebook.com" not in source
     assert "/send" not in source and "/discard" not in source
+
+
+# ------------------------------------------------------------- las campanas (E-355)
+
+
+def test_a_bridge_without_the_campaigns_says_so_before_anything_is_created(bridge: type[_Bridge]) -> None:
+    # Sin AGENT_CAMPAIGNS_ENABLED las rutas no existen: FastAPI contesta su 404 generico.
+    bridge.routes[f"GET {PREFIX}/campaigns?estado=abiertas"] = (404, {"detail": "Not Found"})
+    assert json.loads(_tools().list_campaigns({})) == {"error": "campaigns_not_enabled"}
+    bridge.routes[f"POST {CHATWOOT}/macros"] = (405, {"detail": "Method Not Allowed"})
+    assert json.loads(_tools().create_chatwoot_label_macro({"label": "promo"})) == {"error": "chatwoot_tool_not_enabled"}
+    # La campana que no existe, con la ruta prendida, sigue siendo su codigo.
+    bridge.routes[f"GET {PREFIX}/campaigns/{PROPOSAL}"] = (404, {"detail": "agent_campaign_not_found"})
+    assert json.loads(_tools().get_campaign({"campaign_id": PROPOSAL})) == {"error": "agent_campaign_not_found"}
+
+
+def test_the_campaign_tools_go_to_their_routes_with_who_asks_from_the_session(bridge: type[_Bridge]) -> None:
+    tools = _tools()
+    def respond(status: int, data: dict[str, object]) -> tuple[int, object]:
+        return status, {"contract": "agent-campaigns-v1", "contract_version": "1.0.0", "data": data}
+
+    bridge.routes[f"POST {PREFIX}/campaigns/preview"] = respond(200, {"ok": True})
+    bridge.routes[f"POST {PREFIX}/campaigns"] = respond(201, {"campaign_id": PROPOSAL})
+    bridge.routes[f"POST {PREFIX}/campaigns/{PROPOSAL}/validate"] = respond(200, {"status": "validada"})
+    assert json.loads(tools.preview_campaign({"campaign": {"clave": "x"}}))["data"]["ok"] is True
+    assert json.loads(tools.propose_campaign({"campaign": {"clave": "x"}, "purpose": "Black November"}))["data"]["campaign_id"] == PROPOSAL
+    assert json.loads(str(bridge.seen[-1]["body"]))["requested_by"] == {"slack_user": "U0123456789"}
+    assert json.loads(tools.validate_campaign({"campaign_id": PROPOSAL, "revision": 1}))["data"]["status"] == "validada"
+
+
+def test_the_campaign_tools_never_send_a_phone_in_the_purpose(bridge: type[_Bridge]) -> None:
+    tools = _tools()
+    assert json.loads(tools.propose_campaign({"campaign": {}, "purpose": "Llamar al 5512345678"})) == {
+        "error": "identifier_not_allowed"}

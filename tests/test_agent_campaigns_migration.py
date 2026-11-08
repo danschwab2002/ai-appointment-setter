@@ -1,0 +1,45 @@
+"""La forma de 20261108005000 (agent-campaigns-v1, E-355). Lo que hace, lo prueba validate_agent_campaigns.mjs."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+MIGRATIONS = ROOT / "supabase" / "migrations"
+MIGRATION = MIGRATIONS / "20261108005000_agent_campaigns_v1.sql"
+
+
+def _sql() -> str:
+    return MIGRATION.read_text(encoding="utf-8")
+
+
+def test_it_is_one_transaction_and_is_the_last() -> None:
+    sql = _sql()
+    names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
+    assert names[-1] == MIGRATION.name
+    assert sql.count("\nbegin;\n") == 1 and sql.rstrip().endswith("commit;")
+    assert "set local lock_timeout = '5s';" in sql
+    assert "agent_campaigns_already_applied" in sql and "agent_campaigns_prerequisite_missing" in sql
+
+
+def test_it_only_adds() -> None:
+    lowered = _sql().lower()
+    assert "create or replace" not in lowered and "drop " not in lowered
+
+
+def test_one_live_is_enforced_by_a_unique_index() -> None:
+    assert "agent_campaigns_one_live" in _sql()
+    assert "where status = 'publicada'" in _sql()
+
+
+def test_publishing_is_only_for_the_approver_role() -> None:
+    sql = _sql()
+    assert "grant execute on function %s to flow_change_approver" in sql
+    grants_ae = sql.split("to_regrole('automation_expert_change')", 1)[1].split("end if;", 1)[0]
+    assert "approver_publish" not in grants_ae and "approver_pause" not in grants_ae
+
+
+def test_the_validator_is_in_the_npm_chain() -> None:
+    chain = json.loads((ROOT / "tests/sql/followup_engine/package.json").read_text(encoding="utf-8"))["scripts"]["test"]
+    assert chain.endswith("node validate_agent_campaigns.mjs")

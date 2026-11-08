@@ -6778,6 +6778,42 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         1,
         'flow_change_publish_native_version_guard'
+    union all
+    select
+        '20261108005000',
+        '20261108005000_agent_campaigns_v1.sql',
+        -- Las campanas del Automation Expert como dato (E-355, agent-campaigns-v1):
+        -- las dos tablas, con RLS y sin lectura para la API ...
+        (
+            select count(*) = 2
+            from pg_class c
+            where c.oid in (to_regclass('public.agent_campaigns'), to_regclass('public.agent_campaign_events'))
+              and c.relrowsecurity
+              and not has_table_privilege('anon', c.oid, 'SELECT')
+              and not has_table_privilege('authenticated', c.oid, 'SELECT')
+        )::int
+        -- ... una sola viva por instancia ...
+        + (
+            select count(*) = 1
+            from pg_indexes
+            where schemaname = 'public'
+              and indexname = 'agent_campaigns_one_live'
+              and indexdef like '%status = ''publicada''%'
+        )::int
+        -- ... y publicar solo desde la pagina, con su rol.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.approver_publish_agent_campaign_v1(jsonb,text,uuid,text,text)')
+              and prosecdef
+              and case when to_regrole('flow_change_approver') is null then false
+                       else has_function_privilege('flow_change_approver', oid, 'EXECUTE') end
+              and case when to_regrole('automation_expert_change') is null then true
+                       else not has_function_privilege('automation_expert_change', oid, 'EXECUTE') end
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+        )::int,
+        3,
+        'agent_campaigns'
 )
 select
     version,

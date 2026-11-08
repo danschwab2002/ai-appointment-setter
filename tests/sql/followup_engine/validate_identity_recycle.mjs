@@ -104,7 +104,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026110300050
   // El almacen dice quien ejecuta cada flujo (20261108000100, E-353): una clave mas en read_flow_store_v1.
   '20261108000100_flow_store_route_executor_v1.sql',
   // La base no publica una version nativa que el motor no ejecuta (20261108004100, E-357).
-  '20261108004100_flow_change_publish_native_version_guard_v1.sql'])) {
+  '20261108004100_flow_change_publish_native_version_guard_v1.sql',
+  // Las campanas del Automation Expert como dato (20261108005000, E-355).
+  '20261108005000_agent_campaigns_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de los rechazos de Meta`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(

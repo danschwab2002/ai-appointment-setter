@@ -473,7 +473,9 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261106000100 (el cierre del caso por el cupon de una campana, E-339) suma su RPC.
     # 20261107000100 (el rechazo de la cuenta, E-348) suma sus ocho: marcar el
     # prendido, esperar, liberar, listar, reservar, cerrar, frenar y volver a esperar.
-    assert len(allowlisted) == 201
+    # 20261108005000 (las campanas del Automation Expert, E-355) suma sus tres: el
+    # catalogo vivo y el comando del juez.
+    assert len(allowlisted) == 204
     assert "mark_meta_account_hold_enabled_v1(bigint, timestamp with time zone, timestamp with time zone, integer)" in allowlisted
     assert "requeue_meta_account_hold_v1(bigint, bigint, bigint, timestamp with time zone)" in allowlisted
     assert "close_recovery_case_segment_coupon_v1(uuid, uuid, text, bigint, timestamp with time zone)" in allowlisted
@@ -2041,6 +2043,19 @@ def test_segment_coupon_close_fingerprint() -> None:
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
 
 
+def test_agent_campaigns_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261108005000 (E-355) es la ultima: las tablas con RLS, la viva
+    # unica y publicar solo desde la pagina.
+    fingerprint = sql.split("'20261108005000'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261108005000_agent_campaigns_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",3,'agent_campaigns')")
+    assert "to_regclass('public.agent_campaigns')" in compact_fingerprint
+    assert "agent_campaigns_one_live" in compact_fingerprint
+
+
 def test_meta_account_hold_fingerprint_is_last() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261107000100 (el rechazo de la cuenta espera a que la cuenta
@@ -2070,12 +2085,12 @@ def test_schema_inventory_recognizes_the_route_executor_of_the_flow_store() -> N
 
 
 def test_schema_inventory_recognizes_the_native_version_guard_of_publish() -> None:
-    # La fila de 20261108004100 (E-357) es la ultima: el chequeo de _flow_change_publish.
+    # La fila de 20261108004100 (E-357): el chequeo de _flow_change_publish.
     sql = (ROOT / "scripts" / "supabase_schema_inventory.sql").read_text(encoding="utf-8")
-    fingerprint = sql.split("'20261108004100'", 1)[1].split("select\n    version,", 1)[0]
+    fingerprint = sql.split("'20261108004100'", 1)[1].split("'20261108005000'", 1)[0].rsplit("union all", 1)[0]
     compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261108004100_flow_change_publish_native_version_guard_v1.sql'" in fingerprint
-    assert compact.endswith(",1,'flow_change_publish_native_version_guard')")
+    assert compact.endswith(",1,'flow_change_publish_native_version_guard'")
     assert "to_regprocedure('public._flow_change_publish(text,text,uuid,text,jsonb)')" in compact
     assert "position('flow_change_publish_native_version_guard'indefinition)>0" in compact
