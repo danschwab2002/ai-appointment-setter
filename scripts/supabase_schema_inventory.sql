@@ -6765,6 +6765,19 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         1,
         'flow_store_route_executor'
+    union all
+    select
+        '20261108004100',
+        '20261108004100_flow_change_publish_native_version_guard_v1.sql',
+        -- La base no publica una version nativa que el motor no ejecuta (E-357): el chequeo de _flow_change_publish.
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_change_publish(text,text,uuid,text,jsonb)')
+              and position('flow_change_publish_native_version_guard' in definition) > 0
+        )::int,
+        1,
+        'flow_change_publish_native_version_guard'
 )
 select
     version,

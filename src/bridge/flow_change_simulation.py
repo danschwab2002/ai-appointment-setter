@@ -39,6 +39,7 @@ from typing import Any
 
 from .flow_definition import FlowWorld, ProposalItem
 from .flow_engine import ENGINE_CAPABILITIES_V1, EngineFlow, PlanNotSupported, not_supported
+from .flow_validator import structural_changes
 from .flow_parity import CaptureV3
 from .flow_replay import (
     Versions,
@@ -441,6 +442,13 @@ def build_native_flow_simulation(counts: Any, items: Sequence[ProposalItem], *,
             summary["alcance"] = _REACH_BY_STATE.get(flow.state, "nadie_hoy")
             if item.tipo == "volver":
                 summary["vuelve_a_version"] = item.version
+            active = flow.active_definition
+            if isinstance(active, Mapping) and isinstance(definition, Mapping):
+                # El cambio de estructura (P28, E-357): la pagina lo nombra y pide el segundo paso. Solo cuando
+                # lo hay: el resumen de una version que cambia una espera o el mensaje es el de antes.
+                changes = structural_changes(active, definition)
+                if changes:
+                    summary["cambia_estructura"] = list(changes)
         else:
             summary["mensajes_si_fuera_para_todos"] = people
         own = f"{flow.product_ref}/{flow.flow_key}"

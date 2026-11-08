@@ -28,6 +28,7 @@ import re
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 from .flow_definition import (
@@ -95,6 +96,7 @@ from .flow_engine import (
     NATIVE_UNSUPPORTED_REPEAT,
     NATIVE_UNSUPPORTED_TRIGGER,
     NOT_SUPPORTED,
+    TOO_MANY_SENDS,
     native_not_supported,
     native_trigger_key,
 )
@@ -107,7 +109,7 @@ __all__ = [
     "ACTORS", "BLOCK_CODES", "CATALOG", "CHECKOUT_BUTTON_URL", "PHASES", "RULES_VERSION",
     "VALIDATOR_CONTRACT", "WARNING_CODES", "FlowValidationInputError", "ValidationResult",
     "Finding", "FlowWorld", "InstanceView", "ProposalItem", "ProposalItemsInvalid",
-    "TemplateCatalog", "WorldFlow", "loads_strict", "parse_items", "validate",
+    "TemplateCatalog", "WorldFlow", "loads_strict", "parse_items", "structural_changes", "validate",
 ]
 
 # Lo que la base exige en la revalidacion (``_flow_change_validator_is_valid``):
@@ -527,6 +529,107 @@ CHANGE_OUTSIDE_1B_SCOPE = _spec(
     "En la 1b el Automation Expert cambia las esperas y el plazo, la plantilla, los topes por día y total, el horario, y prende, pausa o apaga.",
     alternative="Pedírselo a un operador.",
 )
+# Lo que el AE no cambia de la estructura de un flujo nativo (E-357, P28 del 30/10): lo que el motor nativo no
+# ejecuta, y por eso se publicaria sin cambiar nada. Son bloqueos: una version «estructural» que no cambia ningun
+# envio es lo que E-353 ya frena. El motivo y la alternativa son lo que el AE le dice al dueno: en lenguaje de
+# negocio, sin campos ni la palabra operador, porque el pedido es que el dueno no dependa de un operador.
+_DROP_THAT_CHANGE = "Sacá ese cambio de la propuesta (lo demás sigue) y decile al dueño, con este motivo, que hoy no se puede. "
+NATIVE_CHANGE_EXITS = _spec(
+    "native_change_exits", None, KIND_CYCLE,
+    "Este flujo siempre corta cuando la persona compra, y por ahora esa es su única salida: que conteste, por ejemplo, no lo corta.",
+    alternative=_DROP_THAT_CHANGE + "Lo que sí se puede cambiar es cuánto tiempo sigue vigente el mensaje y cuánto se espera antes de mandarlo.",
+)
+NATIVE_CHANGE_REPEAT_SILENCE = _spec(
+    "native_change_repeat_silence", None, KIND_CYCLE,
+    "El seguimiento le llega una sola vez a cada conversación, y eso no se puede cambiar.",
+    alternative=_DROP_THAT_CHANGE + "Lo que sí se puede cambiar es a qué altura del silencio sale, entre las 24 y las 72 horas, y su mensaje.",
+)
+NATIVE_CHANGE_PRIORITY_SILENCE = _spec(
+    "native_change_priority_silence", None, KIND_CYCLE,
+    "El seguimiento no mira si la persona está en otro flujo: sale igual.",
+    alternative=_DROP_THAT_CHANGE + "Para que no salga, se puede pausar o apagar.",
+)
+NATIVE_CHANGE_PRIORITY_WINS = _spec(
+    "native_change_priority_wins", None, KIND_CYCLE,
+    "Hoy un flujo no le puede ganar a otro. Lo que sí se puede decir es que este flujo no arranque mientras la persona está en otro.",
+    alternative="Cambiá el pedido a «que no arranque mientras está en ese otro flujo», en el flujo que tiene que esperar, y confirmalo con el dueño.",
+)
+NATIVE_CHANGE_PRIORITY_REF = _spec(
+    "native_change_priority_ref", None, KIND_CYCLE,
+    "Un flujo solo puede esperar a otro del mismo producto y que corra en el sistema nuevo: con este no cambiaría nada.",
+    alternative=_DROP_THAT_CHANGE + "Si el dueño quiere esperar a un flujo que corre en el sistema anterior, el equipo técnico tiene que pasarlo antes al sistema nuevo.",
+)
+# El seguimiento corre en el sistema nuevo, pero nadie queda «adentro»: el texto general diria lo contrario.
+_NATIVE_PRIORITY_REF_SILENCE = "El seguimiento manda su mensaje sin dejar a la persona adentro de un flujo, así que no se lo puede esperar: con este no cambiaría nada."
+NATIVE_CHANGE_ENTRY = _spec(
+    "native_change_entry", None, KIND_CYCLE,
+    "Quién entra a este flujo lo fija lo que lo dispara: no se puede cambiar por separado.",
+    alternative=_DROP_THAT_CHANGE + "Si el dueño quiere otra gente, es otro flujo, con otro disparador.",
+)
+NATIVE_CHANGE_POOL = _spec(
+    "native_change_pool", None, KIND_CYCLE,
+    "El cupo de mensajes de un flujo es siempre el mismo: si se cambiara, la cuenta de lo enviado volvería a cero.",
+    alternative=_DROP_THAT_CHANGE + "Para mandar más o menos, se cambia el tope por día o el total.",
+)
+NATIVE_CHANGE_OTHER = _spec(
+    "native_change_other", None, KIND_CYCLE,
+    "Eso, en este flujo, hoy no se puede cambiar.",
+    alternative=_DROP_THAT_CHANGE + "Sí se pueden cambiar las esperas, el mensaje, el plazo, los topes, el horario y, en casi todos, cada cuánto se repite.",
+)
+# La salida de un flujo nativo, dicha por lo que lo dispara (native_trigger_key).
+_NATIVE_EXITS_TEXT: Mapping[str, str] = MappingProxyType({
+    "compra": "La bienvenida no tiene salidas: manda su mensaje y termina.",
+    NATIVE_SILENCE_TRIGGER: "El seguimiento siempre corta si la persona compra o contesta, y esas son sus únicas salidas.",
+    "intencion": ("El primer contacto corta cuando la persona compra, abandona el carrito, se le rechaza el pago, "
+                  "se da de baja o la pasan a una persona, y esas son sus únicas salidas: no se pueden sumar otras."),
+})
+def _native_shape_for_the_owner(what: str) -> tuple[str, str]:
+    """El motivo y la alternativa de una forma que el motor nativo no ejecuta, para el AE (E-357).
+
+    ``what`` es el codigo cerrado de ``native_not_supported``; el dueno nunca lo lee. Un codigo sin texto cae en
+    el general, que tampoco lo muestra.
+    """
+    drop = "Sacá eso de la propuesta y decile al dueño que hoy no se puede."
+    fix = "Corregilo en la propuesta."
+    if what == TOO_MANY_SENDS or what == "conversar":
+        return ("Este flujo manda un solo mensaje por persona: el sistema nuevo todavía no manda dos seguidos.",
+                drop + " Si quiere más de un mensaje, decile que esa capacidad todavía no está.")
+    if what in ("espera_despues_del_envio", "espera_entre_envios"):
+        return ("Una espera después del mensaje no hace nada: el flujo termina cuando lo manda.",
+                "Poné la espera antes del mensaje. " + fix)
+    if what == "condicion":
+        return ("Solo el pago rechazado elige el mensaje según el caso: este flujo manda siempre el mismo.", drop)
+    if what == "condicion_dato":
+        return ("Las variantes del pago rechazado solo pueden mirar el tipo de rechazo, cuántas veces se rechazó o "
+                "si tuvo descuento antes.", fix)
+    if what in ("condicion_no_al_final", "rama_de_un_envio"):
+        return ("Las variantes van al final del flujo y cada una manda un solo mensaje, sin esperas adentro.", fix)
+    if what == "etiquetar":
+        return ("El seguimiento solo manda su mensaje: no pone etiquetas.", drop)
+    if what == "boton_sin_cupon":
+        return ("El seguimiento siempre lleva el botón de pago con su cupón.", fix)
+    if what == "cupon_personal":
+        return ("El cupón distinto para cada persona todavía no está en el sistema nuevo.",
+                drop + " Un mismo cupón para todos sí se puede, si ya estaba en el flujo.")
+    if what.startswith("boton_"):
+        return ("Este flujo no lleva un botón propio: usa los botones que ya trae la plantilla aprobada.", drop)
+    if what == "variables_seguimiento":
+        return ("El seguimiento siempre usa el nombre de la persona y el producto, en ese orden.", fix)
+    if what.startswith("variable") or what == "variables_differ":
+        return ("Este mensaje solo puede usar el nombre de la persona y el producto.", fix)
+    if what == "contesto_a":
+        return ("El seguimiento solo le escribe a quien ya contestó alguna plantilla: eso no se cambia.", fix)
+    if what == "silencio_ventana":
+        return ("El seguimiento solo corre entre las 24 y las 72 horas de silencio.", fix)
+    if what == "salida_compra_y_contesta":
+        # Aca falta una salida obligatoria; el texto de abajo es el de sumar una que no existe.
+        return ("El seguimiento siempre corta si la persona compra o contesta: el flujo tiene que tener esas dos salidas.",
+                "Poné las dos salidas, que compre y que conteste. " + fix)
+    if what.startswith("salida_") or what.startswith("contesta_"):
+        return (NATIVE_CHANGE_EXITS.reason, NATIVE_CHANGE_EXITS.alternative or drop)
+    return ("Eso, en este flujo, hoy no se puede hacer.", drop)
+
+
 # Un cambio que se publicaria sin cambiar ningun envio (E-353). Son bloqueos y no advertencias: una
 # advertencia el modelo la puede pasar por alto. El motivo y la alternativa son lo que el AE le dice al
 # dueno: no se arregla tocando la propuesta, y por eso la alternativa lo dice (crear-un-flujo.md le pide
@@ -665,6 +768,8 @@ _VALIDATOR_CODES: tuple[CodeSpec, ...] = (
     ENGINE_NOT_SUPPORTED_NATIVE_TRIGGER, ENGINE_NOT_SUPPORTED_NATIVE_PERMISSION,
     ENGINE_NOT_SUPPORTED_NATIVE_REPEAT, ENGINE_NOT_SUPPORTED_NATIVE_PRIORITY, ENGINE_NOT_SUPPORTED_NATIVE_SHAPE,
     ENGINE_NOT_SUPPORTED_ETIQUETAR, CHANGE_OUTSIDE_1B_SCOPE, TRIGGER_CHANGE_IS_ANOTHER_FLOW, FLOW_CHANGE_STALE_BASE,
+    NATIVE_CHANGE_EXITS, NATIVE_CHANGE_REPEAT_SILENCE, NATIVE_CHANGE_PRIORITY_SILENCE, NATIVE_CHANGE_PRIORITY_WINS,
+    NATIVE_CHANGE_PRIORITY_REF, NATIVE_CHANGE_ENTRY, NATIVE_CHANGE_POOL, NATIVE_CHANGE_OTHER,
     CHANGE_WITHOUT_EFFECT_LEGACY_ROUTE, NATIVE_ENGINE_NOT_RUNNING, NATIVE_FIRST_CONTACT_NOT_RUNNING,
     NATIVE_SILENCE_NOT_RUNNING, NATIVE_TRIGGER_OTHER_PRODUCT,
     ROLLBACK_TARGET_NOT_FOUND, ROLLBACK_TARGET_IS_ACTIVE, STATE_TRANSITION_INVALID,
@@ -987,6 +1092,44 @@ def _scope_steps(steps: object, depth: int) -> object:
     return kept
 
 
+def _scope_keys(before: Mapping[str, Any], after: Mapping[str, Any]) -> list[tuple[Segment, ...]]:
+    """Lo que difiere entre dos ``_scope_view``, por campo y sin repetidos."""
+    keys: list[tuple[Segment, ...]] = []
+    for change in diff(before, after):
+        segments = _pointer_segments(change.path)
+        if not segments:
+            continue
+        top = segments[0]
+        if top == "pasos":
+            key: tuple[Segment, ...] = ("pasos",)
+        elif top == "dispara" and len(segments) >= 3:
+            # /dispara/silencio/conversaciones: quien entra, no el silencio entero.
+            key = tuple(segments[:3])
+        elif len(segments) >= 2 and isinstance(before.get(top), Mapping) and isinstance(after.get(top), Mapping):
+            key = (top, segments[1])
+        else:
+            key = (top,)
+        if key not in keys:
+            keys.append(key)
+    return keys
+
+
+# Lo que no cambia ningun envio: renombrar un flujo no es un cambio de estructura para la pagina.
+_NOT_A_STRUCTURE_CHANGE = frozenset({("nombre",)})
+
+
+def structural_changes(active: Mapping[str, Any], draft: Mapping[str, Any]) -> tuple[str, ...]:
+    """Lo que cambia ``draft`` de la estructura de ``active``: los campos, separados por ``/``.
+
+    Es la misma cuenta que ``_scope``, para que la pagina y el segundo paso digan lo mismo que el validador
+    (``pasos``, ``topes/repeticion``, ``prioridad/no_arranca_mientras``…). Vacio si la version solo cambia lo
+    que el AE cambia en cualquier flujo, o solo el nombre.
+    """
+    return tuple("/".join(str(part) for part in key)
+                 for key in _scope_keys(_scope_view(active), _scope_view(draft))
+                 if key not in _NOT_A_STRUCTURE_CHANGE)
+
+
 # ---------------------------------------------------------------------------
 # La validacion.
 # ---------------------------------------------------------------------------
@@ -999,9 +1142,10 @@ class _Emitter:
         self.collapse = collapse
         self.findings: list[Finding] = []
 
-    def add(self, spec: CodeSpec, segments: Sequence[Segment] = (), *, reason: str | None = None) -> None:
+    def add(self, spec: CodeSpec, segments: Sequence[Segment] = (), *, reason: str | None = None,
+            alternative: str | None = None) -> None:
         path = self.collapse if self.collapse is not None else finding_path(self.base + tuple(segments))
-        self.findings.append(spec.at(path, reason=reason))
+        self.findings.append(spec.at(path, reason=reason, alternative=alternative))
 
 
 @dataclass
@@ -1316,28 +1460,75 @@ class _Run:
                 emitter.add(INVALID_VALUE, ("producto",), reason="El producto no es el del flujo del ítem.")
 
     def _scope(self, subject: _Subject, active: Mapping[str, Any]) -> None:
-        """``change_outside_1b_scope``: lo que el Automation Expert cambia fuera de la decision 4."""
-        before = _scope_view(active)
-        after = _scope_view(subject.definition)
-        keys: list[tuple[Segment, ...]] = []
-        for change in diff(before, after):
-            segments = _pointer_segments(change.path)
-            if not segments:
-                continue
-            top = segments[0]
-            if top == "pasos":
-                key: tuple[Segment, ...] = ("pasos",)
-            elif top == "dispara" and len(segments) >= 3:
-                # /dispara/silencio/conversaciones: quien entra, no el silencio entero.
-                key = tuple(segments[:3])
-            elif len(segments) >= 2 and isinstance(before.get(top), Mapping) and isinstance(after.get(top), Mapping):
-                key = (top, segments[1])
+        """Lo que el Automation Expert cambia fuera de la decision 4 (``change_outside_1b_scope``).
+
+        En un flujo nativo (P28, E-357) la estructura se abre hasta donde el motor nativo la ejecuta:
+        ``_native_scope``. El legado y la ruta del motor siguen igual: su estructura la cambia el operador.
+        """
+        for key in _scope_keys(_scope_view(active), _scope_view(subject.definition)):
+            if subject.flow.is_native:
+                self._native_scope(subject, key)
             else:
-                key = (top,)
-            if key not in keys:
-                keys.append(key)
-        for key in keys:
-            subject.emitter.add(CHANGE_OUTSIDE_1B_SCOPE, key)
+                subject.emitter.add(CHANGE_OUTSIDE_1B_SCOPE, key)
+
+    def _native_scope(self, subject: _Subject, key: tuple[Segment, ...]) -> None:
+        """Si el cambio de ``key`` en un flujo nativo se publica, o por que no (flow-change-cycle-v1 1.12.0).
+
+        Se abre solo lo que el motor lee: ``pasos`` (dentro de la regla 14, que en fase publish mira cada
+        forma), ``topes.repeticion``, ``prioridad.no_arranca_mientras`` y ``nombre``. Lo que el motor no lee
+        se bloquea: publicarlo no cambiaria nada. El silencio corre por su propio barrido, que no mira ni la
+        repeticion (una por conversacion, indice unico) ni la prioridad.
+        """
+        trigger = native_trigger_key(subject.definition)
+        silence = trigger == NATIVE_SILENCE_TRIGGER
+        emitter = subject.emitter
+        if key in (("pasos",), ("nombre",)):
+            return
+        if key == ("topes", "repeticion"):
+            if silence:
+                emitter.add(NATIVE_CHANGE_REPEAT_SILENCE, key)
+        elif key == ("prioridad", "no_arranca_mientras"):
+            if silence:
+                emitter.add(NATIVE_CHANGE_PRIORITY_SILENCE, key)
+            else:
+                self._native_priority_refs(subject)
+        elif key == ("prioridad", "le_gana_a"):
+            emitter.add(NATIVE_CHANGE_PRIORITY_WINS, key)
+        elif key == ("termina", "si"):
+            emitter.add(NATIVE_CHANGE_EXITS, key, reason=_NATIVE_EXITS_TEXT.get(trigger or ""))
+        elif key in (("entra", "contesto_a"), ("entra", "permiso")):
+            emitter.add(NATIVE_CHANGE_ENTRY, key)
+        elif key == ("topes", "bolsa"):
+            emitter.add(NATIVE_CHANGE_POOL, key)
+        else:
+            emitter.add(NATIVE_CHANGE_OTHER, key)
+
+    def _native_priority_refs(self, subject: _Subject) -> None:
+        """Cada flujo de ``no_arranca_mientras`` lo puede leer la base (``_flow_engine_admit_native_flow``).
+
+        La base compara ``flow_engine_runs.flow_key`` con el texto de la lista, en el mismo producto: una
+        referencia con producto, un flujo de otro producto o uno sin recorridos del motor no frenarian nunca.
+        El seguimiento con cupon es nativo pero tampoco tiene recorridos: su corrida es una fila de
+        ``conversation_followup_events``, sin caso (D-P22-1, migracion 20261101000200).
+        """
+        flow = subject.flow
+        own_product = _own_product(subject.definition, flow)
+        for index, ref in enumerate(_refs(subject.definition, "prioridad", "no_arranca_mientras")):
+            if is_unresolved(ref):
+                continue
+            parsed = parse_flow_ref(ref, own_product)
+            other = self.world.find(*parsed) if parsed is not None else None
+            if other is None:
+                continue  # unknown_flow_reference, de la regla 10
+            at = ("prioridad", "no_arranca_mientras", index)
+            active = other.active_definition
+            if active is not None and native_trigger_key(active) == NATIVE_SILENCE_TRIGGER:
+                subject.emitter.add(NATIVE_CHANGE_PRIORITY_REF, at, reason=_NATIVE_PRIORITY_REF_SILENCE)
+                continue
+            runs_in_engine = other.is_native or other.route_executor in (ROUTE_MOTOR, ROUTE_NOT_READ)
+            if ref != other.flow_key or other.product_ref != own_product or other.flow_id == flow.flow_id \
+                    or not runs_in_engine:
+                subject.emitter.add(NATIVE_CHANGE_PRIORITY_REF, at)
 
     # -- Las reglas de forma (de la 2 a la 10) -------------------------------
 
@@ -1821,7 +2012,12 @@ class _Run:
                 if step_type(step) == "etiquetar":
                     emitter.add(ENGINE_NOT_SUPPORTED_ETIQUETAR, at + ("etiquetar",))
             return
-        for code in native_not_supported(definition):
+        codes = native_not_supported(definition)
+        if self.actor == "automation_expert" and f"{NOT_SUPPORTED}:{TOO_MANY_SENDS}" in codes:
+            # Dos mensajes seguidos son dos problemas para el motor (la espera en el medio y el segundo envio) y
+            # uno solo para el dueno: el del mensaje de mas. Los dos caen en el mismo camino y se contaria solo el primero.
+            codes = tuple(code for code in codes if not code.endswith(("espera_despues_del_envio", "espera_entre_envios")))
+        for code in codes:
             spec = _NATIVE_SPECS.get(code)
             if spec is not None:
                 emitter.add(spec, _NATIVE_PATHS[code])
@@ -1834,6 +2030,13 @@ class _Run:
                 else ("dispara",) if what.startswith("disparo_") \
                 else ("dispara", "silencio") if what.startswith("silencio_") \
                 else ("entra", "contesto_a") if what == "contesto_a" else ("pasos",)
+            if self.actor == "automation_expert":
+                if what.startswith(("salida_", "contesta_")) \
+                        and any(found.code == NATIVE_CHANGE_EXITS.code for found in emitter.findings):
+                    continue  # el cambio de salidas ya volvio frenado, con su motivo (``_native_scope``)
+                reason, alternative = _native_shape_for_the_owner(what)
+                emitter.add(ENGINE_NOT_SUPPORTED_NATIVE_SHAPE, at, reason=reason, alternative=alternative)
+                continue
             emitter.add(ENGINE_NOT_SUPPORTED_NATIVE_SHAPE, at,
                         reason=f"El motor nativo de esta versión no ejecuta eso ({what}).")
 

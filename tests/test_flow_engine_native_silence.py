@@ -275,7 +275,7 @@ def test_the_native_followup_shape_blocks_where_it_is_written() -> None:
                    actor="automation_expert", draft_base={}, catalog=CATALOG, in_world=world(keys=()))
     [block] = result.blocks
     assert (block.code, block.path) == ("motor_nativo:forma", "/0/definicion/entra/contesto_a")
-    assert "contesto_a" in (block.reason or "")
+    assert "quien ya contestó" in (block.reason or "") and "contesto_a" not in (block.reason or "")
 
 
 def test_the_silence_of_the_person_stays_out_of_the_native_engine() -> None:

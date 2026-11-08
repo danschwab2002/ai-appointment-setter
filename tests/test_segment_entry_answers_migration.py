@@ -34,15 +34,17 @@ def test_it_is_one_transaction_with_lock_timeout_and_the_last() -> None:
     sql = _sql()
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
     # El rechazo de la cuenta espera a que la cuenta vuelva (20261107000100, E-348): dos tablas y ocho RPC de service_role.
-    assert names[-2] == "20261107000100_meta_account_hold_retry_v1.sql"
+    assert names[-3] == "20261107000100_meta_account_hold_retry_v1.sql"
     # El almacen dice quien ejecuta cada flujo (20261108000100, E-353): una clave mas en read_flow_store_v1.
-    assert names[-1] == "20261108000100_flow_store_route_executor_v1.sql"
+    # La base no publica una version nativa que el motor no ejecuta (20261108004100, E-357).
+    assert names[-1] == "20261108004100_flow_change_publish_native_version_guard_v1.sql"
+    assert names[-2] == "20261108000100_flow_store_route_executor_v1.sql"
     # El cierre del caso por el cupon de una campana (20261106000100, E-339): una RPC de service_role.
-    assert names[-3] == "20261106000100_recovery_case_segment_coupon_close_v1.sql"
+    assert names[-4] == "20261106000100_recovery_case_segment_coupon_close_v1.sql"
     # El origen de un recorrido nativo para la campana por landing (20261103001700, E-321): una lectura de service_role.
-    assert names[-4] == "20261103001700_flow_engine_native_campaign_origin_v1.sql"
-    assert names[-5] == MIGRATION.name
-    assert names[-6] == "20261103001300_flow_engine_native_segment_label_v1.sql"
+    assert names[-5] == "20261103001700_flow_engine_native_campaign_origin_v1.sql"
+    assert names[-6] == MIGRATION.name
+    assert names[-7] == "20261103001300_flow_engine_native_segment_label_v1.sql"
     assert sql.count("\nbegin;\n") == 1 and sql.rstrip().endswith("commit;")
     assert "set local lock_timeout = '5s';" in sql
     assert "message = 'segment_entry_answers_already_applied'" in sql
@@ -83,4 +85,4 @@ def test_nothing_of_the_person_is_stored() -> None:
 def test_the_validator_is_the_last_of_the_npm_chain() -> None:
     chain = json.loads(PACKAGE.read_text(encoding="utf-8"))["scripts"]["test"]
     assert chain.rstrip().endswith(
-        " && node validate_flow_engine_native_segment_label.mjs && node validate_segment_entry_answers.mjs && node validate_flow_engine_native_campaign_origin.mjs --check && node validate_recovery_case_segment_coupon_close.mjs && node validate_meta_account_hold_retry.mjs && node validate_flow_store_route_executor.mjs --check")
+        " && node validate_flow_engine_native_segment_label.mjs && node validate_segment_entry_answers.mjs && node validate_flow_engine_native_campaign_origin.mjs --check && node validate_recovery_case_segment_coupon_close.mjs && node validate_meta_account_hold_retry.mjs && node validate_flow_store_route_executor.mjs --check && node validate_flow_change_publish_native_version_guard.mjs")

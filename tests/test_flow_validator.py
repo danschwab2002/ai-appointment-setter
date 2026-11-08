@@ -316,6 +316,37 @@ def _follow_up() -> dict[str, Any]:
                    entra={"permiso": "conversacion"}, pasos=[copy.deepcopy(CONFIRMED_STEP)])
 
 
+def _silence() -> dict[str, Any]:
+    """El seguimiento nativo a 24 h con cupon: lo unico que ese disparador ejecuta (E-357)."""
+    return {**_follow_up(), "entra": {"permiso": "conversacion", "contesto_a": "cualquier_plantilla"},
+            "pasos": [{"plantilla": "att1_seguimiento_descuento_01", "idioma": "es_MX",
+                       "variables": ["nombre", "producto"], "boton": {"link": "checkout", "cupon": "VUELVE20"}}],
+            "termina": {"si": ["compra", "contesta"]},
+            "topes": {"repeticion": {"una_por": "conversacion", "otra_despues_de": "nunca"}}}
+
+
+NATIVE_ID = "0000000b-0000-4000-8000-0000000b0003"
+
+
+def native_flow(definition: dict[str, Any], *, key: str = "nativo", state: str = "prendido",
+                flow_id: str = NATIVE_ID) -> WorldFlow:
+    """Un flujo nativo con su v1 publicada, sobre el que el AE propone una version (E-357)."""
+    return WorldFlow(flow_id=flow_id, product_ref="att1", flow_key=key, state=state, active_version=1,
+                     generation=1, versions={1: published({**definition, "flujo": key})}, native=True)
+
+
+def _native_change(definition: dict[str, Any], change: Callable[[dict[str, Any]], None] | None = None) -> list[Finding]:
+    """Lo que devuelve el validador a una version de un nativo que propone el AE, sin mirar la plantilla."""
+    base = native_flow(definition)
+    draft = fd.as_draft(base.versions[1])
+    if change is not None:
+        change(draft)
+    others = world(base, _native_welcome("bienvenida", WELCOME_ID, "prendido"), _routed("legado"))
+    result = check([version_item(draft, "nativo", flow_id=NATIVE_ID)], actor="automation_expert",
+                   in_world=others, catalog=None, phase="draft")
+    return [*result.blocks, *result.warnings]
+
+
 def _rollback(version: int) -> list[Finding]:
     two = flow("carrito", versions={1: published(flow_def("carrito")), 2: published(flow_def("carrito"), 2)})
     result = check([state_item("volver", version=version)], in_world=world(two))
@@ -664,6 +695,39 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
         lambda: run(draft_of("carrito", lambda d: d["topes"].update(por_dia=90)),
                     actor="automation_expert", in_world=world(live("carrito"))),
     ),
+    # E-357 (P28): lo que el AE no cambia de la estructura de un nativo, cada uno con su vecino que si.
+    "native_change_exits": (
+        lambda: _native_change(_form(), lambda d: d["termina"]["si"].append("contesta")),
+        lambda: _native_change(_form(), lambda d: d["termina"].update(vence="2d")),
+    ),
+    "native_change_repeat_silence": (
+        lambda: _native_change(_silence(), lambda d: d["topes"]["repeticion"].update(otra_despues_de="24h")),
+        lambda: _native_change(_form(), lambda d: d["topes"]["repeticion"].update(otra_despues_de="24h")),
+    ),
+    "native_change_priority_silence": (
+        lambda: _native_change(_silence(), lambda d: d["prioridad"]["no_arranca_mientras"].append("bienvenida")),
+        lambda: _native_change(_form(), lambda d: d["prioridad"]["no_arranca_mientras"].append("bienvenida")),
+    ),
+    "native_change_priority_wins": (
+        lambda: _native_change(_form(), lambda d: d["prioridad"]["le_gana_a"].append("bienvenida")),
+        lambda: _native_change(_form(), lambda d: d["prioridad"]["no_arranca_mientras"].append("bienvenida")),
+    ),
+    "native_change_priority_ref": (
+        lambda: _native_change(_form(), lambda d: d["prioridad"]["no_arranca_mientras"].append("carrito")),
+        lambda: _native_change(_form(), lambda d: d["prioridad"]["no_arranca_mientras"].append("bienvenida")),
+    ),
+    "native_change_entry": (
+        lambda: _native_change(_form(), lambda d: d["entra"].update(permiso="compra")),
+        lambda: _native_change(_form()),
+    ),
+    "native_change_pool": (
+        lambda: _native_change(_form(), lambda d: d["topes"].update(bolsa="otra-bolsa")),
+        lambda: _native_change(_form(), lambda d: d["topes"].update(por_dia=20)),
+    ),
+    "native_change_other": (
+        lambda: _native_change(_silence(), lambda d: d["dispara"]["silencio"].update(conversaciones=["resuelta"])),
+        lambda: _native_change(_silence()),
+    ),
     # E-353: un cambio que se publicaria sin cambiar ningun envio.
     "change_without_effect_legacy_route": (
         lambda: run(draft_of("carrito"), actor="automation_expert", in_world=world(_routed("legado"))),
@@ -918,6 +982,9 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         "same_event_native_flows", "flow_key_reserved_for_legacy", "change_without_effect_legacy_route",
         "native_engine_not_running", "native_first_contact_not_running", "native_silence_not_running",
         "native_trigger_other_product",
+        "native_change_exits", "native_change_repeat_silence", "native_change_priority_silence",
+        "native_change_priority_wins", "native_change_priority_ref", "native_change_entry", "native_change_pool",
+        "native_change_other",
     }
     assert all(pairs == {(None, "advertencia")} for code, pairs in fv.CODE_RULES.items()
                if code in fv.WARNING_CODES)
