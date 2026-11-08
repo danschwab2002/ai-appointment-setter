@@ -636,6 +636,7 @@ class ChatwootMessageSender:
         template: WhatsAppTemplateConfig | None = None,
         whatsapp_equivalence_enabled: bool = False,
         on_conversation_opened: Callable[[int], Awaitable[object]] | None = None,
+        on_product_conversation_opened: Callable[[int, str | None], Awaitable[object]] | None = None,
         active_conversation_guard_seconds: int = 0,
         reuse_open_conversation: bool = False,
         clock: Callable[[], float] = time.time,
@@ -643,6 +644,9 @@ class ChatwootMessageSender:
         """``on_conversation_opened`` corre despues de cada plantilla de primer
         contacto que salio, con la conversacion; hoy, la etiqueta de producto.
         Es de falla blanda: si lanza, el envio sigue contando como enviado.
+        ``on_product_conversation_opened`` es lo mismo con mas de un producto
+        (E-350): recibe tambien el producto de la plantilla, y va en lugar del
+        otro. Con un solo producto no se pasa.
 
         Las dos de G3 (E-177) solo miran un contacto que ya existe, y apagadas
         (0 y False, el default) el primer toque es exactamente el de antes:
@@ -682,6 +686,7 @@ class ChatwootMessageSender:
         self._template = template
         self._whatsapp_equivalence_enabled = whatsapp_equivalence_enabled
         self._on_conversation_opened = on_conversation_opened
+        self._on_product_conversation_opened = on_product_conversation_opened
 
     @property
     def whatsapp_equivalence_enabled(self) -> bool:
@@ -988,7 +993,7 @@ class ChatwootMessageSender:
             and not isinstance(message_id_raw, bool)
             else None
         )
-        await self._conversation_opened(conversation_id)
+        await self._conversation_opened(conversation_id, product_name=product_name)
         return FirstTouchResult(
             status="sent",
             conversation_id=conversation_id,
@@ -1073,11 +1078,17 @@ class ChatwootMessageSender:
                 "first_touch_before_send_failed conversation=%s", conversation_id
             )
 
-    async def _conversation_opened(self, conversation_id: int) -> None:
-        if self._on_conversation_opened is None:
+    async def _conversation_opened(
+        self, conversation_id: int, product_name: str | None = None
+    ) -> None:
+        if self._on_conversation_opened is None and self._on_product_conversation_opened is None:
             return
         try:
-            await self._on_conversation_opened(conversation_id)
+            if self._on_product_conversation_opened is not None:
+                await self._on_product_conversation_opened(conversation_id, product_name)
+            else:
+                assert self._on_conversation_opened is not None
+                await self._on_conversation_opened(conversation_id)
         except Exception:
             # La plantilla ya salio: lo que cuelga de aca no la deshace.
             logger.warning(

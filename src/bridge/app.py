@@ -91,7 +91,7 @@ from bridge.purchase_agent_pause import (
     purchase_pause_note_present,
 )
 from bridge.product_label import ProductLabeler
-from bridge.product_routes import HotmartUnrouted, ProductRoute, ProductRoutes
+from bridge.product_routes import HotmartUnrouted, ProductRoute, ProductRoutes, followup_product_labels
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
 from bridge.payment_link_coupon import coupon_applied_in_context, mark_payment_link_coupon, mark_segment_link_coupon, segment_coupon_fits_product, segment_coupon_for_labels, segment_link_coupon, validate_payment_link_coupon_code  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
 from bridge.filtering import EventDecision, classify_chatwoot_event
@@ -5390,16 +5390,32 @@ def create_app(
                 await labeler.ensure(conversation_id, source=source)
 
     async def label_opened_conversation(conversation_id: int) -> None:
-        # Las plantillas salen de los flujos, y hoy solo el principal tiene
-        # flujos (los demas llegan con el motor de la 1b, decision de Dan del
-        # 2026-10-16): la plantilla lleva la etiqueta del principal.
+        # Con un solo producto, la plantilla lleva la etiqueta del principal.
         await label_products(
             conversation_id, (commercial_ally_routes.principal.key,), source="plantilla"
         )
 
+    async def label_product_opened_conversation(
+        conversation_id: int, product_name: str | None
+    ) -> None:
+        # Con varios productos, la del producto de la plantilla (E-350): los
+        # flujos nativos de cada producto salen por el mismo sender. Lo que no
+        # se puede atribuir (un nombre compartido, un envio sin nombre) va al
+        # principal, como con uno solo.
+        route = commercial_ally_routes.by_product_name(product_name) or commercial_ally_routes.principal
+        await label_products(conversation_id, (route.key,), source="plantilla")
+
+    # E-350: el barredor del seguimiento (legado y nativo) es del principal.
+    followup_other_labels, followup_own_label = followup_product_labels(settings.instance_manifest)
     conversation_opened_hook = (
         label_opened_conversation
         if commercial_ally_routes.principal.key in product_labelers
+        and len(commercial_ally_routes) == 1
+        else None
+    )
+    product_conversation_opened_hook = (
+        label_product_opened_conversation
+        if product_labelers and len(commercial_ally_routes) > 1
         else None
     )
     # Lo que ve el agente de los productos (paso 2b): la lista de productos y lo
@@ -6125,6 +6141,7 @@ def create_app(
                 template=waba_template,
                 whatsapp_equivalence_enabled=portable_dynamic_recipient,
                 on_conversation_opened=conversation_opened_hook,
+                on_product_conversation_opened=product_conversation_opened_hook,
                 active_conversation_guard_seconds=(
                     settings.first_touch_active_conversation_guard_seconds
                 ),
@@ -6259,6 +6276,7 @@ def create_app(
                     template=waba_template,
                     whatsapp_equivalence_enabled=portable_dynamic_recipient,
                     on_conversation_opened=conversation_opened_hook,
+                    on_product_conversation_opened=product_conversation_opened_hook,
                     active_conversation_guard_seconds=(
                         settings.first_touch_active_conversation_guard_seconds
                     ),
@@ -6338,6 +6356,7 @@ def create_app(
                 if portable_dynamic_recipient
                 else None
             ),
+            product_routes=commercial_ally_routes,
             portable_recipient_enabled=portable_dynamic_recipient,
             pilot_boundary=pilot_boundary,
             chatwoot_inbox_id=settings.chatwoot_inbox_id,
@@ -9427,6 +9446,8 @@ def create_app(
                     if whatsapp_inbound_equivalence
                     else None
                 ),
+                other_product_labels=followup_other_labels,
+                own_product_label=followup_own_label,
             )
             app.state.conversation_followup_sweeper = (
                 conversation_followup_sweeper
@@ -9580,6 +9601,8 @@ def create_app(
                     only_conversation_ids=spec.cohort_conversation_ids,
                     log_prefix="flow_engine_silence",
                     segment_catalog=segment_catalog,
+                    other_product_labels=followup_other_labels,
+                    own_product_label=followup_own_label,
                 )
 
             native_silence_sweepers = NativeSilenceSweepers(
@@ -11286,10 +11309,17 @@ def create_app(
         # si el plan no procede, y la respuesta HTTP es la misma en los dos
         # casos.
         assert shared_supabase is not None
+        if not route.principal and settings.flow_engine_native_intent_enabled:
+            # E-350: con el motor nativo del formulario, los productos que no son
+            # el principal tambien entran a sus flujos nativos. Decide la base; lo
+            # que ningun flujo reclama queda solo admitido (el legado es del
+            # principal: _admit_and_route_portable_lead no le pasa su scope).
+            return await _admit_and_route_portable_lead(submission, raw_payload, route)
         if not route.principal:
-            # Un producto que no es el principal todavia no tiene primer
-            # contacto (paso 2c-2): el envio se admite en su funnel, que es lo
-            # que lee la historia de la persona, y no se planifica nada.
+            # Sin el motor nativo del formulario, un producto que no es el
+            # principal no tiene primer contacto (paso 2c-2): el envio se admite
+            # en su funnel, que es lo que lee la historia de la persona, y no se
+            # planifica nada.
             admission = await shared_supabase.admit_portable_observed_lead_precheckout(
                 config=route.config,
                 external_submission_id=submission.external_submission_id,
@@ -11355,11 +11385,12 @@ def create_app(
         raw_payload: dict[str, object],
         route: ProductRoute,
     ) -> PrecheckoutAdmissionResult:
-        # El formulario del producto principal con FLOW_ENGINE_NATIVE_INTENT_ENABLED.
+        # El formulario de cualquier producto con FLOW_ENGINE_NATIVE_INTENT_ENABLED.
         # Un error de la base es SupabaseError (503: GHL reintenta, y la RPC es
         # idempotente por el id del envio).
         assert shared_supabase is not None
-        legacy = settings.portable_precheckout_first_contact_enabled
+        # El legado del formulario es el del scope del principal (E-350).
+        legacy = route.principal and settings.portable_precheckout_first_contact_enabled
         if legacy:
             # create_app ya no arranca sin el scope con el flag prendido.
             assert settings.pilot_precheckout_scope_key is not None

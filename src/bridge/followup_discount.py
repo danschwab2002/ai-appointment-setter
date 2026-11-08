@@ -422,6 +422,9 @@ class FollowupDecision:
         return self.candidate is not None
 
 
+OTHER_PRODUCT_CONVERSATION = "other_product_conversation"
+
+
 def _skip(reason: str) -> FollowupDecision:
     return FollowupDecision(candidate=None, skip_reason=reason)
 
@@ -499,6 +502,8 @@ def evaluate_followup_candidate(
     max_inbound_age_seconds: int = DEFAULT_MAX_INBOUND_AGE_SECONDS,
     allowed_phone: str | None = None,
     stop_on_lead_decline: bool = True,
+    other_product_labels: frozenset[str] = frozenset(),
+    own_product_label: str | None = None,
 ) -> FollowupDecision:
     """Decidir si una conversacion recibe el seguimiento con cupon.
 
@@ -512,6 +517,11 @@ def evaluate_followup_candidate(
     ``lead_declined``. Va al final, despues de la ventana de edad: solo cuenta
     a quien de otro modo habria recibido el cupon. El barredor sin manifiesto
     (Johanna) lo apaga, para quedar como estaba.
+
+    ``other_product_labels`` y ``own_product_label`` (E-350): con varios
+    productos, una conversacion con la etiqueta de otro producto y sin la del
+    producto del barredor da ``other_product_conversation``: el cupon, el link
+    y el nombre son los del producto del barredor. Vacio, como antes.
     """
     if (
         not isinstance(expected_inbox_id, int)
@@ -554,6 +564,11 @@ def evaluate_followup_candidate(
     # Pausada = en manos del equipo (una derivacion o una persona que escribio).
     if "automation_paused" in label_values:
         return _skip("conversation_paused")
+    if (
+        other_product_labels.intersection(label_values)
+        and (own_product_label is None or own_product_label not in label_values)
+    ):
+        return _skip(OTHER_PRODUCT_CONVERSATION)
 
     meta = details.get("meta")
     if not isinstance(meta, dict):
@@ -787,9 +802,13 @@ class ConversationFollowupSweeper:
         only_conversation_ids: frozenset[int] | None = None,
         log_prefix: str = "conversation_followup",
         segment_catalog: object | None = None,
+        other_product_labels: frozenset[str] = frozenset(),
+        own_product_label: str | None = None,
         clock: Callable[[], float] = time.time,
         ulid_factory: Callable[[], str] = generate_issuance_ulid,
     ) -> None:
+        self._other_product_labels = other_product_labels
+        self._own_product_label = own_product_label
         if (
             not isinstance(account_id, int)
             or isinstance(account_id, bool)
@@ -1063,6 +1082,8 @@ class ConversationFollowupSweeper:
                 # El «no» claro, solo con manifiesto (ATT1 y Maribel): sin
                 # manifiesto (Johanna) el barredor queda como estaba.
                 stop_on_lead_decline=self._phone_equivalence,
+                other_product_labels=self._other_product_labels,
+                own_product_label=self._own_product_label,
             )
             if decision.candidate is None:
                 motivos[decision.skip_reason or "unknown"] += 1

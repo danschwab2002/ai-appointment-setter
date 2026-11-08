@@ -107,7 +107,7 @@ from bridge.payment_slip_first_touch import (
     compose_payment_slip_first_touch,
     payment_slip_ingestion_reason,
 )
-from bridge.flow_engine_runtime import FlowEngineRuntime
+from bridge.flow_engine_runtime import READ_OK, FlowEngineRuntime
 from bridge.native_flows import (
     NATIVE_ANCHOR,
     NATIVE_NEEDS_DIRECT_TEMPLATE,
@@ -134,7 +134,7 @@ from bridge.followup_steps import FOLLOWING_STEP_TRIGGERS
 from bridge.lead_decline import LEAD_DECLINED
 from bridge.payment_slip_reminders import PAYMENT_SLIP_STEPS
 from bridge.phones import equivalent_whatsapp_phones, whatsapp_phone_region
-from bridge.product_routes import HotmartUnrouted, ProductRoutes
+from bridge.product_routes import HotmartUnrouted, ProductRoute, ProductRoutes
 from bridge.recovery_agent import (
     FollowupHandoffSuggestion,
     FollowupMessageProposal,
@@ -403,6 +403,7 @@ def _is_authorized_followup_recipient(
     allowed_jid: str | None,
     commercial_ally_config: CommercialAllyConfig | None,
     portable_recipient_enabled: bool = False,
+    product_routes: ProductRoutes | None = None,
 ) -> bool:
     """Validate the recipient through the legacy or portable tenant boundary.
 
@@ -410,16 +411,26 @@ def _is_authorized_followup_recipient(
     ``additional_offer_codes``), the same set that admission and the pilot
     boundary already accept. Comparing only the default offer let a cart from
     another landing of the instance be planned and then die at dispatch.
+
+    With several products of the instance (E-350), the same comparison against
+    each of them: a native run of a product that is not the principal is not
+    a stranger. With one, the routes add nothing.
     """
     if is_allowed_whatsapp_target(execution_context.buyer_phone, allowed_jid):
         return True
-    return (
-        portable_recipient_enabled
-        and commercial_ally_config is not None
-        and execution_context.buyer_phone is not None
-        and execution_context.product_name == commercial_ally_config.product_name
-        and execution_context.offer_code
-        in commercial_ally_config.accepted_offer_codes
+    if (
+        not portable_recipient_enabled
+        or commercial_ally_config is None
+        or execution_context.buyer_phone is None
+    ):
+        return False
+    configs = [commercial_ally_config]
+    if product_routes is not None and len(product_routes) > 1:
+        configs.extend(route.config for route in product_routes if not route.principal)
+    return any(
+        execution_context.product_name == config.product_name
+        and execution_context.offer_code in config.accepted_offer_codes
+        for config in configs
     )
 
 
@@ -874,6 +885,7 @@ class DurableDispatcher:
         allowed_jid: str | None = None,
         commercial_ally_config: CommercialAllyConfig | None = None,
         portable_recipient_enabled: bool = False,
+        product_routes: ProductRoutes | None = None,
         clock: Callable[[], str] | None = None,
         pilot_boundary: PilotBoundaryConfig | None = None,
         chatwoot_inbox_id: int | None = None,
@@ -1006,6 +1018,7 @@ class DurableDispatcher:
         self._sender = sender
         self._allowed_jid = allowed_jid
         self._commercial_ally_config = commercial_ally_config
+        self._dispatch_product_routes = product_routes
         self._portable_recipient_enabled = portable_recipient_enabled
         self._pilot_boundary = pilot_boundary
         self._human_handoff_admission_enabled = human_handoff_admission_enabled
@@ -2866,6 +2879,7 @@ class DurableDispatcher:
                                 portable_recipient_enabled=(
                                     self._portable_recipient_enabled
                                 ),
+                                product_routes=self._dispatch_product_routes,
                             ):
                                 await self._finalize_pre_request_failure(
                                     action=action,
@@ -4174,6 +4188,33 @@ class ResolutionWorker:
             return None
         return product_ref
 
+    def _native_flows_unknown(self) -> bool:
+        """The native flows were never read: an empty cache says nothing (E-350)."""
+        if self._flow_engine is None:
+            return False
+        native = self._flow_engine.native_flows
+        return native.state != READ_OK and not native.flows
+
+    def _non_principal_native_flow(
+        self, event_type: object, payload: dict[str, Any], route: ProductRoute
+    ) -> bool:
+        """Whether this event of a non-principal product goes to its native flows (E-350).
+
+        Only the cart and the payment failure, with a native flow on or in its
+        cohort for that product, and with the same durable pieces the cart of
+        the principal needs (a policy and a pilot boundary: they say whose
+        number and inbox it is). Anything else stays ``ignored`` as before.
+        """
+        if self._policy_key is None or self._policy_version is None or self._pilot_boundary is None:
+            return False
+        if event_type == EVENT_CART_ABANDONMENT:
+            product_ref = self._native_cart_product(payload)
+        elif event_type == EVENT_PURCHASE_CANCELED:
+            product_ref = self._native_payment_failure_product(payload)
+        else:
+            return False
+        return product_ref == route.config.funnel_ref
+
     def _native_cart_product(self, payload: dict[str, Any]) -> str | None:
         """The product of a cart with a native cart flow on or in its cohort, or None (E-161).
 
@@ -4440,13 +4481,33 @@ class ResolutionWorker:
                 error="unsupported_persisted_event_type",
             )
             return
+        # E-350: el producto que no es el principal entra solo a sus flujos
+        # nativos. Sin uno, lo de siempre (ignored, sin planificar).
+        native_only_route: ProductRoute | None = None
         if self._product_routes is not None and len(self._product_routes) > 1:
             route = self._product_routes.for_hotmart(payload)
-            if isinstance(route, HotmartUnrouted) or not route.principal:
+            if (
+                not isinstance(route, HotmartUnrouted)
+                and not route.principal
+                and event_type in (EVENT_CART_ABANDONMENT, EVENT_PURCHASE_CANCELED)
+                and self._native_flows_unknown()
+            ):
+                # Sin haber leido nunca los flujos no se puede decir que no hay
+                # uno: el evento queda received y lo retoma el lote siguiente.
+                logger.info("hotmart_event_waits_native_flows event_id=%s", event_id)
+                return
+            if (
+                not isinstance(route, HotmartUnrouted)
+                and not route.principal
+                and self._non_principal_native_flow(event_type, payload, route)
+            ):
+                native_only_route = route
+            elif isinstance(route, HotmartUnrouted) or not route.principal:
                 # El evento ya quedo admitido en el funnel de su producto (la
                 # historia de la persona, la correlacion y los frenos lo ven).
-                # Ese producto no tiene flujos todavia: nada se planifica y no
-                # se crea el contacto. Queda ignored con el motivo, no failed.
+                # Ese producto no tiene flujos nativos prendidos para este
+                # evento: nada se planifica y no se crea el contacto. Queda
+                # ignored con el motivo, no failed.
                 reason = (
                     route.reason
                     if isinstance(route, HotmartUnrouted)
@@ -4497,7 +4558,10 @@ class ResolutionWorker:
             pilot_boundary = self._payment_failure_planning.pilot_boundary
         try:
             resolver_kwargs: dict[str, Any] = {}
-            if self._commercial_ally_config is not None:
+            if native_only_route is not None:
+                resolver_kwargs["commercial_ally_config"] = native_only_route.config
+                resolver_kwargs["native_only"] = True
+            elif self._commercial_ally_config is not None:
                 resolver_kwargs["commercial_ally_config"] = self._commercial_ally_config
             if self._flow_engine is not None and event_type == EVENT_CART_ABANDONMENT:
                 # El carrito: el motor v1 y, con su flujo nativo, la admision

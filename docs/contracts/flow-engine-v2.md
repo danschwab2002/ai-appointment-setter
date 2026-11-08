@@ -526,3 +526,16 @@ Escrito al construir el cambio, el 2026-11-03, antes de cualquier merge o despli
 - **El bridge (`FLOW_ENGINE_SEGMENT_LABELS_ENABLED`).** El despachador lee la cola del paso antes del envío de una acción nativa y, si su `etiquetar` es la etiqueta de un segmento vigente, la pone por el macro del segmento en la conversación del envío, antes de la plantilla (en el primer contacto, el remitente con `before_send`); con el envío aceptado reintenta una vez si no salió. Falla blanda. La cola de `cliente` (sección 13) sigue igual y no corre con un segmento.
 - **Lo que no cambia.** Sin el flag, el despachador no lee nada nuevo y el validador acepta solo `cliente`. La bienvenida con `etiquetar: cliente` hace lo de hoy.
 - **Las pruebas:** `tests/test_segment_labels.py` (el despacho nativo con los dobles de `test_flow_engine_native_dispatch.py`), `validate_flow_engine_native_segment_label.mjs` y `tests/test_flow_engine_native_segment_label_migration.py`.
+
+## Varios productos por aliada (E-350)
+
+Con `[[productos]]` y más de un producto, un flujo nativo es de **un** producto (`producto`, que es el `funnel_ref`), y solo lo disparan los eventos de ese producto:
+
+- El carrito y el pago rechazado de un producto que no es el principal se admiten con el binding de **su** producto, y solo entran por su flujo nativo (`resolve_event(native_only=True)`): lo que ningún flujo nativo toma queda `ignored` con `product_without_recovery_flows` o `product_native_not_claimed:<razon>`, sin caso, sin el legado y sin el motor v1, que son del principal.
+- El formulario de un producto que no es el principal, con `FLOW_ENGINE_NATIVE_INTENT_ENABLED`, entra por `admit_and_route_portable_lead_precheckout_v1` con su binding y sin el scope del legado. Con el flag apagado, solo se admite, como antes.
+- En el despacho, el destinatario se autoriza contra cualquier producto de la instancia y la plantilla lleva la etiqueta de su producto (por el nombre del producto del caso; si dos productos comparten el nombre, la del principal).
+- Una base que rechaza o no contesta deja el evento de ese producto `failed` (`product_native_unavailable:<razon>`). Con los flujos nativos nunca leídos, el evento queda `received`.
+- Un mismo producto de Hotmart partido por oferta no está soportado.
+- Con un solo producto no cambia nada: ninguna de estas ramas se toma.
+
+Lo que sigue siendo del principal: el seguimiento por silencio (`silencio:agente` y `CONVERSATION_FOLLOWUP_*`, que necesitarían saber de qué producto es la conversación; saltea las conversaciones con la etiqueta de otro producto y sin la del principal), la ficha impresa y la pausa del agente al comprar, que es de toda la conversación.
