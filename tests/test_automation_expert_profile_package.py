@@ -223,6 +223,36 @@ def test_the_soul_names_every_tool_of_its_plugins() -> None:
     assert "`mensajes`" in guides
 
 
+def test_the_soul_keeps_the_language_of_the_owner() -> None:
+    # E-367, probado el 09/11 por Slack como un dueño no técnico: operador, bolsa, versiones, voseo y el «0» sin ventana.
+    soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
+    table = soul.split("  | Adentro | A la persona |", 1)[1].split("\n\n", 1)[0]
+    assert "| operador | «el equipo técnico que te dejó instalado el sistema» |" in table
+    assert "| bolsa |" in table
+    assert "versión de un flujo" in table
+    assert "operador" not in soul.replace("| operador |", "")
+    answers = soul.split("## Cómo contestás", 1)[1].split("\n## ", 1)[0]
+    assert "mismo trato de quien te escribe" in answers and "tuteo neutro" in answers
+    assert "ventana real" in answers and "Antes de un cero" in answers and "no prometas uno" in answers
+    assert "reporte que le manda" not in answers
+    # Ninguna frase textual del agente (entre comillas) le fuerza el voseo a la persona.
+    guides = "\n".join(p.read_text(encoding="utf-8") for p in sorted((PROFILE / "skills").rglob("SKILL.md")))
+    for quoted in re.findall(r"«[^»]*»", soul + guides):
+        assert not re.search(r"\b(tenés|querés|sabés|preguntame|escribime|probá|ya sos|con vos)\b", quoted), quoted
+    # La única vez que una guía nombra «operador» es para prohibirlo.
+    assert guides.count("operador") == 1 and "«operador»" in guides
+    # La frase de pausar es del equipo técnico solamente: apagar es otra cosa, y es una propuesta.
+    assert "ese lo pausa el equipo técnico" in soul and "ese lo apaga" not in soul
+
+
+def test_a_template_with_an_image_is_refused_in_the_first_round() -> None:
+    # E-367: a un pedido «con foto del producto» el AE ofreció pedirle la imagen a Meta. Esta guía se carga antes.
+    conversation = _skill("flujos/crear-un-flujo").split("## Qué hace hoy y cómo se escribe", 1)[0]
+    section = conversation.split("### Si pide algo que el sistema nuevo no hace", 1)[1]
+    line = next(x for x in section.splitlines() if x.startswith("- **Imagen o video"))
+    assert "no puede llevar imagen ni video" in line and "primera ronda" in line and "no lo ofrezcas" in line
+
+
 def test_the_soul_publishes_and_pauses_by_the_approval_page() -> None:
     # P11 de M16: el sí y la pausa se dan en la página de aprobación (ciclo 1.9.0). El operador queda
     # solo como el camino sin botón y para el scope del legado.
@@ -230,7 +260,8 @@ def test_the_soul_publishes_and_pauses_by_the_approval_page() -> None:
     assert "con el comando del operador" not in soul
     section = soul.split("## Quién aprueba, publica y pausa", 1)[1].split("\n## ", 1)[0]
     assert "página de aprobación" in section and "Pausar no es una propuesta" in section
-    assert "`not_posted`" in section and "el sí lo da el operador" in section
+    assert "`not_posted`" in section and "el sí lo da el equipo técnico" in section
+    assert "operador" not in section  # E-367: la palabra se le contagia a la respuesta a un dueño
 
 
 def test_the_soul_knows_what_the_native_engine_runs_today() -> None:
@@ -601,18 +632,18 @@ def test_the_meta_skill_answers_how_it_goes_in_few_words() -> None:
     section = _meta_skill_section("Cuando el dueño vuelve: cómo va")
     assert "**Contestá en dos o tres frases: qué pasó y qué falta.**" in section
     assert "Sin fechas, horas, intentos ni cuánto vale el botón" in section
-    assert "preguntale a quien te dejó instalado el sistema" in section
+    assert "pregúntale a quien te dejó instalado el sistema" in section
     assert "no le repitas el aviso" in section
     failed = _meta_skill_state("no_llego_a_meta")
     assert "el agente» sos vos" in failed and "reemplazá la última frase" in failed
-    assert failed.index("Volver a mandar") < failed.index("o la reviso con vos")
+    assert failed.index("Volver a mandar") < failed.index("o la reviso contigo")
     assert "no le llegó ningún aviso" in section and "Yo no te escribo por mi cuenta" in section
 
 
 def test_the_meta_skill_does_not_promise_a_notice_that_may_not_come() -> None:
     # E-361: sin hilo guardado, pasados los 7 dias del sondeo o con un aviso `unknown`, no sale ninguno.
     for state in ("en_revision", "sin_respuesta_de_meta"):
-        assert "te llega el aviso" not in _meta_skill_state(state) and "preguntame" in _meta_skill_state(state)
+        assert "te llega el aviso" not in _meta_skill_state(state) and "pregúntame" in _meta_skill_state(state)
     assert "normalmente llega un aviso" in _meta_skill_state("en_revision")
     assert "No prometas un aviso" in _meta_skill_state("sin_respuesta_de_meta")
 

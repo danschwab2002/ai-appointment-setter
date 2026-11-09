@@ -34,8 +34,8 @@ DRAW_FLOW = {
     "name": "draw_flow",
     "description": (
         "Dibuja los flujos de la instancia como en un editor (disparador, esperas, "
-        "plantillas, fin), en un HTML que se adjunta en Slack. Con flow_key ese flujo "
-        "queda adelante. Devuelve `media`: copiá esa línea MEDIA:... tal cual, sola, al "
+        "plantillas, fin), en un HTML que se adjunta en Slack y se le puede pasar al equipo. "
+        "Con flow_key dibuja solo ese flujo; sin flow_key, todos. Devuelve `media`: copiá esa línea MEDIA:... tal cual, sola, al "
         "final de tu respuesta, y Slack adjunta el archivo. El dibujo sale de la misma "
         "lectura que list_flows: decí también los huecos que trae (`gaps`). Solo lee."
     ),
@@ -45,7 +45,7 @@ DRAW_FLOW = {
             "flow_key": {
                 "type": "string",
                 "pattern": "^[a-z][a-z0-9_]{1,39}$",
-                "description": "El flujo que se abre primero en el dibujo.",
+                "description": "El flujo que se dibuja. Sin este dato salen todos.",
             }
         },
         "additionalProperties": False,
