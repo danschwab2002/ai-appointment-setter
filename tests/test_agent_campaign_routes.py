@@ -459,6 +459,20 @@ def test_with_open_questions_the_page_shows_them_and_no_button() -> None:
     assert "Aprobar y publicar" not in page and "¿Sirve en Colombia?" in page
 
 
+def test_clean_with_notices_shows_them_and_can_still_be_published() -> None:
+    # E-364a: con el criterio frenos, limpio quiere decir que nada frena y lo demas se lee en la pagina.
+    client_db = _signed()
+    client, db = client_db
+    _validated(client_db)
+    db.row["check_report"] = {"veredicto": "limpio", "abiertos": 0, "items": [], "criterio": "frenos-v1",
+                              "avisos": [{"numero": "D1", "tipo": "D", "pregunta": "¿Tuteo o voseo?", "campo": "instruccion"}],
+                              "avisos_total": 1}
+    page = _page(client)
+    assert "Aprobar y publicar" in page and "¿Tuteo o voseo?" in page and "Dejó 1 aviso que no frena" in page
+    _post(client, "publish", csrf_token=_field(page, "csrf_token"), fingerprint=FINGERPRINT)
+    assert db.row["status"] == "publicada"
+
+
 def test_a_check_from_before_the_base_changed_is_not_published() -> None:
     client_db = _signed()
     client, db = client_db

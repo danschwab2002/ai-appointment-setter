@@ -1048,6 +1048,7 @@ class Item:
     number: str = ""
     discarded: list[Citation] = field(default_factory=list)
     reopens: str = ""  # la clave de la respuesta del equipo que este item reabre
+    stop_reason: str | None = None  # por que frena, si corrio una compuerta y frena
 
     @property
     def verified(self) -> bool:
@@ -1226,6 +1227,7 @@ class Report:
     warnings: list[str]
     sources: dict[str, Any]
     chequeo_sha: str | None
+    notices: list[Item] = field(default_factory=list)  # con compuerta: lo que el juez dijo y no frena
 
     @property
     def valid_runs(self) -> int:
@@ -1301,6 +1303,18 @@ class Report:
         return "\n".join(lines).rstrip() + "\n"
 
 
+@dataclass(frozen=True)
+class GateContext:
+    """Lo que una compuerta puede mirar, ademas de las citas del item."""
+
+    segment: Segment
+    segment_text: str
+    base: CommercialKnowledge
+
+
+Gate = Callable[[Item, GateContext], "str | None"]
+
+
 def chequear(
     segmento_texto: str,
     *,
@@ -1314,9 +1328,13 @@ def chequear(
     corridas: int = DEFAULT_RUNS,
     ahora: datetime | None = None,
     fuentes: Mapping[str, Any] | None = None,
+    compuerta: Gate | None = None,
 ) -> Report:
     """El chequeo entero, sin leer archivos: el juez corre ``corridas`` veces sobre las mismas
-    fuentes. ``otros`` son los textos TOML de los otros segmentos declarados."""
+    fuentes. ``otros`` son los textos TOML de los otros segmentos declarados.
+
+    Con ``compuerta`` (la usa el comando de una campana), ``items`` son los que frenan y el resto
+    va a ``notices``. Sin compuerta, todo item frena: el alta por archivo sigue igual."""
 
     if corridas < 1:
         raise SegmentCheckError("corridas tiene que ser 1 o mas")
@@ -1383,10 +1401,18 @@ def chequear(
     discarded = sum(len(item.discarded) for item in items)
     if discarded:
         warnings.append(f"se descartaron {discarded} citas que no aparecen literalmente en su fuente")
+    notices: list[Item] = []
+    if compuerta is not None:
+        gate_context = GateContext(seg, segmento_texto, base)
+        stopping: list[Item] = []
+        for item in items:
+            item.stop_reason = compuerta(item, gate_context)
+            (stopping if item.stop_reason else notices).append(item)
+        items = stopping
     report_sources = dict(fuentes or {})
     report_sources.setdefault("base", {"version": base.version, "sha256": base.rendered_sha256})
     report_sources["leidas_por_el_juez"] = [s.source_id for s in sources]
-    report = Report(seg, base, items, runs, corridas, warnings, report_sources, None)
+    report = Report(seg, base, items, runs, corridas, warnings, report_sources, None, notices)
     if report.clean:
         report.chequeo_sha = calcular_chequeo_sha(raw, base_sha256=base.rendered_sha256, otros=others_raw)
         if seg.chequeo_sha is not None and seg.chequeo_sha != report.chequeo_sha:
@@ -1407,8 +1433,14 @@ def check_files(
     flows_dir: Path | None = None,
     runs: int = DEFAULT_RUNS,
     now: datetime | None = None,
+    label: str | None = None,
+    compuerta: Gate | None = None,
 ) -> Report:
-    """Arma las fuentes desde la carpeta de la instancia y corre :func:`chequear`."""
+    """Arma las fuentes desde la carpeta de la instancia y corre :func:`chequear`.
+
+    ``label`` es la etiqueta de Chatwoot del segmento cuando no esta declarado en el manifiesto
+    (una campana de la base): con ella se buscan los flujos que la ponen. Sin ``label``, la del
+    manifiesto y si no, la clave."""
 
     try:
         segment_text = segment_path.read_text(encoding="utf-8")
@@ -1441,7 +1473,8 @@ def check_files(
 
     declared = [entry for entry in agent.get("segmentos", []) if isinstance(entry, Mapping)]
     mine = next((entry for entry in declared if entry.get("clave") == segment.key), None)
-    label = str(mine.get("etiqueta")) if mine and mine.get("etiqueta") else segment.key
+    if label is None:
+        label = str(mine.get("etiqueta")) if mine and mine.get("etiqueta") else segment.key
     others: list[str] = []
     for entry in declared:
         if entry.get("clave") == segment.key or not isinstance(entry.get("conocimiento"), str):
@@ -1493,20 +1526,33 @@ def check_files(
         corridas=runs,
         ahora=now,
         fuentes=sources,
+        compuerta=compuerta,
     )
 
 
-def _recording(judge: Judge, directory: Path) -> Judge:
-    directory.mkdir(parents=True, exist_ok=True)
+def _recording(judge: Judge, directory: Path, *, on_error: Callable[[OSError], None] | None = None) -> Judge:
+    """Graba cada respuesta cruda. Con ``on_error``, un disco que falla avisa y la corrida sigue."""
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        if on_error is None:
+            raise
+        on_error(error)
+        return judge
     counter = {"n": 0}
 
     def wrapped(messages: list[dict[str, str]]) -> JudgeAnswer:
         answer = judge(messages)
         counter["n"] += 1
         record = {"_grabado": datetime.now(timezone.utc).isoformat(), "modelo": answer.model, "content": answer.content}
-        (directory / f"respuesta-{counter['n']}.json").write_text(
-            json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        try:
+            (directory / f"respuesta-{counter['n']}.json").write_text(
+                json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+        except OSError as error:
+            if on_error is None:
+                raise
+            on_error(error)
         return answer
 
     return wrapped

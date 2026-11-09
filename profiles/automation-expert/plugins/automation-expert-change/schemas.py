@@ -385,8 +385,9 @@ VALIDATE_CAMPAIGN = {
 GET_CAMPAIGN = {
     "name": "get_campaign",
     "description": (
-        "Relee una campaña: su estado, la vista previa, lo que dio el control de calidad (check_report, con las "
-        "preguntas abiertas) y si quedó limpia. Solo lee."
+        "Relee una campaña: su estado, la vista previa, lo que dio el control de calidad (check_report: veredicto, "
+        "items y, si trae criterio, avisos que no frenan) y si tiene un control limpio anotado (check_clean). "
+        "check_clean no asegura el botón de publicar: lo decide la página, según el conocimiento vigente. Solo lee."
     ),
     "parameters": {
         "type": "object",

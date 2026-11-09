@@ -43,6 +43,10 @@ python -m bridge.segment_check chequear <instancia>/conocimiento/segmentos/<clav
   corrida inválida, `2` si el segmento o una fuente no se pueden leer, `3` si el juez no pudo correr
   (sin clave, o ninguna corrida válida).
 
+## Compuerta (E-364a, solo para `campaign_check`)
+
+`chequear` y `check_files` aceptan `compuerta=` (`Callable[[Item, GateContext], str | None]`). Sin ella, todo sigue igual: cada item abre y el alta por archivo no cambia. Con ella, `Report.items` son los que frenan (`Item.stop_reason` dice por qué) y lo demás va a `Report.notices`. `Report.clean` y `chequeo_sha` salen con la misma fórmula, y `CHECK_RULES_VERSION` no se toca. `check_files` acepta además `label=`, la etiqueta de Chatwoot de un segmento que no está en el manifiesto, para buscar los flujos que la ponen: el `chequeo_sha` no depende de los flujos.
+
 ## Qué recibe el juez
 
 Un mensaje `system` con sus instrucciones (`JUDGE_INSTRUCTIONS`) y un mensaje `user` con las
