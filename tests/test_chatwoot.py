@@ -3946,3 +3946,23 @@ def test_stalled_scan_that_runs_out_of_pages_before_its_window_fails_closed(
             )
         )
     assert str(raised.value) == "conversation_scan_incomplete"
+
+
+def test_sync_inbox_templates_posts_to_the_inbox_and_raises_on_failure(tmp_path: Path) -> None:
+    """F-146 parte 4: pedirle a Chatwoot que relea las plantillas; el cuerpo de la respuesta no se lee."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200 if len(seen) == 1 else 403, json={})
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test", account_id=2, access_token="control-token", allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token", agent_bot_id=1, reply_dir=tmp_path,
+        transport=httpx.MockTransport(handler),
+    )
+    asyncio.run(client.sync_inbox_templates(inbox_id=11))
+    assert seen[0].method == "POST" and seen[0].url.path == "/api/v1/accounts/2/inboxes/11/sync_templates"
+    assert seen[0].headers["api_access_token"] == "control-token"
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(client.sync_inbox_templates(inbox_id=11))

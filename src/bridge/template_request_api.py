@@ -70,7 +70,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 CONTRACT = rules.CONTRACT
-CONTRACT_VERSION = "1.2.0"
+CONTRACT_VERSION = "1.3.0"
 LIST_DEFAULT_LIMIT = 20
 LIST_MAX_LIMIT = 50
 LIST_STATES = {"abiertas": True, "todas": False}
@@ -86,6 +86,8 @@ _WABA_ID = re.compile(r"^[0-9]{6,32}$")
 _GRAPH_VERSION = re.compile(r"^v[0-9]{1,3}\.[0-9]{1,2}$")
 _PRODUCT_VERSION = re.compile(r"^v?[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$")
 _GIT_SHA = re.compile(r"^[0-9a-f]{7,40}$")
+_SLACK_CHANNEL = re.compile(r"^[CDG][A-Z0-9]{8,20}$")
+_SLACK_THREAD_TS = re.compile(r"^[0-9]{1,12}\.[0-9]{1,8}$")
 _POINTER = re.compile(r"^(/[a-z0-9_]{1,40}){1,16}$")
 _RESULT_STATUS = {
     "meta_template_open_limit": 409,
@@ -103,11 +105,16 @@ class TemplateRequestStore(FlowChangeStore):
 
     async def save_request(self, instance: Mapping[str, str], *, request_id: str | None, revision: int | None,
                            draft: Mapping[str, Any], purpose: str, proposal_id: str | None,
-                           step_pointer: str | None, requested_by: str) -> dict[str, Any]:
-        return await self._rpc("save_meta_template_request_draft_v1", {
+                           step_pointer: str | None, requested_by: str,
+                           slack_thread: tuple[str, str | None] | None = None) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "p_instance": instance, "p_request_id": request_id, "p_expected_revision": revision,
             "p_draft": draft, "p_purpose": purpose, "p_proposal_id": proposal_id,
-            "p_step_pointer": step_pointer, "p_requested_by_ref": requested_by})
+            "p_step_pointer": step_pointer, "p_requested_by_ref": requested_by}
+        if slack_thread is None:
+            return await self._rpc("save_meta_template_request_draft_v1", payload)
+        return await self._rpc("save_meta_template_request_draft_v2", {
+            **payload, "p_slack_channel": slack_thread[0], "p_slack_thread_ts": slack_thread[1]})
 
     async def record_request_validation(self, instance: Mapping[str, str], *, request_id: str, revision: int,
                                         validator: Mapping[str, Any], result: Mapping[str, Any],
@@ -217,6 +224,20 @@ def _for_flow(body: Mapping[str, Any]) -> tuple[str | None, str | None]:
     return proposal_id, link["step"]
 
 
+def _slack_thread(body: Mapping[str, Any]) -> tuple[str, str | None] | None:
+    """El canal y el hilo de Slack donde se pidio, para avisar ahi cuando Meta conteste (parte 4)."""
+    link = body.get("slack_thread")
+    if link is None:
+        return None
+    if not isinstance(link, Mapping) or set(link) != {"channel", "thread_ts"}:
+        raise EntryRefused("invalid_body", {"field": "slack_thread", "problem": "channel_and_thread_ts"})
+    channel, thread_ts = link["channel"], link["thread_ts"]
+    if not isinstance(channel, str) or not _SLACK_CHANNEL.fullmatch(channel) \
+            or not (thread_ts is None or (isinstance(thread_ts, str) and _SLACK_THREAD_TS.fullmatch(thread_ts))):
+        raise EntryRefused("invalid_body", {"field": "slack_thread", "problem": "not_a_slack_thread"})
+    return channel, thread_ts
+
+
 def register_template_request_routes(app: FastAPI, *, token: str, store: TemplateRequestStore, chatwoot: Any,
                                      tenant_ref: str, ally_ref: str, inbox_id: int,
                                      template_context: rules.TemplateContext, git_sha: str | None = None) -> None:
@@ -311,7 +332,8 @@ def register_template_request_routes(app: FastAPI, *, token: str, store: Templat
     async def propose(request: Request, authorization: str | None = Header(default=None)) -> Any:
         authenticate(authorization)
         body = _check_keys(await _body(request), required={"template", "purpose", "requested_by"},
-                           allowed={"template", "purpose", "requested_by", "request_id", "revision", "for_flow"})
+                           allowed={"template", "purpose", "requested_by", "request_id", "revision", "for_flow",
+                                    "slack_thread"})
         requested_by = _requested_by(body)
         purpose = body["purpose"]
         if not isinstance(purpose, str) or not 1 <= len(purpose) <= 500:
@@ -325,6 +347,7 @@ def register_template_request_routes(app: FastAPI, *, token: str, store: Templat
         if request_id is not None:
             request_id = _request_id(request_id) if isinstance(request_id, str) else _request_id("")
         proposal_id, step = _for_flow(body)
+        slack_thread = _slack_thread(body)
         try:
             draft = rules.parse_template(body["template"])
         except rules.TemplateRequestInvalid as error:
@@ -342,7 +365,8 @@ def register_template_request_routes(app: FastAPI, *, token: str, store: Templat
             try:
                 saved = await store.save_request(context.instance, request_id=request_id, revision=revision,
                                                  draft=draft.to_json(), purpose=purpose, proposal_id=proposal_id,
-                                                 step_pointer=step, requested_by=requested_by)
+                                                 step_pointer=step, requested_by=requested_by,
+                                                 slack_thread=slack_thread)
             except (StoreUnavailable, StoreRejected) as error:
                 raise failure(error, "propose", request_id) from None
         refused = result_failure(saved, "propose", request_id)

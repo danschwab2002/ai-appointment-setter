@@ -274,6 +274,12 @@ def _catalog_entry(stored: Mapping[str, Any], catalog: Sequence[Mapping[str, Any
     return None
 
 
+def approved_in_catalog(stored: Mapping[str, Any], catalog: Sequence[Mapping[str, Any]]) -> bool:
+    """Si esta solicitud ya esta ``APPROVED`` en el catalogo de la bandeja: lo que el flujo necesita para usarla."""
+    entry = _catalog_entry(stored, catalog)
+    return entry is not None and entry.get("status") == "APPROVED"
+
+
 def _resolved_from_catalog(stored: Mapping[str, Any], entry: Mapping[str, Any]) -> str | None:
     status, category = entry.get("status"), entry.get("category")
     if status == "APPROVED":

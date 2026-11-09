@@ -140,7 +140,9 @@ if (JSON.stringify(names.slice(names.indexOf(MIGRATION) + 1)) !== JSON.stringify
   // La base no publica una version nativa que el motor no ejecuta (20261108004100, E-357).
   '20261108004100_flow_change_publish_native_version_guard_v1.sql',
   // Las campanas del Automation Expert como dato (20261108005000, E-355).
-  '20261108005000_agent_campaigns_v1.sql'])) {
+  '20261108005000_agent_campaigns_v1.sql',
+  // El sondeo de Meta y el aviso en el hilo (20261109000100, E-361).
+  '20261109000100_meta_template_request_notices_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la del seguimiento a 24 h nativo`, names.slice(-3));
 }
 if (maribel.name !== 'maribel_retomar_proceso_01') fail('el fixture no es la plantilla de Maribel');

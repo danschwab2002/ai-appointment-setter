@@ -55,6 +55,8 @@ PROFILE_NAME = "automation-expert"
 TIMEOUT_SECONDS = 15
 PREFIX = "/internal/automation-expert/v1"
 _SLACK_USER_RE = re.compile(r"[UW][A-Z0-9]{8,20}")
+_SLACK_CHANNEL_RE = re.compile(r"[CDG][A-Z0-9]{8,20}")
+_SLACK_THREAD_TS_RE = re.compile(r"[0-9]{1,12}\.[0-9]{1,8}")
 _EMAIL_RE = re.compile(r"[^\s@]+@[^\s@]+")
 _PHONE_SEPARATORS = frozenset(" \t\n\r -.()+")
 # Los codigos que el bridge contesta; cualquier otro se cambia por uno generico.
@@ -378,6 +380,15 @@ def list_templates(params: dict[str, object], **kwargs: object) -> str:
     return _dumps(_request("GET", f"{PREFIX}/templates"))
 
 
+def _slack_thread() -> dict[str, object] | None:
+    """El canal y el hilo de esta charla, para que el aviso de Meta caiga ahi. Sale de la sesion, nunca del modelo."""
+    channel = _session("HERMES_SESSION_CHAT_ID").strip()
+    if _session("HERMES_SESSION_PLATFORM").strip().lower() != "slack" or not _SLACK_CHANNEL_RE.fullmatch(channel):
+        return None
+    thread = _session("HERMES_SESSION_THREAD_ID").strip()
+    return {"channel": channel, "thread_ts": thread if _SLACK_THREAD_TS_RE.fullmatch(thread) else None}
+
+
 def propose_template(params: dict[str, object], **kwargs: object) -> str:
     """Guarda (o rehace) el borrador de una plantilla. Con bloqueos no guarda y los devuelve. No habla con Meta."""
     del kwargs
@@ -392,6 +403,9 @@ def propose_template(params: dict[str, object], **kwargs: object) -> str:
         return _dumps({"error": "identifier_not_allowed"})
     body: dict[str, object] = {"template": params.get("template"), "purpose": purpose.strip(),
                                "requested_by": requested_by}
+    slack_thread = _slack_thread()
+    if slack_thread is not None:
+        body["slack_thread"] = slack_thread
     if params.get("for_flow") is not None:
         body["for_flow"] = params["for_flow"]
     if params.get("request_id") is not None or params.get("revision") is not None:

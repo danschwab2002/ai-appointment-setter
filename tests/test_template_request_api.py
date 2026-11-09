@@ -89,7 +89,7 @@ class TemplateEmulator(PostgrestEmulator):
         self.requests.append((function, body, dict(request.headers)))
         if body.get("p_instance") != {"tenant_ref": "lancemos", "ally_ref": "att1"}:
             return httpx.Response(400, json={"code": "22023", "message": "flow_store_instance_not_bound"})
-        if function == "save_meta_template_request_draft_v1":
+        if function in ("save_meta_template_request_draft_v1", "save_meta_template_request_draft_v2"):
             if self.save_result is not None:
                 return httpx.Response(200, json=self.save_result)
             request_id = body["p_request_id"] or str(uuid4())
@@ -187,7 +187,7 @@ def test_proposing_saves_the_normalized_draft_with_the_role_key_and_answers_the_
     response = client.post(f"{PREFIX}/template-requests", headers=AUTH, json=_body())
     assert response.status_code == 201, response.text
     body = response.json()
-    assert (body["contract"], body["contract_version"]) == ("template-request-v1", "1.2.0")
+    assert (body["contract"], body["contract_version"]) == ("template-request-v1", "1.3.0")
     data = body["data"]
     assert data["status"] == "borrador" and data["revision"] == 1 and data["variables"] == ["nombre", "producto"]
     assert data["burbuja"]["cuerpo"].startswith("Hola, [nombre]. Se confirmó tu pago de [producto].")
@@ -545,3 +545,43 @@ def test_a_list_reread_that_fails_stops_and_stays_unconfirmed() -> None:
     rows = _rows(client)
     assert {rows[item]["resolved"]["state"] for item in ids} == {"sin_confirmar"}
     assert len(_calls(emulator, "get_meta_template_request_v1")) == 1
+
+
+# ------------------------------------------------------------------- el hilo (F-146 parte 4, E-361)
+
+
+def test_the_slack_thread_is_saved_for_the_notice() -> None:
+    client, db = _client()
+    thread = {"channel": "D0123456789", "thread_ts": "1762700000.123456"}
+    assert client.post(f"{PREFIX}/template-requests", json=_body(slack_thread=thread), headers=AUTH).status_code == 201
+    function, body, _ = db.requests[-1]
+    assert function == "save_meta_template_request_draft_v2"
+    assert body["p_slack_channel"] == "D0123456789" and body["p_slack_thread_ts"] == "1762700000.123456"
+
+
+def test_a_dm_without_thread_saves_only_the_channel() -> None:
+    client, db = _client()
+    thread = {"channel": "D0123456789", "thread_ts": None}
+    assert client.post(f"{PREFIX}/template-requests", json=_body(slack_thread=thread), headers=AUTH).status_code == 201
+    assert db.requests[-1][1]["p_slack_thread_ts"] is None
+
+
+def test_without_a_thread_it_saves_as_before() -> None:
+    client, db = _client()
+    assert client.post(f"{PREFIX}/template-requests", json=_body(), headers=AUTH).status_code == 201
+    assert db.requests[-1][0] == "save_meta_template_request_draft_v1"
+    assert "p_slack_channel" not in db.requests[-1][1]
+
+
+@pytest.mark.parametrize("thread", [
+    {"channel": "no-es-canal", "thread_ts": None},
+    {"channel": "D0123456789", "thread_ts": "ayer"},
+    {"channel": "D0123456789"},
+    {"channel": "D0123456789", "thread_ts": None, "extra": 1},
+    "D0123456789",
+])
+def test_a_malformed_thread_is_refused(thread: object) -> None:
+    client, db = _client()
+    response = client.post(f"{PREFIX}/template-requests", json=_body(slack_thread=thread), headers=AUTH)
+    assert response.status_code == 422
+    assert not any("save_meta" in row[0] for row in db.requests)

@@ -371,6 +371,34 @@ def test_proposing_a_template_sends_who_asks_from_the_session_and_its_flow(bridg
     assert bridge.seen[0]["authorization"] == f"Bearer {TOKEN}"
 
 
+def test_proposing_a_template_keeps_the_slack_thread_of_this_conversation(
+    bridge: type[_Bridge], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bridge.routes[f"POST {PREFIX}/template-requests"] = (201, _tpl({"request_id": REQUEST, "revision": 1}))
+    monkeypatch.setenv("HERMES_SESSION_CHAT_ID", "D0123456789")
+    monkeypatch.setenv("HERMES_SESSION_THREAD_ID", "1762700000.123456")
+    # Lo que diga el modelo no cuenta: sale de la sesion.
+    _tools().propose_template({"template": _template(), "purpose": "x", "slack_thread": {"channel": "C0OTROCANAL"}})
+    assert json.loads(bridge.seen[0]["body"])["slack_thread"] == {"channel": "D0123456789",
+                                                                  "thread_ts": "1762700000.123456"}
+
+
+@pytest.mark.parametrize(("chat", "thread", "expected"), [
+    ("D0123456789", "", {"channel": "D0123456789", "thread_ts": None}),
+    ("D0123456789", "no-es-un-ts", {"channel": "D0123456789", "thread_ts": None}),
+    ("", "1762700000.123456", None),
+    ("no-es-canal", "", None),
+])
+def test_a_session_without_a_valid_channel_sends_no_thread(
+    bridge: type[_Bridge], monkeypatch: pytest.MonkeyPatch, chat: str, thread: str, expected: object,
+) -> None:
+    bridge.routes[f"POST {PREFIX}/template-requests"] = (201, _tpl({"request_id": REQUEST, "revision": 1}))
+    monkeypatch.setenv("HERMES_SESSION_CHAT_ID", chat)
+    monkeypatch.setenv("HERMES_SESSION_THREAD_ID", thread)
+    _tools().propose_template({"template": _template(), "purpose": "x"})
+    assert json.loads(bridge.seen[0]["body"]).get("slack_thread") == expected
+
+
 def test_redoing_a_template_draft_needs_its_id_and_revision(bridge: type[_Bridge]) -> None:
     bridge.routes[f"POST {PREFIX}/template-requests"] = (201, _tpl({"request_id": REQUEST, "revision": 2}))
     _tools().propose_template({"template": _template(), "purpose": "x", "request_id": REQUEST, "revision": 1})

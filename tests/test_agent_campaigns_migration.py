@@ -17,7 +17,9 @@ def _sql() -> str:
 def test_it_is_one_transaction_and_is_the_last() -> None:
     sql = _sql()
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
-    assert names[-1] == MIGRATION.name
+    # El sondeo de Meta y el aviso en el hilo (20261109000100, E-361): dos columnas, una tabla y cuatro RPC.
+    assert names[-1] == "20261109000100_meta_template_request_notices_v1.sql"
+    assert names[-2] == MIGRATION.name
     assert sql.count("\nbegin;\n") == 1 and sql.rstrip().endswith("commit;")
     assert "set local lock_timeout = '5s';" in sql
     assert "agent_campaigns_already_applied" in sql and "agent_campaigns_prerequisite_missing" in sql
@@ -42,4 +44,4 @@ def test_publishing_is_only_for_the_approver_role() -> None:
 
 def test_the_validator_is_in_the_npm_chain() -> None:
     chain = json.loads((ROOT / "tests/sql/followup_engine/package.json").read_text(encoding="utf-8"))["scripts"]["test"]
-    assert chain.endswith("node validate_agent_campaigns.mjs")
+    assert chain.endswith("node validate_agent_campaigns.mjs && node validate_meta_template_request_notices.mjs")

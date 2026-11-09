@@ -19,6 +19,10 @@ class SlackProtocolError(RuntimeError):
 class SlackRejectedError(SlackProtocolError):
     """Raised when Slack explicitly rejects a message without applying it."""
 
+    def __init__(self, message: str, *, slack_error: object = None) -> None:
+        super().__init__(message)
+        self.slack_error = slack_error if isinstance(slack_error, str) else None
+
 
 @dataclass(frozen=True)
 class SlackMessageReference:
@@ -114,7 +118,7 @@ class SlackClient:
         if not isinstance(payload, dict):
             raise SlackProtocolError("invalid_response_shape")
         if payload.get("ok") is not True:
-            raise SlackRejectedError("slack_api_rejected_message")
+            raise SlackRejectedError("slack_api_rejected_message", slack_error=payload.get("error"))
         returned_channel = payload.get("channel")
         message_ts = payload.get("ts")
         if (

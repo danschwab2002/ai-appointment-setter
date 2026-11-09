@@ -151,6 +151,8 @@ require(JSON.stringify(executable) === JSON.stringify([
   'save_agent_campaign_draft_v1(jsonb, uuid, integer, jsonb, text, text)',
   'save_flow_change_draft_v1(jsonb, uuid, integer, jsonb, jsonb, text, text)',
   'save_meta_template_request_draft_v1(jsonb, uuid, integer, jsonb, text, uuid, text, text)',
+  // El guardado con el hilo de Slack (20261109000100, E-361).
+  'save_meta_template_request_draft_v2(jsonb, uuid, integer, jsonb, text, uuid, text, text, text, text)',
 ]), `the role executes: ${JSON.stringify(executable)}`);
 for (const signature of WRAPPERS) {
   const row = await one(`select has_function_privilege('anon', $1::regprocedure, 'execute') a,
