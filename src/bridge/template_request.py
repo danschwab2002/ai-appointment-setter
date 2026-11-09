@@ -14,7 +14,7 @@ toca bases) y hace cuatro cosas:
   OS (``.claude/scripts/integrations/meta_plantillas.py``), portadas, y las del
   producto se suman: solo variables del vocabulario del flujo, un solo boton de
   URL y primero, la URL dinamica solo a un destino que el bridge sabe llenar,
-  la URL fija solo de la lista de la instancia (D7), el nombre con el prefijo
+  la URL fija con la forma de un link publico, el nombre con el prefijo
   de la instancia y su numero, el idioma de la instancia, y ni links ni
   telefonos ni mails en el texto.
 * ``meta_request``: el cuerpo exacto de ``POST /{WABA}/message_templates``
@@ -35,6 +35,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 from .approved_templates import CHECKOUT_BUTTON_URL
 from .flow_definition import VARIABLES
@@ -101,6 +102,36 @@ _TEMPLATE_KEYS = {"nombre", "idioma", "categoria", "cuerpo", "encabezado", "pie"
 _TEMPLATE_REQUIRED = {"nombre", "idioma", "categoria", "cuerpo"}
 
 
+def _is_public_host(host: str) -> bool:
+    """Un nombre de dominio: dos partes o mas y una terminacion de letras. Una IP termina en numero y no pasa."""
+    labels = host.split(".")
+    if len(labels) < 2 or len(host) > 253:
+        return False
+    for label in labels:
+        if not 0 < len(label) <= 63 or label[0] == "-" or label[-1] == "-" or not label.replace("-", "").isalnum():
+            return False
+    return labels[-1].startswith("xn--") or (len(labels[-1]) >= 2 and labels[-1].isalpha())
+
+
+def _is_public_link(url: str) -> bool:
+    """El link fijo de un boton: ``https://``, un dominio, sin usuario ni clave, sin llaves y sin un mail en la query.
+
+    Los digitos no se miran a proposito: un id de pago o ``wa.me/<numero>`` son links reales, y el link fijo es el
+    mismo para todas las personas. Un acortador pasa: ``forms.gle`` esta en plantillas aprobadas.
+    """
+    if _FIXED_URL.fullmatch(url) is None or "{" in unquote(url) or "}" in unquote(url):
+        return False
+    try:
+        parts = urlsplit(url)
+        _ = parts.port  # urlsplit valida el puerto recien al leerlo.
+        pairs = parse_qsl(parts.query, keep_blank_values=True)
+    except ValueError:
+        return False
+    if "@" in parts.netloc or not _is_public_host(parts.hostname or ""):
+        return False
+    return not any(_EMAIL.search(text) for pair in pairs for text in pair)
+
+
 class TemplateRequestInvalid(Exception):
     """El borrador no tiene la forma: un codigo cerrado y que campo no cierra (nunca un valor)."""
 
@@ -114,9 +145,7 @@ class TemplateRequestInvalid(Exception):
 class TemplateContext:
     """Lo que el validador sabe de la instancia, del manifiesto.
 
-    ``fixed_urls`` es la lista de URLs que un boton fijo puede llevar
-    (``[plantillas].urls_fijas``, parte 6 de F-146): vacia, ningun boton fijo
-    pasa. ``slip_buttons`` son las bases del boton de la ficha
+    ``slip_buttons`` son las bases del boton de la ficha
     (``[[ficha.medios]]``): ``(medio, tienda, url con {{1}})``.
     """
 
@@ -127,7 +156,6 @@ class TemplateContext:
     offer_code: str
     price: Decimal | None = None
     currency: str | None = None
-    fixed_urls: tuple[str, ...] = ()
     slip_buttons: tuple[tuple[str, str, str], ...] = ()
 
 
@@ -184,12 +212,11 @@ class TemplateResult:
         return {"blocks": [f.to_json() for f in self.blocks], "warnings": [f.to_json() for f in self.warnings]}
 
 
-def context_from_manifest(manifest: Any, *, fixed_urls: Sequence[str] | None = None) -> TemplateContext:
+def context_from_manifest(manifest: Any) -> TemplateContext:
     """El contexto del validador, del manifiesto de la instancia (``InstanceManifest``).
 
     El idioma es el de sus plantillas, si es uno solo; la oferta del ejemplo, la
-    oferta por defecto. Las URLs fijas son las de ``[plantillas].urls_fijas``:
-    sin la lista, ningun boton fijo pasa. ``fixed_urls`` las reemplaza (pruebas).
+    oferta por defecto.
     """
     languages = {template.language for template in manifest.templates.values()}
     offer = next((o for o in manifest.offers if o.default), manifest.offers[0] if manifest.offers else None)
@@ -201,7 +228,6 @@ def context_from_manifest(manifest: Any, *, fixed_urls: Sequence[str] | None = N
         offer_code=offer.code if offer is not None else "",
         price=manifest.price,
         currency=manifest.currency,
-        fixed_urls=tuple(manifest.template_fixed_urls if fixed_urls is None else fixed_urls),
         slip_buttons=tuple((method.medio, method.tienda, method.button_url_template)
                            for method in manifest.payment_slip_methods if method.habilitada),
     )
@@ -527,7 +553,7 @@ def check(draft: Draft, context: TemplateContext, *, catalog_names: Sequence[tup
             continue
         if _LINK.search(value) or _BARE_DOMAIN.search(value):
             result.block("template_text_has_link", f"/{key}",
-                         "Un link va solo en un boton, y de la lista de la instancia.")
+                         "Un link va solo en un boton.")
         if _looks_like_identifier(value):
             result.block("identifier_not_allowed", f"/{key}", "Ni telefonos ni mails en el texto de una plantilla.")
 
@@ -566,12 +592,9 @@ def check(draft: Draft, context: TemplateContext, *, catalog_names: Sequence[tup
                          "El texto de un boton va en una linea y sin datos: el bridge no los llena.")
         if button["tipo"] == "url_fija":
             url = button.get("url", "")
-            if _FIXED_URL.fullmatch(url) is None:
+            if not _is_public_link(url):
                 result.block("template_fixed_url_invalid", f"{at}/url",
-                             "La URL fija va con https:// y sin datos.")
-            elif url not in context.fixed_urls:
-                result.block("template_fixed_url_not_listed", f"{at}/url",
-                             "Una URL fija solo de la lista de la instancia ([plantillas].urls_fijas).")
+                             "La URL fija va con https://, con un dominio y sin datos.")
         if button["tipo"] == "ficha" and _slip_button(button, context) is None:
             result.block("template_slip_button_unavailable", f"{at}",
                          "El link de la ficha solo con un medio de [[ficha.medios]] de la instancia.")
@@ -688,8 +711,7 @@ def bubble(draft: Draft, context: TemplateContext) -> dict[str, Any]:
         "botones": buttons,
         "categoria": draft.category,
         "categoria_explicada": CATEGORY_MEANING[draft.category],
-        "al_aprobar": ("Se manda a Meta. Nadie recibe nada todavia. Lo que conteste Meta se mira en la cuenta de "
-                       "WhatsApp, y el flujo se aprueba aparte."),
+        "al_aprobar": "Se manda a Meta. Nadie recibe nada todavia, y el flujo se aprueba aparte.",
     }
 
 

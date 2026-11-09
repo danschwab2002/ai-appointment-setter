@@ -550,14 +550,17 @@ def _meta_skill_closing() -> str:
 
 def test_the_meta_skill_keeps_its_promises() -> None:
     text = _skill("flujos/pedir-plantilla-a-meta")
-    # Sin la parte 4 no hay sondeo ni aviso: dice que no avisa, y las palabras de aviso solo aparecen para prohibirlas.
-    assert "No te voy a avisar" in text
-    forbidden = "En ningún momento digas «te aviso», «te confirmo cuando esté» ni «quedo atento a Meta»"
-    assert forbidden in text
-    assert not re.search(r"te (aviso|avisamos|confirmo)", text.replace(forbidden, ""))
+    # E-361/E-362: el aviso lo manda el sistema en el hilo donde se pidio; la skill lo dice y no lo promete sin envio.
+    assert "No te voy a avisar" not in text
+    assert "te llega el aviso en este mismo hilo" in text
+    assert "con `not_posted` o sin `approval_button` no lo prometas" in text
+    assert "nada de «quedo atento a Meta»" in text
     # Las reglas de Dan: la baja en marketing, las URLs de la lista, sin imagen, y el numero siguiente.
     assert "No más mensajes" in text
-    assert "lista de la instancia" in text
+    # E-362: el link fijo lo define el dueno, se le avisa que queda clavado y se confirma completo.
+    assert "lista de la instancia" not in text and "urls_fijas" not in text
+    assert "pedile el link exacto y no lo inventes ni lo deduzcas" in text
+    assert "Ese link queda clavado en la plantilla" in text and "repetíselo completo" in text
     assert "Imagen o video no" in text
     assert "número siguiente" in text
     # El destrabe es una revision del borrador, con el nombre y las variables en orden.
@@ -566,6 +569,36 @@ def test_the_meta_skill_keeps_its_promises() -> None:
     assert "template_requests_not_enabled" in text
     # El AE no manda: no nombra ninguna herramienta que lo haga.
     assert "send_template" not in text and "/send" not in text
+
+
+def test_the_meta_skill_answers_how_it_goes_in_few_words() -> None:
+    # E-362: cuando vuelve un dueno no tecnico, el estado se cuenta corto y sin los datos de la herramienta.
+    section = _meta_skill_section("Cuando el dueño vuelve: cómo va")
+    assert "**Contestá en dos o tres frases: qué pasó y qué falta.**" in section
+    assert "Sin fechas, horas, intentos ni cuánto vale el botón" in section
+    assert "preguntale a quien te dejó instalado el sistema" in section
+    assert "no le repitas el aviso" in section
+    failed = _meta_skill_state("no_llego_a_meta")
+    assert "el agente» sos vos" in failed and "reemplazá la última frase" in failed
+    assert failed.index("Volver a mandar") < failed.index("o la reviso con vos")
+    assert "no le llegó ningún aviso" in section and "Yo no te escribo por mi cuenta" in section
+
+
+def test_the_meta_skill_does_not_promise_a_notice_that_may_not_come() -> None:
+    # E-361: sin hilo guardado, pasados los 7 dias del sondeo o con un aviso `unknown`, no sale ninguno.
+    for state in ("en_revision", "sin_respuesta_de_meta"):
+        assert "te llega el aviso" not in _meta_skill_state(state) and "preguntame" in _meta_skill_state(state)
+    assert "normalmente llega un aviso" in _meta_skill_state("en_revision")
+    assert "No prometas un aviso" in _meta_skill_state("sin_respuesta_de_meta")
+
+
+def test_the_meta_skill_does_not_save_a_template_without_its_link() -> None:
+    drafting = _meta_skill_section("Cómo se redacta con el dueño")
+    assert "la plantilla no se guarda con el botón a medias ni se completa después" in drafting
+    assert "no le digas quién lo tiene que conseguir" in drafting
+    assert "sin llaves" in drafting and "Las llaves son solo para el borrador de la herramienta" in drafting
+    # Lo de seguir con el dato pendiente es de la instancia sin el flag, no de esta ronda.
+    assert "Solo en este caso, si falta un dato de su botón" in _skill("flujos/pedir-plantilla-a-meta")
 
 
 def test_the_meta_skill_has_a_branch_for_every_resolved_state_and_no_other() -> None:
@@ -624,7 +657,7 @@ def test_the_branches_say_what_the_owner_has_to_hear() -> None:
 def test_the_meta_skill_tells_the_result_where_it_really_is() -> None:
     closing = _meta_skill_closing()
     # La pagina se queda en «En revision» hasta la parte 4: no promete ver ahi el resultado.
-    assert "El resultado se ve en la cuenta de WhatsApp" in closing
+    assert "te llega el aviso en este mismo hilo" in closing
     assert "página de la plantilla" not in _skill("flujos/pedir-plantilla-a-meta")
     contract = (ROOT / "docs" / "contracts" / "template-request-v1.md").read_text(encoding="utf-8")
     # Desde la parte 4 (E-361) el contrato dice que avisa el sistema, en el hilo donde se pidio.

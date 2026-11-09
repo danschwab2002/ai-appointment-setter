@@ -443,6 +443,20 @@ def test_the_warnings_are_said_in_words_with_the_validators_codes_out_of_sight()
     assert "Va como utilidad y habla de descuento" in shown and "template_utility" not in shown
 
 
+def test_the_person_who_approves_sees_the_whole_fixed_link_before_sending() -> None:
+    # E-362: sin lista de la instancia, esta es la ultima mirada humana antes de Meta.
+    # La burbuja sale del validador real: ahi el link va en `link`, no en `url`.
+    url = "https://chat.whatsapp.com/GrupoDemoConUnCodigoLargo?origen=plantilla&campana=noviembre-2026"
+    raw = copy.deepcopy(REAL["att1_bienvenida_01"])
+    button = next(b for b in raw["botones"] if b["tipo"] == "url_fija")
+    button.update(texto="Entrar", url=url)
+    context = template_request.context_from_manifest(InstanceManifest.from_toml_file(_ATT1 / "instancia.toml"))
+    db = TemplateDb()
+    db.row["validation"]["preview"]["burbuja"] = template_request.bubble(template_request.parse_template(raw), context)
+    client, _, _ = _signed(db)
+    assert f"«Entrar» lleva a {url}." in _visible(_page(client)).replace("&amp;", "&")
+
+
 def test_every_text_of_the_model_is_escaped() -> None:
     db = TemplateDb()
     attack = "<script>alert(1)</script>"
