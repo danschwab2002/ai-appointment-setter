@@ -1872,17 +1872,19 @@ class _Run:
                 emitter.add(TEMPLATE_NOT_APPROVED, at + ("plantilla",))
                 continue
             self._template_shape(emitter, step, at, template,
-                                 native=flow is not None and flow.is_native)
+                                 native=flow is not None and flow.is_native,
+                                 silence=native_trigger_key(definition) == NATIVE_SILENCE_TRIGGER)
         return categories
 
     def _template_shape(self, emitter: _Emitter, step: Mapping[str, Any], at: tuple[Segment, ...],
-                        template: Mapping[str, Any], *, native: bool = False) -> None:
+                        template: Mapping[str, Any], *, native: bool = False, silence: bool = False) -> None:
         """Los marcadores {{1}}..{{n}} y los botones, con la forma de ``parse_approved_template``.
 
         ``native``: el paso de un flujo nativo. Sus variables las declara el paso, una por
         marcador y en su orden, y la razon del bloqueo dice cuantos marcadores tiene la
         plantilla. Sus botones, si no declara ``boton``, solo pueden ser de URL fija o de
-        respuesta rapida.
+        respuesta rapida. Y solo el envio nativo manda un encabezado de imagen, el de la
+        plantilla declarada en la instancia; ``silence``: el barrido del silencio no lo manda.
         """
         components = template.get("components")
         if not isinstance(components, list) or not all(isinstance(c, Mapping) for c in components):
@@ -1902,9 +1904,21 @@ class _Run:
                             reason=_native_count_reason(placeholders, variables) if native else None)
         buttons: list[object] = []
         groups = 0
+        # E-370: solo un nativo que no sea el silencio manda la imagen que declara la instancia.
+        sends_image = native and not silence
+        image_declared = step.get("plantilla") in self.instance.template_images
+        image_headers = 0
         for component in components:
             kind = component.get("type")
             if kind == "BODY":
+                continue
+            if kind == "HEADER" and component.get("format") == "IMAGE" and sends_image and image_headers == 0:
+                image_headers += 1
+                if not image_declared:
+                    emitter.add(TEMPLATE_VARIABLE_COUNT_MISMATCH, at + ("plantilla",),
+                                reason="La plantilla pide una imagen en el encabezado y la instancia no tiene declarada cuál mandar.",
+                                alternative=("Usar una plantilla sin imagen, o decirle al dueño que el equipo técnico "
+                                             "tiene que declarar la imagen de esa plantilla en la instancia."))
                 continue
             if kind == "BUTTONS":
                 groups += 1
@@ -1921,6 +1935,11 @@ class _Run:
                 continue
             emitter.add(TEMPLATE_VARIABLE_COUNT_MISMATCH, at + ("plantilla",),
                         reason="La plantilla tiene un componente que el flujo no sabe llenar.")
+        if sends_image and image_declared and image_headers == 0:
+            # El envio la frenaria siempre con header_media_missing.
+            emitter.add(TEMPLATE_VARIABLE_COUNT_MISMATCH, at + ("plantilla",),
+                        reason="La instancia declara una imagen para esta plantilla, pero en el catálogo no tiene encabezado de imagen.",
+                        alternative="Usar la plantilla que tiene la imagen, o pedirle al equipo técnico que corrija la declaración.")
         button = _mapping(step.get("boton"))
         link = button.get("link") if button is not None else None
         if button is not None and (not isinstance(link, str) or is_unresolved(link)):

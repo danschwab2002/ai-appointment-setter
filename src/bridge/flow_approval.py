@@ -1831,6 +1831,7 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
                                   clock: Callable[[], datetime] | None = None,
                                   segment_labels: Callable[[], list[dict[str, str]]] | None = None,
                                   runtime: InstanceRuntime | None = None,
+                                  template_images: frozenset[str] = frozenset(),
                                   extra_routes: Callable[[FastAPI, PageTools], None] | None = None) -> None:
     """Las rutas de la pagina. Solo se llama con el flag prendido.
 
@@ -1839,6 +1840,8 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
 
     ``runtime`` (E-353): lo que ejecuta el bridge de la instancia, para que un flag apagado despues de
     validar no publique sin efecto. Sin el, no se bloquea por eso.
+
+    ``template_images`` (E-370): las plantillas con imagen de encabezado declarada, para revalidar.
 
     ``chatwoot`` e ``inbox_id`` dan el catalogo de plantillas para revalidar al
     publicar (sin ellos, publicar contesta ``template_catalog_unavailable``);
@@ -2241,7 +2244,8 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
             "instance": {**instance, "products": sorted(products), "time_zone": time_zone,
                          # E-316: las etiquetas de segmento que acepta etiquetar, con su estado de ahora.
                          "segment_labels": segment_labels() if segment_labels is not None else [],
-                         **({"runtime": runtime.to_json()} if runtime is not None else {})},
+                         **({"runtime": runtime.to_json()} if runtime is not None else {}),
+                         **({"template_images": sorted(template_images)} if template_images else {})},
             "store": snapshot,
             "proposal": {"id": proposal_id, "revision": found.get("revision"), "items": found.get("items"),
                          "draft_base": found.get("draft_base"), "purpose": found.get("purpose"),

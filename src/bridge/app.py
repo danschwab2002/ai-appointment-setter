@@ -4401,6 +4401,12 @@ def _waba_template_config(settings: Settings) -> WhatsAppTemplateConfig | None:
             if payment_slip_name is not None
             else ()
         ),
+        # E-370: la imagen fija de cada plantilla, por nombre. Vacio: nada cambia.
+        header_media=(
+            settings.instance_manifest.template_images
+            if settings.instance_manifest is not None
+            else ()
+        ),
     )
 
 
@@ -10068,6 +10074,7 @@ def create_app(
             time_zone=change_manifest.time_zone,
             inbox_id=change_manifest.chatwoot_inbox_id,
             segment_labels=lambda: segment_labels_setup.validator_labels(datetime.now(UTC)),
+            template_images=change_manifest.template_image_names,
             # E-353: lo que este bridge corre de verdad, para que el AE no publique sin efecto.
             runtime=instance_runtime,
         )
@@ -10180,6 +10187,7 @@ def create_app(
             time_zone=settings.instance_manifest.time_zone,
             producer=slack_runtime.producer if slack_runtime is not None else None,
             segment_labels=lambda: segment_labels_setup.validator_labels(datetime.now(UTC)),
+            template_images=settings.instance_manifest.template_image_names,
             runtime=instance_runtime,
             # F-146 parte 3: la pagina de una solicitud de plantilla y el envio
             # a Meta. Con el flag apagado las rutas no existen, y el cliente de

@@ -764,8 +764,14 @@ class InstanceView:
     segment_labels: tuple[tuple[str, str], ...] = ()
     # E-353: lo que ejecuta el bridge de la instancia. None: no se sabe, y no se bloquea por eso.
     runtime: InstanceRuntime | None = None
+    # E-370: las plantillas con su imagen de encabezado declarada en el manifiesto. Vacio: ninguna.
+    template_images: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.template_images, frozenset) or not all(
+            isinstance(name, str) for name in self.template_images
+        ):
+            raise ValueError("instance_template_images_invalid")
         if not isinstance(self.tenant_ref, str) or not _REF.fullmatch(self.tenant_ref):
             raise ValueError("instance_tenant_ref_invalid")
         if not isinstance(self.ally_ref, str) or not _REF.fullmatch(self.ally_ref):

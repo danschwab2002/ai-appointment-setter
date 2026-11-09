@@ -28,6 +28,7 @@ from typing import Any, Mapping
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .approved_templates import TemplateHeaderMedia
 from .commercial_ally import CommercialAllyConfig, OfferLanding
 from .flow_definition import check_client_ok
 from .payment_slip import (
@@ -83,6 +84,8 @@ FLOWS = ("inbound", "precheckout", "carrito", "pago_fallido", "reactivacion", "d
 OPTIONAL_FLOWS = ("ficha",)
 # La lista de URLs fijas que un boton de una plantilla pedida al AE puede llevar (template-request-v1, D7).
 FIXED_URLS_KEY = "urls_fijas"
+# La imagen fija del encabezado de una plantilla, por su nombre en Meta (E-370).
+IMAGE_HEADERS_KEY = "imagenes"
 _FIXED_TEMPLATE_URL = re.compile(r"https://[^\s{}#\"'<>]+")
 TEMPLATE_SLOTS = (
     "precheckout", "carrito", "pago_fallido", "reactivacion", "descuento", "ficha",
@@ -384,6 +387,15 @@ class InstanceManifest:
     # [plantillas].urls_fijas: se sigue aceptando para no romper manifiestos, sin efecto desde E-362.
     # El link de un boton fijo lo define el dueno con el AE y lo ve quien aprueba.
     template_fixed_urls: tuple[str, ...] = ()
+    # [plantillas.imagenes]: la imagen fija del encabezado de cada plantilla, por su nombre en Meta
+    # (E-370). Vacio = ninguna: una plantilla con encabezado de imagen no sale.
+    template_images: tuple[tuple[str, TemplateHeaderMedia], ...] = ()
+
+    @property
+    def template_image_names(self) -> frozenset[str]:
+        """Las plantillas con imagen declarada: lo unico que el validador de flujos necesita saber."""
+
+        return frozenset(name for name, _ in self.template_images)
 
     def flow_enabled(self, flow: str) -> bool:
         """Si ``flow`` esta prendido; un flujo opcional sin declarar, no."""
@@ -629,6 +641,7 @@ class InstanceManifest:
 
         templates = _templates(_table(payload, "plantillas"))
         template_fixed_urls = _template_fixed_urls(_table(payload, "plantillas"))
+        template_images = _template_images(_table(payload, "plantillas"))
 
         agente = _table(payload, "agente")
         _exact_keys("agente", agente, {"modelo", "conocimiento"}, {"segmentos"})
@@ -694,6 +707,7 @@ class InstanceManifest:
             consent_copy_version=_str(consentimiento, "copy_version", "consentimiento.copy_version"),
             templates=templates,
             template_fixed_urls=template_fixed_urls,
+            template_images=template_images,
             agent_model_name=_str(agente, "modelo", "agente.modelo"),
             agent_knowledge_path=knowledge_path,
             events=events,
@@ -1366,10 +1380,10 @@ def _offers(value: object, field: str = "hotmart.ofertas") -> tuple[Offer, ...]:
 
 
 def _templates(table: Mapping[str, Any]) -> Mapping[str, Template]:
-    _exact_keys("plantillas", table, set(), {*TEMPLATE_SLOTS, FIXED_URLS_KEY})
+    _exact_keys("plantillas", table, set(), {*TEMPLATE_SLOTS, FIXED_URLS_KEY, IMAGE_HEADERS_KEY})
     templates = {}
     for slot, raw in table.items():
-        if slot == FIXED_URLS_KEY:
+        if slot in (FIXED_URLS_KEY, IMAGE_HEADERS_KEY):
             continue
         where = f"plantillas.{slot}"
         if not isinstance(raw, dict):
@@ -1420,6 +1434,33 @@ def _template_fixed_urls(table: Mapping[str, Any]) -> tuple[str, ...]:
     if len(set(urls)) != len(urls):
         raise ManifestError(f"{where} tiene URLs repetidas")
     return tuple(urls)
+
+
+def _template_images(table: Mapping[str, Any]) -> tuple[tuple[str, TemplateHeaderMedia], ...]:
+    """``[plantillas.imagenes]``: nombre de la plantilla en Meta = URL publica de su imagen.
+
+    Va por nombre y no por slot porque un paso de un flujo nativo elige cualquier plantilla
+    del catalogo. Una URL que Chatwoot cambiaria falla al cargar, en voz alta, y no en cada
+    envio. La biblioteca de medios sumara aca otra forma de valor, sin tocar lo de abajo.
+    """
+    if IMAGE_HEADERS_KEY not in table:
+        return ()
+    where = f"plantillas.{IMAGE_HEADERS_KEY}"
+    images = table[IMAGE_HEADERS_KEY]
+    if not isinstance(images, dict):
+        raise ManifestError(f"{where} debe ser una tabla: nombre de la plantilla = URL de su imagen")
+    declared = []
+    for name, url in images.items():
+        if _TEMPLATE_NAME.fullmatch(name) is None:
+            raise ManifestError(f"{where}: la clave debe ser el nombre de Meta (a-z, 0-9, _)")
+        try:
+            declared.append((name, TemplateHeaderMedia("image", url)))
+        except ValueError:
+            raise ManifestError(
+                f"{where}.{name} debe ser una URL https con el host en minuscula y con nombre (no una IP), "
+                "sin puerto, sin % y sin espacios, hasta 1000 caracteres"
+            ) from None
+    return tuple(declared)
 
 
 def _template_parameters(

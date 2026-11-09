@@ -26,7 +26,8 @@ La entrada de ``validar``::
     {"instance": {"tenant_ref", "ally_ref", "products": [...], "time_zone",
                   "segment_labels": [{"etiqueta", "estado"}]?,
                   "runtime": {"engine_enabled", "native_intent_enabled",
-                              "native_silence_sweeper", "cart_touches", "main_product"}?},
+                              "native_silence_sweeper", "cart_touches", "main_product"}?,
+                  "template_images": [<nombre de plantilla>]?},
      "store": {"flows": [{"flow_id", "product_ref", "flow_key", "state",
                           "active_version", "generation", "route_executor"?,
                           "versions": {"<n>": <definicion>}}]},
@@ -110,6 +111,10 @@ def instance_from_input(value: object) -> InstanceView:
                 "main_product")})
     except (KeyError, TypeError, ValueError) as error:
         raise OperatorInputError("operator_instance_invalid") from error
+    # E-370: las plantillas con imagen de encabezado declarada. Opcional: sin la clave, ninguna.
+    raw_images = data.get("template_images", [])
+    if not isinstance(raw_images, list) or not all(isinstance(name, str) for name in raw_images):
+        raise OperatorInputError("operator_instance_invalid")
     try:
         return InstanceView(
             tenant_ref=data.get("tenant_ref"),  # type: ignore[arg-type]
@@ -118,6 +123,7 @@ def instance_from_input(value: object) -> InstanceView:
             time_zone=data.get("time_zone"),
             segment_labels=tuple((entry["etiqueta"], entry["estado"]) for entry in raw_segments),
             runtime=runtime,
+            template_images=frozenset(raw_images),
         )
     except (TypeError, ValueError) as error:
         raise OperatorInputError("operator_instance_invalid") from error

@@ -99,6 +99,9 @@ NOT_GOVERNING = ("el almacen todavia no gobierna ningun envio: los flujos de la 
                  "siguen en piloto.sh hasta que su ruta pase a motor")
 AGENT_TEXT_OPEN = "--- escrito por quien propuso, no verificado ---"
 AGENT_TEXT_CLOSE = "--- fin del texto de quien propuso ---"
+# E-370: este comando no lee el manifiesto, asi que toda plantilla con imagen bloquea aca como no declarada.
+IMAGE_BLOCK_NOTE = ("ojo: este comando no conoce [plantillas.imagenes] del manifiesto: una plantilla con imagen "
+                    "bloquea aca aunque este declarada. Se valida y se publica por la pagina de aprobacion.")
 
 
 class Refused(Exception):
@@ -628,8 +631,14 @@ def show_agent_text(ops: Ops, text: object) -> None:
     ops.say(AGENT_TEXT_CLOSE)
 
 
+def show_blocks(ops: Ops, blocks: Sequence[Mapping[str, Any]]) -> None:
+    ops.show("bloqueos", [(b.get("code"), b.get("path")) for b in blocks])
+    if any("imagen en el encabezado" in str(b.get("reason")) for b in blocks):
+        ops.say(IMAGE_BLOCK_NOTE)
+
+
 def show_validation(ops: Ops, validation: Mapping[str, Any]) -> None:
-    ops.show("bloqueos", [(b.get("code"), b.get("path")) for b in validation["result"]["blocks"]])
+    show_blocks(ops, validation["result"]["blocks"])
     ops.show("advertencias", [(w.get("code"), w.get("path")) for w in validation["result"]["warnings"]])
     ops.show("huecos", [gap.get("code") for gap in validation["preview"].get("huecos", [])])
 
@@ -843,7 +852,7 @@ def cmd_proponer(ops: Ops, args: argparse.Namespace) -> int:
     world = ops.read_world()
     code, normalized = ops.module("normalizar", {**world, "items": items, "catalog": ops.read_catalog()})
     if code != 0:
-        ops.show("bloqueos", [(b.get("code"), b.get("path")) for b in normalized["result"]["blocks"]])
+        show_blocks(ops, normalized["result"]["blocks"])
         raise Refused("los items tienen bloqueos: no se guardo nada", EXIT_BLOCKED)
     saved, recorded = _save_and_validate(ops, normalized["items"], normalized["draft_base"], args.quien, args.motivo)
     ops.say(f"para publicarla: publicar {saved['proposal_id']} --quien {args.quien}")

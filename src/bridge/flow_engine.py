@@ -1188,6 +1188,7 @@ LEGACY_REASON_TO_MOTIVO: Mapping[str, str | None] = MappingProxyType({
     "chatwoot_authority_unavailable": "identidad:<motivo>",
     "contact_authorization_unknown": "identidad:<motivo>",
     "approved_template_mismatch": "meta:<regla>",
+    "approved_template_header_media_not_declared": "meta:<regla>",
     "template_parameters_missing": "meta:nombre",
     "greeting_name_refused": "meta:<regla>",
     "delivery_uncertain_or_failed": "envio_incierto",
