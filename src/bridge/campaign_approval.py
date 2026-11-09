@@ -98,6 +98,18 @@ def _done(done: Mapping[str, str]) -> str:
     return f'<div class="notice notice--warn" role="status"><p>{_esc(text)}</p></div>'
 
 
+def _notices(report: Mapping[str, Any]) -> str:
+    """Lo que el control dejo sin frenar (criterio frenos-v1). Una fila vieja no los trae: no suma nada."""
+    notices = report.get("avisos")
+    if not isinstance(notices, list) or not notices:
+        return ""
+    total = report.get("avisos_total")
+    count = total if isinstance(total, int) and total >= len(notices) else len(notices)
+    lines = "".join(f"<li>{_esc(item.get('pregunta'))}</li>" for item in notices if isinstance(item, Mapping))
+    subject = "Dejó 1 aviso que no frena" if count == 1 else f"Dejó {count} avisos que no frenan"
+    return f'<div class="notice"><p>{subject}: conviene leerlos antes de aprobar.</p><ul>{lines}</ul></div>'
+
+
 def _check_block(found: Mapping[str, Any], *, status: str, check_stale: bool) -> tuple[str, bool]:
     """El bloque del control de calidad y si deja publicar."""
     report = found.get("check_report")
@@ -111,12 +123,19 @@ def _check_block(found: Mapping[str, Any], *, status: str, check_stale: bool) ->
         if check_stale:
             return ('<div class="notice notice--warn"><p>El control de calidad dio bien, pero el conocimiento general '
                     "del agente cambió después. Hay que volver a correrlo.</p></div>"), False
+        if report.get("criterio"):
+            return ("<p>Pasó el control de calidad: nada contradice un precio, un cupón, una garantía ni una promesa "
+                    f"escrita.</p>{_notices(report)}"), True
         return "<p>Pasó el control de calidad: no choca con lo que el agente ya sabe.</p>", True
     if verdict == "sin_veredicto":
         return '<div class="notice notice--warn"><p>El control de calidad no llegó a un resultado. Hay que volver a correrlo.</p></div>', False
     items = report.get("items")
     lines = "".join(f"<li>{_esc(item.get('pregunta'))}</li>" for item in items if isinstance(item, Mapping)) \
         if isinstance(items, list) else ""
+    if report.get("criterio"):
+        return ('<div class="notice notice--warn"><p>El control de calidad encontró algo que contradice un valor o una '
+                "promesa escrita, y frena la publicación. Contestalo con el agente: la vuelve a armar y se corre otra vez."
+                f"</p><ul>{lines}</ul></div>{_notices(report)}"), False
     return ('<div class="notice notice--warn"><p>El control de calidad dejó preguntas. Contestalas con el agente: '
             f"la vuelve a armar y se corre otra vez.</p><ul>{lines}</ul></div>"), False
 

@@ -154,6 +154,31 @@ def test_the_campaign_skill_checks_they_are_on_before_creating_anything() -> Non
     assert "`campaigns_not_enabled`" in (PROFILE / "SOUL.md").read_text(encoding="utf-8")
 
 
+def test_the_campaign_skill_reads_notices_and_does_not_promise_the_button() -> None:
+    # E-364a: el AE no ve check_stale. No afirma que se puede aprobar: manda a la pagina.
+    text = _skill("flujos/armar-una-campana")
+    legacy = text.index("**no trae `criterio`**")
+    assert "una por mensaje" in text[legacy:text.index("**Si `check_report` trae `criterio`**")]
+    assert "hasta 3 temas por mensaje" in text and "en una sola línea" in text
+    assert "No digas «segmento», «reemplaza», «base», «campo» ni el número de item" in text
+    assert "ya se puede aprobar: " not in text and "Con `limpio` y `avisos`: ya se puede aprobar" not in text
+    clean = text.index("Con `limpio`:")
+    assert "**No digas que ya se puede aprobar como certeza**" in text[clean:]
+    assert "Mandá el link" in text[clean:] and "la página confirma" in text[clean:]
+
+
+def test_the_campaign_skill_says_what_to_do_without_a_verdict() -> None:
+    text = _skill("flujos/armar-una-campana")
+    block = text[text.index("`sin_veredicto`"):]
+    assert "no llegó a un resultado" in block and "lo corre el equipo" in block and "no se puede aprobar" in block
+
+
+def test_get_campaign_says_check_clean_does_not_promise_the_button() -> None:
+    schemas = (PROFILE / "plugins/automation-expert-change/schemas.py").read_text(encoding="utf-8")
+    block = schemas[schemas.index("GET_CAMPAIGN = {"):schemas.index("LIST_CAMPAIGNS = {")]
+    assert "check_clean no asegura el botón" in block and "avisos" in block
+
+
 def test_the_soul_keeps_the_rules_that_cannot_depend_on_a_skill() -> None:
     # E-349 (decision del 29/07): lo que no se puede saltear no vive solo en una skill.
     soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
