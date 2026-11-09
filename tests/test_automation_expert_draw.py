@@ -60,25 +60,24 @@ def _datos(html: str) -> dict[str, Any]:
 
 
 def test_the_real_reading_draws_every_flow_with_its_state_and_numbers() -> None:
-    html, avisos, errores = DIBUJO.armar_dibujo(_capture(), "carrito")
+    html, avisos, errores = DIBUJO.armar_dibujo(_capture(), None)
     assert errores == []
     assert html is not None and html.lstrip().lower().startswith("<!doctype html")
     datos = _datos(html)
-    assert [f["id"] for f in datos["flujos"]] == ["carrito", "precheckout", "pago_fallido", "reactivacion", "descuento"]
-    carrito = datos["flujos"][0]["versiones"]["hoy"]
+    assert [f["id"] for f in datos["flujos"]] == ["precheckout", "carrito", "pago_fallido", "reactivacion", "descuento"]
+    carrito = datos["flujos"][1]["versiones"]["hoy"]
     assert carrito["estado"] == "vigente"
     plantillas = [n["titulo"] for n in carrito["nodos"] if n["tipo"] == "plantilla"]
-    assert plantillas == ["att1_carrito_abandonado_01"]
+    assert plantillas == ["Mensaje por WhatsApp"]
     disparador = next(n for n in carrito["nodos"] if n["id"] == "dispara")
-    assert disparador["metrica"] == "245 disparos, 197 arranques, 197 aceptados por Chatwoot en 7 días"
-    # Cada nodo que dice que corre lleva la lectura como evidencia.
-    assert all(n["evidencia"][0]["ref"].startswith("bridge@b163669f57bf:") for n in carrito["nodos"])
-    # La política que nombra la base queda a la vista, aunque la definición sea de un toque.
-    assert "att1-carrito-tres-toques v1" in datos["flujos"][0]["resumen"]
-    # Lo apagado se ve apagado, y un hueco de la lectura va al resumen de su flujo.
+    assert disparador["metrica"] == "245 avisos, 197 entraron al flujo, 197 mensajes enviados en los últimos 7 días"
+    # Cada nodo que dice que corre lleva la lectura como evidencia, sin nombres de adentro.
+    assert all(n["evidencia"][0]["ref"] == "Datos del sistema" for n in carrito["nodos"])
+    # Lo apagado se ve apagado, y un hueco de la lectura deja su frase en el resumen de su flujo.
     reactivacion = datos["flujos"][3]
     assert reactivacion["versiones"]["hoy"]["estado"] == "sin_activar"
-    assert "No se sabe desde cuándo vale lo que vale" in reactivacion["resumen"]
+    assert "puede no mostrar todos los detalles" in reactivacion["resumen"]
+    assert "puede no mostrar" not in carrito.get("resumen", "") and "puede no mostrar" not in datos["flujos"][1]["resumen"]
     # Los textos de las plantillas no vienen en la lectura: es aviso, no error.
     assert all("sin texto de plantilla" in a for a in avisos)
 
@@ -91,13 +90,148 @@ def test_a_phone_in_the_reading_leaves_no_drawing() -> None:
     assert any("teléfono" in e or "telefono" in e for e in errores)
 
 
-def test_a_flow_that_is_on_without_a_reading_sha_still_names_where_it_came_from() -> None:
+def test_a_flow_that_is_on_without_a_reading_sha_still_says_where_it_came_from() -> None:
     capture = copy.deepcopy(_capture())
     capture["bridge_git_sha"] = None
     html, _, errores = DIBUJO.armar_dibujo(capture, None)
     assert errores == [] and html is not None
     nodo = _datos(html)["flujos"][0]["versiones"]["hoy"]["nodos"][0]
-    assert nodo["evidencia"][0]["ref"].startswith("bridge@sin-sha:")
+    assert nodo["evidencia"][0]["ref"] == "Datos del sistema"
+
+
+def test_with_a_flow_key_the_drawing_brings_only_that_flow() -> None:
+    html, _, errores = DIBUJO.armar_dibujo(_capture(), "carrito")
+    assert errores == [] and html is not None
+    datos = _datos(html)
+    assert [f["id"] for f in datos["flujos"]] == ["carrito"]
+    assert datos["titulo"] == "Carrito abandonado: cómo funciona hoy"
+    # Las prioridades nombran a los otros flujos por lo que hacen, aunque no estén en el dibujo.
+    disparador = datos["flujos"][0]["versiones"]["hoy"]["nodos"][0]
+    assert ["Le gana a", "Primer contacto tras el formulario"] in disparador["datos"]
+    assert ["No arranca mientras", "Pago fallido"] in disparador["datos"]
+
+
+# Lo que se vio en la captura real del 09/11 y lo que el SOUL no deja decir. Se busca en lo que muestra
+# la página: los `id` de un flujo (carrito_nativo) no se ven, y solo van en atributos.
+_PALABRAS_DE_ADENTRO = (
+    "PURCHASE_", "Chatwoot", "bridge", "legado", "scope", "bolsa", "esquema", "manifiesto", "cohorte", "motor",
+    "nativo", "claim", "uuid", "setter-flujo", "Automation Expert", "maribel-recuperacion", "tres-toques",
+    "un solo caso", "va en null", "att1_", "es_MX", "billet_url", "America/", "Escrito en la definición",
+    "Desde el código", "rama «", "None", "sin-sha", "bridge@",
+)
+
+
+def _lo_que_se_ve(valor: object, clave: str = "") -> list[str]:
+    if clave in ("id", "de", "a"):
+        return []
+    if isinstance(valor, str):
+        return [valor]
+    if isinstance(valor, dict):
+        return [t for k, v in valor.items() for t in _lo_que_se_ve(v, k)]
+    if isinstance(valor, list):
+        return [t for v in valor for t in _lo_que_se_ve(v)]
+    return []
+
+
+def _lectura_con_la_forma_de_maribel() -> dict[str, Any]:
+    """La captura real de ATT1, con lo de la captura de Maribel del 09/11 y los huecos reales del bridge."""
+    from bridge.automation_expert_read import EXECUTOR_GAPS
+
+    capture = _capture()
+    flows = capture["data"]["flows"]
+    carrito = next(f for f in flows if f["flow_key"] == "carrito")
+    carrito["version"] = {"scope": "maribel-recuperacion v4", "policy": "maribel-recuperacion-un-toque v1"}
+    nativo = copy.deepcopy(carrito)
+    nativo["flow_key"] = "carrito_nativo"
+    nativo["definition"]["flujo"] = "carrito_nativo"
+    nativo["definition"]["pasos"] = [
+        {"esperar": "1h"},
+        {"plantilla": "att1_carrito_abandonado_01", "idioma": "es_MX", "variables": ["nombre", "producto"]},
+        {"condicion": {"dato": "ventana", "es": ["abierta"]}, "entonces": [{"conversar": "ayudarla con el pago"}], "si_no": []},
+        {"etiquetar": "cliente"},
+    ]
+    nativo["definition"]["entra"] = {"permiso": "conversacion", "contesto_a": ["carrito", "pago_fallido"]}
+    nativo["definition"]["topes"]["bolsa"] = "maribel-recuperacion"
+    flows.append(nativo)
+    capture["gaps"] = capture["gaps"] + [
+        {"code": codigo, "scope": "flow:carrito", "what": what, "why": why}
+        for codigo, (what, why) in EXECUTOR_GAPS.items()
+    ]
+    return capture
+
+
+@pytest.mark.parametrize("solo", ["carrito", "carrito_nativo", None])
+def test_the_drawing_speaks_the_language_of_the_owner(solo: str | None) -> None:
+    html, _, errores = DIBUJO.armar_dibujo(_lectura_con_la_forma_de_maribel(), solo)
+    assert errores == [] and html is not None
+    datos = _datos(html)
+    textos = " | ".join(_lo_que_se_ve(datos))
+    for palabra in _PALABRAS_DE_ADENTRO:
+        assert palabra not in textos, palabra
+    assert "versión" not in textos and "v4" not in textos  # la versión de un flujo no se muestra
+    if solo == "carrito":
+        assert textos.count("puede no mostrar todos los detalles") == 1
+        assert "Datos del sistema" in textos
+    # La plantilla del lienzo tampoco las trae.
+    fijo = html.replace(re.search(r'<script type="application/json"[^>]*>(.*?)</script>', html, re.S).group(1), "")
+    for palabra in _PALABRAS_DE_ADENTRO:
+        assert palabra not in fijo, palabra
+    if solo == "carrito_nativo":
+        nodos = datos["flujos"][0]["versiones"]["hoy"]["nodos"]
+        assert any(n["titulo"] == "¿Escribió en las últimas 24 horas?" for n in nodos)
+        assert any(n["titulo"] == "Le pone la etiqueta «cliente»" for n in nodos)
+        disparador = nodos[0]
+        assert ["Contestó a", "Carrito abandonado, Pago fallido"] in disparador["datos"]
+        assert ["Topes", "240 por día · 5000 en total"] in disparador["datos"]
+        assert ["Una vez por", "persona y producto · puede repetirse enseguida"] in disparador["datos"]
+
+
+def test_what_the_reading_does_not_know_is_said_and_not_printed_as_none() -> None:
+    # La forma real de un flujo del sistema anterior con el hueco legacy_scope_runtime_only.
+    capture = _capture()
+    carrito = next(f for f in capture["data"]["flows"] if f["flow_key"] == "carrito")
+    carrito["definition"]["topes"] = {
+        "bolsa": "att1-recuperacion", "por_dia": None, "total": None,
+        "repeticion": {"una_por": "persona_y_oferta", "otra_despues_de": None},
+    }
+    carrito["definition"]["horario"] = None
+    carrito["definition"]["termina"]["vence"] = None
+    html, _, errores = DIBUJO.armar_dibujo(capture, "carrito")
+    assert errores == [] and html is not None
+    datos = _datos(html)
+    assert "None" not in " | ".join(_lo_que_se_ve(datos))
+    nodos = datos["flujos"][0]["versiones"]["hoy"]["nodos"]
+    assert ["Topes", "sin confirmar"] in nodos[0]["datos"]
+    assert ["Una vez por", "persona y producto · repetición sin confirmar"] in nodos[0]["datos"]
+    assert next(n for n in nodos if n["id"] == "fin")["sub"].startswith("plazo sin confirmar")
+
+
+def test_a_flow_in_the_test_group_says_so() -> None:
+    capture = _capture()
+    carrito = next(f for f in capture["data"]["flows"] if f["flow_key"] == "carrito")
+    carrito["status"]["state"] = "cohort"
+    html, _, errores = DIBUJO.armar_dibujo(capture, "carrito")
+    assert errores == [] and html is not None
+    flujo = _datos(html)["flujos"][0]
+    assert flujo["resumen"].startswith("Hoy está en el grupo de prueba")
+    assert flujo["versiones"]["hoy"]["estado"] == "sin_activar"
+
+
+def test_a_flow_whose_definition_was_not_read_does_not_claim_it_writes_to_nobody() -> None:
+    capture = _capture()
+    next(f for f in capture["data"]["flows"] if f["flow_key"] == "carrito")["definition"] = None
+    html, _, errores = DIBUJO.armar_dibujo(capture, "carrito")
+    assert errores == [] and html is not None
+    assert _datos(html)["flujos"][0]["versiones"]["hoy"]["vacio"] == "El detalle de este flujo no se pudo leer."
+
+
+def test_the_page_has_no_empty_rules_panel_and_no_voseo() -> None:
+    html, _, _ = DIBUJO.armar_dibujo(_capture(), "carrito")
+    assert html is not None
+    assert '<div class="solo-ancho" style="display:none">\n        <h2>Reglas de todos los flujos</h2>' in html
+    assert 'id="lista-reglas"' in html  # el script de la pagina la escribe
+    assert "fuentes" not in _datos(html)
+    assert "Arrastrá" not in html and "tocá" not in html
 
 
 # --------------------------------------------------------- la herramienta
@@ -143,9 +277,21 @@ def test_draw_flow_leaves_the_html_in_the_profile_cache_and_names_it_with_media(
     path = Path(result["media"].removeprefix("MEDIA:"))
     assert path.is_file() and path.suffix == ".html"
     assert path.parent == tmp_path / "cache" / "documents" / "automation-expert"
-    assert _datos(path.read_text(encoding="utf-8"))["flujos"][0]["id"] == "pago_fallido"
-    assert result["opened_first"] == "pago_fallido"
+    assert "pago_fallido" not in path.name  # Slack muestra el nombre del archivo
+    assert [f["id"] for f in _datos(path.read_text(encoding="utf-8"))["flujos"]] == ["pago_fallido"]
+    assert result["flows"] == ["pago_fallido"]
     assert result["read_at"] == _capture()["database_at"]
+    assert result["gaps"] == []  # los huecos de otros flujos no son de este dibujo
+
+
+def test_draw_flow_with_a_key_keeps_the_gaps_of_that_flow(bridge: type[_Bridge]) -> None:
+    result = json.loads(TOOLS.draw_flow({"flow_key": "reactivacion"}))
+    assert [g["scope"] for g in result["gaps"]] == ["flow:reactivacion"]
+
+
+def test_draw_flow_without_a_key_keeps_every_flow_and_every_gap(bridge: type[_Bridge]) -> None:
+    result = json.loads(TOOLS.draw_flow({}))
+    assert result["flows"] == ["precheckout", "carrito", "pago_fallido", "reactivacion", "descuento"]
     assert [g["scope"] for g in result["gaps"]] == ["flow:reactivacion", "flow:descuento"]
 
 

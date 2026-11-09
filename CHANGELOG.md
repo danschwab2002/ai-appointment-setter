@@ -14,6 +14,7 @@ Lo que ya está en `main` y todavía no tiene versión. El número se elige al p
 
 ### Cambiado
 
+- **El Automation Expert habla como le hablaría a un dueño (E-367).** `draw_flow` con `flow_key` trae solo ese flujo, y el dibujo sale en lenguaje de negocio, sin códigos de Hotmart, nombres de plantilla ni versiones. El SOUL y las guías dejan de decir «operador» y «bolsa», usan el trato de quien escribe y dan cada número con su ventana real. `crear-un-flujo` dice que una plantilla todavía no lleva imagen ni video. Para que llegue a una charla abierta, hay que arrancar una conversación nueva con el AE.
 - **El juez de una campaña frena solo lo que contradice un valor o una promesa escrita (E-364a, decisión de Dan del 2026-11-09).** `python -m bridge.campaign_check --criterio frenos` clasifica en código, sobre las citas ya verificadas (`campaign_gate.py`): frena otro precio, otro cupón, otra garantía o algo que el base o el SOUL prohíben; todo lo demás queda como aviso visible en la página, y `limpio` pasa a querer decir que nada frena. Suma `--grabar` para guardar las respuestas crudas del juez con sus citas y `--sin-anotar` para correr sin escribir nada en la base. **Sin la opción tampoco queda igual en dos cosas:** el juez ahora ve los flujos y plantillas de la campaña (buscaba con la clave en vez de la etiqueta, y puede sumar observaciones), y 2 de 3 corridas válidas sin nada que frene da `sin_veredicto` en vez de `abiertos` con la lista vacía. El prompt del juez y `CHECK_RULES_VERSION` no cambian, y el `chequeo_sha` de las publicadas tampoco.
 
 

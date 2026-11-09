@@ -289,7 +289,7 @@ def _drawings_dir() -> Path:
 
 
 def draw_flow(params: dict[str, object], **kwargs: object) -> str:
-    """El lienzo de los flujos en un HTML, con el pedido adelante, listo para adjuntar en Slack."""
+    """El dibujo en un HTML listo para adjuntar en Slack: con flow_key solo ese flujo; sin flow_key, todos."""
     del kwargs
     flow_key = params.get("flow_key")
     if flow_key is not None and (not isinstance(flow_key, str) or not _FLOW_KEY_RE.fullmatch(flow_key)):
@@ -306,14 +306,17 @@ def draw_flow(params: dict[str, object], **kwargs: object) -> str:
     if html is None:
         return _dumps({"error": "automation_expert_drawing_invalid", "detail": errores[:5]})
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    path = dibujo.guardar(html, _drawings_dir(), f"flujos-{flow_key or 'todos'}-{stamp}.html")
+    path = dibujo.guardar(html, _drawings_dir(), f"flujos-{stamp}.html")  # Slack muestra el nombre: sin la clave
+    gaps = payload.get("gaps") or []
+    if flow_key is not None:  # los huecos de otro flujo no son de este dibujo
+        gaps = [g for g in gaps if not (isinstance(g, dict) and str(g.get("scope", "")).startswith("flow:")
+                                        and g.get("scope") != f"flow:{flow_key}")]
     return _dumps({
         "media": f"MEDIA:{path}",
-        "flows": keys,
-        "opened_first": flow_key,
+        "flows": [flow_key] if flow_key is not None else keys,
         "read_at": payload.get("database_at"),
         "warnings": avisos,
-        "gaps": payload.get("gaps") or [],
+        "gaps": gaps,
     })
 
 

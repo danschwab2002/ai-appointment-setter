@@ -49,7 +49,7 @@ FALLBACK_TEXT = "La propuesta quedó validada. Revisar y aprobar:"
 POSTED = {"status": "posted",
           "note": "El botón «Revisar y aprobar» ya quedó en este chat: el sí lo da un aprobador desde ahí."}
 NOT_POSTED = {"status": "not_posted",
-              "note": "El botón no salió. El sí lo da el operador, como hasta ahora."}
+              "note": "El botón no salió. El sí lo da el equipo técnico, como hasta ahora."}
 
 # La pagina de una solicitud de plantilla (template-request-v1, F-146 parte 3). Mismo boton de URL, mismo
 # DM: lo postea este codigo, nunca el modelo. El texto es fijo y no promete un aviso de Meta (parte 4).
