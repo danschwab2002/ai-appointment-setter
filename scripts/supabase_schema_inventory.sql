@@ -6814,6 +6814,39 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'agent_campaigns'
+    union all
+    select
+        '20261109000100',
+        '20261109000100_meta_template_request_notices_v1.sql',
+        -- El sondeo de Meta y el aviso en el hilo (E-361, F-146 parte 4):
+        -- la tabla de avisos, con RLS y sin lectura para la API ...
+        (
+            select count(*) = 1
+            from pg_class c
+            where c.oid = to_regclass('public.meta_template_request_notices')
+              and c.relrowsecurity
+              and not has_table_privilege('anon', c.oid, 'SELECT')
+              and not has_table_privilege('authenticated', c.oid, 'SELECT')
+        )::int
+        -- ... el hilo en la solicitud ...
+        + (
+            select count(*) = 2
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'meta_template_requests'
+              and column_name in ('notify_slack_channel', 'notify_slack_thread_ts')
+        )::int
+        -- ... y reclamar avisos, solo para service_role.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.claim_meta_template_notices_v1(jsonb,integer)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+        )::int,
+        3,
+        'meta_template_request_notices'
 )
 select
     version,

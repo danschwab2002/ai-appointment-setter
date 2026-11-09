@@ -12,6 +12,11 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Agregado (apagado por defecto)
+
+- **El aviso de Meta en el hilo de Slack (E-361, F-146 parte 4, decisión de Dan del 2026-11-09).** Cuando Meta contesta sobre una plantilla que pidió el Automation Expert, el sistema avisa en el mismo hilo donde se la pidieron: aprobada, rechazada (con el motivo en palabras) o aprobada con otro tipo. Un aviso por cambio, también después de un reinicio, con texto fijo escrito por código. Un worker sondea Meta (cada 5 minutos la primera hora, cada 30 después, hasta 7 días), anota el estado y le pide a Chatwoot que sincronice el catálogo. El plugin guarda el canal y el hilo desde la sesión; una solicitud sin hilo no avisa y queda contada. `/ready` publica el sondeo y los avisos. Migración `20261109000100_meta_template_request_notices_v1.sql` (`template-request-v1` 1.3.0). Variable nueva, opcional: `META_TEMPLATES_SLACK_BOT_TOKEN`, el token del bot del AE, el único que puede escribir en su DM; si falta, está mal formado o Slack lo rechaza, los avisos esperan sin perderse y `/ready` lo dice. Apagado: sin `META_TEMPLATES_ENABLED` no corre nada.
+
+
 ## [1.33.0] - 2026-11-08
 
 Una menor sobre la 1.32.0, con 8 PR (#432, #433, #434, #435, #436, #437, #438 y #439) y 4 migraciones. Queda apagado todo lo que tiene flag: la espera de la cuenta de Meta (#432, `META_ACCOUNT_HOLD_RETRY_ENABLED`), las plantillas a Meta (#433 y #438, `META_TEMPLATES_ENABLED`), varios productos (#434, sin `[[productos]]` no cambia nada) y las campañas (#439, `AGENT_CAMPAIGNS_ENABLED`): con las variables nuevas ausentes, para las personas que escriben no cambia nada al subir. **Sin flag, rigen al desplegar:** #436 (E-353, migración `20261108000100`) y #437 (E-357, migración `20261108004100`), que cambian lo que el Automation Expert puede simular y publicar, no lo que se le manda a un lead. **El Automation Expert cambia** (#435, E-349, y el plugin 0.6.0 de #439): las skills y el SOUL nuevo llegan a las charlas nuevas, y una charla abierta sigue con lo de antes hasta que la persona escribe `/new`. **Al subir cambia un profile:** instalar la distribucion en automation-expert (SOUL.md, config.yaml, plugins/, skills/). El conector de Slack no cambia de código.

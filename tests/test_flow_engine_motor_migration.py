@@ -153,6 +153,8 @@ def test_it_is_one_transaction_and_comes_before_the_bridge_reads() -> None:
         "20261108004100_flow_change_publish_native_version_guard_v1.sql",
         # Las campanas del Automation Expert como dato (20261108005000, E-355).
         "20261108005000_agent_campaigns_v1.sql",
+        # El sondeo de Meta y el aviso en el hilo (20261109000100, E-361).
+        "20261109000100_meta_template_request_notices_v1.sql",
     ]
     later = (MIGRATIONS / names[position + 1]).read_text(encoding="utf-8")
     assert "create or replace" not in later.lower()

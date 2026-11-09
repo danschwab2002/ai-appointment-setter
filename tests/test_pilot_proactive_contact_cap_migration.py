@@ -160,6 +160,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261108004100",
         # Las campanas del Automation Expert como dato (20261108005000, E-355).
         "20261108005000",
+        # El sondeo de Meta y el aviso en el hilo (20261109000100, E-361).
+        "20261109000100",
     ]
 
     sql = _sql()

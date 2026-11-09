@@ -1,0 +1,14 @@
+{
+  "_capture": {
+    "fecha": "2026-11-09",
+    "origen_meta_read": "NO CAPTURADO. Forma documentada por Meta (WhatsApp Business Management API, GET /{MESSAGE_TEMPLATE_ID}?fields=id,status,category,rejected_reason), con el mismo precedente que tests/fixtures/meta_graph_templates_documented_20261108.json. Los motivos son los de la referencia de Meta y los del diseno F-146. El id es inventado.",
+    "origen_slack_post": "NO CAPTURADO. Forma documentada de chat.postMessage (ok, channel, ts; o ok false con error), la misma que valida slack_correlation.client.",
+    "deuda": "Reemplazar por la respuesta cruda del primer sondeo real en Maribel (parte 6) y el primer aviso real. Si la forma difiere, el worker lo marca meta_unexpected_answer o no reintenta el aviso: falla cerrado."
+  },
+  "read_pending": {"id": "4596630157247420", "status": "PENDING", "category": "UTILITY"},
+  "read_approved": {"id": "4596630157247420", "status": "APPROVED", "category": "UTILITY"},
+  "read_approved_marketing": {"id": "4596630157247420", "status": "APPROVED", "category": "MARKETING"},
+  "read_rejected": {"id": "4596630157247420", "status": "REJECTED", "category": "UTILITY", "rejected_reason": "PROMOTIONAL"},
+  "slack_post_ok": {"ok": true, "channel": "D0123456789", "ts": "1762700100.000200", "message": {"text": "x"}},
+  "slack_post_rejected": {"ok": false, "error": "channel_not_found"}
+}

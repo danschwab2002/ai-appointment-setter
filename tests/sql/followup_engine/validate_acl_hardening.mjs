@@ -290,7 +290,11 @@ const rows = await db.query(`
       -- 20261108005000: las campanas del Automation Expert (E-355): el catalogo vivo y el comando del juez.
       ('get_live_agent_campaigns_v1(jsonb)'),
       ('operator_get_agent_campaign_v1(jsonb,uuid)'),
-      ('record_agent_campaign_check_v1(jsonb,uuid,text,jsonb,text)')
+      ('record_agent_campaign_check_v1(jsonb,uuid,text,jsonb,text)'),
+      -- 20261109000100: el sondeo de Meta y los avisos en el hilo (E-361).
+      ('list_meta_template_requests_to_poll_v1(jsonb,integer)'),
+      ('claim_meta_template_notices_v1(jsonb,integer)'),
+      ('finish_meta_template_notice_v1(jsonb,uuid,text,text,text)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -318,6 +322,7 @@ const result = rows.rows[0];
 // 20261106000100 (el cierre del caso por el cupon de una campana, E-339) suma su RPC: 193.
 // 20261107000100 (el rechazo de la cuenta, E-348) suma sus ocho: 201.
 // 20261108005000 (las campanas del AE, E-355) suma sus tres de service_role: 204.
+// 20261109000100 (el sondeo de Meta, E-361) suma sus tres de service_role: 207.
 // Historical baseline guard was `result.expected_count !== 63`; the current
 // baseline is 68 RPCs, daily feedback adds fourteen, payment links add three,
 // the one-shot operator disposition adds one, and correlation event context
@@ -368,7 +373,7 @@ const result = rows.rows[0];
 // The Meta rejections (20261103000500, E-284) add six: record, list due,
 // claim, settle and block the retry, and mark the 131026 notice.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 204) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 207) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

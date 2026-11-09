@@ -475,7 +475,8 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # prendido, esperar, liberar, listar, reservar, cerrar, frenar y volver a esperar.
     # 20261108005000 (las campanas del Automation Expert, E-355) suma sus tres: el
     # catalogo vivo y el comando del juez.
-    assert len(allowlisted) == 204
+    # 20261109000100 (el sondeo de Meta y los avisos, E-361) suma sus tres.
+    assert len(allowlisted) == 207
     assert "mark_meta_account_hold_enabled_v1(bigint, timestamp with time zone, timestamp with time zone, integer)" in allowlisted
     assert "requeue_meta_account_hold_v1(bigint, bigint, bigint, timestamp with time zone)" in allowlisted
     assert "close_recovery_case_segment_coupon_v1(uuid, uuid, text, bigint, timestamp with time zone)" in allowlisted
@@ -2043,15 +2044,26 @@ def test_segment_coupon_close_fingerprint() -> None:
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
 
 
-def test_agent_campaigns_fingerprint_is_last() -> None:
+def test_meta_template_request_notices_fingerprint_is_last() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261108005000 (E-355) es la ultima: las tablas con RLS, la viva
+    fingerprint = sql.split("'20261109000100'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261109000100_meta_template_request_notices_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",3,'meta_template_request_notices')")
+    assert "to_regclass('public.meta_template_request_notices')" in compact_fingerprint
+    assert "claim_meta_template_notices_v1(jsonb,integer)" in compact_fingerprint
+
+
+def test_agent_campaigns_fingerprint() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261108005000 (E-355): las tablas con RLS, la viva
     # unica y publicar solo desde la pagina.
-    fingerprint = sql.split("'20261108005000'", 1)[1].split("select\n    version,", 1)[0]
+    fingerprint = sql.split("'20261108005000'", 1)[1].split("'20261109000100'", 1)[0].rsplit("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261108005000_agent_campaigns_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",3,'agent_campaigns')")
+    assert compact_fingerprint.endswith(",3,'agent_campaigns'")
     assert "to_regclass('public.agent_campaigns')" in compact_fingerprint
     assert "agent_campaigns_one_live" in compact_fingerprint
 

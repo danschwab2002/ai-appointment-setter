@@ -225,7 +225,11 @@ expected_service_role(signature) as (
         -- 20261108005000: las campanas del Automation Expert (E-355), el catalogo vivo y el comando del juez.
         ('public.get_live_agent_campaigns_v1(jsonb)'),
         ('public.operator_get_agent_campaign_v1(jsonb, uuid)'),
-        ('public.record_agent_campaign_check_v1(jsonb, uuid, text, jsonb, text)')
+        ('public.record_agent_campaign_check_v1(jsonb, uuid, text, jsonb, text)'),
+        -- 20261109000100: el sondeo de Meta y los avisos en el hilo (E-361).
+        ('public.list_meta_template_requests_to_poll_v1(jsonb, integer)'),
+        ('public.claim_meta_template_notices_v1(jsonb, integer)'),
+        ('public.finish_meta_template_notice_v1(jsonb, uuid, text, text, text)')
 ),
 functions as (
     select

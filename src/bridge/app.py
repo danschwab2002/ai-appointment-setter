@@ -170,6 +170,8 @@ from bridge import automation_expert_chatwoot, flow_approval, flow_change_api
 from bridge import template_approval, template_request, template_request_api
 from bridge import agent_campaign_api, agent_campaigns, campaign_approval
 from bridge.meta_templates import MetaTemplatesClient
+from bridge.template_status import MetaTemplateStatusWorker, TemplateStatusStore, slack_token_problem
+from slack_correlation.client import SlackClient
 from bridge.automation_expert_read import (
     CHATWOOT_MAX_MESSAGES_PER_CONVERSATION,
     CHATWOOT_READ_TIMEOUT_SECONDS,
@@ -1152,6 +1154,9 @@ class Settings:
     meta_waba_id: str | None = None
     meta_graph_api_version: str = "v23.0"
     meta_templates_daily_cap: int = 5
+    # F-146 parte 4: el SLACK_BOT_TOKEN de la app del Automation Expert, el unico
+    # que puede escribir en su DM. Sin el, el sondeo corre y los avisos esperan.
+    meta_templates_slack_bot_token: str | None = None
     # flow-engine-v1, seccion 8: el bridge del motor de flujos (la T2.4).
     # Apagado, el bridge no lee nada del motor y hace exactamente lo de hoy.
     flow_engine_enabled: bool = False
@@ -2658,6 +2663,9 @@ class Settings:
             ),
             meta_templates_access_token=(
                 os.getenv("META_TEMPLATES_ACCESS_TOKEN", "").strip() or None
+            ),
+            meta_templates_slack_bot_token=(
+                os.getenv("META_TEMPLATES_SLACK_BOT_TOKEN", "").strip() or None
             ),
             meta_waba_id=(os.getenv("META_WABA_ID", "").strip() or None),
             meta_graph_api_version=(
@@ -4675,6 +4683,7 @@ def create_app(
     flow_approval_store: flow_approval.ApprovalStore | None = None,
     flow_approval_oidc: flow_approval.SlackIdTokenClient | None = None,
     meta_templates_client: MetaTemplatesClient | None = None,
+    meta_template_status_store: TemplateStatusStore | None = None,
 ) -> FastAPI:
     configure_bridge_event_log()  # los info revisados, al log (E-084)
     boolean_fields = [
@@ -6616,6 +6625,7 @@ def create_app(
     conversation_followup_sweeper: ConversationFollowupSweeper | None = None
     meta_delivery_sweeper: MetaDeliveryRejectionSweeper | None = None
     handoff_wait_alert_sweeper: HandoffWaitAlertSweeper | None = None
+    meta_template_status_worker: MetaTemplateStatusWorker | None = None
     # El barrido nativo del seguimiento a 24 h (P22-3 de M16, E-269): lo arma
     # el motor (FLOW_ENGINE_ENABLED) con Chatwoot; sin un silencio nativo
     # publicado no arma ningun barredor.
@@ -6685,9 +6695,12 @@ def create_app(
                 await flow_engine_divergence_notifier.start()
             if flow_engine_rejection_notifier is not None:
                 await flow_engine_rejection_notifier.start()
+            if meta_template_status_worker is not None:
+                await meta_template_status_worker.start()
             yield
         finally:
             for worker_name, worker in (
+                ("meta_template_status", meta_template_status_worker),
                 (
                     "flow_engine_rejection_notifier",
                     flow_engine_rejection_notifier,
@@ -10075,6 +10088,31 @@ def create_app(
                 inbox_id=change_manifest.chatwoot_inbox_id,
                 template_context=template_request.context_from_manifest(change_manifest),
             )
+            # F-146 parte 4 (template-request-v1 1.3.0): el sondeo y el aviso en
+            # el hilo. Con el flag apagado este worker no existe.
+            if settings.supabase_service_role_key is not None:
+                slack_problem = slack_token_problem(settings.meta_templates_slack_bot_token)
+                meta_template_status_worker = MetaTemplateStatusWorker(
+                    store=meta_template_status_store or TemplateStatusStore(
+                        base_url=settings.supabase_base_url or "",
+                        db_key=settings.supabase_service_role_key,
+                    ),
+                    meta=meta_templates_client or MetaTemplatesClient(
+                        access_token=settings.meta_templates_access_token or "",
+                        waba_id=settings.meta_waba_id or "",
+                        graph_version=settings.meta_graph_api_version,
+                    ),
+                    chatwoot=control_client,
+                    inbox_id=change_manifest.chatwoot_inbox_id,
+                    instance={"tenant_ref": change_manifest.tenant_ref, "ally_ref": change_manifest.ally_ref},
+                    slack=(
+                        SlackClient(bot_token=settings.meta_templates_slack_bot_token or "")
+                        if slack_problem is None
+                        else None
+                    ),
+                    slack_problem=slack_problem or "sin_token",
+                )
+                app.state.meta_template_status_worker = meta_template_status_worker
         if settings.agent_campaigns_enabled:
             # E-355 (agent-campaigns-v1): el agente arma y valida; nunca publica.
             assert agent_campaigns_context is not None
@@ -10776,6 +10814,28 @@ def create_app(
                 "handoff_wait_alerts_after": (
                     f"{handoff_wait_alert_sweeper.after_hours}h"
                 ),
+            }
+        if meta_template_status_worker is not None:
+            # F-146 parte 4: el sondeo de Meta y los avisos en el hilo. Un sondeo
+            # caido no tumba el bridge: se publica. Sin nombres ni hilos.
+            stalled_monitor_readiness = {
+                **stalled_monitor_readiness,
+                "meta_template_status": meta_template_status_worker.state,
+                "meta_template_status_last_error": (
+                    meta_template_status_worker.last_error or "none"
+                ),
+                "meta_template_status_last_poll": (
+                    meta_template_status_worker.last_summary
+                ),
+                "meta_template_status_last_run_at": (
+                    meta_template_status_worker.last_run_at or "never"
+                ),
+                "meta_template_notices": meta_template_status_worker.notices_state,
+            }
+        elif settings.meta_templates_enabled:
+            stalled_monitor_readiness = {
+                **stalled_monitor_readiness,
+                "meta_template_status": "sin_service_role",
             }
         if native_silence_sweepers is not None:
             # El barrido nativo del seguimiento (E-269): de lo que ya esta en

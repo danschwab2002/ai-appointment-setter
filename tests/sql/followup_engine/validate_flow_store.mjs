@@ -690,6 +690,8 @@ check(sameJson([...lockTimeouts].sort(), [
   // Las campanas del Automation Expert (20261108005000, E-355).
   'approver_discard_agent_campaign_v1', 'approver_pause_agent_campaign_v1', 'approver_publish_agent_campaign_v1',
   'approver_resume_agent_campaign_v1', 'record_agent_campaign_check_v1', 'record_agent_campaign_validation_v1',
+  // El sondeo de Meta y los avisos en el hilo (20261109000100, E-361).
+  'claim_meta_template_notices_v1', 'finish_meta_template_notice_v1', 'list_meta_template_requests_to_poll_v1',
 ].sort()), '2: lock_timeout de 5 s en las que esperan locks', lockTimeouts);
 
 // ===========================================================================

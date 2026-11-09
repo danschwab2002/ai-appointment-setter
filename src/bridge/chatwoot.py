@@ -2824,6 +2824,25 @@ class ChatwootClient:
             raise ChatwootProtocolError("invalid_inbox_payload")
         return payload
 
+    async def sync_inbox_templates(self, *, inbox_id: int) -> None:
+        """Pedirle a Chatwoot que relea las plantillas del inbox desde Meta (F-146 parte 4).
+
+        Corre aparte en Chatwoot: el catalogo cambia un rato despues. Sin esto,
+        su programador lo hace con hasta 3 horas de atraso. No se lee el cuerpo
+        de la respuesta.
+        """
+        if not isinstance(inbox_id, int) or isinstance(inbox_id, bool) or inbox_id <= 0:
+            raise ValueError("invalid inbox id")
+        path = f"/api/v1/accounts/{self._account_id}/inboxes/{inbox_id}/sync_templates"
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"api_access_token": self._access_token},
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            response = await client.post(path)
+            response.raise_for_status()
+
     async def list_open_conversations_with_messages(
         self,
         *,

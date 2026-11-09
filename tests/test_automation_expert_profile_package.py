@@ -627,8 +627,8 @@ def test_the_meta_skill_tells_the_result_where_it_really_is() -> None:
     assert "El resultado se ve en la cuenta de WhatsApp" in closing
     assert "página de la plantilla" not in _skill("flujos/pedir-plantilla-a-meta")
     contract = (ROOT / "docs" / "contracts" / "template-request-v1.md").read_text(encoding="utf-8")
-    does_not = contract.split("**Lo que esta versión no hace.**", 1)[1].split("## 1.", 1)[0]
-    assert "se lee en la página" not in does_not and "nunca muestra lo que Meta contestó" in does_not
+    # Desde la parte 4 (E-361) el contrato dice que avisa el sistema, en el hilo donde se pidio.
+    assert "avisa en el mismo hilo de Slack donde se pidió la plantilla" in contract
 
 
 def test_the_meta_skill_does_not_send_a_missing_button_to_a_road_that_does_not_exist() -> None:
