@@ -151,7 +151,7 @@ Las del producto:
 - **Los datos:** solo los del vocabulario del flujo.
 - **Los botones de link:** uno solo, y primero.
 - **La ficha:** solo con un medio de `[[ficha.medios]]` habilitado.
-- **La URL fija:** solo de la lista de la instancia, `[plantillas].urls_fijas` del manifiesto (D7). Sin la lista, ningún botón fijo pasa.
+- **La URL fija:** con `https://`, un dominio (no una IP), sin usuario ni clave, sin llaves (tampoco codificadas) y sin un mail en la query, hasta 2.000 caracteres. Los dígitos no se miran, porque un id o `wa.me/<número>` son links reales, y un acortador como `forms.gle` pasa (decisión de Dan del 2026-11-09, reemplaza a D7: las URLs cambian de un flujo a otro). El AE se la pide exacta al dueño y se la confirma, y quien aprueba la ve completa en la página antes de mandarla. `[plantillas].urls_fijas` ya no tiene efecto.
 - **El texto:** ni links (tampoco un dominio suelto, como `marca.com.mx`) ni teléfonos ni mails, en el cuerpo, el encabezado, el pie y los botones. La regla de los teléfonos es la de la lectura del AE (siete dígitos seguidos), así que un monto como `1.497.000` también bloquea.
 - **Encabezado, pie y botones:** en una sola línea, y el texto de un botón sin llaves (el bridge no llena datos en un botón). Formato o emojis en el encabezado dan un aviso: que Meta los rechace está a verificar.
 - **Para un paso de flujo** (`for_flow`, al validar): el paso la espera con `{a_crear: <nombre>}`; si nombra idioma o variables, son los del borrador; su botón (`checkout` o `ficha`) es el primero de la plantilla, y sin botón en el paso la plantilla no lleva un link que cambia por persona; `precio` y `vence` van solo con cupón; y una de marketing no va en un flujo con permiso de compra.

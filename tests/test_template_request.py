@@ -48,15 +48,13 @@ REAL = json.loads((FIXTURES / "meta_template_requests" / "plantillas_reales_att1
 BY_NAME = {row["template"]["nombre"]: row for row in REAL["plantillas"]}
 CATALOG_1026 = json.loads((FIXTURES / "chatwoot_message_templates_inbox_11_bienvenida_20261026.json").read_text())
 CATALOG_1019 = json.loads((FIXTURES / "chatwoot_message_templates_inbox_11_pago_rechazado_20261019.json").read_text())
-# Las URLs fijas de los botones de bienvenida de ATT1 y Maribel, tal como estan aprobadas.
-FIXED_URLS = ("https://forms.gle/mzopWTpQae8TDBph9", "https://forms.gle/1ESdBdR2fLYd5Eqt7")
 # La base del boton de la ficha de OXXO de ATT1, la aprobada en Meta (fuente de ATT1, botones.ficha).
 SLIP = ("CASHPAYMENT", "OXXO", "https://customer-local-latam.ebanx.com/print/oxxo?hash={{1}}")
 
 
 def _context(instance: str, **overrides: Any) -> TemplateContext:
     manifest = InstanceManifest.from_toml_file(FIXTURES / "instances" / instance / "instancia.toml")
-    context = context_from_manifest(manifest, fixed_urls=FIXED_URLS)
+    context = context_from_manifest(manifest)
     if overrides:
         context = TemplateContext(**{**context.__dict__, **overrides})
     return context
@@ -82,12 +80,11 @@ def _catalog(name: str, catalog: dict[str, Any]) -> dict[str, Any]:
 # ------------------------------------------------------------------- el contexto, del manifiesto
 
 
-def test_the_context_comes_from_the_manifest_with_no_fixed_url_until_the_manifest_lists_them() -> None:
+def test_the_context_comes_from_the_manifest() -> None:
     manifest = InstanceManifest.from_toml_file(FIXTURES / "instances" / "att1" / "instancia.toml")
     context = context_from_manifest(manifest)
     assert (context.ally_ref, context.language, context.product_name) == ("att1", "es_MX", "Alimenta tu Tiroides")
     assert context.hotlink == "D98014973Y" and context.offer_code == "gopi6lh7"
-    assert context.fixed_urls == ()
     assert MARIBEL.product_name == "El Protocolo Biohacking +"
 
 
@@ -140,9 +137,38 @@ def test_a_marketing_one_without_the_opt_out_is_blocked_even_if_meta_took_it() -
     assert _codes(result.blocks) == ["template_marketing_without_opt_out"]
 
 
-def test_a_fixed_url_needs_the_list_of_the_instance() -> None:
+def test_a_fixed_url_does_not_depend_on_a_list_of_the_instance() -> None:
+    # E-362, decision de Dan del 2026-11-09: las URLs cambian de un flujo a otro; manda la forma.
     draft = parse_template(_raw("att1_bienvenida_01"))
-    assert _codes(check(draft, _context("att1", fixed_urls=())).blocks) == ["template_fixed_url_not_listed"]
+    assert "template_fixed_url_not_listed" not in _codes(check(draft, _context("att1")).blocks)
+    assert "template_fixed_url_invalid" not in _codes(check(draft, _context("att1")).blocks)
+
+
+def _codes_with_fixed_url(url: str) -> list[str]:
+    raw = copy.deepcopy(_raw("att1_bienvenida_01"))
+    next(b for b in raw["botones"] if b["tipo"] == "url_fija")["url"] = url
+    return _codes(check(parse_template(raw), _context("att1")).blocks)
+
+
+@pytest.mark.parametrize("url", [
+    "https://hola", "https://sin-dominio/ruta.con.punto", "ftp://x.example/a", "https://x.example/a b",
+    "https://x.example/{{1}}", "https://x.example/%7B%7B1%7D%7D", "https://x.example/%7b%7b1%7d%7d", "https://a..",
+    "https://user:clave@x.example/a", "https://forms.gle@evil.example/x", "https://192.168.0.1/admin",
+    "https://x.example:puerto/a", "https://-x.example/a", "https://x.example?correo=ana@gmail.com",
+    "https://x.example/a?correo=ana%40gmail.com", "https://x.example/a?ana@gmail.com",
+])
+def test_a_fixed_url_has_to_have_the_form_of_a_link(url: str) -> None:
+    assert "template_fixed_url_invalid" in _codes_with_fixed_url(url)
+
+
+@pytest.mark.parametrize("url", [
+    "https://forms.gle/mzopWTpQae8TDBph9", "https://bit.ly/3AbCdEf", "https://chat.whatsapp.com/GrupoDemo",
+    "https://wa.me/5215512345678", "https://api.whatsapp.com/send?phone=5215512345678",
+    "https://www.ejemplo.com.mx/pago/123456789?precio=1497000&utm_campaign=2026", "https://medium.com/@marca/nota",
+    "https://x.example/a?usuario=@marca", "https://xn--andu-hqa.example/a",
+])
+def test_a_real_link_passes_even_with_digits_or_a_shortener(url: str) -> None:
+    assert "template_fixed_url_invalid" not in _codes_with_fixed_url(url)
 
 
 # ------------------------------------------------------------------- el pedido de Meta, contra lo aprobado
@@ -452,12 +478,12 @@ def test_the_phone_rule_starts_at_seven_digits() -> None:
     assert "identifier_not_allowed" in _codes(check(parse_template(seven), ATT1).blocks)
 
 
-def test_the_fixed_urls_come_from_the_manifest_when_nothing_overrides_them() -> None:
-    # E-356, F-146 parte 6: el camino de produccion, sin el argumento de las pruebas.
+def test_urls_fijas_in_the_manifest_has_no_effect_on_the_validator() -> None:
+    # E-362: se sigue aceptando, para no romper manifiestos, y no decide nada.
     manifest = replace(InstanceManifest.from_toml_file(FIXTURES / "instances" / "att1" / "instancia.toml"),
                        template_fixed_urls=("https://ejemplo.com/f",))
-    assert context_from_manifest(manifest).fixed_urls == ("https://ejemplo.com/f",)
-    assert context_from_manifest(manifest, fixed_urls=()).fixed_urls == ()
+    draft = parse_template(_raw("att1_bienvenida_01"))
+    assert _codes(check(draft, context_from_manifest(manifest)).blocks) == _codes(check(draft, _context("att1")).blocks)
 
 
 # ---- E-356: el estado ya resuelto. Lo que el AE le cuenta al duenio sale de aca, nunca del estado crudo.

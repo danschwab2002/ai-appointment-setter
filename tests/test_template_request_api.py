@@ -201,13 +201,14 @@ def test_proposing_saves_the_normalized_draft_with_the_role_key_and_answers_the_
 
 def test_a_draft_with_blocks_is_not_saved_and_says_each_rule() -> None:
     client, emulator = _client()
-    # La bienvenida real de ATT1 lleva una URL fija: hasta que el manifiesto liste las suyas (parte 6), no pasa.
+    # La bienvenida real de ATT1, con su URL fija mal escrita.
     welcome = copy.deepcopy(REAL["att1_bienvenida_01"])
     welcome["nombre"] = "att1_bienvenida_02"
+    next(b for b in welcome["botones"] if b["tipo"] == "url_fija")["url"] = "http://forms.gle/x"
     response = client.post(f"{PREFIX}/template-requests", headers=AUTH, json=_body(template=welcome))
     assert response.status_code == 422
     assert response.json()["detail"] == "template_request_draft_blocked"
-    assert [b["code"] for b in response.json()["data"]["blocks"]] == ["template_fixed_url_not_listed"]
+    assert [b["code"] for b in response.json()["data"]["blocks"]] == ["template_fixed_url_invalid"]
     assert _calls(emulator, "save_meta_template_request_draft_v1") == []
 
 

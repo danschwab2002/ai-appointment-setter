@@ -381,8 +381,8 @@ class InstanceManifest:
     # Las campanas que entran por landing u oferta ([[campanas]], E-321). Vacio =
     # ninguna: el motor no pone etiquetas por la landing.
     campaigns: tuple[Campaign, ...] = ()
-    # Las URLs que un boton fijo de una plantilla pedida al AE puede llevar
-    # ([plantillas].urls_fijas, template-request-v1, D7). Vacia = ningun boton fijo pasa.
+    # [plantillas].urls_fijas: se sigue aceptando para no romper manifiestos, sin efecto desde E-362.
+    # El link de un boton fijo lo define el dueno con el AE y lo ve quien aprueba.
     template_fixed_urls: tuple[str, ...] = ()
 
     def flow_enabled(self, flow: str) -> bool:
@@ -1407,7 +1407,7 @@ def _templates(table: Mapping[str, Any]) -> Mapping[str, Template]:
 
 
 def _template_fixed_urls(table: Mapping[str, Any]) -> tuple[str, ...]:
-    """``[plantillas].urls_fijas``: las URLs que un boton fijo de una plantilla pedida al AE puede llevar (F-146)."""
+    """``[plantillas].urls_fijas``: se valida y se guarda, sin efecto en el validador desde E-362."""
     if FIXED_URLS_KEY not in table:
         return ()
     where = f"plantillas.{FIXED_URLS_KEY}"
