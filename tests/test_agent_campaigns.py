@@ -42,6 +42,7 @@ from bridge.agent_campaigns import (
 )
 from bridge.app import create_app
 from bridge.campaign_inbound_entry import CampaignEntry
+from bridge.instance_manifest import InstanceManifest
 from bridge.segment_check import calcular_chequeo_sha
 from bridge.segment_knowledge import SegmentCatalog, SegmentKnowledge, load_segment_catalog
 
@@ -540,3 +541,68 @@ def test_the_manifest_catalog_rule_still_stops_the_start_with_a_bad_file(tmp_pat
     assert settings.instance_manifest is not None and settings.commercial_knowledge is not None
     with pytest.raises(SegmentError):
         load_segment_catalog(settings.instance_manifest, tmp_path / "instancia", settings.commercial_knowledge)
+
+
+# ------------------------------------- la oferta de la campana en el link (E-410)
+#
+# oferta.codigo_oferta: la oferta de Hotmart con la que sale el link del agente.
+# Las ofertas son las del manifiesto de ATT1 (tests/fixtures/instances/att1/
+# instancia.toml); wmkq4ba9 es la de Black, que existe en el checkout publico
+# (tests/fixtures/hotmart_checkout_offer_black_att1_20261110.json) y todavia
+# no esta declarada.
+
+
+def _with_offer_code(code: str, **offer: Any) -> dict[str, Any]:
+    return _draft(oferta={"precio": "37", "moneda": "USD", "reemplaza": ["precio", "moneda"],
+                          "codigo_oferta": code, **offer})
+
+
+def test_the_offer_code_is_part_of_the_draft_and_of_the_segment(tmp_path: Path) -> None:
+    body = parse_campaign(_with_offer_code("bmaztyhg"))
+    assert body["oferta"]["codigo_oferta"] == "bmaztyhg"
+    context = _context(tmp_path)
+    blocks, warnings, segment = instance_blocks(body, context=context, now=NOW)
+    assert blocks == []
+    assert _codes(warnings) == ["campaign_offer_not_verified"]
+    assert segment is not None and segment.knowledge.offer is not None
+    assert segment.knowledge.offer.offer_code == "bmaztyhg"
+    assert "El link de pago lo arma el sistema con la oferta de esta campaña." in segment.rendered
+
+
+def test_an_offer_the_instance_does_not_declare_is_blocked(tmp_path: Path) -> None:
+    blocks, warnings, _ = instance_blocks(parse_campaign(_with_offer_code("wmkq4ba9")),
+                                          context=_context(tmp_path), now=NOW)
+    assert {"code": "campaign_offer_unknown", "field": "oferta.codigo_oferta"} in blocks
+    assert "campaign_offer_not_verified" in _codes(warnings)
+
+
+def test_an_offer_with_the_wrong_shape_is_a_segment_error(tmp_path: Path) -> None:
+    blocks, _, _ = instance_blocks(parse_campaign(_with_offer_code("wm-kq")), context=_context(tmp_path), now=NOW)
+    assert "campaign_segment_invalid" in _codes(blocks)
+
+
+def test_the_offer_code_and_the_coupon_together_warn_both(tmp_path: Path) -> None:
+    blocks, warnings, _ = instance_blocks(parse_campaign(_with_offer_code("2uafw5bg", cupon="BLACK37")),
+                                          context=_context(tmp_path), now=NOW)
+    assert blocks == []
+    assert _codes(warnings) == ["campaign_coupon_not_verified", "campaign_offer_not_verified"]
+
+
+def test_with_several_products_the_offer_has_to_be_of_the_product_of_the_campaign(tmp_path: Path) -> None:
+    from test_multi_product_manifest import SECOND
+
+    context = _context(tmp_path)
+    payload = tomllib.loads((Path(__file__).parent / "fixtures" / "instances" / "att1" / "instancia.toml")
+                            .read_text(encoding="utf-8"))
+    payload["productos"] = [{"clave": "att1"}, copy.deepcopy(SECOND)]
+    for product in payload["productos"]:
+        product.pop("etiqueta", None)
+        product.pop("macro_etiqueta", None)
+    two = InstanceManifest.from_mapping(payload)
+    context = replace(context, manifest=replace(context.manifest, products=two.products))
+    # Sin oferta.producto la campana es del principal: la del segundo producto no sirve.
+    blocks, _, _ = instance_blocks(parse_campaign(_with_offer_code("prueba2b")), context=context, now=NOW)
+    assert "campaign_offer_unknown" in _codes(blocks)
+    blocks, _, _ = instance_blocks(parse_campaign(_with_offer_code("bmaztyhg")), context=context, now=NOW)
+    assert "campaign_offer_unknown" not in _codes(blocks)
+

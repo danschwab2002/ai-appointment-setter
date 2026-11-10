@@ -94,7 +94,8 @@ _KEY_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789-")
 _REQUIRED = {"clave", "nombre", "etiqueta", "macro_etiqueta", "desde", "hasta", "asesoramiento"}
 _OPTIONAL = {"palabras_clave", "pregunta_entrada", "instruccion", "oferta", "se_puede_decir", "no_confirmado",
              "promesas_prohibidas", "faq", "preguntas_del_alta"}
-_OFFER_KEYS = {"producto", "precio", "moneda", "precio_antes", "cupon", "incluye", "garantia", "medios", "reemplaza"}
+_OFFER_KEYS = {"producto", "precio", "moneda", "precio_antes", "cupon", "codigo_oferta", "incluye", "garantia",
+               "medios", "reemplaza"}
 _LIST_SECTIONS = ("se_puede_decir", "no_confirmado", "promesas_prohibidas")
 _QA_SECTIONS = ("faq", "preguntas_del_alta")
 # Las etiquetas que no pueden abrir una campana: las mismas que un segmento del manifiesto.
@@ -399,6 +400,16 @@ def instance_blocks(draft: Mapping[str, Any], *, context: CampaignContext, now: 
         if coupon is not None:
             # El producto no lo puede verificar: la API de Hotmart no esta en este camino.
             warnings.append(_finding("campaign_coupon_not_verified", "oferta.cupon"))
+        offer_code = loaded.knowledge.offer.offer_code if loaded.knowledge.offer is not None else None
+        if offer_code is not None:
+            # E-410: la oferta del link tiene que ser una oferta declarada del producto
+            # de la campana (el principal, o el de oferta.producto). Si esta activa en
+            # Hotmart y en el catalogo de la base no lo ve este camino: lo dice la
+            # reserva (blocked_campaign_offer, y se deriva).
+            codes = manifest.offer_codes_of_product(loaded.knowledge.offer.product)
+            if codes is None or offer_code not in codes:
+                blocks.append(_finding("campaign_offer_unknown", "oferta.codigo_oferta"))
+            warnings.append(_finding("campaign_offer_not_verified", "oferta.codigo_oferta"))
     return blocks, warnings, loaded
 
 

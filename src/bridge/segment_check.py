@@ -102,6 +102,7 @@ _OFFER_KEYS = {
     "moneda",
     "precio_antes",
     "cupon",
+    "codigo_oferta",
     "incluye",
     "garantia",
     "medios",
@@ -147,6 +148,9 @@ class Segment:
     forbidden: tuple[str, ...]
     faq: tuple[tuple[str, str, str], ...]
     answers: tuple[tuple[str, str, str], ...]
+    # La oferta de Hotmart de la campana (E-410): no entra al prompt del juez como
+    # un dato a contrastar; la frase de JUDGE_INSTRUCTIONS dice que no es un item.
+    offer_code: str | None = None
 
     def overlaps(self, other: "Segment") -> bool:
         return self.starts < other.ends and other.starts < self.ends
@@ -250,6 +254,7 @@ def parse_segment(payload: Mapping[str, Any]) -> Segment:
         currency=_optional_text(offer, "moneda", "oferta.moneda"),
         price_before=_optional_text(offer, "precio_antes", "oferta.precio_antes"),
         coupon=_optional_text(offer, "cupon", "oferta.cupon"),
+        offer_code=_optional_text(offer, "codigo_oferta", "oferta.codigo_oferta"),
         includes=_list(offer, "incluye", "oferta.incluye"),
         guarantee=_optional_text(offer, "garantia", "oferta.garantia"),
         methods=_list(offer, "medios", "oferta.medios"),
@@ -264,6 +269,7 @@ def parse_segment(payload: Mapping[str, Any]) -> Segment:
 
 
 _COUPON_FORM = re.compile(r"[A-Za-z0-9_-]{2,64}")
+_OFFER_CODE_FORM = re.compile(r"[A-Za-z0-9]{4,32}")
 
 
 def _offer_rules(offer: Mapping[str, Any]) -> None:
@@ -281,6 +287,11 @@ def _offer_rules(offer: Mapping[str, Any]) -> None:
     coupon = _optional_text(offer, "cupon", "oferta.cupon")
     if coupon is not None and _COUPON_FORM.fullmatch(coupon) is None:
         raise SegmentCheckError("oferta.cupon debe ser un codigo (letras, numeros, guiones; 2 a 64)")
+    offer_code = _optional_text(offer, "codigo_oferta", "oferta.codigo_oferta")
+    if offer_code is not None and _OFFER_CODE_FORM.fullmatch(offer_code) is None:
+        raise SegmentCheckError(
+            "oferta.codigo_oferta debe ser un codigo de oferta de Hotmart (letras y numeros, 4 a 32)"
+        )
 
 
 def segment_content_sha(payload: Mapping[str, Any]) -> str:
@@ -622,7 +633,7 @@ FIXED_QUESTIONS = (
     FixedQuestion("alta-01", "¿Desde y hasta cuándo va la campaña, con hora y zona?", "[vigencia].desde y .hasta"),
     FixedQuestion("alta-02", "¿Qué producto o productos entran en la campaña?", "[oferta].producto"),
     FixedQuestion("alta-03", "¿Cuál es el precio y la moneda de la campaña? ¿Y el precio de antes?", "[oferta].precio y .moneda (y .precio_antes)"),
-    FixedQuestion("alta-04", "¿Cómo se obtiene el precio: con un cupón (qué código) o con una oferta distinta (qué link)?", "[oferta].cupon o [instruccion].texto"),
+    FixedQuestion("alta-04", "¿Cómo se obtiene el precio: con un cupón (qué código) o con una oferta distinta (qué link)?", "[oferta].cupon o [oferta].codigo_oferta"),
     FixedQuestion("alta-05", "¿Qué incluye, y hay bonos que existen solo en la campaña?", "[oferta].incluye"),
     FixedQuestion("alta-06", "¿Cambia la garantía en la campaña?", "[oferta].garantia (y reemplaza si cambia)"),
     FixedQuestion("alta-07", "¿Qué medios de pago hay en la campaña, y hay meses sin intereses?", "[oferta].medios"),
@@ -896,7 +907,7 @@ def extracted_hints(sources: Sequence[Source]) -> str:
 
 JUDGE_INSTRUCTIONS = """Sos el revisor del alta de un segmento de conocimiento de un agente comercial de WhatsApp.
 
-Un segmento es un bloque extra (una campana, por ejemplo) que el agente recibe, ademas del conocimiento base y del SOUL, cuando la conversacion tiene una etiqueta y el segmento esta vigente. Donde el segmento dice algo distinto del conocimiento base, manda el segmento, pero solo si el cambio es a proposito: un campo de [oferta] de los que se reemplazan (__REEMPLAZABLES__) que cambia frente al base tiene que estar en [oferta].reemplaza. Los otros campos de [oferta] (cupon, precio_antes, producto) no se pueden nombrar en reemplaza y no hace falta: son de la campana. oferta.cupon es el cupon de la campana: que exista, o que sea distinto de un cupon del base, no es un item. Si es un item que un texto del segmento ofrezca otro cupon, nombre como el de la campana uno distinto del de oferta.cupon, o diga que se suma con otro cuando el base o el segmento dicen que no se suman. El SOUL no lo puede pisar ningun segmento.
+Un segmento es un bloque extra (una campana, por ejemplo) que el agente recibe, ademas del conocimiento base y del SOUL, cuando la conversacion tiene una etiqueta y el segmento esta vigente. Donde el segmento dice algo distinto del conocimiento base, manda el segmento, pero solo si el cambio es a proposito: un campo de [oferta] de los que se reemplazan (__REEMPLAZABLES__) que cambia frente al base tiene que estar en [oferta].reemplaza. Los otros campos de [oferta] (cupon, precio_antes, producto) no se pueden nombrar en reemplaza y no hace falta: son de la campana. oferta.cupon es el cupon de la campana: que exista, o que sea distinto de un cupon del base, no es un item. oferta.codigo_oferta es la oferta de Hotmart de la campana: que exista, o que sea distinta de la del base, no es un item; el link de esa campana lo arma el sistema con esa oferta. Si es un item que un texto del segmento ofrezca otro cupon, nombre como el de la campana uno distinto del de oferta.cupon, o diga que se suma con otro cuando el base o el segmento dicen que no se suman. El SOUL no lo puede pisar ningun segmento.
 
 Tu trabajo es encontrar todo lo que pueda hacer que el agente diga algo falso, contradictorio o no confirmado a una persona de este segmento, antes de que entre en produccion. Nada entra con algo abierto, asi que lo que no tengas claro no lo das por bueno: lo preguntas.
 
