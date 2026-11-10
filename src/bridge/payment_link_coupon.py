@@ -238,6 +238,33 @@ def segment_link_coupon(catalog: object, entries: object) -> SegmentCoupon | Non
     return None
 
 
+class SegmentOfferLink(NamedTuple):
+    """La oferta de Hotmart de un segmento del turno (E-410): su clave, el codigo y su producto."""
+
+    key: str
+    offer_code: str
+    # ``[oferta].producto``: la clave de ``[[productos]]``, o None («el principal»).
+    product: str | None
+
+
+def segment_link_offer(catalog: object, entries: object) -> SegmentOfferLink | None:
+    """La oferta del primer segmento del turno que trae ``[oferta].codigo_oferta``, o None.
+
+    Gemela de ``segment_link_coupon``: ``entries`` es la entrada ``segments`` del
+    turno, en orden de prioridad, y gana el primero (D9 de E-408). Sin catalogo
+    (``AGENT_SEGMENTS_ENABLED`` apagado) devuelve None. Que la oferta sea del
+    producto del link lo decide ``segment_coupon_fits_product``, igual que el cupon.
+    """
+
+    if catalog is None:
+        return None
+    for segment in catalog.blocks_for(entries):  # type: ignore[attr-defined]
+        offer = segment.knowledge.offer
+        if offer is not None and getattr(offer, "offer_code", None) is not None:
+            return SegmentOfferLink(segment.key, offer.offer_code, offer.product)
+    return None
+
+
 def segment_coupon_for_labels(
     catalog: object, labels: object, *, now: datetime
 ) -> SegmentCoupon | None:
