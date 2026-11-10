@@ -154,6 +154,23 @@ def describe_attachments_without_text(
     return described
 
 
+def attachment_without_text_refs(
+    messages: Sequence[Mapping[str, object]],
+) -> set[str]:
+    """Los ids de los adjuntos de la persona que siguen sin texto en el historial.
+
+    La normalizacion los saltea, asi que un lote que los incluya no los va a
+    encontrar nunca. Con el flag ``describe_attachments_without_text`` ya les
+    puso su texto y esto da vacio.
+    """
+    return {
+        str(message.get("id"))
+        for message in messages
+        if _is_prospect_message(message)
+        and attachment_without_text_kinds(message) is not None
+    }
+
+
 def is_repeated_attachment_without_text(
     messages: Sequence[Mapping[str, object]],
     *,

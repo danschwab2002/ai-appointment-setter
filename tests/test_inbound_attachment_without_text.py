@@ -25,6 +25,7 @@ import asyncio
 import copy
 import json
 import logging
+import time
 from pathlib import Path
 
 import httpx
@@ -33,6 +34,12 @@ import pytest
 import bridge.app as app_module
 from bridge.app import Settings, create_app
 from bridge.chatwoot import ChatwootClient
+from bridge.chatwoot_inbox import (
+    BoundedChatwootWorkError,
+    ChatwootWorker,
+    DurableChatwootInbox,
+    RetryableChatwootWorkError,
+)
 from bridge.inbound_attachments import (
     ATTACHMENT_WITHOUT_TEXT_REPEATED_REASON,
     attachment_without_text_kinds,
@@ -40,6 +47,7 @@ from bridge.inbound_attachments import (
     describe_attachments_without_text,
     is_repeated_attachment_without_text,
 )
+from bridge.supabase import SupabaseError
 from test_audio_transcription import _webhook_200
 from test_webhook import (
     StubChatwootClient,
@@ -542,3 +550,374 @@ def test_a_photo_and_a_text_batched_together_get_one_answer(tmp_path: Path) -> N
     assert prospect[0].startswith("[La persona mandó una imagen sin texto.")
     assert prospect[-1] == "Esto es lo que me sale"
     assert len(chatwoot.reply_calls) == 1
+
+
+# E-380: ATT1, conversacion 726 (interna 1250), 08/11 18:55Z. Una foto sin texto
+# (6291) y enseguida un texto de 14 caracteres (6292), con el flag apagado: el
+# trabajo fallo 1.165 veces en un dia y la persona se quedo sin respuesta. El
+# lote se arma con los mismos webhooks reales de arriba.
+TEXTO_DEL_LOTE = "Esto me sale!!"
+
+
+def _imagen_con_id(message_id: int) -> dict[str, object]:
+    webhook = _webhook_imagen()
+    webhook["id"] = message_id
+    webhook["conversation"]["messages"][0]["id"] = message_id
+    return webhook
+
+
+def _texto_con_id(message_id: int) -> dict[str, object]:
+    webhook = _imagen_con_id(message_id)
+    webhook["content"] = TEXTO_DEL_LOTE
+    webhook["attachments"] = []
+    webhook["conversation"]["messages"][0]["attachments"] = []
+    webhook["conversation"]["messages"][0]["content"] = TEXTO_DEL_LOTE
+    return webhook
+
+
+def _lote(
+    tmp_path: Path,
+    *,
+    webhooks: list[dict[str, object]],
+    historial: list[dict[str, object]],
+    **ajustes: object,
+) -> tuple[object, StubShadowProcessor, StubChatwootClient, StubInboundCommercialSupabase]:
+    shadow = StubShadowProcessor({"decision": "reply", "reply": "Ya veo."})
+    chatwoot = StubChatwootClient(messages=historial)
+    supabase = StubInboundCommercialSupabase()
+    app = create_app(
+        _settings(tmp_path, chatwoot_inbound_debounce_seconds=5, **ajustes),
+        chatwoot_client=chatwoot,
+        shadow_processor=shadow,
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+    for orden, webhook in enumerate(webhooks):
+        raw_body = json.dumps(webhook, separators=(",", ":")).encode("utf-8")
+        response = _post(
+            app, raw_body, _signed_headers(raw_body, secret=SECRET, delivery=f"lote-{orden}")
+        )
+        assert response.status_code == 202
+    return app, shadow, chatwoot, supabase
+
+
+def _correr(app: object, veces: int = 1) -> None:
+    worker = app.state.chatwoot_worker  # type: ignore[attr-defined]
+    for vuelta in range(veces):
+        worker._clock = lambda vuelta=vuelta: time.time() + 3_600 * (vuelta + 1)
+        asyncio.run(worker.run_once())
+
+
+def _sobres(app: object) -> list[dict[str, object]]:
+    work_dir = app.state.chatwoot_worker._inbox._work_dir  # type: ignore[attr-defined]
+    return [
+        json.loads(path.read_text())
+        for path in sorted(work_dir.glob("*.json"))
+        if not path.name.startswith(".")
+    ]
+
+
+def _textos_de_la_persona(shadow: StubShadowProcessor) -> list[str]:
+    return [m["text"] for m in shadow.calls[0][1]["messages"] if m["actor"] == "prospect"]
+
+
+def test_flag_off_a_photo_then_a_text_answers_the_text(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    foto = _imagen_con_id(6291)
+    texto = _texto_con_id(6292)
+
+    with caplog.at_level(logging.WARNING):
+        app, shadow, chatwoot, supabase = _lote(
+            tmp_path,
+            webhooks=[foto, texto],
+            historial=[_mensaje_2472(foto), _mensaje_2472(texto)],
+        )
+        _correr(app)
+
+    assert _textos_de_la_persona(shadow) == [TEXTO_DEL_LOTE]
+    assert len(chatwoot.reply_calls) == 1
+    assert supabase.handoff_calls == []
+    assert {sobre["status"] for sobre in _sobres(app)} == {"completed"}
+    assert (
+        "chatwoot_batch_attachment_without_text_skipped conversation=200 messages=6291"
+    ) in caplog.text
+    assert "chatwoot_work_failed" not in caplog.text
+
+
+def test_flag_off_a_text_then_a_photo_answers_the_text(tmp_path: Path) -> None:
+    """La foto queda con el id mas alto y no puede liderar: el texto se perderia."""
+    texto = _texto_con_id(6291)
+    foto = _imagen_con_id(6292)
+
+    app, shadow, chatwoot, supabase = _lote(
+        tmp_path,
+        webhooks=[texto, foto],
+        historial=[_mensaje_2472(texto), _mensaje_2472(foto)],
+    )
+    _correr(app)
+
+    assert _textos_de_la_persona(shadow) == [TEXTO_DEL_LOTE]
+    assert len(chatwoot.reply_calls) == 1
+    assert supabase.handoff_calls == []
+    assert {sobre["status"] for sobre in _sobres(app)} == {"completed"}
+
+
+def test_flag_off_two_photos_alone_are_still_only_logged(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    fotos = [_imagen_con_id(6291), _imagen_con_id(6292)]
+
+    with caplog.at_level(logging.WARNING):
+        app, shadow, chatwoot, supabase = _lote(
+            tmp_path,
+            webhooks=fotos,
+            historial=[_mensaje_2472(foto) for foto in fotos],
+        )
+        _correr(app)
+
+    assert shadow.calls == []
+    assert chatwoot.reply_calls == []
+    assert supabase.handoff_calls == []
+    assert "chatwoot_inbound_without_text_ignored message=6292" in caplog.text
+
+
+def test_flag_on_a_text_then_a_photo_keeps_the_system_text(tmp_path: Path) -> None:
+    texto = _texto_con_id(6291)
+    foto = _imagen_con_id(6292)
+
+    app, shadow, chatwoot, _ = _lote(
+        tmp_path,
+        webhooks=[texto, foto],
+        historial=[_mensaje_2472(texto), _mensaje_2472(foto)],
+        inbound_attachment_without_text_enabled=True,
+    )
+    _correr(app)
+
+    textos = _textos_de_la_persona(shadow)
+    assert textos[0] == TEXTO_DEL_LOTE
+    assert textos[-1].startswith("[La persona mandó una imagen sin texto.")
+    assert len(chatwoot.reply_calls) == 1
+
+
+def test_a_batch_that_never_appears_ends_failed_and_goes_to_a_person(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    uno = _texto_con_id(6291)
+    dos = _texto_con_id(6292)
+
+    with caplog.at_level(logging.WARNING):
+        app, shadow, chatwoot, supabase = _lote(
+            tmp_path,
+            webhooks=[uno, dos],
+            historial=[_mensaje_2472(dos)],  # el 6291 no aparece nunca
+        )
+        _correr(app, veces=7)
+        assert {sobre["status"] for sobre in _sobres(app)} == {"admitted"}
+        assert supabase.handoff_calls == []
+        _correr(app, veces=3)
+
+    assert sorted(sobre["attempts"] for sobre in _sobres(app)) == [0, 8]
+    assert {sobre["status"] for sobre in _sobres(app)} == {"failed"}
+    assert shadow.calls == []
+    assert len(supabase.handoff_calls) == 1
+    assert supabase.handoff_calls[0]["detail_reason_code"] == "chatwoot_work_exhausted"
+    assert chatwoot.calls == [(200, "automation_paused")]
+    assert caplog.text.count("chatwoot_work_exhausted reason=") == 1
+    assert (
+        "chatwoot_work_exhausted reason=batched_messages_not_in_canonical_history "
+        "conversation=200 message=6292 attempts=8 recovery_count=0"
+    ) in caplog.text
+
+
+def test_an_exhausted_work_without_handoff_only_leaves_the_log(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    uno = _texto_con_id(6291)
+    dos = _texto_con_id(6292)
+
+    with caplog.at_level(logging.WARNING):
+        app, _, _, supabase = _lote(
+            tmp_path,
+            webhooks=[uno, dos],
+            historial=[_mensaje_2472(dos)],
+            human_handoff_admission_enabled=False,
+            human_handoff_projection_enabled=False,
+        )
+        _correr(app, veces=8)
+
+    assert {sobre["status"] for sobre in _sobres(app)} == {"failed"}
+    assert supabase.handoff_calls == []
+    assert "chatwoot_work_exhausted reason=" in caplog.text
+    assert "chatwoot_exhausted_handoff_unavailable message=6292" in caplog.text
+
+
+def test_a_dependency_failure_still_retries_past_the_bound(tmp_path: Path) -> None:
+    """El tope es del historial incompleto: Chatwoot caido sigue sin limite."""
+    ahora = [1_000.0]
+    inbox = DurableChatwootInbox(tmp_path / "trabajo", clock=lambda: ahora[0])
+    assert inbox.admit(delivery_id="caido", payload={"id": 1})
+
+    async def handler(*_: object) -> None:
+        raise RetryableChatwootWorkError("chatwoot_canonical_history_unavailable")
+
+    worker = ChatwootWorker(inbox=inbox, handler=handler, clock=lambda: ahora[0])
+    for _ in range(12):
+        ahora[0] += 3_600
+        asyncio.run(worker.run_once())
+
+    [sobre] = [json.loads(p.read_text()) for p in (tmp_path / "trabajo").glob("*.json")]
+    assert sobre["status"] == "admitted"
+    assert sobre["attempts"] == 12
+
+
+def _sobre_viejo(app: object, message_id: int, attempts: int) -> None:
+    """Un sobre de antes del contador: muchos intentos y sin el campo."""
+    work_dir = app.state.chatwoot_worker._inbox._work_dir  # type: ignore[attr-defined]
+    for path in work_dir.glob("*.json"):
+        sobre = json.loads(path.read_text())
+        if sobre["payload"].get("id") == message_id:
+            sobre["attempts"] = attempts
+            sobre["last_error_type"] = "CanonicalHistoryIncompleteError"
+            sobre.pop("history_incomplete_attempts", None)
+            path.write_text(json.dumps(sobre))
+            return
+    raise AssertionError("no aparecio el sobre")
+
+
+@pytest.mark.parametrize("ids", [(6292,), (6291, 6292)], ids=["solo", "lote"])
+def test_an_envelope_from_before_the_counter_gets_its_eight_attempts(
+    tmp_path: Path, ids: tuple[int, ...]
+) -> None:
+    app, shadow, chatwoot, supabase = _lote(
+        tmp_path,
+        webhooks=[_texto_con_id(message_id) for message_id in ids],
+        historial=[],  # ninguno aparece
+    )
+    _sobre_viejo(app, 6292, attempts=1_165)
+
+    _correr(app)
+
+    [lider] = [s for s in _sobres(app) if s.get("attempts", 0) > 0]
+    assert lider["status"] == "admitted"
+    assert lider["attempts"] == 1_166
+    assert lider["history_incomplete_attempts"] == 1
+    assert supabase.handoff_calls == []
+    assert chatwoot.calls == []
+
+    _correr(app, veces=6)
+    assert {s["status"] for s in _sobres(app)} == {"admitted"}
+    assert supabase.handoff_calls == []
+
+    _correr(app, veces=2)
+    assert {s["status"] for s in _sobres(app)} == {"failed"}
+    [lider] = [s for s in _sobres(app) if s.get("attempts", 0) > 0]
+    assert lider["history_incomplete_attempts"] == 8
+    assert len(supabase.handoff_calls) == 1
+    assert shadow.calls == []
+
+
+def _trabajo_que_falla(
+    tmp_path: Path,
+    errores: list[Exception],
+    **sobre: object,
+) -> tuple[ChatwootWorker, Path, list[int], list[float]]:
+    ahora = [1_000.0]
+    inbox = DurableChatwootInbox(tmp_path / "trabajo", clock=lambda: ahora[0])
+    assert inbox.admit(delivery_id="d", payload={"id": 1, **sobre})
+    derivados: list[int] = []
+    pendientes = iter(errores)
+
+    async def handler(*_: object) -> None:
+        raise next(pendientes)
+
+    async def on_exhausted(_: str, payload: dict, __: tuple[int, ...]) -> None:
+        derivados.append(payload["id"])
+
+    worker = ChatwootWorker(
+        inbox=inbox,
+        handler=handler,
+        clock=lambda: ahora[0],
+        on_exhausted=on_exhausted,
+    )
+    return worker, tmp_path / "trabajo", derivados, ahora
+
+
+def _dar_vueltas(worker: ChatwootWorker, ahora: list[float], veces: int) -> None:
+    for _ in range(veces):
+        ahora[0] += 3_600
+        asyncio.run(worker.run_once())
+
+
+def _sobre_unico(work_dir: Path) -> dict[str, object]:
+    [sobre] = [json.loads(p.read_text()) for p in work_dir.glob("*.json")]
+    return sobre
+
+
+def test_a_long_outage_does_not_use_up_the_history_bound(tmp_path: Path) -> None:
+    caida = RetryableChatwootWorkError("chatwoot_canonical_history_unavailable")
+    incompleto = BoundedChatwootWorkError("batched_messages_not_in_canonical_history")
+    worker, work_dir, derivados, ahora = _trabajo_que_falla(
+        tmp_path,
+        [caida] * 12 + [incompleto] * 3 + [caida] * 2 + [incompleto] * 5,
+    )
+
+    _dar_vueltas(worker, ahora, 12 + 3)
+    sobre = _sobre_unico(work_dir)
+    assert (sobre["status"], sobre["attempts"]) == ("admitted", 15)
+    assert sobre["history_incomplete_attempts"] == 3
+
+    # Una caida en el medio no borra lo contado, y el octavo cierra.
+    _dar_vueltas(worker, ahora, 2 + 4)
+    sobre = _sobre_unico(work_dir)
+    assert sobre["status"] == "admitted"
+    assert sobre["history_incomplete_attempts"] == 7
+    assert derivados == []
+
+    _dar_vueltas(worker, ahora, 1)
+    sobre = _sobre_unico(work_dir)
+    assert sobre["status"] == "failed"
+    assert sobre["history_incomplete_attempts"] == 8
+    assert derivados == [1]
+
+
+def test_a_stalled_monitor_recovery_fails_without_going_to_a_person(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    incompleto = BoundedChatwootWorkError("batched_messages_not_in_canonical_history")
+    worker, work_dir, derivados, ahora = _trabajo_que_falla(
+        tmp_path, [incompleto], _stalled_monitor={"version": 1}
+    )
+
+    with caplog.at_level(logging.WARNING):
+        _dar_vueltas(worker, ahora, 1)
+
+    assert _sobre_unico(work_dir)["status"] == "failed"
+    assert derivados == []
+    assert "chatwoot_work_exhausted reason=" in caplog.text
+    assert "recovery_count=1" in caplog.text
+
+
+def test_a_handoff_that_fails_leaves_the_log_and_the_work_failed(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    uno = _texto_con_id(6291)
+    dos = _texto_con_id(6292)
+
+    async def rechazar(**_: object) -> object:
+        raise SupabaseError("request_inbound_human_handoff", "rejected")
+
+    with caplog.at_level(logging.WARNING):
+        app, _, chatwoot, supabase = _lote(
+            tmp_path,
+            webhooks=[uno, dos],
+            historial=[_mensaje_2472(dos)],
+        )
+        supabase.request_inbound_human_handoff = rechazar  # type: ignore[method-assign]
+        _correr(app, veces=8)
+
+    assert {sobre["status"] for sobre in _sobres(app)} == {"failed"}
+    assert chatwoot.calls == []
+    assert (
+        "chatwoot_work_exhausted_handoff_failed conversation=200 "
+        "error_type=RetryableChatwootWorkError"
+    ) in caplog.text

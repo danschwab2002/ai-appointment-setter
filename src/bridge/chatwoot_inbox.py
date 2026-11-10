@@ -50,6 +50,20 @@ class RetryableChatwootWorkError(RuntimeError):
     """A transient dependency failure that must remain admitted."""
 
 
+class BoundedChatwootWorkError(RetryableChatwootWorkError):
+    """A failure that gets the bounded attempts, because it may never clear.
+
+    E-380 (ATT1, conversation 726, 08/11): Chatwoot answered fine and the
+    message the batch needed was never going to be readable, so the unlimited
+    retries of a dependency failure ran 1,165 times in a day and nobody
+    answered. ``str(exc)`` is a fixed reason code: it goes to the log.
+
+    The bound counts only these failures (``history_incomplete_attempts`` in
+    the envelope): ``attempts`` also adds the unlimited ones, so an outage or
+    an envelope from before this class would close on its first failure.
+    """
+
+
 class ChatwootStalledConversationMonitor:
     """Recurrently admit scanner candidates into the existing durable inbox."""
 
@@ -202,6 +216,7 @@ class ChatwootWorkItem:
     next_attempt_at: float = 0.0
     admitted_at: float = 0.0
     recovery_count: int = 0
+    history_incomplete_attempts: int = 0
 
 
 def _canonical_message_id(item: ChatwootWorkItem) -> int:
@@ -213,6 +228,7 @@ def _canonical_message_id(item: ChatwootWorkItem) -> int:
 
 def _select_group_leader(
     items: list[ChatwootWorkItem],
+    can_lead: Callable[[dict[str, object]], bool] | None = None,
 ) -> tuple[ChatwootWorkItem, ChatwootWorkItem]:
     latest_arrival = max(
         items,
@@ -221,6 +237,10 @@ def _select_group_leader(
     canonical_items = [
         candidate for candidate in items if _canonical_message_id(candidate) >= 0
     ]
+    if can_lead is not None:
+        canonical_items = [
+            candidate for candidate in canonical_items if can_lead(candidate.payload)
+        ] or canonical_items
     leader = (
         max(
             canonical_items,
@@ -427,6 +447,7 @@ class DurableChatwootInbox:
         next_attempt_at = envelope.get("next_attempt_at", 0.0)
         admitted_at = envelope.get("admitted_at", file_stat.st_mtime)
         recovery_count = envelope.get("recovery_count", 0)
+        history_incomplete_attempts = envelope.get("history_incomplete_attempts", 0)
         if (
             not isinstance(delivery_id, str)
             or not delivery_id
@@ -443,6 +464,9 @@ class DurableChatwootInbox:
             or not isinstance(recovery_count, int)
             or isinstance(recovery_count, bool)
             or recovery_count < 0
+            or not isinstance(history_incomplete_attempts, int)
+            or isinstance(history_incomplete_attempts, bool)
+            or history_incomplete_attempts < 0
             or path.stem
             != hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
         ):
@@ -457,6 +481,7 @@ class DurableChatwootInbox:
             next_attempt_at=float(next_attempt_at),
             admitted_at=float(admitted_at),
             recovery_count=recovery_count,
+            history_incomplete_attempts=history_incomplete_attempts,
         )
 
     def complete(self, item: ChatwootWorkItem) -> None:
@@ -478,9 +503,16 @@ class DurableChatwootInbox:
         *,
         error_type: str,
         max_attempts: int | None = 8,
+        history_incomplete: bool = False,
     ) -> str:
         attempts = item.attempts + 1
-        if max_attempts is not None and attempts >= max_attempts:
+        history_incomplete_attempts = item.history_incomplete_attempts + (
+            1 if history_incomplete else 0
+        )
+        counted_attempts = (
+            history_incomplete_attempts if history_incomplete else attempts
+        )
+        if max_attempts is not None and counted_attempts >= max_attempts:
             status = "failed"
             next_attempt_at = 0.0
         else:
@@ -501,6 +533,7 @@ class DurableChatwootInbox:
                 "admitted_at": item.admitted_at,
                 "last_error_type": error_type,
                 "recovery_count": item.recovery_count,
+                "history_incomplete_attempts": history_incomplete_attempts,
                 **({"terminal_at": self._clock()} if status == "failed" else {}),
             },
         )
@@ -512,6 +545,7 @@ class DurableChatwootInbox:
         *,
         leader: ChatwootWorkItem,
         error_type: str,
+        history_incomplete: bool = False,
     ) -> None:
         member_files = sorted({item.path.name for item in items})
         if leader.path.name not in member_files:
@@ -526,6 +560,7 @@ class DurableChatwootInbox:
                 "leader_file": leader.path.name,
                 "member_files": member_files,
                 "leader_error_type": error_type,
+                **({"leader_history_incomplete": True} if history_incomplete else {}),
             },
         )
         self._reconcile_group_failure(journal_path)
@@ -578,6 +613,15 @@ class DurableChatwootInbox:
                         leader_error_type if is_leader else "GroupedLeaderFailed"
                     ),
                     "recovery_count": item.recovery_count,
+                    "history_incomplete_attempts": (
+                        item.history_incomplete_attempts
+                        + (
+                            1
+                            if is_leader
+                            and journal.get("leader_history_incomplete") is True
+                            else 0
+                        )
+                    ),
                     "terminal_at": self._clock(),
                 },
             )
@@ -673,6 +717,11 @@ class ChatwootWorker:
         debounce_key: Callable[[dict[str, object]], str | None] | None = None,
         debounce_seconds: float = 0.0,
         clock: Callable[[], float] = time.time,
+        can_lead: Callable[[dict[str, object]], bool] | None = None,
+        on_exhausted: Callable[
+            [str, dict[str, object], tuple[int, ...]], Awaitable[None]
+        ]
+        | None = None,
     ) -> None:
         if handler_timeout_seconds <= 0:
             raise ValueError("handler_timeout_seconds must be positive")
@@ -685,6 +734,8 @@ class ChatwootWorker:
         self._debounce_key = debounce_key
         self._debounce_seconds = debounce_seconds
         self._clock = clock
+        self._can_lead = can_lead
+        self._on_exhausted = on_exhausted
         self._task: asyncio.Task[None] | None = None
         self._stopping = asyncio.Event()
 
@@ -721,7 +772,7 @@ class ChatwootWorker:
             grouped.setdefault(group_key, []).append(item)
 
         for group_key, items in grouped.items():
-            latest_arrival, item = _select_group_leader(items)
+            latest_arrival, item = _select_group_leader(items, self._can_lead)
             if item.next_attempt_at > self._clock():
                 continue
             if (
@@ -761,7 +812,9 @@ class ChatwootWorker:
                     ]
                     if not items:
                         continue
-                    latest_arrival, current = _select_group_leader(items)
+                    latest_arrival, current = _select_group_leader(
+                        items, self._can_lead
+                    )
                     if current.next_attempt_at > self._clock():
                         continue
                     if (
@@ -789,23 +842,32 @@ class ChatwootWorker:
                             batch_message_ids,
                         )
                 except Exception as exc:
+                    history_incomplete = isinstance(exc, BoundedChatwootWorkError)
                     max_attempts = (
                         1
                         if current.recovery_count > 0
                         else None
                         if isinstance(exc, RetryableChatwootWorkError)
+                        and not history_incomplete
                         else 8
                     )
                     terminal_group_failure = (
                         len(items) > 1
                         and max_attempts is not None
-                        and current.attempts + 1 >= max_attempts
+                        and (
+                            current.history_incomplete_attempts
+                            if history_incomplete
+                            else current.attempts
+                        )
+                        + 1
+                        >= max_attempts
                     )
                     if terminal_group_failure:
                         self._inbox.fail_group(
                             items,
                             leader=current,
                             error_type=type(exc).__name__,
+                            history_incomplete=history_incomplete,
                         )
                         failure_status = "failed"
                     else:
@@ -813,6 +875,7 @@ class ChatwootWorker:
                             current,
                             error_type=type(exc).__name__,
                             max_attempts=max_attempts,
+                            history_incomplete=history_incomplete,
                         )
                     # Un error operativo (Supabase caido, Chatwoot sin
                     # responder) se reintenta sin limite y ya dice todo en su
@@ -826,6 +889,10 @@ class ChatwootWorker:
                         failure_status,
                         exc_info=not isinstance(exc, RetryableChatwootWorkError),
                     )
+                    if failure_status == "failed" and history_incomplete:
+                        await self._report_exhausted(
+                            current, batch_message_ids, reason=str(exc)
+                        )
                     continue
                 for superseded in items:
                     if superseded.path != current.path:
@@ -834,6 +901,47 @@ class ChatwootWorker:
             finally:
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
                 os.close(lock_fd)
+
+    async def _report_exhausted(
+        self,
+        item: ChatwootWorkItem,
+        batch_message_ids: tuple[int, ...],
+        *,
+        reason: str,
+    ) -> None:
+        """The work is already terminal: this only tells somebody.
+
+        A recovery admission fails on its first attempt and the monitor can
+        admit it again, so only the normal work goes to a person.
+        """
+        conversation = item.payload.get("conversation")
+        conversation_id = (
+            conversation.get("id") if isinstance(conversation, dict) else None
+        )
+        logger.warning(
+            "chatwoot_work_exhausted reason=%s conversation=%s message=%s "
+            "attempts=%s recovery_count=%s history_incomplete_attempts=%s",
+            reason,
+            conversation_id,
+            item.payload.get("id"),
+            item.attempts + 1,
+            item.recovery_count,
+            item.history_incomplete_attempts + 1,
+        )
+        if self._on_exhausted is None or item.recovery_count > 0:
+            return
+        try:
+            async with asyncio.timeout(self._handler_timeout_seconds):
+                await self._on_exhausted(
+                    item.delivery_id, item.payload, batch_message_ids
+                )
+        except Exception as exc:
+            logger.warning(
+                "chatwoot_work_exhausted_handoff_failed conversation=%s "
+                "error_type=%s",
+                conversation_id,
+                type(exc).__name__,
+            )
 
     async def _run(self) -> None:
         while not self._stopping.is_set():
