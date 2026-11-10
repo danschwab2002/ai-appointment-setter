@@ -8,7 +8,8 @@
 # Levanta dos contenedores con la imagen que declara el producto, sin red y con tope de memoria:
 # el Hermes de una instancia de prueba (stack "prueba") y el de otra instancia (stack "otra"), con
 # un agente-comercial que no es nuestro. El modelo es el de mentira, adentro del mismo contenedor.
-# Prueba el camino verde (plan, aplicar, chequear, hablarle, aplicar otra vez sin cambios) y los
+# Prueba el camino verde (plan, aplicar, chequear, hablarle, tambien con el conocimiento de dos
+# productos de mas de 20.000 bytes, aplicar otra vez sin cambios) y los
 # rojos a proposito (un byte de mas en el SOUL, un profile de mas, el default prendido, un Hermes
 # ajeno). Al final busca que la key de prueba no haya salido en ninguna salida. Borra todo al irse.
 set -eu
@@ -107,9 +108,11 @@ levantar "$C" prueba
 docker exec "$C" mkdir -p /tmp/mentira
 docker cp "$RAIZ/hermes/prueba/modelo_de_mentira.py" "$C:/tmp/mentira/modelo_de_mentira.py"
 docker cp "$RAIZ/profiles/agente-comercial-comun/SOUL.md" "$C:/tmp/mentira/SOUL.md"
+docker cp "$RAIZ/tests/fixtures/hermes/conocimiento-dos-productos.md" "$C:/tmp/mentira/conocimiento.md"
 docker exec "$C" chown -R hermes:hermes /tmp/mentira
 docker exec -d -u hermes "$C" /opt/hermes/.venv/bin/python /tmp/mentira/modelo_de_mentira.py \
-  --puerto 9999 --soul /tmp/mentira/SOUL.md --registro /tmp/mentira/pedidos.jsonl
+  --puerto 9999 --soul /tmp/mentira/SOUL.md --registro /tmp/mentira/pedidos.jsonl \
+  --conocimiento /tmp/mentira/conocimiento.md
 
 paso "2. plan sobre un Hermes nuevo: dice que haria y no escribe nada"
 instalador plan-inicial 0 plan --instancia "$TMP/hermes.toml"
@@ -143,6 +146,37 @@ with urllib.request.urlopen(pedido, timeout=180) as respuesta:
 PY
 cat "$SALIDAS/hablar.txt"
 contiene hablar "MENTIRA herramientas=0 soul=entero modelo=prueba/modelo"
+
+paso "5b. el conocimiento de dos productos, de mas de 20.000 bytes, llega entero al modelo"
+# El bridge manda el conocimiento comercial renderizado como mensaje system en cada pedido, y Hermes
+# lo suma al prompt del profile. Con dos productos pasa los 20.000 bytes, el largo al que Hermes corta
+# los archivos de contexto como el SOUL. Se leyo en el codigo que el system del pedido no se corta
+# (commercial-knowledge-v1.md); aca se prueba con la imagen. El archivo es el render de
+# tests/test_two_products_sandbox.py, que exige que siga igual al codigo.
+BYTES=$(wc -c < "$RAIZ/tests/fixtures/hermes/conocimiento-dos-productos.md" | tr -d ' ')
+[ "$BYTES" -gt 20000 ] || fallar "el conocimiento de dos productos tiene $BYTES bytes y tiene que pasar los 20.000"
+docker exec -i -u hermes "$C" /opt/hermes/.venv/bin/python - > "$SALIDAS/hablar-conocimiento.txt" 2>&1 <<'PY'
+import json
+import urllib.request
+
+ruta = "/opt/data/profiles/agente-comercial/" + "." + "env"
+clave = next(l.split("=", 1)[1].strip() for l in open(ruta) if l.startswith("API_SERVER_KEY="))
+conocimiento = open("/tmp/mentira/conocimiento.md", encoding="utf-8").read()
+cuerpo = {
+    "model": "agente-comercial",
+    "messages": [{"role": "system", "content": conocimiento}, {"role": "user", "content": "hola"}],
+}
+pedido = urllib.request.Request("http://127.0.0.1:8642/v1/chat/completions", data=json.dumps(cuerpo).encode())
+pedido.add_header("Content-Type", "application/json")
+pedido.add_header("Authorization", f"Bearer {clave}")
+with urllib.request.urlopen(pedido, timeout=180) as respuesta:
+    print(json.loads(respuesta.read())["choices"][0]["message"]["content"])
+PY
+cat "$SALIDAS/hablar-conocimiento.txt"
+contiene hablar-conocimiento "MENTIRA herramientas=0 soul=entero modelo=prueba/modelo conocimiento=entero"
+SISTEMA=$(sed -n 's/.* sistema=\([0-9]*\).*/\1/p' "$SALIDAS/hablar-conocimiento.txt")
+[ -n "$SISTEMA" ] && [ "$SISTEMA" -gt "$BYTES" ] || fallar "el modelo vio $SISTEMA bytes de sistema, menos que el conocimiento ($BYTES)"
+echo "el modelo recibio $SISTEMA bytes de sistema: el SOUL entero y los $BYTES del conocimiento, sin cortes"
 
 paso "6. aplicar otra vez: sin cambios y sin reiniciar el gateway"
 PID=$(pid_del_gateway agente-comercial)
