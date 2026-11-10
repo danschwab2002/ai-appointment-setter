@@ -769,3 +769,12 @@ def test_the_tools_say_that_a_request_approved_by_a_person_did_not_reach_meta() 
     schemas = (PROFILE / "plugins" / "automation-expert-change" / "schemas.py").read_text(encoding="utf-8")
     assert "«aprobada» ahí quiere decir que la aprobó una persona y NO se " in schemas
     assert "resolved.state: cómo va de verdad" in schemas
+
+
+def test_the_skills_say_where_the_offer_of_a_campaign_comes_from() -> None:
+    # E-410: el off= del link de la pagina, declarada en la instancia, y lo que pasa si no esta.
+    campaign = _skill("flujos/armar-una-campana")
+    assert "oferta.codigo_oferta" in campaign and "campaign_offer_unknown" in campaign
+    assert "campaign_offer_not_verified" in campaign and "pasa a una persona" in campaign
+    hotmart = _skill("plataformas/hotmart")
+    assert "`off=`" in hotmart and "no lo inventes" in hotmart

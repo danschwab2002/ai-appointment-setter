@@ -27,6 +27,8 @@ Cargala cuando no sabés si un aviso de Hotmart existe, cómo llega o qué dispa
 
 **El producto, siempre por su ID.** Un evento es de un producto de la instancia por el ID de Hotmart (`data.product.id`), nunca por el nombre: el nombre puede venir distinto (en ATT1 llegó uno con un espacio al final). Una compra del bump o del upsell es de otro producto y no cuenta como compra del principal.
 
+**La oferta de un link de pago.** Un link de pago de Hotmart es `https://pay.hotmart.com/<hotlink>?off=<oferta>&…`: el `off=` es el código de la oferta (8 letras y números, por ejemplo `wmkq4ba9`). Para una campaña con oferta propia (`oferta.codigo_oferta`, guía `armar-una-campana`), pedí el link del botón de pago de la página de la campaña y leé el `off=`; no lo inventes ni lo deduzcas del nombre. Esa oferta tiene que estar declarada en la instancia (`[[hotmart.ofertas]]` del manifiesto): si no está, la suma el equipo antes de publicar la campaña.
+
 **Qué trae una compra.** El mail y el teléfono del comprador, el nombre (`data.buyer.name`), el producto, la oferta y la transacción. El teléfono y el mail nunca se muestran.
 
 **El pago rechazado, con sus versiones (cómo se escribe).**
