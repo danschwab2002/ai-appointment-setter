@@ -21,10 +21,11 @@ Lo que ya está en `main` y todavía no tiene versión. El número se elige al p
 ### Cambiado
 
 - **Un caso cuyo último toque no sale se cierra (E-423, decisión de Dan del 2026-11-10).** Migración `20261111000100`: cuando un toque termina `permanent_failed` o `expired` y al caso no le queda ningún toque por salir, `finalize_followup_delivery_attempt` completa la secuencia y cierra el caso en `unreachable` (nunca salió un toque) o `sequence_exhausted` (ya había salido alguno). Antes quedaba abierto para siempre y frenaba el carrito, el pago rechazado, el formulario y el motor de la misma persona (medido el 10/11: 18 casos así en ATT1 y 10 en Maribel). No toca los casos en que la persona contestó o la tomó alguien del equipo, ni el cierre por el cupón de una campaña. El bridge no cambia.
+- **Quien elige Mercado Pago (o Nequi, o transferencia) y no paga vuelve a recibir el primer contacto del formulario (E-423, informe E-414).** Migración `20261111000200`: un `PURCHASE_CANCELED` de un pago pendiente (sin motivo de rechazo y con un medio que no es tarjeta ni PayPal) ya no clasifica la intención como pago rechazado; antes eso cancelaba el primer contacto ya planificado y el pago rechazado tampoco escribía (`payment_failure_not_a_refusal`). Medido el 10/11: 1 persona en ATT1 (dos primeros contactos perdidos) y ninguna en Maribel. Un rechazo de tarjeta o PayPal clasifica igual que antes, y una intención ya clasificada no se toca.
 
 ### Qué hace quien actualiza
 
-- **Correr la migración `20261111000100`.** Los casos que ya están trabados no se cierran solos: van con el kit del destrabe del programa, después de la migración.
+- **Correr las migraciones `20261111000100` y `20261111000200`.** Los casos que ya están trabados no se cierran solos: van con el kit del destrabe del programa, después de la migración.
 
 ## [1.35.0] - 2026-11-10
 

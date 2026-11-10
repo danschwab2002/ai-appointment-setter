@@ -154,6 +154,7 @@ def test_it_is_one_transaction_and_comes_right_after_the_t4b() -> None:
         # La oferta de la campana en el link del agente (20261110000500, E-410).
         "20261110000500_campaign_offer_checkout_issuance_v1.sql",
         "20261111000100_close_recovery_case_without_pending_touch_v1.sql",
+        "20261111000200_pending_cancel_keeps_first_contact_v1.sql",
     ]
 
 

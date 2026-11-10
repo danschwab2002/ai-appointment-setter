@@ -166,6 +166,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261110000500",
         # El caso se cierra cuando su ultimo toque termina sin salir (20261111000100, E-423).
         "20261111000100",
+        # Un pago pendiente que se cancela no clasifica la intencion (20261111000200, E-423).
+        "20261111000200",
     ]
 
     sql = _sql()

@@ -48,6 +48,9 @@
 //   6. carrito o pago fallido que lo reemplazan; el flujo de Hotmart sigue
 //      planificando para la misma persona, y con su caso abierto el formulario
 //      no planifica;
+//  6b. un pago pendiente que se cancela (Mercado Pago capturado) no lo
+//      reemplaza: la intencion no se clasifica y el primer contacto sale; un
+//      rechazo de tarjeta antes si lo reemplaza (20261111000200, E-423);
 //   7. consentimiento perdido (authorization lost) e intencion que deja de
 //      estar viva;
 //   8. el scope: manual_cohort rechazado, sin publicar, de otra fuente, y
@@ -1903,6 +1906,126 @@ const statusOf = async (scope) => one((await asService(() => db.query(`
     form_with_open_recovery_case: withOpenCaseResult,
     payment_failure: `${failureSuperseded}, payment failure recovery ${failureSent}`,
     form_after_the_payment_failure: afterFailureResult,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 6b. Un pago pendiente que se cancela no reemplaza al primer contacto
+//     (20261111000200, E-423, informe E-414). Hotmart manda PURCHASE_CANCELED
+//     tambien para un Mercado Pago que vencio sin pagarse; no es un rechazo y
+//     el pago rechazado no le escribe (payment_failure_not_a_refusal), asi que
+//     la intencion no se clasifica y el primer contacto sale. Payloads
+//     capturados: tests/fixtures/hotmart_purchase_canceled_att1_20261019.json
+//     (persona 6, Mercado Pago sin motivo; persona 4, la tarjeta negada y su
+//     Mercado Pago dos horas despues), con id, fecha, comprador, producto,
+//     oferta y transaccion sustituidos.
+// ---------------------------------------------------------------------------
+{
+  const captured = JSON.parse(readFileSync(
+    join(root, 'tests/fixtures/hotmart_purchase_canceled_att1_20261019.json'), 'utf8')).eventos;
+  const capturedCancel = (persona, type) => {
+    const found = captured.filter((event) => event.persona === persona
+      && event.payload.data.purchase.payment.type === type);
+    if (found.length < 1) throw new Error(`no capture for persona ${persona} ${type}`);
+    return structuredClone(found[0].payload);
+  };
+  const admitCaptured = async (lead, payload, { phone = lead.whatsapp } = {}) => {
+    transactionIndex += 1;
+    payload.id = `att1-first-contact-pending-${lead.email}-${transactionIndex}`;
+    payload.creation_date = FAILED_AT.getTime();
+    payload.data.buyer = { ...payload.data.buyer, name: lead.name, email: lead.email, checkout_phone: `+${phone}` };
+    payload.data.product = { ...payload.data.product, id: ATT1.productId, name: ATT1.productName };
+    payload.data.purchase.offer = { ...payload.data.purchase.offer, code: lead.offer.offer_code };
+    payload.data.purchase.transaction = `HPATT1PC${String(transactionIndex).padStart(4, '0')}`;
+    const admitted = one((await db.query(`
+      select * from public.admit_portable_hotmart_payment_failure($1,$2,$3,$4,$5::jsonb,$6,$7)
+    `, [ATT1.tenant, ATT1.funnel, ATT1.bindingVersion, payload.id,
+      JSON.stringify(payload), lead.email, phone])).rows, `${lead.label} canceled`);
+    if (admitted.outcome !== 'inserted') {
+      throw new Error(`${lead.label}: canceled was not admitted: ${admitted.outcome}`);
+    }
+    const correlation = one((await db.query(`
+      select outcome, purchase_intent_id from public.hotmart_purchase_intent_correlations
+      where webhook_event_id = $1
+    `, [admitted.webhook_event_id])).rows, `${lead.label} correlation`);
+    return { eventId: admitted.webhook_event_id, correlation, phone };
+  };
+  const refusalKind = async (eventId) => one((await db.query(`
+    select public.payment_failure_refusal_kind(
+             event.payload #>> '{data,purchase,payment,refusal_reason}',
+             event.payload #>> '{data,purchase,payment,type}') as kind
+    from public.webhook_events event where event.id = $1
+  `, [eventId])).rows, 'refusal kind').kind;
+
+  // a. Mercado Pago sin pagar despues del formulario: el primer contacto sale.
+  const pendingLead = person('mercado-pago-sin-pagar', 'MX');
+  const pendingFirst = await submit(pendingLead, OPEN_SCOPE);
+  expectPlan('first contact before the pending cancel', pendingFirst, 'planned', 'first_contact_scheduled');
+  const pending = await admitCaptured(pendingLead, capturedCancel(6, 'MERCADO_PAGO'));
+  const pendingIntent = await intentOf(pendingFirst.intent);
+  if (pending.correlation.outcome !== 'resolved'
+      || pending.correlation.purchase_intent_id !== pendingFirst.intent
+      || (await refusalKind(pending.eventId)) !== 'not_a_refusal'
+      || pendingIntent.current_classification !== null
+      || pendingIntent.lifecycle_state !== 'waiting_for_purchase') {
+    throw new Error(`pending cancel: ${JSON.stringify({ correlation: pending.correlation, classification: pendingIntent.current_classification })}`);
+  }
+  const pendingSent = await dispatch(pendingLead, pendingFirst);
+  // El pago rechazado lo sigue descartando: no es un rechazo.
+  await addHotmartPoints(pendingLead, pending.eventId, pending.phone);
+  let notARefusal = null;
+  await db.exec('begin');
+  try {
+    await db.query(`
+      select * from public.plan_portable_payment_failure_recovery($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+    `, [pending.eventId, pendingLead.contact, String(ATT1.productId), ATT1.productName,
+      pendingLead.offer.offer_code, recoveryPolicy.policy_key, recoveryPolicy.version,
+      FAILED_AT.toISOString(), ATT1.accountId, ATT1.inboxId, pendingLead.plain,
+      HOTMART_SCOPE.key, HOTMART_SCOPE.version]);
+  } catch (error) {
+    notARefusal = error;
+  }
+  await db.exec('rollback');
+  if (notARefusal?.code !== '55000' || notARefusal.message !== 'payment_failure_not_a_refusal') {
+    throw new Error(`pending cancel: the payment failure planned it: ${notARefusal?.message ?? 'planned'}`);
+  }
+
+  // b. Una tarjeta negada y despues su Mercado Pago (persona 4): el rechazo
+  //    clasifica, el pendiente no lo desclasifica y el primer contacto se cancela.
+  const refusedLead = person('tarjeta-y-despues-mercado-pago', 'MX');
+  const refusedFirst = await submit(refusedLead, OPEN_SCOPE);
+  expectPlan('first contact before the refusal', refusedFirst, 'planned', 'first_contact_scheduled');
+  const card = await admitCaptured(refusedLead, capturedCancel(4, 'CREDIT_CARD'));
+  const afterCard = (await intentOf(refusedFirst.intent)).current_classification;
+  const later = await admitCaptured(refusedLead, capturedCancel(4, 'MERCADO_PAGO'));
+  const afterPending = (await intentOf(refusedFirst.intent)).current_classification;
+  if (card.correlation.outcome !== 'resolved' || later.correlation.outcome !== 'resolved'
+      || (await refusalKind(card.eventId)) !== 'declined'
+      || afterCard !== 'payment_failure_supported' || afterPending !== 'payment_failure_supported') {
+    throw new Error(`refusal then pending: ${JSON.stringify({ afterCard, afterPending })}`);
+  }
+  const refusedSuperseded = await expectCancelled(refusedLead, refusedFirst, 'superseded_by_provider_event');
+
+  // c. Un carrito y despues un pendiente cancelado: la clasificacion del
+  //    carrito queda (antes el pendiente la pisaba con payment_failure_supported).
+  const cartLead = person('carrito-y-despues-mercado-pago', 'MX');
+  const cartFirst = await submit(cartLead, OPEN_SCOPE);
+  expectPlan('first contact before the cart and the pending cancel', cartFirst, 'planned', 'first_contact_scheduled');
+  await admitCart(cartLead);
+  const afterCart = (await intentOf(cartFirst.intent)).current_classification;
+  const cartPending = await admitCaptured(cartLead, capturedCancel(6, 'MERCADO_PAGO'));
+  const afterCartPending = (await intentOf(cartFirst.intent)).current_classification;
+  if (afterCart !== 'confirmed_abandonment' || cartPending.correlation.outcome !== 'resolved'
+      || afterCartPending !== 'confirmed_abandonment') {
+    throw new Error(`cart then pending: ${JSON.stringify({ afterCart, afterCartPending, correlation: cartPending.correlation })}`);
+  }
+  const cartSuperseded = await expectCancelled(cartLead, cartFirst, 'superseded_by_provider_event');
+
+  results.pending_cancel = {
+    mercado_pago_sin_pagar: `classification ${pendingIntent.current_classification}, first contact ${pendingSent}`,
+    pago_rechazado: notARefusal.message,
+    tarjeta_y_despues_mercado_pago: `${afterPending}, ${refusedSuperseded}`,
+    carrito_y_despues_mercado_pago: `${afterCartPending}, ${cartSuperseded}`,
   };
 }
 

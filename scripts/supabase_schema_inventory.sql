@@ -6918,6 +6918,24 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'close_recovery_case_without_pending_touch'
+    union all
+    select
+        '20261111000200',
+        '20261111000200_pending_cancel_keeps_first_contact_v1.sql',
+        -- Un pago pendiente que se cancela no clasifica la intencion (E-423):
+        -- la rama del correlador portable, que sigue siendo security definer.
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._correlate_portable_hotmart_purchase_intent(uuid)')
+              and prosecdef
+              and position('pending_cancel_keeps_first_contact' in definition) > 0
+              and position('payment_failure_refusal_kind' in definition) > 0
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        1,
+        'pending_cancel_keeps_first_contact'
 )
 select
     version,

@@ -81,7 +81,8 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026102600020
   '20261109000100_meta_template_request_notices_v1.sql',
   // La oferta de la campana en el link del agente (20261110000500, E-410).
   '20261110000500_campaign_offer_checkout_issuance_v1.sql',
-  '20261111000100_close_recovery_case_without_pending_touch_v1.sql'])) {
+  '20261111000100_close_recovery_case_without_pending_touch_v1.sql',
+  '20261111000200_pending_cancel_keeps_first_contact_v1.sql'])) {
   fail(`despues de ${MIGRATION} van solo la de la oferta en el caso nativo, la de la pagina de aprobacion y la del carrito nativo`, names.slice(position + 1));
 }
 

@@ -2069,14 +2069,25 @@ def test_campaign_offer_checkout_issuance_fingerprint() -> None:
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
 
 
-def test_close_recovery_case_without_pending_touch_fingerprint_is_last() -> None:
+def test_pending_cancel_keeps_first_contact_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261111000200 (E-423): la rama del correlador portable.
+    fingerprint = sql.split("'20261111000200'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261111000200_pending_cancel_keeps_first_contact_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",1,'pending_cancel_keeps_first_contact')")
+    assert "_correlate_portable_hotmart_purchase_intent(uuid)" in compact_fingerprint
+
+
+def test_close_recovery_case_without_pending_touch_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261111000100 (E-423): el cierre privado y el envoltorio que lo llama.
-    fingerprint = sql.split("'20261111000100'", 1)[1].split("select\n    version,", 1)[0]
+    fingerprint = sql.split("'20261111000100'", 1)[1].split("'20261111000200'", 1)[0].rsplit("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261111000100_close_recovery_case_without_pending_touch_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",2,'close_recovery_case_without_pending_touch')")
+    assert compact_fingerprint.endswith(",2,'close_recovery_case_without_pending_touch'")
     assert "_close_recovery_case_without_pending_touch_v1(uuid,text,timestamptz)" in compact_fingerprint
     assert "nothas_function_privilege('service_role',oid,'EXECUTE')" in compact_fingerprint
 
