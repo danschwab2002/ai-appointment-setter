@@ -122,6 +122,17 @@ Sin el atributo (un `main` sin PR-A, o sin manifiesto) no hay segmentos. Con los
 3. `FLOW_ENGINE_SEGMENT_LABELS_ENABLED=true` (y, si se quiere la herencia, `SEGMENT_LABEL_INHERITANCE_ENABLED=true`, con `AGENT_SEGMENTS_ENABLED=true`).
 4. El AE propone el flujo (por ejemplo, el carrito de la oferta de Black November con `etiquetar` primero), arranca en cohorte y se prueba con el teléfono de un aprobador: en el log, `flow_engine_native_segment_label when=before_send … outcome=added` antes del envío, y en el primer turno de la respuesta, `segment_context key=black-november` (PR-A) con `agent_replies_before=0`.
 
+## 7b. Las campañas del Automation Expert (E-411, `AGENT_CAMPAIGN_LABEL_PATHS_ENABLED`)
+
+Con `AGENT_CAMPAIGN_LABEL_PATHS_ENABLED` (apagado por defecto; exige `AGENT_CAMPAIGNS_ENABLED`, si no el bridge no arranca), la herencia y el `etiquetar` del flujo leen una **fuente viva**: los segmentos del manifiesto más una etiqueta por cada campaña del AE que sirve el catálogo de la base (`agent-campaigns-v1`), con su vigencia y su macro (`origin = "campana_ae"`). La fuente se lee en cada turno y en cada envío: una campaña publicada, pausada o terminada se ve sin reiniciar. Cada camino sigue detrás de su flag (`SEGMENT_LABEL_INHERITANCE_ENABLED`, `FLOW_ENGINE_SEGMENT_LABELS_ENABLED`).
+
+- **El arranque** no exige `[[agente.segmentos]]` ni un segmento con `macro_etiqueta`, como la palabra clave con `campaigns_live`. Lo demás (motor, cliente de control, inbox, macros reservados) igual.
+- **La herencia**, para una etiqueta de una campaña del AE, solo toma conversaciones con actividad (`last_activity_at`) desde el `desde` de la campaña vigente (D1 de E-411: la misma etiqueta puede volver en otra campaña). Para las del manifiesto, igual que arriba.
+- **Sin ningún segmento sin vencer** (ni del manifiesto ni del AE), la herencia no llama a Chatwoot: `segment_label_inheritance outcome=sin_segmentos`. Para quien no está en ninguna campaña no hay lectura nueva.
+- **El validador y el AE** (`instance.segment_labels`, `segments` y `allowed_labels` de `/flows`) leen la misma fuente: el AE puede escribir `etiquetar: <etiqueta de su campaña>` y se valida contra su vigencia (`segment_label_outside_window`).
+- **Un etiquetador por campaña** para los cuatro caminos (palabra clave, herencia, `etiquetar`, entrada por oferta): el mismo `ProductLabeler` entre recargas.
+- **Sin el flag:** las fuentes fijas del manifiesto; el bridge llama a los armados como antes.
+
 ## 8. Decisiones (con su default)
 
 - **D-E316-1.** La etiqueta de un segmento va antes de la plantilla en la definición (arriba de todo), porque es lo que hace el motor. Un `etiquetar` de segmento después del envío es un error de forma, no se corre solo.

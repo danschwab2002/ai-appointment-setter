@@ -65,6 +65,16 @@ Log: `campaign_entry_matched action_id=… segment=… label=… by=landing|ofer
 
 Para una acción que no es de un recorrido nativo, `null`. No devuelve mail, teléfono, nombre ni payload. La prueba es `tests/sql/followup_engine/validate_flow_engine_native_campaign_origin.mjs` (la cadena entera en PGlite, con el formulario y el carrito capturado por las admisiones portables), que escribe el fixture del bridge `tests/fixtures/flow_engine/native_campaign_origin_rows.json`.
 
+## 4b. Las campañas del Automation Expert (E-411, `AGENT_CAMPAIGN_LABEL_PATHS_ENABLED`)
+
+Con `AGENT_CAMPAIGN_LABEL_PATHS_ENABLED` (apagado; exige `AGENT_CAMPAIGNS_ENABLED`) y `FLOW_ENGINE_CAMPAIGN_ENTRY_ENABLED`, la lista de campañas del despacho se lee en cada envío: primero las `[[campanas]]` del manifiesto y después las campañas del AE servidas que traen `oferta.codigo_oferta` (E-410).
+
+- **Cómo se identifica** una campaña del AE: por su `codigo_oferta` (la oferta del recorrido) y por la landing de esa oferta en el manifiesto (el `landing_id` de la `[[hotmart.ofertas]]` con ese código, que es de una sola oferta). Sin `codigo_oferta`, la campaña no entra por este camino (D4 de E-411).
+- **El manifiesto gana** (D3 de E-411): `match_campaign` no cambia y la lista llega con el manifiesto primero. Al crear la campaña, `campaign_offer_entry_taken` bloquea una oferta (o su landing) que ya es de una `[[campanas]]`; si igual pasa en vivo, la campaña se sigue sirviendo (bloque y palabra clave) sin la entrada por oferta (`agent_campaign_entry_skipped key=… reason=offer_taken`).
+- **El arranque** no exige `[[campanas]]`. **Sin campañas** en la lista, el plan no lee el origen del recorrido: no hay lectura nueva.
+- **No cambia la plantilla:** la etiqueta se pone en el `before_send` del envío nativo. A1, A2 y Z salen con su descuento salvo los frenos de `segment-knowledge-v1`, que deciden por las etiquetas y no frenan el carrito nativo (ver «Una campaña sin cupón que frena igual»).
+- **El carrito de una oferta que la instancia no declara** no llega al motor (`pilot_offer_mismatch`): primero se declara la oferta (`add_instance_offers.py`).
+
 ## Lo que no hace
 
 - No sirve para el carrito legado (no nativo): el plan de etiqueta es del motor nativo.
