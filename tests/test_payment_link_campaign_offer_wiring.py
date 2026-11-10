@@ -239,3 +239,9 @@ def test_the_flag_is_off_by_default_and_needs_the_segments(monkeypatch: pytest.M
     monkeypatch.setenv("AGENT_CAMPAIGN_OFFER_LINK_ENABLED", " TRUE ")
     with pytest.raises(ValueError, match="AGENT_CAMPAIGN_OFFER_LINK_ENABLED requires AGENT_SEGMENTS_ENABLED"):
         Settings.from_env()
+
+
+def test_the_offer_logs_reach_the_container() -> None:
+    from bridge.event_log import LOGGED_INFO_EVENTS
+
+    assert {"segment_link_offer", "segment_link_offer_other_product"} <= LOGGED_INFO_EVENTS
