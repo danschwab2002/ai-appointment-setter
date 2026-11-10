@@ -997,6 +997,85 @@ def test_blocks_remaining_parts_when_the_contact_replies_between_them(
     assert not any(request.method == "POST" for request in requests)
 
 
+@pytest.mark.parametrize(
+    ("attachment_flag", "expected_status"),
+    [(False, "sent"), (True, "blocked")],
+)
+def test_a_photo_without_text_after_the_trigger_blocks_the_reply_only_with_its_own_turn(
+    tmp_path: Path, attachment_flag: bool, expected_status: str
+) -> None:
+    """E-380: sin el flag la foto no tiene turno; si frena el texto, nadie contesta."""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "POST":
+            return httpx.Response(
+                200,
+                json={
+                    "id": 99,
+                    "conversation_id": 2,
+                    "message_type": 1,
+                    "private": False,
+                    "content": "Ya veo.",
+                    "content_attributes": {
+                        "appointment_setter_reply_hash": hashlib.sha256(
+                            b"2:10"
+                        ).hexdigest()
+                    },
+                    "sender": {"type": "agent_bot", "id": 1},
+                },
+            )
+        if request.url.path.endswith("/labels"):
+            return httpx.Response(200, json={"payload": []})
+        return httpx.Response(
+            200,
+            json={
+                "payload": [
+                    {
+                        "id": 10,
+                        "message_type": 0,
+                        "private": False,
+                        "content": "Esto me sale",
+                        "sender": {"type": "contact", "id": 20},
+                    },
+                    {
+                        "id": 11,
+                        "message_type": 0,
+                        "private": False,
+                        "content": None,
+                        "attachments": [{"file_type": "image"}],
+                        "sender": {"type": "contact", "id": 20},
+                    },
+                ]
+            },
+        )
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+        accept_attachment_without_text=attachment_flag,
+        transport=AuthorizedConversationTransport(httpx.MockTransport(handler)),
+    )
+
+    result = asyncio.run(
+        client.send_agent_bot_reply(
+            conversation_id=2,
+            trigger_message_id=10,
+            delivery_id="photo-after-trigger",
+            content="Ya veo.",
+        )
+    )
+
+    assert result["status"] == expected_status
+    assert any(r.method == "POST" for r in requests) is (expected_status == "sent")
+
+
 def test_does_not_send_an_agent_bot_reply_when_automation_is_paused(
     tmp_path: Path,
 ) -> None:

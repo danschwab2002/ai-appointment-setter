@@ -61,12 +61,18 @@ baja (un primer adjunto pasa por el escaneo canonico como un texto), la etiqueta
 Nada cambia: el adjunto deja `chatwoot_inbound_without_text_ignored message=<id>`,
 el monitor no lo toma y la guarda lo rechaza.
 
+Agrupado por el debounce con un texto de la persona (E-380): el lote lo lidera
+el texto y se atiende. El adjunto no llega al agente ni deriva, igual que un
+adjunto solo, y deja `chatwoot_batch_attachment_without_text_skipped
+conversation= messages=`. Si en el lote no hay ningun texto, nada cambia.
+
 ## Log
 
 | Linea | Cuando |
 |---|---|
 | `chatwoot_inbound_attachment_without_text message= kinds= repeated=` | info revisado (`LOGGED_INFO_EVENTS`): cada adjunto sin texto que se procesa con el flag |
 | `chatwoot_attachment_handoff_unavailable message=` | el segundo seguido sin la derivacion configurada |
+| `chatwoot_batch_attachment_without_text_skipped conversation= messages=` | sin el flag: adjunto agrupado con un texto, que se atiende (E-380) |
 
 ## Fuera de alcance
 

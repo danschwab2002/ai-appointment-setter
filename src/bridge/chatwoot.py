@@ -1294,6 +1294,16 @@ class ChatwootClient:
                 continue
             attributes = message.get("content_attributes")
             sender = message.get("sender")
+            # E-380: sin el flag, un adjunto sin texto de la persona no tiene
+            # turno propio. Si frenara esta respuesta, nadie la contestaria.
+            if (
+                not self._accept_attachment_without_text
+                and message_type == 0
+                and isinstance(sender, dict)
+                and sender.get("type") == "contact"
+                and attachment_without_text_kinds(message) is not None
+            ):
+                continue
             prior_index = (
                 attributes.get("appointment_setter_reply_part_index")
                 if isinstance(attributes, dict)

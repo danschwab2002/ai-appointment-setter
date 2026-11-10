@@ -44,6 +44,7 @@ from bridge.inbound_attachments import (
     ATTACHMENT_WITHOUT_TEXT_REPEATED_REASON,
     attachment_without_text_kinds,
     attachment_without_text_note,
+    attachment_without_text_refs,
     describe_attachments_without_text,
     is_repeated_attachment_without_text,
 )
@@ -62,6 +63,7 @@ from bridge.chatwoot import (
     seconds_since_last_team_message,
 )
 from bridge.chatwoot_inbox import (
+    BoundedChatwootWorkError,
     ChatwootStalledConversationMonitor,
     ChatwootWorker,
     DurableChatwootInbox,
@@ -572,8 +574,12 @@ def _requires_medication_guidance_handoff(
     return bool(subject_re.search(normalized) and action_re.search(normalized))
 
 
-class CanonicalHistoryIncompleteError(RetryableChatwootWorkError):
+class CanonicalHistoryIncompleteError(BoundedChatwootWorkError):
     """Raised when Chatwoot has not exposed the triggering message yet."""
+
+
+# E-380: the detail of the handoff of a work that used up its attempts.
+CHATWOOT_WORK_EXHAUSTED_REASON = "chatwoot_work_exhausted"
 
 
 @dataclass(frozen=True)
@@ -7477,6 +7483,21 @@ def create_app(
             for index, message in enumerate(normalized)
         }
         expected_refs = {str(message_id) for message_id in batch_message_ids}
+        # E-380: sin INBOUND_ATTACHMENT_WITHOUT_TEXT_ENABLED una foto sin texto
+        # no tiene lugar en el historial normalizado. Agrupada con un texto, no
+        # puede frenar el turno: se atiende el texto y la foto queda como queda
+        # una foto sola, en Chatwoot y sin pasar por el agente.
+        skipped_attachment_refs = (
+            attachment_without_text_refs(history) & expected_refs
+        )
+        if skipped_attachment_refs:
+            logger.warning(
+                "chatwoot_batch_attachment_without_text_skipped "
+                "conversation=%s messages=%s",
+                conversation_id,
+                ",".join(sorted(skipped_attachment_refs)),
+            )
+            expected_refs -= skipped_attachment_refs
         if not expected_refs.issubset(message_indexes):
             raise CanonicalHistoryIncompleteError(
                 "batched_messages_not_in_canonical_history"
@@ -7819,6 +7840,8 @@ def create_app(
         delivery_id: str,
         payload: dict[str, object],
         batch_message_ids: tuple[int, ...],
+        *,
+        exhausted_handoff_reason: str | None = None,
     ) -> None:
         decision = classify_scoped_chatwoot_event(payload)
         if decision.action == "pause_automation":
@@ -8434,7 +8457,11 @@ def create_app(
             )
             if attachment_handoff_reason is None:
                 context = _shadow_context(payload)
-        synthetic_handoff_reason = audio_handoff_reason or attachment_handoff_reason
+        synthetic_handoff_reason = (
+            exhausted_handoff_reason
+            or audio_handoff_reason
+            or attachment_handoff_reason
+        )
         if context is None and synthetic_handoff_reason is None:
             # Un entrante sin texto (audio con la transcripcion apagada, imagen,
             # sticker) no llega al agente. Antes salia de aca sin dejar rastro:
@@ -8447,11 +8474,16 @@ def create_app(
         if synthetic_handoff_reason is not None:
             # Fallaron todos los modelos: el audio no se entiende y el agente no
             # puede contestar algo que no leyo. Lo toma una persona. Lo mismo
-            # con el segundo adjunto sin texto seguido (E-315).
+            # con el segundo adjunto sin texto seguido (E-315) y con el trabajo
+            # que agoto sus intentos (E-380).
             if not settings.human_handoff_admission_enabled or admission is None:
                 logger.warning(
                     "chatwoot_%s_handoff_unavailable message=%s",
-                    "audio" if audio_handoff_reason is not None else "attachment",
+                    "exhausted"
+                    if exhausted_handoff_reason is not None
+                    else "audio"
+                    if audio_handoff_reason is not None
+                    else "attachment",
                     payload.get("id"),
                 )
                 return
@@ -9437,11 +9469,31 @@ def create_app(
                 return None
             return str(conversation_id)
 
+        async def hand_off_exhausted_work(
+            delivery_id: str,
+            payload: dict[str, object],
+            batch_message_ids: tuple[int, ...],
+        ) -> None:
+            await process_chatwoot_work(
+                delivery_id,
+                payload,
+                batch_message_ids,
+                exhausted_handoff_reason=CHATWOOT_WORK_EXHAUSTED_REASON,
+            )
+
         chatwoot_worker = ChatwootWorker(
             inbox=chatwoot_inbox,
             handler=process_chatwoot_work,
             debounce_key=inbound_debounce_key,
             debounce_seconds=settings.chatwoot_inbound_debounce_seconds,
+            # E-380: sin el flag, la foto sin texto no contesta nada: si llego
+            # despues de un texto, el lote lo lidera el texto.
+            can_lead=(
+                None
+                if settings.inbound_attachment_without_text_enabled
+                else lambda message: attachment_without_text_kinds(message) is None
+            ),
+            on_exhausted=hand_off_exhausted_work,
         )
         app.state.chatwoot_worker = chatwoot_worker
         if settings.chatwoot_stalled_monitor_enabled:
