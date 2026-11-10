@@ -95,7 +95,7 @@ from bridge.purchase_agent_pause import (
 from bridge.product_label import ProductLabeler
 from bridge.product_routes import HotmartUnrouted, ProductRoute, ProductRoutes, followup_product_labels
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
-from bridge.payment_link_coupon import coupon_applied_in_context, mark_payment_link_coupon, mark_segment_link_coupon, segment_coupon_fits_product, segment_coupon_for_labels, segment_link_coupon, segment_link_offer, SegmentOfferLink, validate_payment_link_coupon_code  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
+from bridge.payment_link_coupon import coupon_applied_in_context, mark_payment_link_coupon, mark_segment_link_coupon, segment_cart_discount_brake, segment_coupon_fits_product, segment_coupon_for_labels, segment_link_coupon, segment_link_offer, SegmentOfferLink, validate_payment_link_coupon_code  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
 from bridge.filtering import EventDecision, classify_chatwoot_event
 from bridge.agent_provenance import AgentTurn, CONTEXT_BUILDER_VERSION
 from bridge.hermes import AGENT_TURN_FAILED_REASON_CODE, HermesShadowProcessor, agent_turn_failure_to_hand_off, payment_link_product  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
@@ -6958,10 +6958,12 @@ def create_app(
                 "customer_status_coupon_skipped conversation=%s", conversation_id
             )
             return
-        campaign = segment_link_coupon(
+        campaign = segment_cart_discount_brake(
             segment_catalog, context.get(SEGMENT_CONTEXT_KEY)
         )
         if campaign is not None:
+            # E-410 C8: tambien una campana sin cupon con
+            # [oferta].frenar_descuento_carrito (sin el campo, la de siempre).
             # PR-A2 (E-338, diseno E-310 §2.6): con una campana con cupon
             # vigente no se renueva el cupon del carrito por respuesta ni se le
             # dice al agente que hay uno. Los dos no se suman.

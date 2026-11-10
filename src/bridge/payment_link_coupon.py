@@ -214,10 +214,15 @@ SEGMENT_COUPON_ACTIVE = "segment_coupon_active"
 
 
 class SegmentCoupon(NamedTuple):
-    """El cupon de un segmento del turno: su clave, el codigo y su producto."""
+    """El cupon de un segmento del turno: su clave, el codigo y su producto.
+
+    ``code`` es None solo en el freno del descuento del carrito de una campana
+    sin cupon con ``[oferta].frenar_descuento_carrito`` (E-410 C8): frena lo
+    mismo, y no hay cupon que poner en el link.
+    """
 
     key: str
-    code: str
+    code: str | None
     # ``[oferta].producto``: la clave de ``[[productos]]``, o None («el principal»).
     product: str | None
 
@@ -265,6 +270,30 @@ def segment_link_offer(catalog: object, entries: object) -> SegmentOfferLink | N
     return None
 
 
+def segment_cart_discount_brake(catalog: object, entries: object) -> SegmentCoupon | None:
+    """El segmento del turno que frena el descuento del carrito (E-339), o None.
+
+    El de siempre: el primer segmento con ``[oferta].cupon`` (con su codigo). Y,
+    desde E-410 C8, tambien el primero con ``[oferta].frenar_descuento_carrito =
+    true`` aunque no traiga cupon (``code`` None). Gana el primero por prioridad
+    que traiga cualquiera de los dos. Sin el campo (o en false) es exactamente
+    ``segment_link_coupon``. El cupon del link sigue siendo ``segment_link_coupon``:
+    una campana que solo frena no le pone cupon al link.
+    """
+
+    if catalog is None:
+        return None
+    for segment in catalog.blocks_for(entries):  # type: ignore[attr-defined]
+        offer = segment.knowledge.offer
+        if offer is None:
+            continue
+        if offer.coupon is not None:
+            return SegmentCoupon(segment.key, offer.coupon, offer.product)
+        if getattr(offer, "stop_cart_discount", False):
+            return SegmentCoupon(segment.key, None, offer.product)
+    return None
+
+
 def segment_coupon_for_labels(
     catalog: object, labels: object, *, now: datetime
 ) -> SegmentCoupon | None:
@@ -285,7 +314,7 @@ def segment_coupon_for_labels(
         else []
     )
     selection = catalog.select(labels=present, now=now)  # type: ignore[attr-defined]
-    return segment_link_coupon(catalog, selection.context_entries())
+    return segment_cart_discount_brake(catalog, selection.context_entries())
 
 
 def segment_coupon_fits_product(

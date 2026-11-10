@@ -103,6 +103,7 @@ _OFFER_KEYS = {
     "precio_antes",
     "cupon",
     "codigo_oferta",
+    "frenar_descuento_carrito",
     "incluye",
     "garantia",
     "medios",
@@ -287,6 +288,8 @@ def _offer_rules(offer: Mapping[str, Any]) -> None:
     coupon = _optional_text(offer, "cupon", "oferta.cupon")
     if coupon is not None and _COUPON_FORM.fullmatch(coupon) is None:
         raise SegmentCheckError("oferta.cupon debe ser un codigo (letras, numeros, guiones; 2 a 64)")
+    if type(offer.get("frenar_descuento_carrito", False)) is not bool:
+        raise SegmentCheckError("oferta.frenar_descuento_carrito debe ser true o false")
     offer_code = _optional_text(offer, "codigo_oferta", "oferta.codigo_oferta")
     if offer_code is not None and _OFFER_CODE_FORM.fullmatch(offer_code) is None:
         raise SegmentCheckError(
@@ -907,7 +910,7 @@ def extracted_hints(sources: Sequence[Source]) -> str:
 
 JUDGE_INSTRUCTIONS = """Sos el revisor del alta de un segmento de conocimiento de un agente comercial de WhatsApp.
 
-Un segmento es un bloque extra (una campana, por ejemplo) que el agente recibe, ademas del conocimiento base y del SOUL, cuando la conversacion tiene una etiqueta y el segmento esta vigente. Donde el segmento dice algo distinto del conocimiento base, manda el segmento, pero solo si el cambio es a proposito: un campo de [oferta] de los que se reemplazan (__REEMPLAZABLES__) que cambia frente al base tiene que estar en [oferta].reemplaza. Los otros campos de [oferta] (cupon, precio_antes, producto) no se pueden nombrar en reemplaza y no hace falta: son de la campana. oferta.cupon es el cupon de la campana: que exista, o que sea distinto de un cupon del base, no es un item. oferta.codigo_oferta es la oferta de Hotmart de la campana: que exista, o que sea distinta de la del base, no es un item; el link de esa campana lo arma el sistema con esa oferta. Si es un item que un texto del segmento ofrezca otro cupon, nombre como el de la campana uno distinto del de oferta.cupon, o diga que se suma con otro cuando el base o el segmento dicen que no se suman. El SOUL no lo puede pisar ningun segmento.
+Un segmento es un bloque extra (una campana, por ejemplo) que el agente recibe, ademas del conocimiento base y del SOUL, cuando la conversacion tiene una etiqueta y el segmento esta vigente. Donde el segmento dice algo distinto del conocimiento base, manda el segmento, pero solo si el cambio es a proposito: un campo de [oferta] de los que se reemplazan (__REEMPLAZABLES__) que cambia frente al base tiene que estar en [oferta].reemplaza. Los otros campos de [oferta] (cupon, precio_antes, producto) no se pueden nombrar en reemplaza y no hace falta: son de la campana. oferta.cupon es el cupon de la campana: que exista, o que sea distinto de un cupon del base, no es un item. oferta.codigo_oferta es la oferta de Hotmart de la campana: que exista, o que sea distinta de la del base, no es un item; el link de esa campana lo arma el sistema con esa oferta. oferta.frenar_descuento_carrito = true es una regla del sistema (no manda el descuento del carrito mientras la campana esta vigente): no es un item. Si es un item que un texto del segmento ofrezca otro cupon, nombre como el de la campana uno distinto del de oferta.cupon, o diga que se suma con otro cuando el base o el segmento dicen que no se suman. El SOUL no lo puede pisar ningun segmento.
 
 Tu trabajo es encontrar todo lo que pueda hacer que el agente diga algo falso, contradictorio o no confirmado a una persona de este segmento, antes de que entre en produccion. Nada entra con algo abierto, asi que lo que no tengas claro no lo das por bueno: lo preguntas.
 

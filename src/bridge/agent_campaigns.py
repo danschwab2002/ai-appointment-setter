@@ -94,8 +94,8 @@ _KEY_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789-")
 _REQUIRED = {"clave", "nombre", "etiqueta", "macro_etiqueta", "desde", "hasta", "asesoramiento"}
 _OPTIONAL = {"palabras_clave", "pregunta_entrada", "instruccion", "oferta", "se_puede_decir", "no_confirmado",
              "promesas_prohibidas", "faq", "preguntas_del_alta"}
-_OFFER_KEYS = {"producto", "precio", "moneda", "precio_antes", "cupon", "codigo_oferta", "incluye", "garantia",
-               "medios", "reemplaza"}
+_OFFER_KEYS = {"producto", "precio", "moneda", "precio_antes", "cupon", "codigo_oferta", "frenar_descuento_carrito",
+               "incluye", "garantia", "medios", "reemplaza"}
 _LIST_SECTIONS = ("se_puede_decir", "no_confirmado", "promesas_prohibidas")
 _QA_SECTIONS = ("faq", "preguntas_del_alta")
 # Las etiquetas que no pueden abrir una campana: las mismas que un segmento del manifiesto.
@@ -161,6 +161,12 @@ def _offer(raw: Any) -> dict[str, Any]:
     for key, value in raw.items():
         if key in ("incluye", "medios", "reemplaza"):
             out[key] = _texts(raw, key, f"oferta.{key}")
+        elif key == "frenar_descuento_carrito":
+            # E-410 C8: un si/no. Solo se guarda en true: false es lo de hoy.
+            if type(value) is not bool:
+                raise _refused("oferta.frenar_descuento_carrito", "not_a_boolean")
+            if value:
+                out[key] = True
         else:
             if not isinstance(value, str):
                 raise _refused(f"oferta.{key}", "not_a_text")

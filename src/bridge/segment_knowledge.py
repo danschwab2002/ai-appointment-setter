@@ -115,6 +115,7 @@ _OFFER_KEYS = {
     "precio_antes",
     "cupon",
     "codigo_oferta",
+    "frenar_descuento_carrito",
     "incluye",
     "garantia",
     "medios",
@@ -150,6 +151,10 @@ class SegmentOffer:
     # La oferta de Hotmart de la campana (E-410). No se nombra en ``reemplaza``:
     # no es un dato que el agente diga, es la oferta del link.
     offer_code: str | None = None
+    # E-410 C8: la campana frena el descuento del carrito (los frenos de E-339)
+    # aunque no traiga cupon. Por defecto False: sin el campo, como hoy. No va al
+    # render: es una regla del producto, no algo que el agente diga.
+    stop_cart_discount: bool = False
 
 
 @dataclass(frozen=True)
@@ -716,6 +721,9 @@ def _offer(
         raise SegmentError(
             "oferta.codigo_oferta debe ser un codigo de oferta de Hotmart (letras y numeros, 4 a 32)"
         )
+    stop_cart_discount = raw.get("frenar_descuento_carrito", False)
+    if type(stop_cart_discount) is not bool:
+        raise SegmentError("oferta.frenar_descuento_carrito debe ser true o false")
     includes = _list(raw, "incluye", "oferta.incluye")
     methods = _list(raw, "medios", "oferta.medios")
     replaces = _list(raw, "reemplaza", "oferta.reemplaza")
@@ -748,6 +756,7 @@ def _offer(
         methods=methods,
         replaces=replaces,
         offer_code=offer_code,
+        stop_cart_discount=stop_cart_discount,
     )
 
 
