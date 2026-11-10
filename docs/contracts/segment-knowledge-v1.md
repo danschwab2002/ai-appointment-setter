@@ -24,7 +24,7 @@ Cerrado, como el base: no se acepta ninguna clave fuera de esta tabla.
 | `[cabecera]` | `segment_version` (entero ≥ 1), `estado` (`borrador` o `aprobado`), `ally_ref`, `clave` (slug), `nombre` (titula el bloque) | `aprobado_por`, `aprobado_el` (fecha; los dos obligatorios si está `aprobado`), `chequeo_sha` (sha256 en hexadecimal del reporte del chequeo del alta) |
 | `[vigencia]` | `desde`, `hasta`: fecha y hora **con zona** (`2026-11-20T00:00:00-06:00`), `desde < hasta` | |
 | `[instruccion]` (opcional) | | `texto` (hasta 600 caracteres): cómo usar el bloque en esta campaña |
-| `[oferta]` (opcional, no vacía) | | `producto` (clave de un producto del conocimiento base, solo si el base tiene `[[productos]]`), `precio` y `moneda` (juntos), `precio_antes` (con `precio`), `cupon` (código), `incluye` (lista), `garantia`, `medios` (lista), `reemplaza` (lista de `precio`, `moneda`, `garantia`, `incluye`, `medios`, cada uno presente en la oferta) |
+| `[oferta]` (opcional, no vacía) | | `producto` (clave de un producto del conocimiento base, solo si el base tiene `[[productos]]`), `precio` y `moneda` (juntos), `precio_antes` (con `precio`), `cupon` (código), `codigo_oferta` (la oferta de Hotmart de la campaña, `[A-Za-z0-9]{4,32}`, declarada en el manifiesto para el producto del segmento; E-410), `frenar_descuento_carrito` (`true` o `false`, por defecto `false`; E-410), `incluye` (lista), `garantia`, `medios` (lista), `reemplaza` (lista de `precio`, `moneda`, `garantia`, `incluye`, `medios`, cada uno presente en la oferta) |
 | `[asesoramiento]` | `items` (no vacía): qué recomendar y a quién | |
 | `[se_puede_decir]`, `[no_confirmado]`, `[promesas_prohibidas]` (opcionales) | `items` (no vacía) | |
 | `[[faq]]` | `pregunta`, `respuesta`, `fuente` | |
@@ -47,7 +47,7 @@ Cerrado, como el base: no se acepta ninguna clave fuera de esta tabla.
 Determinista: el mismo archivo y la misma zona de la aliada (`instancia.zona_horaria`) dan el mismo texto y el mismo `sha256`. Orden fijo:
 
 1. `# Segmento: <nombre> (vigente hasta el <dd/mm HH:MM>, hora de la aliada)`. `hasta` es exclusivo, así que se muestra un segundo antes: `hasta = 2026-12-01T00:00:00-06:00` se lee «hasta el 30/11 23:59».
-2. El preámbulo fijo del producto: «Esta persona está en esta campaña. Lo de este bloque vale para ella y, donde dice algo distinto del conocimiento general, manda este bloque. No cambia cómo respondes, el link de pago ni cuándo derivar.»
+2. El preámbulo fijo del producto: «Esta persona está en esta campaña. Lo de este bloque vale para ella y, donde dice algo distinto del conocimiento general, manda este bloque. No cambia cómo respondes, el link de pago ni cuándo derivar.» Con `[oferta].codigo_oferta` (E-410) va una variante: «… No cambia cómo respondes ni cuándo derivar. El link de pago lo arma el sistema con la oferta de esta campaña.», y la oferta suma la línea «El enlace de pago de esta campaña es el de su oferta: pedilo como siempre.» (el código no se le dice al agente). Sin el campo, el render y su `sha256` son los de siempre, byte a byte. `frenar_descuento_carrito` no cambia el render.
 3. `## Cómo usar este bloque` (si hay `[instruccion]`), `## Oferta de la campaña` (si hay `[oferta]`), `## Asesoramiento`, `## Lo que sí se puede decir`, `## No confirmado`, `## Promesas prohibidas` y `## Preguntas frecuentes de la campaña`, cada uno si tiene algo.
 
 ## En cada turno (`AGENT_SEGMENTS_ENABLED`, apagado por defecto)
@@ -88,6 +88,21 @@ Un segmento que **va en el turno** (etiqueta, vigente, dentro de los topes) y tr
 
 El cupón se declara en `[oferta].cupon` y no va en `reemplaza` (el base no tiene un campo de cupón; ver `segment-check-v1`).
 
+**Una campaña sin cupón que frena igual (E-410, decisión de Dan del 2026-11-10).** `[oferta].frenar_descuento_carrito = true` hace que un segmento vigente **sin** `cupon` active los mismos frenos de arriba (A1 sin el 10 %, A2 y Z que no salen con el cierre del caso, el seguimiento con cupón fijo, el botón «Quiero mi 10 %» y la renovación por respuesta). Por defecto es `false`: sin el campo, o en `false`, una campaña sin cupón no frena nada, como antes. Gana el primer segmento del turno por prioridad que traiga `cupon` o el campo en `true`. El link del agente no lleva cupón por esto (`segment_link_coupon` sigue mirando solo `cupon`). Decide por las etiquetas, igual que E-339: tampoco frena el carrito nativo, y un carrito que recibe la etiqueta en el `before_send` de su propio A1 nativo (la entrada por oferta, `campaign-entry-v1`) sale con ese A1 tal cual.
+
+## La oferta de la campaña en el link (E-410)
+
+Con `AGENT_CAMPAIGN_OFFER_LINK_ENABLED` (apagado por defecto; exige `AGENT_SEGMENTS_ENABLED` y un manifiesto), un segmento que **va en el turno** y trae `[oferta].codigo_oferta` cambia la reserva del link del agente (`send_payment_link`):
+
+- **La reserva** es `reserve_portable_checkout_issuance_for_offer_v1` (migración `20261110000500`) con el `funnel_ref` del producto del link (con un solo producto, el del principal), la oferta y la clave del segmento (`campaign_ref`). Sale con la oferta de la campaña, el mismo `sck` (`hermes~v1~<ULID>`, con el `sck` del formulario adelante si lo hay) y la misma fila en `checkout_link_issuances`, con `offer_resolution = 'campaign'`. Ver `johanna-payment-link-v2`.
+- **De qué producto es:** la regla del cupón (D10 de E-338). Un link de otro producto sale como siempre.
+- **Prioridad:** con dos segmentos con oferta en el turno, la del primero (D9 de E-408).
+- **Contra la intención de la persona:** gana la campaña. La intención de su formulario sigue aportando el `sck` y el `fbclid`, y su oferta queda en `lead_offer_code` (D3 de E-408).
+- **Sin la oferta:** si la oferta no está activa en el catálogo del funnel, la base contesta `blocked_campaign_offer` sin escribir nada y el turno se deriva (`payment_link_campaign_offer_unavailable`). Nunca la oferta por defecto (D2).
+- **El cupón** no cambia: con `cupon` y `codigo_oferta` a la vez, el cupón va sobre la oferta de la campaña (que Hotmart lo acepte en esa oferta es configuración de Hotmart).
+- **Lo que no cubre (D7):** A1, A2 y Z del carrito, el seguimiento con cupón, el botón del 10 % y la nota de derivación siguen con la oferta de siempre.
+- **Sin el flag, o sin el campo:** la reserva y su pedido son los de siempre, byte a byte.
+
 ## La etiqueta antes del primer turno
 
 **La etiqueta tiene que estar puesta antes del primer turno del agente en la conversación** (Dan, 2026-11-03): un inicio de conversación sin el segmento deja en el historial respuestas que el agente dio sin él, y eso ensucia lo que lee en los turnos siguientes aunque después se sume la etiqueta.
@@ -110,6 +125,8 @@ Con el flag, `agent_segments` lista cada segmento declarado como `clave:vN:sha25
 - `segment_link_coupon key=… conversation=…`: el link del agente salió con el cupón de ese segmento (nunca el código).
 - `segment_link_coupon_other_product key=… product=… conversation=…`: el turno tenía un segmento con cupón y el link era de otro producto; salió sin ese cupón.
 - `segment_recovery_coupon_skipped key=… conversation=…`: con ese segmento no se ofreció el cupón del carrito.
+- `segment_link_offer key=… conversation=…`: el link del agente se reservó con la oferta de ese segmento (E-410; nunca el código).
+- `segment_link_offer_other_product key=… product=… conversation=…`: el turno tenía un segmento con oferta y el link era de otro producto; salió como siempre.
 
 - `segment_first_touch_without_coupon key=… action_id=…`: A1 salió sin cupón por ese segmento (E-339).
 - `segment_contact_labels_truncated contact=… read=… outcome=frenado|sin_evidencia`: la lista de conversaciones del contacto vino cortada y se decidió con las leídas (E-339).
@@ -128,7 +145,7 @@ Con `AGENT_CAMPAIGNS_ENABLED`, una campaña que el Automation Expert armó y un 
 ## Lo que no hace (todavía)
 
 - **El chequeo del alta** (`setter segmento chequear`: contradicciones y huecos, `chequeo_sha` obligatorio para cargar): PR-B.
-- **El link por oferta del segmento** (una campaña con otro código de oferta y no un cupón): en la v1 el segmento lo dice en `[instruccion]` y el agente deriva para el link (D8).
+- **El link por oferta del segmento** (D8): una campaña con una oferta propia de Hotmart la declara en `[oferta].codigo_oferta`. Con `AGENT_CAMPAIGN_OFFER_LINK_ENABLED`, el link del agente se emite con esa oferta, con el mismo `sck` y la misma fila; si no se puede, se deriva (arriba). Sin el flag, como antes: se deriva por `[instruccion]`.
 - **Poner la etiqueta desde el motor** (`etiquetar` con las etiquetas de los segmentos, `macro_etiqueta`, la regla `segment_label_outside_window`) y la lectura del AE (`/segments`, `allowed_labels`): PR-C. Hoy la pone el equipo con un macro de Chatwoot.
 - `cliente` no es un segmento: sigue por `customer_status`, con sus frenos (D13).
 

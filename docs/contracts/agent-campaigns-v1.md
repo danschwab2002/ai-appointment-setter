@@ -55,6 +55,14 @@ Las tablas (`agent_campaigns`, `agent_campaign_events`) no tienen permisos para 
 
 Bajo `/internal/automation-expert/v1`, con `AUTOMATION_EXPERT_CHANGE_TOKEN`: `POST /campaigns/preview`, `POST /campaigns`, `POST /campaigns/{id}/validate`, `GET /campaigns?estado=abiertas|todas&limit=`, `GET /campaigns/{id}`. Validar exige `SETTER_VERSION` y `GIT_SHA` en la imagen.
 
+## La oferta propia de la campaña (E-410)
+
+- **`oferta.codigo_oferta`**: la oferta de Hotmart de la campaña, si tiene una propia (el `off=` del link de pago de su página). Con `AGENT_CAMPAIGN_OFFER_LINK_ENABLED`, el link del agente en la campaña sale con esa oferta (`segment-knowledge-v1`, «La oferta de la campaña en el link»).
+- **Bloqueo `campaign_offer_unknown`** (campo `oferta.codigo_oferta`): el código no es una oferta declarada del producto de la campaña en el manifiesto (`[[hotmart.ofertas]]` del principal, o las de `[[productos]]` si hay `oferta.producto`). La oferta se declara en `instancia.toml` y se siembra en el catálogo de la base con `scripts/add_instance_offers.py` **antes** de armar la campaña.
+- **Aviso `campaign_offer_not_verified`**: el bridge no ve si la oferta está activa en Hotmart ni en el catálogo de la base; eso lo dice la reserva al emitir.
+- **`oferta.frenar_descuento_carrito`** (`true`; `false` no se guarda): la campaña frena el descuento del carrito aunque no traiga cupón (E-410 C8, `segment-knowledge-v1`).
+- **Una campaña publicada no se edita**: para sumarle la oferta, se pausa y se arma la versión siguiente con el campo, que pasa otra vez por el juez y la aprobación. `CHECK_RULES_VERSION` no cambió con E-410 (D4): el `chequeo_sha` de una campaña sin el campo es el mismo y sigue sirviéndose.
+
 ## Lo que el arranque exige
 
 `AGENT_CAMPAIGNS_ENABLED=true` pide `AGENT_SEGMENTS_ENABLED`, `CAMPAIGN_INBOUND_ENTRY_ENABLED`, `AUTOMATION_EXPERT_CHANGE_ENABLED` y `FLOW_APPROVAL_ENABLED`. Con eso, `CAMPAIGN_INBOUND_ENTRY_ENABLED` puede arrancar con cero segmentos declarados.
