@@ -31,7 +31,9 @@ def _code(sql: str) -> str:
 
 def test_is_the_last_migration_and_one_transaction() -> None:
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
-    assert names[-1] == MIGRATION.name
+    # El caso se cierra cuando su ultimo toque termina sin salir (20261111000100, E-423): una funcion privada y el envoltorio.
+    assert names[-1] == "20261111000100_close_recovery_case_without_pending_touch_v1.sql"
+    assert names[-2] == MIGRATION.name
     sql = _sql()
     assert sql.lstrip().startswith("-- Migration:")
     assert "\nbegin;\n" in sql and sql.rstrip().endswith("commit;")

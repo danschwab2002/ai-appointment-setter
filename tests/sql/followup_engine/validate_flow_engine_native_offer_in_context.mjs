@@ -108,7 +108,8 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026102800010
   // El sondeo de Meta y el aviso en el hilo (20261109000100, E-361).
   '20261109000100_meta_template_request_notices_v1.sql',
   // La oferta de la campana en el link del agente (20261110000500, E-410).
-  '20261110000500_campaign_offer_checkout_issuance_v1.sql'])) {
+  '20261110000500_campaign_offer_checkout_issuance_v1.sql',
+  '20261111000100_close_recovery_case_without_pending_touch_v1.sql'])) {
   fail(`despues de ${MIGRATION} van solo la de la pagina de aprobacion y la del carrito nativo`, names.slice(position + 1));
 }
 if (captured.payload.event !== 'PURCHASE_APPROVED' || captured.payload.data.purchase.offer.code !== 'gopi6lh7'

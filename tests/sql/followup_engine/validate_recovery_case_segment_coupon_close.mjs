@@ -42,8 +42,21 @@ const CAPTURED_PURCHASE = fixture('hotmart_purchase_approved_att1_bienvenida_202
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
+// 20261111000100 (E-423) redefine el envoltorio publico, que llama a la privada,
+// y no toca ni la privada ni este cierre: lo prueba
+// validate_recovery_case_no_touch_left_close.mjs (seccion 6). Por eso el rojo de
+// aca cierra la accion con la privada, como lo hace este cierre.
+const REVIEWED = new Set(['20261111000100_close_recovery_case_without_pending_touch_v1.sql']);
 for (const name of names.slice(position + 1)) {
   const text = readFileSync(join(root, 'supabase/migrations', name), 'utf8');
+  if (REVIEWED.has(name)) {
+    const code = text.replace(/--[^\n]*/g, '');
+    if (code.includes('close_recovery_case_segment_coupon')
+        || /function\s+public\._finalize_followup_delivery_attempt\s*\(/i.test(code)) {
+      fail(`${name} toca el cierre o la finalizacion privada: revisar esta prueba`);
+    }
+    continue;
+  }
   if (text.includes('close_recovery_case_segment_coupon') || text.includes('_finalize_followup_delivery_attempt')) {
     fail(`${name} toca el cierre o la finalizacion: revisar esta prueba`);
   }
@@ -165,7 +178,7 @@ const inFlight = async () => one(await sql(
 {
   const lead = await atA2('rojo');
   const reserved = await reserve(lead, (await stepOf(lead, 'cart_second_touch')).id);
-  await db.query('select * from public.finalize_followup_delivery_attempt($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+  await db.query('select * from public._finalize_followup_delivery_attempt($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
     [reserved.actionId, reserved.attempt.id, reserved.worker, reserved.lease, 'failed_before_request', null, null,
       REASON, null, null, await dbNow()]);
   if ((await caseOf(lead)).status !== 'active' || (await sequenceOf(lead)).status !== 'active') {
@@ -324,7 +337,7 @@ const purchase = async (lead, { sameOffer = false } = {}) => {
   };
   const stuck = await start('motor-sin-cierre');
   const reservedStuck = await reserve(stuck, (await stepOf(stuck, 'cart_second_touch')).id);
-  await db.query('select * from public.finalize_followup_delivery_attempt($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+  await db.query('select * from public._finalize_followup_delivery_attempt($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
     [reservedStuck.actionId, reservedStuck.attempt.id, reservedStuck.worker, reservedStuck.lease,
       'failed_before_request', null, null, REASON, null, null, await dbNow()]);
   await cartFor(stuck);

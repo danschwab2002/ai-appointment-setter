@@ -18,6 +18,14 @@ Lo que ya está en `main` y todavía no tiene versión. El número se elige al p
 - **Los otros tres caminos de la etiqueta leen las campañas del AE (E-411, decisión de Dan del 2026-11-10), apagado.** Con `AGENT_CAMPAIGN_LABEL_PATHS_ENABLED` (exige `AGENT_CAMPAIGNS_ENABLED`; cada camino sigue detrás de su flag), la herencia de la etiqueta, el `etiquetar` del flujo y la entrada por landing u oferta leen el catálogo vivo: arrancan sin `[[agente.segmentos]]` ni `[[campanas]]`, y una campaña con `codigo_oferta` etiqueta el carrito de esa oferta. La herencia de una campaña del AE corta por su `desde`, y sin segmentos vigentes no lee Chatwoot. Bloqueo nuevo `campaign_offer_entry_taken`. **Sin migración.** Sin el flag, las fuentes fijas de hoy.
 - **Una campaña sin cupón puede frenar el descuento del carrito (E-410 C8, decisión de Dan del 2026-11-10).** `[oferta].frenar_descuento_carrito`, por defecto `false`. En `true` activa los mismos frenos de E-339 que una campaña con cupón; sin el campo o en `false`, nada cambia.
 
+### Cambiado
+
+- **Un caso cuyo último toque no sale se cierra (E-423, decisión de Dan del 2026-11-10).** Migración `20261111000100`: cuando un toque termina `permanent_failed` o `expired` y al caso no le queda ningún toque por salir, `finalize_followup_delivery_attempt` completa la secuencia y cierra el caso en `unreachable` (nunca salió un toque) o `sequence_exhausted` (ya había salido alguno). Antes quedaba abierto para siempre y frenaba el carrito, el pago rechazado, el formulario y el motor de la misma persona (medido el 10/11: 18 casos así en ATT1 y 10 en Maribel). No toca los casos en que la persona contestó o la tomó alguien del equipo, ni el cierre por el cupón de una campaña. El bridge no cambia.
+
+### Qué hace quien actualiza
+
+- **Correr la migración `20261111000100`.** Los casos que ya están trabados no se cierran solos: van con el kit del destrabe del programa, después de la migración.
+
 ## [1.35.0] - 2026-11-10
 
 Una menor sobre la 1.34.0, con 4 PR (#444, #445, #446 y #447) y sin migraciones. Para quien le escribe al setter no cambia nada al subir, salvo lo que diga cada entrada: el juez de las campañas (E-364a) actúa solo con `AGENT_CAMPAIGNS_ENABLED`, y una plantilla con imagen (E-370) no hace nada hasta declarar la imagen en `[plantillas.imagenes]`, que va **después** de desplegar esta versión (un bridge anterior no arranca con la tabla). **El Automation Expert cambia** (E-367: habla como le hablaría a un dueño y dibuja un flujo por vez): llega a una conversación nueva con el AE, y una charla abierta sigue con lo de antes. Entran además E-380 (#447): su entrada dice qué cambia al subir. **Al subir cambia un profile:** instalar la distribucion en automation-expert (SOUL.md, plugins/, skills/). El conector de Slack no cambia de código.

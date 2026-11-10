@@ -150,6 +150,7 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
         "20261109000100_meta_template_request_notices_v1.sql",
         # La oferta de la campana en el link del agente (20261110000500, E-410).
         "20261110000500_campaign_offer_checkout_issuance_v1.sql",
+        "20261111000100_close_recovery_case_without_pending_touch_v1.sql",
     ]
     native = (MIGRATIONS / "20261024000200_flow_engine_native_v1.sql").read_text(encoding="utf-8")
     assert "read_automation_expert_flows_v1" not in native

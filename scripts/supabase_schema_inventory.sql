@@ -6891,6 +6891,33 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'campaign_offer_checkout_issuance'
+    union all
+    select
+        '20261111000100',
+        '20261111000100_close_recovery_case_without_pending_touch_v1.sql',
+        -- El caso se cierra cuando su ultimo toque termina sin salir (E-423):
+        -- el cierre, privado, sin ejecucion para ningun rol de la API ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._close_recovery_case_without_pending_touch_v1(uuid,text,timestamptz)')
+              and not prosecdef
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- ... y el envoltorio publico que lo llama, todavia de service_role.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.finalize_followup_delivery_attempt(uuid,uuid,text,bigint,text,text,uuid,text,timestamptz,timestamptz,timestamptz)')
+              and prosecdef
+              and position('_close_recovery_case_without_pending_touch_v1' in definition) > 0
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+        )::int,
+        2,
+        'close_recovery_case_without_pending_touch'
 )
 select
     version,

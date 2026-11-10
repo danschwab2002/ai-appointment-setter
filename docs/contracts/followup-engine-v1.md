@@ -104,9 +104,19 @@ CommercialCase
 ### Estados mínimos
 
 ```text
-grace_period -> active | won | cancelled | expired | escalated
+grace_period -> active | won | cancelled | expired | escalated | unreachable
 active -> won | lost | cancelled | expired | escalated | sequence_exhausted
 ```
+
+Propuesto en 20261111000100 (E-423, decision de Dan del 2026-11-10): cuando el
+ultimo toque de un caso termina sin salir (`permanent_failed` o `expired`) y no
+le queda ninguna accion viva, `finalize_followup_delivery_attempt` completa la
+secuencia (`delivery_failed_no_touch_left`) y cierra el caso: `unreachable` si
+nunca salio un toque, `sequence_exhausted` si ya habia salido alguno. No se
+cierra si la persona contesto o la tomo alguien del equipo (un toque `cancelled`
+por `prospect_replied` o `human_takeover_active`, o la conversacion del caso con
+`human_takeover` o un entrante posterior al caso). El caso queda marcado en
+`context.closed_without_pending_touch`.
 
 ### Invariantes
 

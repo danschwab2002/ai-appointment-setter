@@ -176,7 +176,7 @@ def test_the_migration_only_opens_the_append_and_is_one_transaction() -> None:
     assert re.sub(r"\s+", " ", without_append) == re.sub(r"\s+", " ", body)
     names = sorted(path.name for path in MIGRATION.parent.glob("*.sql"))
     # Despues va la compra con nuestro link (20261028000400, E-169).
-    assert names[-28] == MIGRATION.name
+    assert names[-29] == MIGRATION.name
     # El doble caso del carrito (20261030000100, E-204): la admision nativa y el planificador del carrito.
     # El pago rechazado nativo (20261030000200, E-207): el disparador pago_fallido del motor nativo.
     # La lista de las propuestas del AE (20261030000300, E-208): una lectura nueva.
@@ -194,42 +194,44 @@ def test_the_migration_only_opens_the_append_and_is_one_transaction() -> None:
     # El aviso de derivaciones sin atender (20261103001000, E-309).
     # La etiqueta de un segmento en un flujo nativo (20261103001300, E-316): un reemplazo contado en la forma nativa.
     # El rechazo de la cuenta espera a que la cuenta vuelva (20261107000100, E-348): dos tablas y ocho RPC de service_role.
-    assert names[-6] == "20261107000100_meta_account_hold_retry_v1.sql"
+    assert names[-7] == "20261107000100_meta_account_hold_retry_v1.sql"
     # El almacen dice quien ejecuta cada flujo (20261108000100, E-353): una clave mas en read_flow_store_v1.
     # Las campanas del Automation Expert como dato (20261108005000, E-355): dos tablas y doce RPC.
     # El sondeo de Meta y el aviso en el hilo (20261109000100, E-361): dos columnas, una tabla y cuatro RPC.
     # La oferta de la campana en el link del agente (20261110000500, E-410): una reserva, una columna y el trigger.
-    assert names[-1] == "20261110000500_campaign_offer_checkout_issuance_v1.sql"
-    assert names[-2] == "20261109000100_meta_template_request_notices_v1.sql"
-    assert names[-3] == "20261108005000_agent_campaigns_v1.sql"
+    # El caso se cierra cuando su ultimo toque termina sin salir (20261111000100, E-423): una funcion privada y el envoltorio.
+    assert names[-1] == "20261111000100_close_recovery_case_without_pending_touch_v1.sql"
+    assert names[-2] == "20261110000500_campaign_offer_checkout_issuance_v1.sql"
+    assert names[-3] == "20261109000100_meta_template_request_notices_v1.sql"
+    assert names[-4] == "20261108005000_agent_campaigns_v1.sql"
     # La base no publica una version nativa que el motor no ejecuta (20261108004100, E-357).
-    assert names[-4] == "20261108004100_flow_change_publish_native_version_guard_v1.sql"
-    assert names[-5] == "20261108000100_flow_store_route_executor_v1.sql"
+    assert names[-5] == "20261108004100_flow_change_publish_native_version_guard_v1.sql"
+    assert names[-6] == "20261108000100_flow_store_route_executor_v1.sql"
     # El cierre del caso por el cupon de una campana (20261106000100, E-339): una RPC de service_role.
-    assert names[-7] == "20261106000100_recovery_case_segment_coupon_close_v1.sql"
+    assert names[-8] == "20261106000100_recovery_case_segment_coupon_close_v1.sql"
     # El origen de un recorrido nativo para la campana por landing (20261103001700, E-321): una lectura de service_role.
-    assert names[-8] == "20261103001700_flow_engine_native_campaign_origin_v1.sql"
+    assert names[-9] == "20261103001700_flow_engine_native_campaign_origin_v1.sql"
     # La entrada a una campana: lo que contesto cada conversacion a la pregunta (20261103001500, E-317).
-    assert names[-9] == "20261103001500_segment_entry_answers_v1.sql"
-    assert names[-10] == "20261103001300_flow_engine_native_segment_label_v1.sql"
-    assert names[-11] == "20261103001000_handoff_wait_alerts_v1.sql"
-    assert names[-12] == "20261103000900_flow_engine_native_payment_failure_branches_v1.sql"
-    assert names[-13] == "20261103000700_customer_status_v1.sql"
-    assert names[-14] == "20261103000600_flow_approval_history_v1.sql"
-    assert names[-15] == "20261103000500_meta_delivery_rejections_v1.sql"
-    assert names[-16] == "20261102000400_identity_recycle_v1.sql"
-    assert names[-17] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
-    assert names[-18] == "20261102000200_meta_template_requests_v1.sql"
-    assert names[-19] == "20261102000100_recovery_coupon_by_reply_v1.sql"
-    assert names[-20] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
-    assert names[-21] == "20261101000200_flow_engine_native_silence_v1.sql"
+    assert names[-10] == "20261103001500_segment_entry_answers_v1.sql"
+    assert names[-11] == "20261103001300_flow_engine_native_segment_label_v1.sql"
+    assert names[-12] == "20261103001000_handoff_wait_alerts_v1.sql"
+    assert names[-13] == "20261103000900_flow_engine_native_payment_failure_branches_v1.sql"
+    assert names[-14] == "20261103000700_customer_status_v1.sql"
+    assert names[-15] == "20261103000600_flow_approval_history_v1.sql"
+    assert names[-16] == "20261103000500_meta_delivery_rejections_v1.sql"
+    assert names[-17] == "20261102000400_identity_recycle_v1.sql"
+    assert names[-18] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
+    assert names[-19] == "20261102000200_meta_template_requests_v1.sql"
+    assert names[-20] == "20261102000100_recovery_coupon_by_reply_v1.sql"
+    assert names[-21] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
+    assert names[-22] == "20261101000200_flow_engine_native_silence_v1.sql"
     # Antes, el primer contacto nativo (20261101000100, E-247): el disparador intencion.
-    assert names[-22] == "20261101000100_flow_engine_native_intent_v1.sql"
-    assert names[-23] == "20261030000400_portable_purchase_stops_see_our_link_v1.sql"
-    assert names[-24] == "20261030000300_flow_change_list_v1.sql"
-    assert names[-25] == "20261030000200_flow_engine_native_payment_failure_v1.sql"
-    assert names[-26] == "20261030000100_flow_engine_native_legacy_double_case_v1.sql"
-    assert names[-27] == "20261028000400_purchase_by_our_link_counts_v1.sql"
+    assert names[-23] == "20261101000100_flow_engine_native_intent_v1.sql"
+    assert names[-24] == "20261030000400_portable_purchase_stops_see_our_link_v1.sql"
+    assert names[-25] == "20261030000300_flow_change_list_v1.sql"
+    assert names[-26] == "20261030000200_flow_engine_native_payment_failure_v1.sql"
+    assert names[-27] == "20261030000100_flow_engine_native_legacy_double_case_v1.sql"
+    assert names[-28] == "20261028000400_purchase_by_our_link_counts_v1.sql"
 
 
 def test_the_read_sql_reads_and_never_writes() -> None:
