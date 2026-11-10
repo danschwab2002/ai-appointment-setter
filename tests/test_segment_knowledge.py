@@ -924,3 +924,125 @@ def test_the_provenance_says_how_many_agent_replies_came_before(tmp_path: Path) 
     ]
     assert TurnSegment(segment=a, agent_replies_before=3).activated_late is True
     assert TurnSegment(segment=a, agent_replies_before=0).activated_late is False
+
+
+# ------------------------------------------ la oferta de la campana (E-410)
+#
+# [oferta].codigo_oferta: la oferta de Hotmart con la que sale el link del
+# agente en la campana. Las ofertas son las de ATT1 (tests/fixtures/instances/
+# att1/instancia.toml); la de Black, wmkq4ba9, es la del checkout capturado
+# (tests/fixtures/hotmart_checkout_offer_black_att1_20261110.json).
+
+# Las huellas de hoy de las dos campanas de ejemplo, calculadas con el codigo de
+# origin/main (v1.35.0) antes de E-410: sin el campo, nada cambia.
+EXAMPLE = FIXTURES / "segments" / "campana-ejemplo-v1.toml"
+SHAS_BEFORE_E410 = {
+    "campana-ejemplo-v1.toml": (
+        "ae745649a59496a8938f55decd5a6a5a51f7be3667c78d9a0ec9123359ac0d43",
+        "73ecce244a5830c1c6b081a03e3d8bd3fe0d9bc6cb59da2e41ba44faa4d9740c",
+    ),
+    "campana-de-prueba-v1.toml": (
+        "3dfe3b54f2e5b6d1633bd27873041c05df1239f9d11acaa2a2a7b94c7100dc4b",
+        "9dd97b2469f92a23f0ba8c4c2dea3e9c5f08dfb94539358425f21e9928e6eba5",
+    ),
+}
+
+
+@pytest.mark.parametrize("path", [EXAMPLE, SEGMENT], ids=lambda path: path.name)
+def test_without_the_offer_code_the_render_and_the_content_sha_do_not_change(path: Path) -> None:
+    raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    segment = SegmentKnowledge.from_mapping(raw, time_zone=TZ, require_approved=False)
+    rendered_sha, content_sha = SHAS_BEFORE_E410[path.name]
+    assert segment.rendered_sha256 == rendered_sha
+    assert segment_check.segment_content_sha(raw) == content_sha
+    assert PREAMBLE in segment.render()
+    assert segment_knowledge.PREAMBLE_CAMPAIGN_OFFER not in segment.render()
+    assert segment_knowledge.CAMPAIGN_OFFER_LINE not in segment.render()
+
+
+def test_the_offer_code_is_parsed_and_changes_the_preamble_and_adds_one_line() -> None:
+    payload = _payload()
+    payload["oferta"]["codigo_oferta"] = "wmkq4ba9"
+    segment = _load(payload)
+    rendered = segment.render()
+
+    assert segment.offer is not None and segment.offer.offer_code == "wmkq4ba9"
+    assert segment_knowledge.PREAMBLE_CAMPAIGN_OFFER in rendered
+    assert PREAMBLE not in rendered
+    assert "El link de pago lo arma el sistema con la oferta de esta campaña." in rendered
+    # La linea va despues del cupon, y el codigo no se le dice al agente.
+    assert (
+        "- Cupón de la campaña: PRUEBA11.\n" + segment_knowledge.CAMPAIGN_OFFER_LINE + "\n"
+    ) in rendered
+    assert "wmkq4ba9" not in rendered
+    # Sin el campo el resto del bloque es el de siempre: solo cambian el
+    # preambulo y la linea.
+    expected = EXPECTED_RENDER.replace(PREAMBLE, segment_knowledge.PREAMBLE_CAMPAIGN_OFFER).replace(
+        "- Cupón de la campaña: PRUEBA11.\n",
+        "- Cupón de la campaña: PRUEBA11.\n" + segment_knowledge.CAMPAIGN_OFFER_LINE + "\n",
+    )
+    assert rendered == expected
+
+
+@pytest.mark.parametrize("code", ["abc", "wmkq-4ba9", "wmkq_4ba9", "x" * 33, "", 12345678])
+def test_an_offer_code_without_the_shape_of_hotmart_is_refused(code: object) -> None:
+    payload = _payload()
+    payload["oferta"]["codigo_oferta"] = code
+    with pytest.raises(SegmentError, match="oferta.codigo_oferta"):
+        _load(payload)
+
+
+def test_the_offer_code_is_not_a_field_to_replace() -> None:
+    payload = _payload()
+    payload["oferta"]["codigo_oferta"] = "wmkq4ba9"
+    payload["oferta"]["reemplaza"] = ["codigo_oferta"]
+    with pytest.raises(SegmentError, match="no es un campo que se pueda reemplazar"):
+        _load(payload)
+
+
+def _with_offer_code(instance: Path, code: str, product: str | None = None) -> None:
+    path = instance / "conocimiento" / "segmentos" / SEGMENT.name
+    text = path.read_text(encoding="utf-8")
+    anchor = 'cupon = "PRUEBA11"\n'
+    assert text.count(anchor) == 1
+    extra = f'codigo_oferta = "{code}"\n' + (f'producto = "{product}"\n' if product else "")
+    path.write_text(text.replace(anchor, anchor + extra), encoding="utf-8")
+
+
+@pytest.mark.parametrize("code", ["gopi6lh7", "bmaztyhg", "2uafw5bg"])
+def test_a_declared_offer_of_the_instance_loads(instance: Path, code: str) -> None:
+    _with_offer_code(instance, code)
+    manifest = _manifest(instance)
+    loaded = load_declared_segment(
+        manifest.agent_segments[0], instance_dir=instance, manifest=manifest, base=_base(instance)
+    )
+    assert loaded.knowledge.offer is not None and loaded.knowledge.offer.offer_code == code
+
+
+def test_an_offer_that_the_instance_does_not_declare_is_refused(instance: Path) -> None:
+    # La de Black: existe en Hotmart (F1) y todavia no esta declarada en ATT1.
+    _with_offer_code(instance, "wmkq4ba9")
+    manifest = _manifest(instance)
+    with pytest.raises(SegmentError, match="oferta.codigo_oferta 'wmkq4ba9' no es una oferta declarada"):
+        load_declared_segment(
+            manifest.agent_segments[0], instance_dir=instance, manifest=manifest, base=_base(instance)
+        )
+
+
+def test_the_offers_of_a_product_are_its_own() -> None:
+    from test_multi_product_manifest import SECOND
+
+    payload = tomllib.loads((ATT1 / "instancia.toml").read_text(encoding="utf-8"))
+    principal = InstanceManifest.from_mapping(payload)
+    assert principal.offer_codes_of_product(None) == {"gopi6lh7", "bmaztyhg", "2uafw5bg"}
+    # Con un solo producto cualquier clave es el principal.
+    assert principal.offer_codes_of_product("att1") == {"gopi6lh7", "bmaztyhg", "2uafw5bg"}
+
+    payload["productos"] = [{"clave": "att1"}, copy.deepcopy(SECOND)]
+    for product in payload["productos"]:
+        product.pop("etiqueta", None)
+        product.pop("macro_etiqueta", None)
+    two = InstanceManifest.from_mapping(payload)
+    assert two.offer_codes_of_product("att1") == {"gopi6lh7", "bmaztyhg", "2uafw5bg"}
+    assert two.offer_codes_of_product("att2") == {"prueba2a", "prueba2b"}
+    assert two.offer_codes_of_product("att9") is None

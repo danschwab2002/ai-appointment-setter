@@ -462,6 +462,25 @@ class InstanceManifest:
     def default_offer(self) -> Offer:
         return next(offer for offer in self.offers if offer.default)
 
+    def offer_codes_of_product(self, product_key: str | None) -> frozenset[str] | None:
+        """Los codigos de oferta declarados de un producto (E-410).
+
+        ``None`` o la clave del principal: las ofertas de ``[hotmart]``. Otro
+        producto de ``[[productos]]``: las suyas. Una clave que no es un producto
+        de la instancia: ``None``. Con un solo producto, cualquier clave es el
+        principal (la valida el conocimiento base, no el manifiesto).
+        """
+
+        if product_key is None or not self.products:
+            return frozenset(offer.code for offer in self.offers)
+        for product in self.products:
+            if product.key != product_key:
+                continue
+            if product.commerce is None:
+                return frozenset(offer.code for offer in self.offers)
+            return frozenset(offer.code for offer in product.commerce.offers)
+        return None
+
     def offer_for_landing(self, site: str, landing_id: str) -> Offer | None:
         for offer in self.offers:
             if offer.site == site and offer.landing_id == landing_id:
