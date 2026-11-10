@@ -30,6 +30,9 @@ APPROVED_TEMPLATE_BODY_MAX_CHARS = 1024
 # attempt. ``detail`` in the exception says which check failed, for the log.
 REASON_UNAVAILABLE = "approved_template_unavailable"
 REASON_MISMATCH = "approved_template_mismatch"
+# The native step closes with this one when the catalog asks for a media HEADER
+# and the instance did not declare it: it does not fix itself with a retry.
+REASON_HEADER_MEDIA_NOT_DECLARED = "approved_template_header_media_not_declared"
 REASON_PARAMETERS_MISSING = "template_parameters_missing"
 
 _PLACEHOLDER_RE = re.compile(r"\{\{(\d+)\}\}")
@@ -73,7 +76,8 @@ HEADER_MEDIA_FORMATS = {"image": "IMAGE", "video": "VIDEO"}
 # the dot segments out, every ``%XX`` re-encoded, and what RFC 3986 does not
 # allow percent-encoded. Instead of copying that normalizer, the bridge only
 # accepts a narrow shape that it leaves exactly as it is (E-196, checked with
-# addressable 2.8.7): ``https://``, a lower case host without port or user,
+# addressable 2.8.7): ``https://``, a lower case host without port or user and
+# whose last label has a letter (an IP is not a public name: E-370),
 # one or more path segments of ``A-Z a-z 0-9 . _ ~ -`` (never ``.`` or ``..``
 # alone), an optional query of ``key=value`` pairs of those same characters
 # joined by ``&``, no ``%``, no fragment, and up to 1000 characters. The URL of
@@ -82,7 +86,8 @@ _HEADER_MEDIA_URL_MAX_CHARS = 1000
 _URL_CHARS = r"[A-Za-z0-9._~-]"
 _HEADER_MEDIA_URL_RE = re.compile(
     r"https://"
-    r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+"
+    r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*"
+    r"\.(?=[0-9-]*[a-z])[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
     rf"(?:/(?!\.\.?(?:[/?]|\Z)){_URL_CHARS}+)+"
     rf"(?:\?{_URL_CHARS}+={_URL_CHARS}*(?:&{_URL_CHARS}+={_URL_CHARS}*)*)?"
 )
@@ -134,6 +139,15 @@ class ApprovedTemplateError(Exception):
         super().__init__(f"{reason}:{detail}")
         self.reason = reason
         self.detail = detail
+
+
+class HeaderMediaNotDeclared(ApprovedTemplateError):
+    """The HEADER asks for an image or a video and nobody declared which one.
+
+    Same reason and detail as any other header the send cannot fill, so the
+    sends that do not tell them apart log and retry exactly as before. The
+    native step catches it and closes with ``REASON_HEADER_MEDIA_NOT_DECLARED``.
+    """
 
 
 @dataclass(frozen=True)
@@ -383,7 +397,7 @@ def parse_approved_template(
             continue
         if kind == "HEADER" and component.get("format") in HEADER_MEDIA_FORMATS.values():
             if header_media is None:
-                raise ApprovedTemplateError(
+                raise HeaderMediaNotDeclared(
                     REASON_MISMATCH, "component_requires_parameters"
                 )
             if has_header_media or component.get("format") != header_media.header_format:

@@ -43,10 +43,12 @@ from bridge.cart_followups import (
 )
 from bridge.checkout_issuance import generate_issuance_ulid
 from bridge.approved_templates import (
+    REASON_HEADER_MEDIA_NOT_DECLARED as APPROVED_TEMPLATE_HEADER_MEDIA_NOT_DECLARED,
     REASON_MISMATCH as APPROVED_TEMPLATE_MISMATCH,
     REASON_PARAMETERS_MISSING as APPROVED_TEMPLATE_PARAMETERS_MISSING,
     REASON_UNAVAILABLE as APPROVED_TEMPLATE_UNAVAILABLE,
     ApprovedTemplateError,
+    HeaderMediaNotDeclared,
     parse_approved_template,
 )
 from bridge.chatwoot import (
@@ -2013,6 +2015,12 @@ class DurableDispatcher:
                 type(exc).__name__,
             )
             return _ApprovedTemplateComposition(failure_reason=APPROVED_TEMPLATE_UNAVAILABLE)
+        # Por nombre, despues de elegir la rama: el paso nativo no lleva el encabezado.
+        header_media = (
+            self._waba_template.header_media_for(template_name)
+            if self._waba_template is not None
+            else None
+        )
         try:
             if button is None:
                 approved = parse_approved_template(
@@ -2022,6 +2030,7 @@ class DurableDispatcher:
                     expected_category=native_step_categories(step_template.entry_permission),
                     parameter_count=len(variables),
                     parameterless_buttons_only=True,
+                    header_media=header_media,
                 )
             else:
                 approved = parse_approved_template(
@@ -2031,20 +2040,31 @@ class DurableDispatcher:
                     expected_category=native_step_categories(step_template.entry_permission),
                     parameter_count=len(variables),
                     checkout_button=True,
+                    header_media=header_media,
                 )
             message = approved.render(ordered)
             processed = approved.processed_params(ordered) if button is None else None
         except ApprovedTemplateError as exc:
+            # Falta declarar la imagen en el manifiesto: no se arregla reintentando.
+            reason = (
+                APPROVED_TEMPLATE_HEADER_MEDIA_NOT_DECLARED
+                if isinstance(exc, HeaderMediaNotDeclared)
+                else exc.reason
+            )
             logger.warning(
                 "approved_template_rejected action_id=%s template=%s reason=%s detail=%s",
                 action.action_id,
                 template_name,
-                exc.reason,
+                reason,
                 exc.detail,
             )
             return _ApprovedTemplateComposition(
-                failure_reason=exc.reason,
-                retryable=exc.reason != APPROVED_TEMPLATE_PARAMETERS_MISSING,
+                failure_reason=reason,
+                retryable=reason
+                not in (
+                    APPROVED_TEMPLATE_PARAMETERS_MISSING,
+                    APPROVED_TEMPLATE_HEADER_MEDIA_NOT_DECLARED,
+                ),
             )
         issuance_id: str | None = None
         if button is not None:

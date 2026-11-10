@@ -110,6 +110,18 @@ Con `carrito` o `pago_fallido` en `true` y la salida por WABA, el bridge no arra
 
 **`urls_fijas`** (opcional) **ya no tiene efecto**: se sigue aceptando con su forma de siempre (hasta 20 URLs con `https://`, sin espacios ni datos y sin repetir) para no romper manifiestos. Desde E-362, el link del botón fijo de una plantilla pedida por el Automation Expert lo define el dueño en la conversación y lo ve completo quien aprueba ([template-request-v1](contracts/template-request-v1.md)). No es una plantilla: no lleva nombre ni idioma.
 
+**`[plantillas.imagenes]`** (opcional, E-370): la imagen fija del encabezado de una plantilla, una por plantilla y la misma para todos. La clave es el nombre de la plantilla en Meta y el valor, la URL pública:
+
+```toml
+[plantillas.imagenes]
+att1_bono_01 = "https://recursos.ejemplo.com/imagenes/bono.png"
+```
+
+- La URL tiene que ser `https`, con el host en minúscula y con nombre (una IP no carga), sin puerto, sin `%`, sin espacios y de hasta 1.000 caracteres: es la forma que Chatwoot 4.13 le pasa a Meta sin cambiarla ([approved-template-direct-dispatch-v1](contracts/approved-template-direct-dispatch-v1.md#encabezado-de-imagen-o-de-video-e-160-sin-publicar)). Otra URL no carga. Meta la baja, así que tiene que ser pública: el bridge no comprueba que exista ni que sea JPEG o PNG, y una que Meta no baja falla al entregar con `131053`. Probala con un envío real antes de publicar el flujo.
+- La lee el paso de un flujo nativo y el envío genérico del modo directo. Sin la tabla, nada cambia. Una versión del bridge anterior a E-370 no arranca con esta tabla: primero la versión, después la tabla.
+- Una plantilla con encabezado de imagen en el catálogo y sin declarar acá no sale: el validador lo dice al proponer el flujo y el envío cierra con `approved_template_header_media_not_declared`. Una declarada que en el catálogo no tiene encabezado de imagen tampoco sale (`approved_template_mismatch`).
+- El seguimiento por silencio y los envíos propios del sistema anterior (A1 con cupón, la ficha, los seguimientos del carrito) no mandan el encabezado: la plantilla con imagen sigue sin salir por ahí.
+
 **Las plantillas de B1 en variantes, de A2 y Z del carrito y del seguimiento del pago rechazado (B2 o Z) no van en `[plantillas]`**: son del runtime, con sus variables de entorno (`WABA_PAYMENT_FAILURE_TEMPLATE_COUPON` y las otras tres de B1, `RECOVERY_CART_*_TEMPLATE_NAME`, y `WABA_PAYMENT_FAILURE_TEMPLATE_SECOND_TOUCH` y `_LAST_TOUCH`), y comparten el `idioma` de las demás. El bridge las verifica contra el catálogo del inbox en cada envío ([portable-payment-failure-followup-v1.md](contracts/portable-payment-failure-followup-v1.md)).
 
 Para `precheckout` vale la misma regla con `WABA_PRECHECKOUT_TEMPLATE_NAME`, que tiene que ser `precheckout.nombre` y compartir `WABA_TEMPLATE_LANGUAGE` y `WABA_TEMPLATE_CATEGORY` con las otras. No tiene préstamo: sin esa variable, el primer contacto del formulario no sale, y nunca usa la plantilla del carrito ([portable-precheckout-first-contact-v1.md](contracts/portable-precheckout-first-contact-v1.md)).

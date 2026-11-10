@@ -61,6 +61,8 @@ El aviso es `MSG-002` («Envío falló definitivamente») por el conector de Sla
 
 **Lo que no está.** La sonda sin tráfico (D5: cada 2 h, máximo 3 por fila) no se construyó: medir la cuenta así es mandarle el mensaje real a la persona más vieja de la cola, y eso necesita la decisión explícita de Dan. Sin señal pasiva, la fila vence a las 72 h. La salud de la cuenta que avisa de la caída (P-32) vive en el OS (`meta_salud.py`), no en el bridge.
 
+**El 131053 (Meta no pudo bajar la imagen del encabezado, E-370).** Sin tratamiento propio: como cualquier código que no es 131049, 131026 ni de la cuenta, se registra con su plantilla y no se reintenta. Reintentar una URL que Meta no baja no la arregla. No entra en `META_ACCOUNT_HOLD_CODES` por defecto.
+
 ## Las variables
 
 | Variable | Default | Qué hace |

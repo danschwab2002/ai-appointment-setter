@@ -375,6 +375,8 @@ class _Context:
     segment_labels: Callable[[], list[dict[str, str]]] = field(default=lambda: [])
     # E-353: lo que ejecuta el bridge de la instancia, para no publicar sin efecto. None: no se sabe.
     runtime: InstanceRuntime | None = None
+    # E-370: las plantillas con imagen de encabezado declarada en el manifiesto.
+    template_images: frozenset[str] = frozenset()
 
 
 def _instance_view(context: _Context, store: Mapping[str, Any]) -> InstanceView:
@@ -385,7 +387,7 @@ def _instance_view(context: _Context, store: Mapping[str, Any]) -> InstanceView:
                         products=frozenset(products), time_zone=context.time_zone,
                         segment_labels=tuple((entry["etiqueta"], entry["estado"])
                                              for entry in context.segment_labels()),
-                        runtime=context.runtime)
+                        runtime=context.runtime, template_images=context.template_images)
 
 
 def _finding(finding: Mapping[str, Any]) -> dict[str, Any]:
@@ -479,17 +481,21 @@ def register_flow_change_routes(app: FastAPI, *, token: str, store: FlowChangeSt
                                 tenant_ref: str, ally_ref: str, time_zone: str | None, inbox_id: int,
                                 git_sha: str | None = None,
                                 segment_labels: Callable[[], list[dict[str, str]]] | None = None,
-                                runtime: InstanceRuntime | None = None) -> None:
+                                runtime: InstanceRuntime | None = None,
+                                template_images: frozenset[str] = frozenset()) -> None:
     """Las rutas, detras del flag (lo mira quien llama: con el flag apagado no existen).
 
     ``segment_labels`` (E-316): las etiquetas de segmento que acepta etiquetar, con su estado al
     validar. Sin el, solo cliente, como antes.
 
     ``runtime`` (E-353): lo que ejecuta el bridge de la instancia. Sin el, no se bloquea por eso.
+
+    ``template_images`` (E-370): las plantillas con imagen de encabezado declarada. Sin ellas, la
+    regla 13 bloquea toda plantilla con encabezado de imagen.
     """
     context = _Context(instance={"tenant_ref": tenant_ref, "ally_ref": ally_ref}, time_zone=time_zone,
                        inbox_id=inbox_id, git_sha=git_sha or os.getenv("GIT_SHA", "") or "unknown",
-                       runtime=runtime,
+                       runtime=runtime, template_images=template_images,
                        **({"segment_labels": segment_labels} if segment_labels is not None else {}))
     slots = asyncio.Semaphore(2)
 
@@ -672,6 +678,8 @@ def register_flow_change_routes(app: FastAPI, *, token: str, store: FlowChangeSt
                     "instance": {**context.instance, "products": sorted(view.products),
                                  "time_zone": context.time_zone,
                                  **({"runtime": view.runtime.to_json()} if view.runtime is not None else {}),
+                                 **({"template_images": sorted(view.template_images)}
+                                    if view.template_images else {}),
                                  "segment_labels": [{"etiqueta": label, "estado": state}
                                                     for label, state in view.segment_labels]},
                     "store": snapshot,
