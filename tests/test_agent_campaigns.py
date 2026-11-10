@@ -606,3 +606,88 @@ def test_with_several_products_the_offer_has_to_be_of_the_product_of_the_campaig
     blocks, _, _ = instance_blocks(parse_campaign(_with_offer_code("bmaztyhg")), context=context, now=NOW)
     assert "campaign_offer_unknown" not in _codes(blocks)
 
+
+
+# ------------------------------------- las dos listas del catalogo vivo (E-411 C11)
+
+
+def _offer_row(context: CampaignContext, code: str = "bmaztyhg", **kwargs: Any) -> dict[str, Any]:
+    draft = _draft(oferta={"precio": "37", "moneda": "USD", "reemplaza": ["precio", "moneda"], "codigo_oferta": code})
+    return _row(context, draft=draft, **kwargs)
+
+
+def _labels_bound(context: CampaignContext, db: _Db) -> tuple[LiveSegmentCatalog, CampaignEntry, _Labeler]:
+    live, entry, labeler = _bound(context, db)
+    live.bind_labels(segments=(), labelers={}, campaigns=(), make_labeler=lambda label, macro: labeler)
+    return live, entry, labeler
+
+
+def test_a_row_appears_in_both_lists_and_leaves_them_when_it_goes(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    db = _Db([_offer_row(context)])
+    live, _, labeler = _labels_bound(context, db)
+    labels, entries = live.label_source(), live.entry_source()
+    assert labels.segments() == () and entries.campaigns() == ()
+
+    asyncio.run(live.refresh())
+    [segment] = labels.segments()
+    assert (segment.key, segment.label, segment.macro_id, segment.origin) == (
+        "black-november-2026", LABEL, MACRO, "campana_ae")
+    [campaign] = entries.campaigns()
+    assert campaign.offers == frozenset({"bmaztyhg"})
+    assert campaign.landings == frozenset({"org-a"})  # la landing de bmaztyhg en el manifiesto de ATT1
+    # El mismo etiquetador que la palabra clave, para los cuatro caminos.
+    assert labels.labeler(LABEL) is labeler and entries.labeler(LABEL) is labeler
+
+    db.rows = []
+    asyncio.run(live.refresh())
+    assert labels.segments() == () and entries.campaigns() == ()
+
+
+def test_a_campaign_without_its_own_offer_labels_but_does_not_enter_by_offer(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    live, _, _ = _labels_bound(context, _Db([_row(context)]))
+    asyncio.run(live.refresh())
+    assert [segment.label for segment in live.label_source().segments()] == [LABEL]
+    assert live.entry_source().campaigns() == ()
+
+
+def test_a_failed_read_keeps_both_lists(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    db = _Db([_offer_row(context)])
+    live, _, _ = _labels_bound(context, db)
+    asyncio.run(live.refresh())
+    db.down = True
+    db.rows = []
+    assert asyncio.run(live.refresh()) is False
+    assert len(live.label_source().segments()) == 1 and len(live.entry_source().campaigns()) == 1
+
+
+def _with_manifest_campaign(context: CampaignContext, **campaign: Any) -> CampaignContext:
+    from bridge.instance_manifest import Campaign
+
+    values = {"segment": "otra", "landings": (), "offers": ()}
+    values.update(campaign)
+    return replace(context, manifest=replace(context.manifest, campaigns=(Campaign(**values),)))
+
+
+@pytest.mark.parametrize("taken", [{"offers": ("bmaztyhg",)}, {"landings": ("org-a",)}], ids=["oferta", "landing"])
+def test_an_offer_or_its_landing_of_a_manifest_campaign_is_blocked(tmp_path: Path, taken: dict[str, Any]) -> None:
+    context = _with_manifest_campaign(_context(tmp_path), **taken)
+    blocks, _, _ = instance_blocks(parse_campaign(_with_offer_code("bmaztyhg")), context=context, now=NOW)
+    assert {"code": "campaign_offer_entry_taken", "field": "oferta.codigo_oferta"} in blocks
+
+
+def test_a_published_campaign_that_clashes_keeps_being_served_without_the_offer_entry(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="bridge")
+    plain = _context(tmp_path)
+    row = _offer_row(plain)
+    context = _with_manifest_campaign(plain, offers=("bmaztyhg",))
+    live, _, _ = _labels_bound(context, _Db([row]))
+    asyncio.run(live.refresh())
+    assert live.serving_state(CAMPAIGN) == "served"
+    assert [segment.label for segment in live.label_source().segments()] == [LABEL]
+    assert live.entry_source().campaigns() == ()
+    assert "agent_campaign_entry_skipped key=black-november-2026 reason=offer_taken" in caplog.text
