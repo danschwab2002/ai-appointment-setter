@@ -98,7 +98,9 @@ if (!same(names.slice(position + 1), ['20261102000100_recovery_coupon_by_reply_v
   // Las campanas del Automation Expert como dato (20261108005000, E-355).
   '20261108005000_agent_campaigns_v1.sql',
   // El sondeo de Meta y el aviso en el hilo (20261109000100, E-361).
-  '20261109000100_meta_template_request_notices_v1.sql'])) {
+  '20261109000100_meta_template_request_notices_v1.sql',
+  // La oferta de la campana en el link del agente (20261110000500, E-410).
+  '20261110000500_campaign_offer_checkout_issuance_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la renovacion por respuesta`, names.slice(position + 1));
 }
 
