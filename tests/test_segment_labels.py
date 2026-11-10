@@ -55,6 +55,7 @@ from bridge.flow_change_operator import OperatorInputError, instance_from_input
 from bridge.flow_definition import InstanceView
 from bridge.product_label import ProductLabeler
 from bridge.segment_labels import (
+    ORIGIN_AGENT_CAMPAIGN,
     STATE_ACTIVE,
     STATE_EXPIRED,
     STATE_NOT_STARTED,
@@ -559,3 +560,116 @@ def test_the_automation_expert_sees_the_segments_and_who_labels_them() -> None:
                      "valid_from": START.isoformat(), "valid_until": END.isoformat(),
                      "labeled_by": ["carrito_bn"]}
     assert second["labelable"] is False and second["labeled_by"] == []
+
+
+# ------------------------------------- la fuente viva (E-411 C9)
+#
+# Las campanas del Automation Expert llegan por el catalogo vivo: la herencia y
+# el plan nativo leen la fuente en cada llamada. Las lecturas de Chatwoot son
+# las capturadas de siempre (_InheritInbox, el contacto de Maribel); la cola
+# del paso nativo es la del doble de test_flow_engine_native_dispatch.
+
+
+class _LiveSource:
+    """Una fuente viva: lo que el catalogo de la base sirve en cada momento."""
+
+    live = True
+
+    def __init__(self) -> None:
+        self.items: list[SegmentLabel] = []
+        self.labelers: dict[str, Any] = {}
+
+    def segments(self) -> tuple[SegmentLabel, ...]:
+        return tuple(self.items)
+
+    def labeler(self, label: str) -> Any:
+        return self.labelers.get(label)
+
+
+def _campaign(**changes: Any) -> SegmentLabel:
+    return _segment(origin=ORIGIN_AGENT_CAMPAIGN, **changes)
+
+
+def test_the_native_plan_sees_a_campaign_that_appears_and_stops_seeing_it_when_it_goes() -> None:
+    source = _LiveSource()
+    labels = NativeSegmentLabels(source=source, clock=lambda: INSIDE)
+    authority = _SegmentAuthority()
+
+    assert asyncio.run(labels.plan(authority, action_id="a")) is None
+    source.items = [_campaign()]
+    source.labelers = {LABEL: ProductLabeler(client=SimpleNamespace(), label=LABEL, macro_id=SEGMENT_MACRO_ID)}
+    plan = asyncio.run(labels.plan(authority, action_id="a"))
+    assert plan is not None and plan.segment.origin == ORIGIN_AGENT_CAMPAIGN
+    source.items, source.labelers = [], {}
+    assert asyncio.run(labels.plan(authority, action_id="a")) is None
+
+
+def test_the_fixed_source_keeps_the_validation_of_today() -> None:
+    with pytest.raises(SegmentLabelsConfigError, match="segment_labelers_invalid"):
+        NativeSegmentLabels(segments=[_segment()], labelers={})
+    with pytest.raises(SegmentLabelsConfigError, match="segment_inheritance_invalid"):
+        SegmentLabelInheritance(client=SimpleNamespace(), inbox_id=INBOX, segments=[], labelers={})
+
+
+def _live_inheritance(inbox: _InheritInbox, source: _LiveSource, *, now: datetime = INSIDE) -> SegmentLabelInheritance:
+    return SegmentLabelInheritance(client=inbox.client(), inbox_id=INBOX, source=source, clock=lambda: now)
+
+
+def test_with_a_live_source_and_no_segment_in_force_chatwoot_is_not_read(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="bridge")
+    inbox = _InheritInbox(_listing([LABEL]))
+    source = _LiveSource()
+    inheritance = _live_inheritance(inbox, source)
+
+    assert asyncio.run(inheritance.apply(_webhook(), conversation_id=9))["conversation"]["labels"] == []
+    assert inbox.listings() == 0
+    assert "segment_label_inheritance outcome=sin_segmentos conversation=9" in caplog.text
+    # Una campana vencida tampoco abre la lectura.
+    source.items = [_campaign(valid_from=START - timedelta(days=30), valid_until=START - timedelta(days=1))]
+    asyncio.run(inheritance.apply(_webhook(), conversation_id=9))
+    assert inbox.listings() == 0
+
+
+def test_a_campaign_that_appears_is_inherited_without_restarting() -> None:
+    inbox = _InheritInbox(_listing([LABEL]))
+    source = _LiveSource()
+    inheritance = _live_inheritance(inbox, source)
+    asyncio.run(inheritance.apply(_webhook(), conversation_id=9))
+
+    # La conversacion 6 del contacto tuvo actividad antes del 20/11 de START: la
+    # campana arranca antes de esa actividad para que se pueda heredar.
+    source.items = [_campaign(valid_from=datetime.fromtimestamp(1793155086 - 60, UTC))]
+    source.labelers = {LABEL: ProductLabeler(client=inbox.client(), label=LABEL, macro_id=SEGMENT_MACRO_ID)}
+    turn = asyncio.run(inheritance.apply(_webhook(), conversation_id=9))
+
+    assert turn["conversation"]["labels"] == [LABEL]
+    assert inbox.posts[-1] == (f"{PREFIX}/macros/{SEGMENT_MACRO_ID}/execute", {"conversation_ids": [9]})
+
+
+def test_a_campaign_of_the_ae_is_not_inherited_from_activity_before_it_started() -> None:
+    # D1 de E-411: la conversacion 6 tuvo su ultima actividad (1793155086) antes
+    # del desde de esta campana; la misma etiqueta del manifiesto si se hereda.
+    late_start = datetime.fromtimestamp(1793155086 + 60, UTC)
+    for origin, inherited in ((ORIGIN_AGENT_CAMPAIGN, []), ("manifiesto", [LABEL])):
+        inbox = _InheritInbox(_listing([LABEL]))
+        source = _LiveSource()
+        source.items = [_segment(origin=origin, valid_from=late_start)]
+        source.labelers = {LABEL: ProductLabeler(client=inbox.client(), label=LABEL, macro_id=SEGMENT_MACRO_ID)}
+        turn = asyncio.run(_live_inheritance(inbox, source).apply(_webhook(), conversation_id=9))
+        assert turn["conversation"]["labels"] == inherited, origin
+        assert inbox.listings() == 1
+
+
+def test_the_fixed_source_still_reads_chatwoot_with_every_segment_expired() -> None:
+    # Lo de hoy, sin cambios: la fuente fija no corta por vigencia antes de leer.
+    inbox = _InheritInbox(_listing([LABEL]))
+    client = inbox.client()
+    inheritance = SegmentLabelInheritance(
+        client=client, inbox_id=INBOX, segments=[_segment()],
+        labelers={LABEL: ProductLabeler(client=client, label=LABEL, macro_id=SEGMENT_MACRO_ID)},
+        clock=lambda: END + timedelta(days=1),
+    )
+    asyncio.run(inheritance.apply(_webhook(), conversation_id=9))
+    assert inbox.listings() == 1
