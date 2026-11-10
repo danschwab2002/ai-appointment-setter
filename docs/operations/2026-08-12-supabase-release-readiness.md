@@ -70,19 +70,24 @@ y restaura sólo 27 RPC exactos para `service_role`.
 
 La interfaz offline del CLI fijado expone `repair --linked --status`,
 `migration list --linked`, `db push --linked --dry-run` y
-`db dump --linked --schema --file`. Esto no prueba su comportamiento transaccional.
+`db dump --linked --schema --file`. La interfaz por sí sola no prueba su
+comportamiento; el failure injection disposable posterior sí probó stop-on-error
+para `db push` 2.113.0.
 
-Docker está instalado pero el daemon no estaba disponible. Por eso no se declara
-ejecutada la receta PostgreSQL 17 ni probado el failure mode del Supabase CLI.
-PGlite no sustituye esos gates.
+El daemon Docker no estaba disponible. Luego se ejecutó un cluster PostgreSQL
+17.10 rootless desde paquetes extraídos y el clean install de las 17 migraciones
+pasó con los inventarios checked-in. El failure injection de Supabase CLI 2.113.0
+también pasó contra PostgreSQL 17 local: la migración anterior quedó
+aplicada/registrada y ni la fallida ni la posterior dejaron objeto o tracking.
+La equivalencia de plataforma hosted sigue separada. Ver
+[`2026-08-12-postgres17-disposable-release-lab.md`](2026-08-12-postgres17-disposable-release-lab.md).
 
 ## Reasons del bloqueo
 
 ```text
 prefix_exact_equivalence_unproved
+supabase_hosted_disposable_failure_mode_unproved
 migration_tracking_empty
-supabase_cli_failure_mode_unproved
-postgres17_disposable_not_executed
 production_ddl_not_authorized
 postflight_not_applicable_before_deploy
 runtime_must_remain_inactive
