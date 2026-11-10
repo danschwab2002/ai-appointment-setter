@@ -420,6 +420,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # ([oferta].codigo_oferta). La regla es del producto; por instancia, solo
     # prenderlo (con la oferta declarada y sembrada en el catalogo).
     "agent_campaign_offer_link_enabled",
+    # E-411: la herencia, el etiquetar del flujo y la entrada por landing u
+    # oferta leen tambien las campanas del AE. Exige AGENT_CAMPAIGNS_ENABLED;
+    # cada camino sigue detras de su flag. Por instancia, solo prenderlo.
+    "agent_campaign_label_paths_enabled",
     "hotmart_purchase_worker_enabled",
     "lead_precheckout_enabled",
     # El adaptador de GHL traduce el formulario a lead.precheckout y lo manda
@@ -996,6 +1000,10 @@ class Settings:
     # que el link del agente se reserve con esa oferta. Apagado, la reserva y su
     # pedido son los de siempre, byte a byte.
     agent_campaign_offer_link_enabled: bool = False
+    # E-411 (contratos segment-labels-v1 y campaign-entry-v1): con el flag, los
+    # tres caminos de la etiqueta leen la fuente viva (manifiesto mas campanas
+    # del AE). Apagado, las fuentes fijas de hoy.
+    agent_campaign_label_paths_enabled: bool = False
     precheckout_form_enabled: bool = False
     precheckout_form_token: str | None = None
     precheckout_max_age_seconds: int = 300
@@ -2367,6 +2375,10 @@ class Settings:
                 os.getenv("AGENT_CAMPAIGNS_ENABLED", "false").strip().lower() == "true"
             ),
             agent_campaign_offer_link_enabled=agent_campaign_offer_link_enabled,
+            agent_campaign_label_paths_enabled=(
+                os.getenv("AGENT_CAMPAIGN_LABEL_PATHS_ENABLED", "false").strip().lower()
+                == "true"
+            ),
             precheckout_form_enabled=precheckout_form_enabled,
             precheckout_form_token=precheckout_form_token,
             precheckout_max_age_seconds=precheckout_max_age_seconds,
@@ -5535,12 +5547,30 @@ def create_app(
 
     # E-316 (segment-labels-v1): las etiquetas de segmento, con el macro de cada
     # [[agente.segmentos]] (macro_etiqueta). Sin los dos flags, nada.
-    segment_labels_setup = _segment_labels_setup(settings, control_client)
+    # E-411: con AGENT_CAMPAIGN_LABEL_PATHS_ENABLED, los tres caminos leen el
+    # catalogo vivo de las campanas del AE (falla cerrado sin AGENT_CAMPAIGNS_ENABLED).
+    label_paths_live = None
+    if settings.agent_campaign_label_paths_enabled:
+        if agent_campaign_live is None:
+            raise ValueError(
+                "AGENT_CAMPAIGN_LABEL_PATHS_ENABLED requires AGENT_CAMPAIGNS_ENABLED"
+            )
+        label_paths_live = agent_campaign_live
+    # Sin el flag, la llamada de siempre (sin ``live``): lo de hoy, igual.
+    segment_labels_setup = (
+        _segment_labels_setup(settings, control_client)
+        if label_paths_live is None
+        else _segment_labels_setup(settings, control_client, live=label_paths_live)
+    )
     native_segment_labels = segment_labels_setup.native
     # E-321 (campaign-entry-v1): con el flag, el mismo plan suma la etiqueta de la
     # campana de la landing (o la oferta) del recorrido. Sin el flag, el de E-316.
-    native_segment_labels = _campaign_entry_labels(
-        settings, control_client, native_segment_labels
+    native_segment_labels = (
+        _campaign_entry_labels(settings, control_client, native_segment_labels)
+        if label_paths_live is None
+        else _campaign_entry_labels(
+            settings, control_client, native_segment_labels, live=label_paths_live
+        )
     )
     segment_label_inheritance = segment_labels_setup.inheritance
 
@@ -10579,7 +10609,7 @@ def create_app(
                 data = {
                     **data,
                     **automation_expert_segments(
-                        segment_labels_setup.segments,
+                        segment_labels_setup.current_segments(),
                         data.get("flows") or [],  # type: ignore[arg-type]
                         now=datetime.now(UTC),
                     ),

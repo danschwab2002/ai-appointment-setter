@@ -522,6 +522,9 @@ class LiveSegmentCatalog:
         self._label_segments: tuple[SegmentLabel, ...] = ()
         self._label_labelers: dict[str, Any] = {}
         self._entry_campaigns: tuple[OfferCampaignEntry, ...] = ()
+        self._label_ae: tuple[SegmentLabel, ...] = ()
+        self._label_ae_labelers: dict[str, Any] = {}
+        self._entry_campaigns_ae: tuple[OfferCampaignEntry, ...] = ()
 
     # -- la interfaz de SegmentCatalog --------------------------------------------
 
@@ -566,8 +569,9 @@ class LiveSegmentCatalog:
         self._entry_base_labelers = dict(entry.labelers)
         self._make_labeler = make_labeler
 
-    def bind_labels(self, *, segments: Sequence[SegmentLabel], labelers: Mapping[str, Any],
-                    campaigns: Sequence[OfferCampaignEntry], make_labeler: Callable[[str, int], Any]) -> None:
+    def bind_labels(self, *, segments: Sequence[SegmentLabel] = (), labelers: Mapping[str, Any] | None = None,
+                    campaigns: Sequence[OfferCampaignEntry] = (),
+                    make_labeler: Callable[[str, int], Any]) -> None:
         """La herencia, el ``etiquetar`` del flujo y la entrada por oferta (E-411).
 
         ``segments``/``labelers``: los del manifiesto (lo de hoy). ``campaigns``: las
@@ -576,13 +580,19 @@ class LiveSegmentCatalog:
         """
         self._labels_bound = True
         self._label_base = tuple(segments)
-        self._label_base_labelers = dict(labelers)
-        self._entry_campaigns_base = tuple(campaigns)
+        self._label_base_labelers = {**self._label_base_labelers, **dict(labelers or {})}
+        self._entry_campaigns_base = tuple(campaigns) or self._entry_campaigns_base
         if self._make_labeler is None:
             self._make_labeler = make_labeler
-        self._label_segments = self._label_base
-        self._label_labelers = dict(self._label_base_labelers)
-        self._entry_campaigns = self._entry_campaigns_base
+        self._label_segments = (*self._label_base, *self._label_ae)
+        self._label_labelers = {**self._label_base_labelers, **self._label_ae_labelers}
+        self._entry_campaigns = (*self._entry_campaigns_base, *self._entry_campaigns_ae)
+
+    def bind_entry_campaigns(self, campaigns: Sequence[OfferCampaignEntry], *, labelers: Mapping[str, Any],
+                             make_labeler: Callable[[str, int], Any]) -> None:
+        """La entrada por oferta (E-411): las ``[[campanas]]`` y sus etiquetadores, sin tocar los segmentos."""
+        self.bind_labels(segments=self._label_base, labelers=labelers, campaigns=campaigns,
+                         make_labeler=make_labeler)
 
     def label_segments(self) -> tuple[SegmentLabel, ...]:
         return self._label_segments
@@ -594,8 +604,8 @@ class LiveSegmentCatalog:
         return _LiveEntries(self)
 
     def _rebuild_labels(self, loaded: Sequence[tuple[str, Mapping[str, Any], LoadedSegment]]) -> None:
-        segments = list(self._label_base)
-        labelers = dict(self._label_base_labelers)
+        segments: list[SegmentLabel] = []
+        labelers: dict[str, Any] = {}
         served: list[tuple[SegmentLabel, str | None]] = []
         for _, _row, segment in loaded:
             macro = segment.label_macro_id
@@ -613,9 +623,12 @@ class LiveSegmentCatalog:
                 code = None
             served.append((label, code))
         entries = agent_campaign_entries(served, declared_offers(self._context.manifest))
-        self._label_segments = tuple(segments)
-        self._label_labelers = labelers
-        self._entry_campaigns = (*self._entry_campaigns_base, *entries)
+        self._label_ae = tuple(segments)
+        self._label_ae_labelers = labelers
+        self._entry_campaigns_ae = entries
+        self._label_segments = (*self._label_base, *self._label_ae)
+        self._label_labelers = {**self._label_base_labelers, **self._label_ae_labelers}
+        self._entry_campaigns = (*self._entry_campaigns_base, *self._entry_campaigns_ae)
 
     def _labeler(self, label: str, macro: int) -> Any:
         assert self._make_labeler is not None

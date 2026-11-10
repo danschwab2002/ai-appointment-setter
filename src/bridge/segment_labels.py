@@ -620,17 +620,24 @@ class SegmentLabelsSetup:
     segments: tuple[SegmentLabel, ...] = ()
     native: NativeSegmentLabels | None = None
     inheritance: SegmentLabelInheritance | None = None
+    # E-411: con AGENT_CAMPAIGN_LABEL_PATHS_ENABLED, la fuente viva (el manifiesto
+    # mas las campanas del AE). None: los segmentos fijos de arriba, lo de hoy.
+    source: SegmentLabelSource | None = None
 
     @property
     def validator_enabled(self) -> bool:
         """El validador y el AE ven los segmentos solo con el flag del motor."""
         return self.native is not None
 
+    def current_segments(self) -> tuple[SegmentLabel, ...]:
+        """Los segmentos de ahora: los de la fuente viva, o los fijos."""
+        return self.source.segments() if self.source is not None else self.segments
+
     def validator_labels(self, now: datetime) -> list[dict[str, str]]:
-        return validator_segment_labels(self.segments, now=now) if self.validator_enabled else []
+        return validator_segment_labels(self.current_segments(), now=now) if self.validator_enabled else []
 
 
-def segment_labels_setup(settings: Any, control_client: Any) -> SegmentLabelsSetup:
+def segment_labels_setup(settings: Any, control_client: Any, *, live: Any = None) -> SegmentLabelsSetup:
     """Los etiquetadores de los segmentos, o nada sin los flags. Falla cerrado.
 
     ``FLOW_ENGINE_SEGMENT_LABELS_ENABLED`` pide el motor de flujos, el cliente de
@@ -639,6 +646,12 @@ def segment_labels_setup(settings: Any, control_client: Any) -> SegmentLabelsSet
     cargados (``AGENT_SEGMENTS_ENABLED`` de PR-A) y el inbox: heredar una etiqueta
     que el agente no usa no sirve. El macro de un segmento no puede ser el de la
     pausa, la reanudacion, la baja ni el de cliente.
+
+    ``live`` (E-411, con ``AGENT_CAMPAIGN_LABEL_PATHS_ENABLED``): el catalogo vivo
+    de las campanas del AE. Con el, el arranque no exige ``[[agente.segmentos]]``
+    ni un segmento con macro (como ``campaign_inbound_entry_setup`` con
+    ``campaigns_live``), y la herencia y el plan nativo leen la fuente viva: los
+    segmentos del manifiesto mas las campanas servidas. Sin ``live``, lo de hoy.
     """
     from .product_label import ProductLabeler
 
@@ -654,7 +667,7 @@ def segment_labels_setup(settings: Any, control_client: Any) -> SegmentLabelsSet
     if control_client is None:
         raise ValueError(f"{flag} requires the Chatwoot control client")
     segments = declared_segment_labels(manifest, catalog)
-    if not segments:
+    if not segments and live is None:
         raise ValueError(f"{flag} requires [[agente.segmentos]] in the manifest")
     reserved = {
         getattr(settings, name, None)
@@ -675,15 +688,28 @@ def segment_labels_setup(settings: Any, control_client: Any) -> SegmentLabelsSet
         labelers[segment.label] = ProductLabeler(
             client=control_client, label=segment.label, macro_id=segment.macro_id
         )
+    source: SegmentLabelSource | None = None
+    if live is not None:
+        live.bind_labels(
+            segments=segments,
+            labelers=labelers,
+            make_labeler=lambda label, macro_id: ProductLabeler(
+                client=control_client, label=label, macro_id=macro_id
+            ),
+        )
+        source = live.label_source()
     native = None
     if motor:
         if not getattr(settings, "flow_engine_enabled", False):
             raise ValueError("FLOW_ENGINE_SEGMENT_LABELS_ENABLED requires FLOW_ENGINE_ENABLED")
-        if not labelers:
-            raise ValueError(
-                "FLOW_ENGINE_SEGMENT_LABELS_ENABLED requires a segment with macro_etiqueta"
-            )
-        native = NativeSegmentLabels(segments=segments, labelers=labelers)
+        if source is not None:
+            native = NativeSegmentLabels(source=source)
+        else:
+            if not labelers:
+                raise ValueError(
+                    "FLOW_ENGINE_SEGMENT_LABELS_ENABLED requires a segment with macro_etiqueta"
+                )
+            native = NativeSegmentLabels(segments=segments, labelers=labelers)
     inheritance = None
     if inherit:
         if catalog is None or not getattr(settings, "agent_segments_enabled", False):
@@ -691,7 +717,11 @@ def segment_labels_setup(settings: Any, control_client: Any) -> SegmentLabelsSet
         inbox_id = getattr(settings, "chatwoot_inbox_id", None)
         if type(inbox_id) is not int:
             raise ValueError("SEGMENT_LABEL_INHERITANCE_ENABLED requires CHATWOOT_INBOX_ID")
-        inheritance = SegmentLabelInheritance(
-            client=control_client, inbox_id=inbox_id, segments=segments, labelers=labelers
+        inheritance = (
+            SegmentLabelInheritance(client=control_client, inbox_id=inbox_id, source=source)
+            if source is not None
+            else SegmentLabelInheritance(
+                client=control_client, inbox_id=inbox_id, segments=segments, labelers=labelers
+            )
         )
-    return SegmentLabelsSetup(segments=segments, native=native, inheritance=inheritance)
+    return SegmentLabelsSetup(segments=segments, native=native, inheritance=inheritance, source=source)

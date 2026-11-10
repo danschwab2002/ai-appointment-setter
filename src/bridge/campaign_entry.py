@@ -274,7 +274,7 @@ class CampaignEntryLabels:
 
 
 def campaign_entry_labels(
-    settings: Any, control_client: Any, flow_labels: _Planner | None
+    settings: Any, control_client: Any, flow_labels: _Planner | None, *, live: Any = None
 ) -> _Planner | None:
     """El planificador del despacho nativo con las campanas por landing, o ``flow_labels`` sin el flag.
 
@@ -283,6 +283,10 @@ def campaign_entry_labels(
     sale de ahi), el cliente de control de Chatwoot y al menos una
     ``[[campanas]]``. Falla cerrado. El macro de una campana no puede ser el de
     la pausa, la reanudacion, la baja ni el de cliente.
+
+    ``live`` (E-411, con ``AGENT_CAMPAIGN_LABEL_PATHS_ENABLED``): el catalogo vivo.
+    Con el, el arranque no exige ``[[campanas]]`` y el plan lee las campanas del
+    manifiesto mas las del AE con ``codigo_oferta``. Sin ``live``, lo de hoy.
     """
     from .product_label import ProductLabeler
 
@@ -300,7 +304,7 @@ def campaign_entry_labels(
     if control_client is None:
         raise ValueError(f"{flag} requires the Chatwoot control client")
     campaigns = declared_campaigns(manifest, catalog)
-    if not campaigns:
+    if not campaigns and live is None:
         raise ValueError(f"{flag} requires [[campanas]] in the manifest")
     reserved = {
         getattr(settings, name, None)
@@ -322,4 +326,13 @@ def campaign_entry_labels(
         labelers[segment.label] = ProductLabeler(
             client=control_client, label=segment.label, macro_id=segment.macro_id
         )
+    if live is not None:
+        live.bind_entry_campaigns(
+            campaigns,
+            labelers=labelers,
+            make_labeler=lambda label, macro_id: ProductLabeler(
+                client=control_client, label=label, macro_id=macro_id
+            ),
+        )
+        return CampaignEntryLabels(source=live.entry_source(), flow_labels=flow_labels)
     return CampaignEntryLabels(campaigns=campaigns, labelers=labelers, flow_labels=flow_labels)
