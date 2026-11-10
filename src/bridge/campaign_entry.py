@@ -132,6 +132,66 @@ class _OriginReader(Protocol):
     async def get_flow_engine_native_campaign_origin(self, action_id: str) -> Any: ...
 
 
+class CampaignEntrySource(Protocol):
+    """De donde lee la entrada por landing u oferta sus campanas (E-411).
+
+    Se lee en cada ``plan``. La fija es la de hoy (``[[campanas]]``); la viva
+    suma las campanas del Automation Expert que sirve el catalogo de la base.
+    """
+
+    live: bool
+
+    def campaigns(self) -> tuple[CampaignEntry, ...]: ...
+
+    def labeler(self, label: str) -> _Labeler | None: ...
+
+
+class StaticCampaignEntries:
+    """La fuente fija: las ``[[campanas]]`` del manifiesto y sus etiquetadores."""
+
+    live = False
+
+    def __init__(self, campaigns: Iterable[CampaignEntry], labelers: Mapping[str, _Labeler]) -> None:
+        self._campaigns = tuple(campaigns)
+        self._labelers = dict(labelers)
+
+    def campaigns(self) -> tuple[CampaignEntry, ...]:
+        return self._campaigns
+
+    def labeler(self, label: str) -> _Labeler | None:
+        return self._labelers.get(label)
+
+
+def agent_campaign_entries(
+    served: Iterable[tuple[SegmentLabel, str | None]], offers: Iterable[Any]
+) -> tuple[CampaignEntry, ...]:
+    """Las campanas del Automation Expert que entran por su oferta (E-411, D4).
+
+    ``served``: cada campana servida, con su ``oferta.codigo_oferta`` (E-410).
+    ``offers``: las ofertas declaradas de la instancia (``code``, ``landing_id``),
+    de todos sus productos. La campana entra por esa oferta y por la landing de
+    esa oferta en el manifiesto (cada landing es de una sola oferta). Sin
+    ``codigo_oferta``, o con una oferta que la instancia no declara, no entra.
+    """
+    by_code = {getattr(offer, "code", None): offer for offer in offers}
+    out: list[CampaignEntry] = []
+    for segment, code in served:
+        if code is None or segment.macro_id is None:
+            continue
+        offer = by_code.get(code)
+        if offer is None:
+            continue
+        landing = getattr(offer, "landing_id", None)
+        out.append(
+            CampaignEntry(
+                segment=segment,
+                landings=frozenset({landing}) if isinstance(landing, str) and landing else frozenset(),
+                offers=frozenset({code}),
+            )
+        )
+    return tuple(out)
+
+
 class CampaignEntryLabels:
     """El plan de la etiqueta de un envio nativo: el del flujo (E-316) o el de la campana.
 
@@ -142,20 +202,24 @@ class CampaignEntryLabels:
     def __init__(
         self,
         *,
-        campaigns: Iterable[CampaignEntry],
-        labelers: Mapping[str, _Labeler],
+        campaigns: Iterable[CampaignEntry] = (),
+        labelers: Mapping[str, _Labeler] | None = None,
+        source: CampaignEntrySource | None = None,
         flow_labels: _Planner | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
-        campaigns = tuple(campaigns)
-        if not campaigns:
-            raise SegmentLabelsConfigError("campaign_entry_invalid")
-        for campaign in campaigns:
-            labeler = labelers.get(campaign.segment.label)
-            if labeler is None or labeler.label != campaign.segment.label:
-                raise SegmentLabelsConfigError("segment_labelers_invalid")
-        self._campaigns = campaigns
-        self._labelers = dict(labelers)
+        if source is None:
+            # La fuente fija de hoy: se valida al construir, como siempre.
+            campaigns = tuple(campaigns)
+            labelers = dict(labelers or {})
+            if not campaigns:
+                raise SegmentLabelsConfigError("campaign_entry_invalid")
+            for campaign in campaigns:
+                labeler = labelers.get(campaign.segment.label)
+                if labeler is None or labeler.label != campaign.segment.label:
+                    raise SegmentLabelsConfigError("segment_labelers_invalid")
+            source = StaticCampaignEntries(campaigns, labelers)
+        self._source = source
         self._flow_labels = flow_labels
         self._clock = clock
 
@@ -165,6 +229,10 @@ class CampaignEntryLabels:
             flow_plan = await self._flow_labels.plan(supabase, action_id=action_id)
             if flow_plan is not None:
                 return flow_plan
+        campaigns = self._source.campaigns()
+        if not campaigns:
+            # E-411: sin campanas (la fuente viva vacia) no se lee el origen.
+            return None
         reader: _OriginReader = supabase
         try:
             origin = await reader.get_flow_engine_native_campaign_origin(action_id)
@@ -182,10 +250,13 @@ class CampaignEntryLabels:
             return None
         landing = getattr(origin, "landing", None)
         offer = getattr(origin, "oferta", None)
-        found = match_campaign(self._campaigns, landing=landing, offer=offer, now=self._clock())
+        found = match_campaign(campaigns, landing=landing, offer=offer, now=self._clock())
         if found is None:
             return None
         campaign, matched_by = found
+        labeler = self._source.labeler(campaign.segment.label)
+        if labeler is None:
+            return None
         logger.info(
             "campaign_entry_matched action_id=%s segment=%s label=%s by=%s value=%s trigger=%s",
             action_id,
@@ -198,7 +269,7 @@ class CampaignEntryLabels:
         return NativeSegmentLabelPlan(
             action_id=action_id,
             segment=campaign.segment,
-            labeler=self._labelers[campaign.segment.label],
+            labeler=labeler,
         )
 
 

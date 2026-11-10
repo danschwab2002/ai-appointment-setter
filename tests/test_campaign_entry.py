@@ -54,6 +54,7 @@ from test_segment_labels import (
 from bridge.campaign_entry import (
     CampaignEntry,
     CampaignEntryLabels,
+    agent_campaign_entries,
     campaign_entry_labels,
     declared_campaigns,
     match_campaign,
@@ -454,3 +455,92 @@ def test_create_app_does_not_start_with_the_flag_and_without_what_it_needs(tmp_p
     with pytest.raises(ValueError, match="FLOW_ENGINE_CAMPAIGN_ENTRY_ENABLED requires FLOW_ENGINE_ENABLED"):
         create_app(replace(settings, flow_engine_campaign_entry_enabled=True),
                    chatwoot_client=StubChatwootClient(messages=[]))
+
+
+# ------------------------------------- las campanas del AE por su oferta (E-411 C10)
+#
+# El origen es el de las filas capturadas de flow_engine_native_campaign_origin_v1
+# (native_campaign_origin_rows.json), con la oferta de Black de ATT1 (wmkq4ba9,
+# la del checkout capturado en hotmart_checkout_offer_black_att1_20261110.json).
+
+BLACK = "wmkq4ba9"
+BLACK_OFFER = SimpleNamespace(code=BLACK, landing_id=LANDING)
+
+
+class _LiveEntries:
+    live = True
+
+    def __init__(self, campaigns: tuple[CampaignEntry, ...] = ()) -> None:
+        self.items = campaigns
+        self.labeler_of = {LABEL: ProductLabeler(client=SimpleNamespace(), label=LABEL, macro_id=SEGMENT_MACRO_ID)}
+
+    def campaigns(self) -> tuple[CampaignEntry, ...]:
+        return self.items
+
+    def labeler(self, label: str) -> Any:
+        return self.labeler_of.get(label)
+
+
+def _ae_segment(**changes: Any) -> Any:
+    from bridge.segment_labels import ORIGIN_AGENT_CAMPAIGN
+
+    return replace(_segment(origin=ORIGIN_AGENT_CAMPAIGN), **changes)
+
+
+def test_an_ae_campaign_enters_by_its_offer_and_by_the_landing_of_that_offer() -> None:
+    [entry] = agent_campaign_entries([(_ae_segment(), BLACK)], [BLACK_OFFER, SimpleNamespace(code=OFFER, landing_id="x")])
+    assert entry.offers == frozenset({BLACK}) and entry.landings == frozenset({LANDING})
+    # Sin codigo_oferta, con una oferta no declarada o sin macro, no entra.
+    assert agent_campaign_entries([(_ae_segment(), None)], [BLACK_OFFER]) == ()
+    assert agent_campaign_entries([(_ae_segment(), "zzzz9999")], [BLACK_OFFER]) == ()
+    assert agent_campaign_entries([(_ae_segment(macro_id=None), BLACK)], [BLACK_OFFER]) == ()
+
+
+def _plan(source: _LiveEntries, origin: FlowEngineNativeCampaignOrigin, *, now: Any = INSIDE) -> Any:
+    labels = CampaignEntryLabels(source=source, clock=lambda: now)
+    authority = _CampaignAuthority(origin=origin)
+    return asyncio.run(labels.plan(authority, action_id="a")), authority
+
+
+def test_a_cart_of_the_offer_of_the_campaign_gets_its_label(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="bridge")
+    source = _LiveEntries(agent_campaign_entries([(_ae_segment(), BLACK)], [BLACK_OFFER]))
+
+    by_offer, _ = _plan(source, _origin(ROWS["cart"], oferta=BLACK, landing=None))
+    by_landing, _ = _plan(source, _origin(ROWS["cart"], oferta=BLACK))
+
+    assert by_offer is not None and by_offer.segment.label == LABEL
+    assert by_landing is not None
+    assert "by=oferta" in caplog.text and "by=landing" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("window", "origin_changes"),
+    [
+        ({"valid_from": END, "valid_until": END + timedelta(days=1)}, {}),
+        ({"valid_from": START - timedelta(days=9), "valid_until": START}, {}),
+        ({}, {"oferta": OTHER_OFFER, "landing": None}),
+        ({}, {"disparador": "compra"}),
+    ],
+    ids=["por-empezar", "vencida", "otra-oferta", "compra"],
+)
+def test_nothing_outside_the_campaign(window: dict[str, Any], origin_changes: dict[str, Any]) -> None:
+    source = _LiveEntries(agent_campaign_entries([(_ae_segment(**window), BLACK)], [BLACK_OFFER]))
+    plan, _ = _plan(source, _origin(ROWS["cart"], **{"oferta": BLACK, **origin_changes}))
+    assert plan is None
+
+
+def test_without_campaigns_the_origin_is_not_even_read() -> None:
+    plan, authority = _plan(_LiveEntries(), _origin(ROWS["cart"], oferta=BLACK))
+    assert plan is None
+    assert "origin" not in authority.engine_calls
+
+
+def test_the_manifest_wins_over_the_ae_with_the_same_offer() -> None:
+    manifest_segment = replace(_segment(), key="del-manifiesto", label="del-manifiesto")
+    manifest_entry = CampaignEntry(segment=manifest_segment, landings=frozenset(), offers=frozenset({BLACK}))
+    source = _LiveEntries((manifest_entry, *agent_campaign_entries([(_ae_segment(), BLACK)], [BLACK_OFFER])))
+    source.labeler_of["del-manifiesto"] = ProductLabeler(client=SimpleNamespace(), label="del-manifiesto", macro_id=42)
+
+    plan, _ = _plan(source, _origin(ROWS["cart"], oferta=BLACK, landing=None))
+    assert plan is not None and plan.segment.label == "del-manifiesto"
