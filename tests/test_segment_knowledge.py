@@ -1046,3 +1046,15 @@ def test_the_offers_of_a_product_are_its_own() -> None:
     assert two.offer_codes_of_product("att1") == {"gopi6lh7", "bmaztyhg", "2uafw5bg"}
     assert two.offer_codes_of_product("att2") == {"prueba2a", "prueba2b"}
     assert two.offer_codes_of_product("att9") is None
+
+
+def test_without_the_offer_link_flag_the_bridge_does_not_load_a_campaign_with_its_offer(instance: Path) -> None:
+    # Revision de E-410: el bloque diria que el link sale con la oferta y saldria la de siempre.
+    _with_offer_code(instance, "bmaztyhg")
+    manifest = _manifest(instance)
+    with pytest.raises(SegmentError, match="requires AGENT_CAMPAIGN_OFFER_LINK_ENABLED"):
+        load_declared_segment(manifest.agent_segments[0], instance_dir=instance, manifest=manifest,
+                              base=_base(instance), offer_link_enabled=False)
+    loaded = load_declared_segment(manifest.agent_segments[0], instance_dir=instance, manifest=manifest,
+                                   base=_base(instance), offer_link_enabled=True)
+    assert loaded.knowledge.offer is not None and loaded.knowledge.offer.offer_code == "bmaztyhg"

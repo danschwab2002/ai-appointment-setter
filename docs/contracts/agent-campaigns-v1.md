@@ -59,6 +59,8 @@ Bajo `/internal/automation-expert/v1`, con `AUTOMATION_EXPERT_CHANGE_TOKEN`: `PO
 
 - **`oferta.codigo_oferta`**: la oferta de Hotmart de la campaña, si tiene una propia (el `off=` del link de pago de su página). Con `AGENT_CAMPAIGN_OFFER_LINK_ENABLED`, el link del agente en la campaña sale con esa oferta (`segment-knowledge-v1`, «La oferta de la campaña en el link»).
 - **Bloqueo `campaign_offer_unknown`** (campo `oferta.codigo_oferta`): el código no es una oferta declarada del producto de la campaña en el manifiesto (`[[hotmart.ofertas]]` del principal, o las de `[[productos]]` si hay `oferta.producto`). La oferta se declara en `instancia.toml` y se siembra en el catálogo de la base con `scripts/add_instance_offers.py` **antes** de armar la campaña.
+- **Bloqueo `campaign_offer_link_disabled`**: la instancia no tiene `AGENT_CAMPAIGN_OFFER_LINK_ENABLED`. Sin el flag una campaña con `codigo_oferta` tampoco se sirve (`contenido_invalido`): su bloque le diría al agente que el link sale con la oferta y saldría la de siempre.
+- **Bloqueo `campaign_offer_is_default`**: la oferta es la por defecto de su producto (el link ya sale con ella, y como entrada por oferta etiquetaría todo carrito de su landing).
 - **Aviso `campaign_offer_not_verified`**: el bridge no ve si la oferta está activa en Hotmart ni en el catálogo de la base; eso lo dice la reserva al emitir.
 - **Bloqueo `campaign_offer_entry_taken`** (E-411, campo `oferta.codigo_oferta`): la oferta, o la landing de esa oferta, ya es de una `[[campanas]]` del manifiesto. Gana el manifiesto.
 - **`oferta.frenar_descuento_carrito`** (`true`; `false` no se guarda): la campaña frena el descuento del carrito aunque no traiga cupón (E-410 C8, `segment-knowledge-v1`).

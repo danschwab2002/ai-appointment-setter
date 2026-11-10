@@ -329,6 +329,10 @@ class CampaignContext:
     base: CommercialKnowledge
     manifest_catalog: SegmentCatalog
     reserved_macros: frozenset[int] = frozenset()
+    # E-410: AGENT_CAMPAIGN_OFFER_LINK_ENABLED. Sin el, una campana con
+    # oferta.codigo_oferta no se valida ni se sirve: su bloque prometeria un link
+    # con esa oferta que no sale.
+    offer_link_enabled: bool = False
 
     @property
     def product_names(self) -> dict[str, str]:
@@ -368,6 +372,11 @@ def declared_offers(manifest: InstanceManifest) -> tuple[Any, ...]:
         if product.commerce is not None:
             offers.extend(product.commerce.offers)
     return tuple(offers)
+
+
+def default_offer_codes(manifest: InstanceManifest) -> frozenset[str]:
+    """Las ofertas por defecto de la instancia: la del principal y la de cada producto."""
+    return frozenset(offer.code for offer in declared_offers(manifest) if offer.default)
 
 
 def offer_entry_taken(manifest: InstanceManifest, offer_code: str) -> bool:
@@ -434,8 +443,14 @@ def instance_blocks(draft: Mapping[str, Any], *, context: CampaignContext, now: 
             # Hotmart y en el catalogo de la base no lo ve este camino: lo dice la
             # reserva (blocked_campaign_offer, y se deriva).
             codes = manifest.offer_codes_of_product(loaded.knowledge.offer.product)
+            if not context.offer_link_enabled:
+                blocks.append(_finding("campaign_offer_link_disabled", "oferta.codigo_oferta"))
             if codes is None or offer_code not in codes:
                 blocks.append(_finding("campaign_offer_unknown", "oferta.codigo_oferta"))
+            elif offer_code in default_offer_codes(manifest):
+                # Hallazgo 3 de la revision: la oferta por defecto ya es la del link de
+                # siempre, y como entrada por oferta etiquetaria todo carrito de su landing.
+                blocks.append(_finding("campaign_offer_is_default", "oferta.codigo_oferta"))
             elif offer_entry_taken(manifest, offer_code):
                 # E-411, D3: el carrito de esa oferta ya lo etiqueta una campana del
                 # manifiesto; el AE no le saca la oferta.
@@ -617,6 +632,9 @@ class LiveSegmentCatalog:
                 labelers[segment.label] = self._labeler(segment.label, int(macro))
             offer = segment.knowledge.offer
             code = offer.offer_code if offer is not None else None
+            if code is not None and code in default_offer_codes(self._context.manifest):
+                # La oferta por defecto no entra por oferta: etiquetaria todo carrito de su landing.
+                code = None
             if code is not None and offer_entry_taken(self._context.manifest, code):
                 # D3 de E-411: se sigue sirviendo (bloque y palabra clave), sin la entrada por oferta.
                 logger.warning("agent_campaign_entry_skipped key=%s reason=offer_taken", segment.key)
@@ -656,6 +674,9 @@ class LiveSegmentCatalog:
             raise _NotServable(NOT_SERVED_DRAFT) from error
         if draft["macro_etiqueta"] in self._context.reserved_macros:
             raise _NotServable(NOT_SERVED_CONFLICT)
+        if draft.get("oferta", {}).get("codigo_oferta") is not None and not self._context.offer_link_enabled:
+            # E-410: sin AGENT_CAMPAIGN_OFFER_LINK_ENABLED el bloque prometeria un link que no sale.
+            raise _NotServable(NOT_SERVED_DRAFT)
         try:
             verificar_huella(dict(segment.raw), base=self._context.base, otros=self._context.others)
         except (ChequeoError, SegmentCheckError) as error:

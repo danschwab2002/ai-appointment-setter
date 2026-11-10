@@ -428,6 +428,8 @@ class SegmentLabelInheritance:
         self._remembered = remembered
         # conversacion -> lo que heredo (vacio: se miro y no habia nada).
         self._seen: OrderedDict[int, tuple[str, ...]] = OrderedDict()
+        # Con que etiquetas de segmento se miro cada una (solo cuenta con la fuente viva).
+        self._seen_with: dict[int, frozenset[str]] = {}
 
     async def apply(self, payload: dict[str, Any], *, conversation_id: int) -> dict[str, Any]:
         """El payload del turno con las etiquetas heredadas. Nunca lanza.
@@ -444,7 +446,12 @@ class SegmentLabelInheritance:
         labels = set(conversation_labels(payload))
         if labels & set(segments):
             return payload
-        if conversation_id in self._seen:
+        if conversation_id in self._seen and (
+            not self._source.live
+            or self._seen_with.get(conversation_id) == frozenset(segments)
+        ):
+            # Con la fuente viva, lo recordado vale mientras los segmentos sean los
+            # mismos: una campana publicada despues se vuelve a mirar.
             self._seen.move_to_end(conversation_id)
             return with_labels(payload, self._seen[conversation_id])
         if self._source.live and all(
@@ -524,14 +531,18 @@ class SegmentLabelInheritance:
                 contact_id,
                 sum(1 for other in others if getattr(other, "conversation_id", None) != conversation_id),
             )
-        self._remember(conversation_id, inherited)
+        self._remember(conversation_id, inherited, frozenset(segments))
         return with_labels(payload, inherited)
 
-    def _remember(self, conversation_id: int, labels: tuple[str, ...]) -> None:
+    def _remember(
+        self, conversation_id: int, labels: tuple[str, ...], with_segments: frozenset[str] = frozenset()
+    ) -> None:
         self._seen[conversation_id] = labels
+        self._seen_with[conversation_id] = with_segments
         self._seen.move_to_end(conversation_id)
         while len(self._seen) > self._remembered:
-            self._seen.popitem(last=False)
+            dropped, _ = self._seen.popitem(last=False)
+            self._seen_with.pop(dropped, None)
 
 
 def _active_since(conversation: object, start: datetime | None) -> bool:

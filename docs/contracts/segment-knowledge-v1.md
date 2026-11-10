@@ -101,7 +101,7 @@ Con `AGENT_CAMPAIGN_OFFER_LINK_ENABLED` (apagado por defecto; exige `AGENT_SEGME
 - **Sin la oferta:** si la oferta no está activa en el catálogo del funnel, la base contesta `blocked_campaign_offer` sin escribir nada y el turno se deriva (`payment_link_campaign_offer_unavailable`). Nunca la oferta por defecto (D2).
 - **El cupón** no cambia: con `cupon` y `codigo_oferta` a la vez, el cupón va sobre la oferta de la campaña (que Hotmart lo acepte en esa oferta es configuración de Hotmart).
 - **Lo que no cubre (D7):** A1, A2 y Z del carrito, el seguimiento con cupón, el botón del 10 % y la nota de derivación siguen con la oferta de siempre.
-- **Sin el flag, o sin el campo:** la reserva y su pedido son los de siempre, byte a byte.
+- **Sin el flag, o sin el campo:** la reserva y su pedido son los de siempre, byte a byte. Sin el flag, el bridge **no carga** un segmento del manifiesto con `codigo_oferta` (no arranca: `requires AGENT_CAMPAIGN_OFFER_LINK_ENABLED`) ni sirve una campaña del AE con el campo: el bloque prometería un link que no sale. `setter instancia validar` no mira el flag.
 
 ## La etiqueta antes del primer turno
 

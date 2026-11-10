@@ -1692,15 +1692,19 @@ class Settings:
                     "AGENT_SEGMENTS_ENABLED requires INSTANCE_MANIFEST_PATH and "
                     "COMMERCIAL_KNOWLEDGE_ENABLED"
                 )
-            agent_segment_catalog = load_segment_catalog(
-                instance_manifest,
-                Path(str(instance_manifest_path)).parent,
-                commercial_knowledge,
-            )
         agent_campaign_offer_link_enabled = (
             os.getenv("AGENT_CAMPAIGN_OFFER_LINK_ENABLED", "false").strip().lower()
             == "true"
         )
+        if agent_segments_enabled:
+            assert instance_manifest is not None and commercial_knowledge is not None
+            agent_segment_catalog = load_segment_catalog(
+                instance_manifest,
+                Path(str(instance_manifest_path)).parent,
+                commercial_knowledge,
+                # E-410: sin el flag, una campana con codigo_oferta no carga.
+                offer_link_enabled=agent_campaign_offer_link_enabled,
+            )
         if agent_campaign_offer_link_enabled and not agent_segments_enabled:
             # La oferta sale del segmento vigente del turno: sin segmentos no hay
             # de donde. Falla al arrancar, como los demas flags de segmentos.
@@ -4874,6 +4878,7 @@ def create_app(
             manifest=campaign_manifest,
             base=settings.commercial_knowledge,
             manifest_catalog=settings.agent_segment_catalog,
+            offer_link_enabled=settings.agent_campaign_offer_link_enabled,
             reserved_macros=frozenset(
                 macro
                 for macro in (

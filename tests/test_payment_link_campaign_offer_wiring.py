@@ -181,6 +181,8 @@ def test_an_offer_the_base_cannot_issue_goes_to_a_person_and_nothing_is_sent(
     assert "payment_link_handoff reason=blocked_campaign_offer" in caplog.text
     [handoff] = supabase.handoff_calls
     assert handoff["reason_code"] == "commercial_exception"
+    # El motivo fino, el de E-410 (D2), viaja en detail_reason_code.
+    assert handoff["detail_reason_code"] == "payment_link_campaign_offer_unavailable"
     assert supabase.prepare_calls == []
 
 

@@ -64,17 +64,18 @@ def _draft(**overrides: Any) -> dict[str, Any]:
     return draft
 
 
-def _context(tmp_path: Path, *, with_manifest_segment: bool = False) -> CampaignContext:
+def _context(tmp_path: Path, *, with_manifest_segment: bool = False, offer_link: bool = True) -> CampaignContext:
     if with_manifest_segment:
         settings = _segment_settings(tmp_path, window=ALWAYS)
         manifest = settings.instance_manifest
         return CampaignContext(manifest=manifest, base=settings.commercial_knowledge,
-                               manifest_catalog=settings.agent_segment_catalog, reserved_macros=frozenset({5}))
+                               manifest_catalog=settings.agent_segment_catalog, reserved_macros=frozenset({5}),
+                               offer_link_enabled=offer_link)
     settings = _manifest_settings(tmp_path)
     assert settings.commercial_knowledge is not None
     return CampaignContext(manifest=settings.instance_manifest, base=settings.commercial_knowledge,
                            manifest_catalog=SegmentCatalog((), len(settings.commercial_knowledge.render().encode("utf-8"))),
-                           reserved_macros=frozenset({5}))
+                           reserved_macros=frozenset({5}), offer_link_enabled=offer_link)
 
 
 def _row(context: CampaignContext, *, draft: dict[str, Any] | None = None, version: int = 1, check_sha: str | None = None,
@@ -691,3 +692,28 @@ def test_a_published_campaign_that_clashes_keeps_being_served_without_the_offer_
     assert [segment.label for segment in live.label_source().segments()] == [LABEL]
     assert live.entry_source().campaigns() == ()
     assert "agent_campaign_entry_skipped key=black-november-2026 reason=offer_taken" in caplog.text
+
+
+# ------------------------------------- revision (E-410/E-411): el flag y la oferta por defecto
+
+
+def test_without_the_offer_link_flag_a_campaign_with_its_offer_is_blocked_and_not_served(tmp_path: Path) -> None:
+    # Hallazgo 1: con el flag apagado el bloque prometeria un link con la oferta que no sale.
+    off = _context(tmp_path, offer_link=False)
+    blocks, _, _ = instance_blocks(parse_campaign(_with_offer_code("bmaztyhg")), context=off, now=NOW)
+    assert {"code": "campaign_offer_link_disabled", "field": "oferta.codigo_oferta"} in blocks
+    row = _offer_row(_context(tmp_path / "otra"))
+    live = _live(off, _Db([row]))
+    asyncio.run(live.refresh())
+    assert live.serving_state(CAMPAIGN) == "contenido_invalido"
+    # Una campana sin la oferta se sirve igual con el flag apagado.
+    plain = _live(off, _Db([_row(off)]))
+    asyncio.run(plain.refresh())
+    assert plain.serving_state(CAMPAIGN) == "served"
+
+
+def test_the_default_offer_is_not_an_offer_of_a_campaign(tmp_path: Path) -> None:
+    # Hallazgo 3: gopi6lh7 es la por defecto de ATT1: el link ya sale con ella, y como
+    # entrada por oferta etiquetaria todo carrito de su landing.
+    blocks, _, _ = instance_blocks(parse_campaign(_with_offer_code("gopi6lh7")), context=_context(tmp_path), now=NOW)
+    assert {"code": "campaign_offer_is_default", "field": "oferta.codigo_oferta"} in blocks

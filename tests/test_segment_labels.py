@@ -673,3 +673,21 @@ def test_the_fixed_source_still_reads_chatwoot_with_every_segment_expired() -> N
     )
     asyncio.run(inheritance.apply(_webhook(), conversation_id=9))
     assert inbox.listings() == 1
+
+
+def test_a_conversation_already_looked_at_is_looked_at_again_when_a_campaign_appears() -> None:
+    # Revision de E-411: con un segmento del manifiesto vigente la conversacion se recuerda;
+    # una campana del AE publicada despues se vuelve a mirar.
+    inbox = _InheritInbox(_listing(["campana-nueva"]))
+    source = _LiveSource()
+    source.items = [_segment(origin="manifiesto")]
+    inheritance = _live_inheritance(inbox, source)
+    asyncio.run(inheritance.apply(_webhook(), conversation_id=9))
+    asyncio.run(inheritance.apply(_webhook(), conversation_id=9))
+    assert inbox.listings() == 1  # mismos segmentos: lo recordado vale
+    source.items = [_segment(origin="manifiesto"),
+                    _campaign(key="campana-nueva", label="campana-nueva", macro_id=None,
+                              valid_from=datetime.fromtimestamp(1793155086 - 60, UTC))]
+    turn = asyncio.run(inheritance.apply(_webhook(), conversation_id=9))
+    assert inbox.listings() == 2
+    assert turn["conversation"]["labels"] == ["campana-nueva"]

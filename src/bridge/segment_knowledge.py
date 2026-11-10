@@ -563,8 +563,16 @@ def load_declared_segment(
     manifest: InstanceManifest,
     base: CommercialKnowledge,
     require_approved: bool = True,
+    offer_link_enabled: bool | None = None,
 ) -> LoadedSegment:
-    """Lee y valida el archivo de un segmento declarado, contra el manifiesto."""
+    """Lee y valida el archivo de un segmento declarado, contra el manifiesto.
+
+    ``offer_link_enabled`` (E-410): lo que dice ``AGENT_CAMPAIGN_OFFER_LINK_ENABLED``
+    en el bridge. En ``False``, un segmento con ``[oferta].codigo_oferta`` no se
+    carga: su bloque le diria al agente que el link sale con la oferta de la
+    campana y saldria la de siempre. ``None`` (la validacion de la instancia, sin
+    el entorno del bridge): no se mira.
+    """
 
     path = instance_dir / declaration.knowledge_path
     where = f"agente.segmentos '{declaration.key}'"
@@ -604,6 +612,10 @@ def load_declared_segment(
             raise SegmentError(
                 f"{where}: oferta.codigo_oferta '{segment.offer.offer_code}' no es una oferta "
                 "declarada del producto de la campana en el manifiesto"
+            )
+        if offer_link_enabled is False:
+            raise SegmentError(
+                f"{where}: oferta.codigo_oferta requires AGENT_CAMPAIGN_OFFER_LINK_ENABLED"
             )
     expected_name = f"{segment.key}-v{segment.version}.toml"
     if Path(declaration.knowledge_path).name != expected_name:
@@ -663,12 +675,15 @@ def load_segment_catalog(
     manifest: InstanceManifest,
     instance_dir: Path,
     base: CommercialKnowledge,
+    *,
+    offer_link_enabled: bool | None = None,
 ) -> SegmentCatalog:
     """El catalogo que carga el bridge al arrancar: solo segmentos aprobados."""
 
     loaded = tuple(
         load_declared_segment(
-            declaration, instance_dir=instance_dir, manifest=manifest, base=base
+            declaration, instance_dir=instance_dir, manifest=manifest, base=base,
+            offer_link_enabled=offer_link_enabled,
         )
         for declaration in manifest.agent_segments
     )
