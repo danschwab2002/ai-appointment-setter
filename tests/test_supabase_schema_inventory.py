@@ -476,7 +476,8 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261108005000 (las campanas del Automation Expert, E-355) suma sus tres: el
     # catalogo vivo y el comando del juez.
     # 20261109000100 (el sondeo de Meta y los avisos, E-361) suma sus tres.
-    assert len(allowlisted) == 207
+    # 20261110000500 (la oferta de la campana en el link, E-410) suma su reserva.
+    assert len(allowlisted) == 208
     assert "mark_meta_account_hold_enabled_v1(bigint, timestamp with time zone, timestamp with time zone, integer)" in allowlisted
     assert "requeue_meta_account_hold_v1(bigint, bigint, bigint, timestamp with time zone)" in allowlisted
     assert "close_recovery_case_segment_coupon_v1(uuid, uuid, text, bigint, timestamp with time zone)" in allowlisted
@@ -2044,15 +2045,28 @@ def test_segment_coupon_close_fingerprint() -> None:
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
 
 
-def test_meta_template_request_notices_fingerprint_is_last() -> None:
+def test_meta_template_request_notices_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    fingerprint = sql.split("'20261109000100'", 1)[1].split("select\n    version,", 1)[0]
+    fingerprint = sql.split("'20261109000100'", 1)[1].split("'20261110000500'", 1)[0].rsplit("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261109000100_meta_template_request_notices_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",3,'meta_template_request_notices')")
+    assert compact_fingerprint.endswith(",3,'meta_template_request_notices'")
     assert "to_regclass('public.meta_template_request_notices')" in compact_fingerprint
     assert "claim_meta_template_notices_v1(jsonb,integer)" in compact_fingerprint
+
+
+def test_campaign_offer_checkout_issuance_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261110000500 (la oferta de la campana en el link, E-410) es
+    # la ultima: la reserva por oferta, la columna y el trigger.
+    fingerprint = sql.split("'20261110000500'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261110000500_campaign_offer_checkout_issuance_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",3,'campaign_offer_checkout_issuance')")
+    assert "reserve_portable_checkout_issuance_for_offer_v1(" in compact_fingerprint
+    assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
 
 
 def test_agent_campaigns_fingerprint() -> None:

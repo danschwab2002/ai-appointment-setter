@@ -162,6 +162,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261108005000",
         # El sondeo de Meta y el aviso en el hilo (20261109000100, E-361).
         "20261109000100",
+        # La oferta de la campana en el link del agente (20261110000500, E-410).
+        "20261110000500",
     ]
 
     sql = _sql()

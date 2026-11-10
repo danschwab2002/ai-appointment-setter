@@ -6847,6 +6847,50 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'meta_template_request_notices'
+    union all
+    select
+        '20261110000500',
+        '20261110000500_campaign_offer_checkout_issuance_v1.sql',
+        -- La oferta de la campana en el link del agente (E-410): la reserva por
+        -- oferta, definer con el search_path fijo, que elige la oferta pedida
+        -- y la deja como 'campaign' ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure(
+                'public.reserve_portable_checkout_issuance_for_offer_v1(uuid,text,bigint,bigint,bigint,text,text,text,text,text,timestamptz)'
+            )
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+              and position('for_offer: la oferta es la de la campana' in definition) > 0
+              and position('offer.offer_code = p_offer_code' in definition) > 0
+              and position('''blocked_campaign_offer''' in definition) > 0
+              and position('v_offer_resolution := ''campaign''' in definition) > 0
+              and position('replay_offer.offer_code = p_offer_code' in definition) > 0
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- ... la columna con la clave de la campana y su regla ...
+        + (
+            select count(*) = 2
+            from pg_catalog.pg_constraint
+            where conrelid = to_regclass('public.checkout_link_issuances')
+              and conname in (
+                  'checkout_link_issuances_campaign_ref_shape',
+                  'checkout_link_issuances_campaign_ref_iff_campaign'
+              )
+        )::int
+        -- ... y la columna entre las inmutables.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.protect_checkout_link_issuance()')
+              and position('old.campaign_ref is distinct from new.campaign_ref' in definition) > 0
+        )::int,
+        3,
+        'campaign_offer_checkout_issuance'
 )
 select
     version,

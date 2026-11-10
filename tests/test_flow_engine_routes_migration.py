@@ -151,6 +151,8 @@ def test_it_is_one_transaction_and_comes_right_after_the_t4b() -> None:
         "20261108005000_agent_campaigns_v1.sql",
         # El sondeo de Meta y el aviso en el hilo (20261109000100, E-361).
         "20261109000100_meta_template_request_notices_v1.sql",
+        # La oferta de la campana en el link del agente (20261110000500, E-410).
+        "20261110000500_campaign_offer_checkout_issuance_v1.sql",
     ]
 
 

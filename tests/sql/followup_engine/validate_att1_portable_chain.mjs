@@ -2438,6 +2438,182 @@ if (linkStopTwice !== '55000 portable_checkout_link_purchase_stop_already_applie
   throw new Error(`the link purchase stop: ${JSON.stringify({ linkStop, linkStopGrant, linkStopTwice })}`);
 }
 
+// ---------------------------------------------------------------------------
+// 15. La oferta de la campana en el link del agente (20261110000500, E-410).
+//     Con AGENT_CAMPAIGN_OFFER_LINK_ENABLED y un segmento vigente con
+//     [oferta].codigo_oferta, el bridge reserva con
+//     reserve_portable_checkout_issuance_for_offer_v1, el funnel del producto
+//     (con un solo producto, el del principal: D10) y la clave de la campana.
+//     La oferta de la campana es una de las declaradas de ATT1 que no es la del
+//     formulario de quien pide (asi se ve que la campana gana a la intencion,
+//     D3). Sobre la conversacion del primer contacto (caso 10), la de quien
+//     compro el principal (caso 11) y la de quien se dio de baja:
+//     - sale la oferta de la campana, con offer_resolution 'campaign', la clave
+//       de la campana, la oferta del formulario en lead_offer_code, y el sck y
+//       el fbclid del formulario adelante del marcador de siempre;
+//     - el replay del mismo mensaje devuelve la misma emision; con otra oferta,
+//       otra campana, o sobre un mensaje que reservo la de funnel,
+//       replay_conflict (D12);
+//     - una oferta fuera del catalogo del funnel (no declarada, o de otro
+//       producto) da blocked_campaign_offer sin escribir (D2);
+//     - el segundo producto (caso 12) emite su oferta adicional con su funnel;
+//     - quien compro el principal, purchase_already_approved; la baja frena
+//       igual que la de funnel; formas invalidas, invalid_request;
+//     - la clave de la campana es inmutable en la fila;
+//     - la compra por ese link (la captura de att1-db de una compra por una
+//       oferta que no es la por defecto con nuestro marcador, F2) correlaciona
+//       con la emision de la campana, y despues frena otro link.
+// ---------------------------------------------------------------------------
+const CAMPAIGN = 'black-november-2026';
+const OFFER_RESERVE = 'select * from public.reserve_portable_checkout_issuance_for_offer_v1($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,clock_timestamp())';
+const campaignIssuanceOf = async (issuanceId) => (issuanceId ? one((await db.query(`
+  select issuance.offer_resolution, issuance.campaign_ref, issuance.lead_offer_code,
+         issuance.source_kind, issuance.attribution_resolution, issuance.purchase_intent_id,
+         issuance.checkout_url_final, issuance.sck_value, offer.offer_code, offer.funnel_ref
+  from public.checkout_link_issuances issuance
+  join public.checkout_offer_catalog offer on offer.id = issuance.offer_catalog_id
+  where issuance.id = $1
+`, [issuanceId])).rows, 'campaign issuance') : null);
+const reserveForOffer = async (reply, funnel, offerCode, campaign, message, ulid) => {
+  const result = await asServiceTry(OFFER_RESERVE, [reply.caseId, reply.userId,
+    ATT1.accountId, ATT1.inboxId, reply.chatwoot, String(message), ulid, funnel, offerCode, campaign]);
+  const row = result.ok ? result.rows[0] : null;
+  return { result, row, link: await campaignIssuanceOf(row?.issuance_id) };
+};
+const reserveForFunnelControl = async (reply, funnel, message) => asServiceTry(FUNNEL_RESERVE,
+  [reply.caseId, reply.userId, ATT1.accountId, ATT1.inboxId, reply.chatwoot, String(message),
+    ulidAt(Date.now()), funnel]);
+const campaignOffer = additionalOffers.find((offer) => offer.offer_code !== asker.lead.offer.offer_code);
+const otherAdditional = additionalOffers.find((offer) => offer.offer_code !== campaignOffer.offer_code);
+
+// La de la campana, su replay y los replays que no se reusan.
+replyMessage += 1;
+const campaignMessage = replyMessage;
+const campaignUlid = ulidAt(Date.now());
+const campaignLink = await reserveForOffer(asker, ATT1.funnel, campaignOffer.offer_code, CAMPAIGN, campaignMessage, campaignUlid);
+const campaignReplay = await reserveForOffer(asker, ATT1.funnel, campaignOffer.offer_code, CAMPAIGN, campaignMessage, campaignUlid);
+const replayOtherOffer = await reserveForOffer(asker, ATT1.funnel, otherAdditional.offer_code, CAMPAIGN, campaignMessage, campaignUlid);
+const replayOtherCampaign = await reserveForOffer(asker, ATT1.funnel, campaignOffer.offer_code, 'otra-campana', campaignMessage, campaignUlid);
+// Un mensaje que ya reservo la de funnel (sin campana) no se reusa con la de oferta.
+replyMessage += 1;
+const funnelMessage = replyMessage;
+const funnelFirst = await reserveForFunnelControl(asker, ATT1.funnel, funnelMessage);
+const offerOverFunnel = await reserveForOffer(asker, ATT1.funnel, campaignOffer.offer_code, CAMPAIGN, funnelMessage, ulidAt(Date.now()));
+// Fuera del catalogo: no declarada, y la oferta del segundo producto pedida en el principal.
+replyMessage += 1;
+const undeclaredMessage = replyMessage;
+const undeclared = await reserveForOffer(asker, ATT1.funnel, 'wmkq4ba9', CAMPAIGN, undeclaredMessage, ulidAt(Date.now()));
+replyMessage += 1;
+const foreignMessage = replyMessage;
+const foreign = await reserveForOffer(asker, ATT1.funnel, SECOND_PRODUCT.offers[1].offer_code, CAMPAIGN, foreignMessage, ulidAt(Date.now()));
+// El segundo producto, con su oferta adicional.
+replyMessage += 1;
+const secondCampaign = await reserveForOffer(asker, SECOND_PRODUCT.funnel, SECOND_PRODUCT.offers[1].offer_code, CAMPAIGN, replyMessage, ulidAt(Date.now()));
+// Formas invalidas.
+replyMessage += 1;
+const shortOffer = await reserveForOffer(asker, ATT1.funnel, 'ab', CAMPAIGN, replyMessage, ulidAt(Date.now()));
+const badCampaign = await reserveForOffer(asker, ATT1.funnel, campaignOffer.offer_code, 'Black November', replyMessage, ulidAt(Date.now()));
+const noCampaign = await reserveForOffer(asker, ATT1.funnel, campaignOffer.offer_code, null, replyMessage, ulidAt(Date.now()));
+// Quien compro el principal (caso 11).
+replyMessage += 1;
+const buyerCampaign = await reserveForOffer(buyer, ATT1.funnel, campaignOffer.offer_code, CAMPAIGN, replyMessage, ulidAt(Date.now()));
+// La baja: la de oferta frena igual que la de funnel, sin escribir.
+const leaver = {
+  caseId: leavingAdmitted.rows[0].commercial_case_id, userId: leavingUser, chatwoot: leaving.run.chatwoot,
+};
+const leaverMessage = replyMessage;  // anterior a la baja: no es una respuesta posterior
+const leaverFunnel = await reserveForFunnelControl(leaver, ATT1.funnel, leaverMessage - 400);
+const leaverOffer = await reserveForOffer(leaver, ATT1.funnel, campaignOffer.offer_code, CAMPAIGN, leaverMessage - 401, ulidAt(Date.now()));
+const leaverRows = one((await db.query(`
+  select count(*)::integer as count from public.checkout_link_issuances
+  where chatwoot_conversation_id = $1 and offer_resolution = 'campaign'
+`, [leaver.chatwoot])).rows, 'leaver campaign issuances').count;
+// La clave de la campana es inmutable.
+const mutate = await tryRows(`
+  update public.checkout_link_issuances set campaign_ref = 'otra-campana' where id = $1
+`, [campaignLink.row?.issuance_id]);
+
+// La compra por el link de la campana: F2, la captura de att1-db de una compra
+// por una oferta que no es la por defecto con nuestro marcador, con la oferta,
+// la persona y el sck de esta emision.
+const F2 = JSON.parse(readFileSync(
+  join(root, 'tests/fixtures/hotmart_purchase_approved_att1_other_offer_hermes_20261110.json'), 'utf8',
+)).payload;
+if (F2.event !== 'PURCHASE_APPROVED' || F2.data.product.id !== ATT1.productId
+    || F2.data.purchase.offer.code === defaultOffer.offer_code
+    || !/^hermes~v1~[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(F2.data.purchase.origin.sck)) {
+  throw new Error('F2 is not a purchase of a non-default ATT1 offer with our marker');
+}
+const campaignSck = campaignLink.link?.sck_value ?? '';
+const campaignPurchaseId = `att1-chain-campaign-purchase-${asker.lead.email}`;
+const campaignPurchasePayload = {
+  ...F2,
+  id: campaignPurchaseId,
+  creation_date: at(-1).getTime(),
+  data: {
+    ...F2.data,
+    buyer: { ...F2.data.buyer, email: asker.lead.email, checkout_phone: `+${asker.lead.whatsapp}` },
+    purchase: {
+      ...F2.data.purchase,
+      approved_date: at(-1).getTime(),
+      transaction: 'HPATT1CHAINCAMPAIGN1',
+      offer: { ...F2.data.purchase.offer, code: campaignOffer.offer_code },
+      origin: { sck: campaignSck },
+    },
+  },
+};
+const campaignPurchase = await asServiceTry(`
+  select * from public.admit_and_correlate_hotmart_checkout_issuance_v2(
+    $1, $2::jsonb, $3, clock_timestamp()
+  )
+`, [campaignPurchaseId, JSON.stringify(campaignPurchasePayload), campaignSck]);
+replyMessage += 1;
+const afterCampaignPurchase = await reserveForOffer(asker, ATT1.funnel, campaignOffer.offer_code, CAMPAIGN, replyMessage, ulidAt(Date.now()));
+
+const issuancesOf = async (message) => issuancesOfMessage(asker, message);
+const campaignUrl = campaignLink.link?.checkout_url_final ?? '';
+const campaignLinks = {
+  campaign: `${outcomeOf(campaignLink)}:${campaignLink.link?.offer_resolution}:${campaignLink.link?.offer_code}:${campaignLink.link?.campaign_ref}:${campaignLink.link?.lead_offer_code}:${campaignLink.link?.source_kind}:${campaignLink.link?.attribution_resolution}`,
+  replay: `${outcomeOf(campaignReplay)}:${campaignReplay.row?.issuance_id === campaignLink.row?.issuance_id ? 'same_issuance' : 'other'}`,
+  replay_with_another_offer: outcomeOf(replayOtherOffer),
+  replay_with_another_campaign: outcomeOf(replayOtherCampaign),
+  replay_of_a_funnel_reserve: `${funnelFirst.ok ? funnelFirst.rows[0].outcome : funnelFirst.code}:${outcomeOf(offerOverFunnel)}`,
+  undeclared_offer: `${outcomeOf(undeclared)}:${await issuancesOf(undeclaredMessage)}`,
+  offer_of_another_product: `${outcomeOf(foreign)}:${await issuancesOf(foreignMessage)}`,
+  second_product: `${outcomeOf(secondCampaign)}:${secondCampaign.link?.offer_resolution}:${secondCampaign.link?.offer_code}:${secondCampaign.link?.funnel_ref}`,
+  invalid: [outcomeOf(shortOffer), outcomeOf(badCampaign), outcomeOf(noCampaign)].join(','),
+  buyer_of_the_principal: outcomeOf(buyerCampaign),
+  opt_out: `${outcomeOf(leaverOffer) === (leaverFunnel.ok ? leaverFunnel.rows[0].outcome : leaverFunnel.code) ? 'same_as_funnel' : 'differs'}:${outcomeOf(leaverOffer)}:${leaverRows}`,
+  campaign_ref_immutable: mutate.ok ? 'updated' : `${mutate.code}:${mutate.message}`,
+  purchase_by_the_campaign_link: campaignPurchase.ok
+    ? `${campaignPurchase.rows[0].admission_outcome}:${campaignPurchase.rows[0].correlation_outcome}:${campaignPurchase.rows[0].issuance_id === campaignLink.row?.issuance_id ? 'this_issuance' : 'other'}`
+    : `${campaignPurchase.code} ${campaignPurchase.message}`,
+  after_the_purchase: outcomeOf(afterCampaignPurchase),
+};
+const expectedCampaignLinks = {
+  campaign: `reserved:campaign:${campaignOffer.offer_code}:${CAMPAIGN}:${asker.lead.offer.offer_code}:precheckout_request:full`,
+  replay: 'reserved:same_issuance',
+  replay_with_another_offer: 'replay_conflict',
+  replay_with_another_campaign: 'replay_conflict',
+  replay_of_a_funnel_reserve: 'reserved:replay_conflict',
+  undeclared_offer: 'blocked_campaign_offer:0',
+  offer_of_another_product: 'blocked_campaign_offer:0',
+  second_product: `reserved:campaign:${SECOND_PRODUCT.offers[1].offer_code}:${SECOND_PRODUCT.funnel}`,
+  invalid: 'invalid_request,invalid_request,invalid_request',
+  buyer_of_the_principal: 'purchase_already_approved',
+  opt_out: 'same_as_funnel:blocked_contact:0',
+  campaign_ref_immutable: '55000:checkout_link_issuance_immutable',
+  purchase_by_the_campaign_link: 'inserted:matched:this_issuance',
+  after_the_purchase: 'purchase_already_approved',
+};
+if (JSON.stringify(campaignLinks) !== JSON.stringify(expectedCampaignLinks)
+    || !campaignUrl.startsWith(`https://pay.hotmart.com/${ATT1.hotlink}?off=${campaignOffer.offer_code}&checkoutMode=`)
+    || !campaignUrl.includes(`&src=hermes&sck=${formSck}~hermes~v1~${campaignUlid}`)
+    || !campaignUrl.endsWith(`&fbclid=${formFbclid}`)
+    || campaignSck !== `${formSck}~hermes~v1~${campaignUlid}`) {
+  throw new Error(`the offer of the campaign in the agent link: ${JSON.stringify({ ...campaignLinks, url: campaignUrl.split('&sck=')[0] })}`);
+}
+
 console.log(JSON.stringify({
   att1_portable_chain: 'OK',
   empty_cohort: 'pilot_scope_rejected:pilot_contact_not_in_cohort',
@@ -2482,6 +2658,7 @@ console.log(JSON.stringify({
     activity: linkActivity.rows.map((row) => row.activity).join(','),
   },
   link_for_funnel: funnelLinks,
+  campaign_offer_link: campaignLinks,
   purchase_of_another_offer: anyOffer,
   purchase_with_our_link_stops: {
     form_again: refillPlan.result,

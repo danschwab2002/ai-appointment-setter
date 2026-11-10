@@ -229,7 +229,9 @@ expected_service_role(signature) as (
         -- 20261109000100: el sondeo de Meta y los avisos en el hilo (E-361).
         ('public.list_meta_template_requests_to_poll_v1(jsonb, integer)'),
         ('public.claim_meta_template_notices_v1(jsonb, integer)'),
-        ('public.finish_meta_template_notice_v1(jsonb, uuid, text, text, text)')
+        ('public.finish_meta_template_notice_v1(jsonb, uuid, text, text, text)'),
+        -- 20261110000500: la oferta de la campana en el link del agente (E-410).
+        ('public.reserve_portable_checkout_issuance_for_offer_v1(uuid, text, bigint, bigint, bigint, text, text, text, text, text, timestamp with time zone)')
 ),
 functions as (
     select
