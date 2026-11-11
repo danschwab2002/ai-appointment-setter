@@ -105,6 +105,10 @@ LOGGED_INFO_EVENTS = frozenset(
         # nunca el codigo del cupon
         "segment_link_coupon",
         "segment_link_coupon_other_product",
+        # la oferta de la campana en el link (bridge.app, E-410): la clave del
+        # segmento, el producto y el numero de conversacion; nunca el codigo
+        "segment_link_offer",
+        "segment_link_offer_other_product",
         "segment_recovery_coupon_skipped",
         # lo que el cupon de la campana frena sin pasar por el agente
         # (bridge.worker y bridge.followup_discount, E-339): la clave del

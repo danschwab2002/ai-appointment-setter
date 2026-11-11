@@ -1,0 +1,122 @@
+{
+  "_capture": {
+    "fecha": "2026-11-10T22:27Z",
+    "origen": "att1-db (stack setter-att1, VPS contabo), public.webhook_events, leido en solo lectura (PGOPTIONS default_transaction_read_only=on) por E-410. Es el PURCHASE_APPROVED de una emision del agente (checkout_link_issuances, status purchase_matched) por una oferta que no es la por defecto de ATT1.",
+    "recibido_en_la_base": "2026-10-11T22:09:38.562742+00:00",
+    "emision": {
+      "offer_resolution": "lead_intent",
+      "source_kind": "precheckout_request",
+      "status": "purchase_matched",
+      "oferta": "bmaztyhg",
+      "oferta_por_defecto": false,
+      "checkout_url_final": "https://pay.hotmart.com/D98014973Y?off=bmaztyhg&checkoutMode=10&src=hermes&sck=hermes~v1~01KA0000000000000000000ZZZ",
+      "sck_value": "hermes~v1~01KA0000000000000000000ZZZ"
+    },
+    "anonimizado": "nombre, apellido, mail, telefono, documento, ucode e IP del comprador; transaccion e id del evento; nombre y documento del productor; afiliado; el ULID de la emision (reemplazado por uno sintetico de la misma forma) y el prefijo del sck del formulario (reemplazado por cinco campos de marcador). Producto, oferta, precios, fechas y forma del sck quedan como llegaron.",
+    "sck_del_formulario": {
+      "sck_tiene_prefijo_del_formulario": false,
+      "prefijo_campos": 0
+    }
+  },
+  "payload": {
+    "id": "00000000-0000-0000-0000-00000000f2f2",
+    "data": {
+      "buyer": {
+        "name": "Compradora Sintetica",
+        "email": "compradora.sintetica@example.invalid",
+        "ucode": "00000000-0000-0000-0000-000000000001",
+        "address": {
+          "country": "Mexico",
+          "country_iso": "MX"
+        },
+        "document": "00000000000",
+        "last_name": "Sintetica",
+        "first_name": "Compradora",
+        "document_type": "",
+        "checkout_phone": "5215500000001"
+      },
+      "product": {
+        "id": 5071808,
+        "name": "Alimenta tu Tiroides",
+        "ucode": "384858a0-bdc4-4b9a-a479-9eeff9ed8893",
+        "support_email": "alumnos@metodoraizana.com",
+        "warranty_date": "2026-10-18T00:00:00Z",
+        "has_co_production": true,
+        "product_format_id": 8,
+        "is_physical_product": false
+      },
+      "producer": {
+        "name": "PRODUCTORA SINTETICA",
+        "document": "00000000000000",
+        "legal_nature": "Pessoa Física"
+      },
+      "purchase": {
+        "offer": {
+          "code": "bmaztyhg",
+          "name": "VSL | ORG | A | 47USD 🟢"
+        },
+        "price": {
+          "value": 905.13,
+          "currency_value": "MXN"
+        },
+        "origin": {
+          "sck": "hermes~v1~01KA0000000000000000000ZZZ"
+        },
+        "status": "APPROVED",
+        "payment": {
+          "type": "CREDIT_CARD",
+          "installments_number": 1
+        },
+        "buyer_ip": "192.0.2.10",
+        "is_funnel": false,
+        "full_price": {
+          "value": 1060.24,
+          "currency_value": "MXN"
+        },
+        "invoice_by": "HOTMART",
+        "order_bump": {
+          "is_order_bump": false
+        },
+        "order_date": 1791756563000,
+        "transaction": "HP0000000000001",
+        "approved_date": 1791756566000,
+        "business_model": "R",
+        "checkout_country": {
+          "iso": "MX",
+          "name": "Mexico"
+        },
+        "original_offer_price": {
+          "value": 49.11,
+          "currency_value": "USD"
+        },
+        "subscription_anticipation_purchase": false
+      },
+      "affiliates": [
+        {
+          "name": "Afiliado Sintetico",
+          "affiliate_code": "X00000000X"
+        }
+      ],
+      "commissions": [
+        {
+          "value": 3.2,
+          "source": "MARKETPLACE",
+          "currency_value": "USD"
+        },
+        {
+          "value": 39.01,
+          "source": "PRODUCER",
+          "currency_value": "USD",
+          "currency_conversion": {
+            "conversion_rate": 18.432503,
+            "converted_value": 719.05,
+            "converted_to_currency": "MXN"
+          }
+        }
+      ]
+    },
+    "event": "PURCHASE_APPROVED",
+    "version": "2.0.0",
+    "creation_date": 1791756577289
+  }
+}

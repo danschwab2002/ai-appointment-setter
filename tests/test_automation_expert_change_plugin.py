@@ -507,3 +507,20 @@ def test_the_campaign_tools_never_send_a_phone_in_the_purpose(bridge: type[_Brid
     tools = _tools()
     assert json.loads(tools.propose_campaign({"campaign": {}, "purpose": "Llamar al 5512345678"})) == {
         "error": "identifier_not_allowed"}
+
+
+def test_the_campaign_names_its_own_offer_and_the_bridge_accepts_it() -> None:
+    # E-410: oferta.codigo_oferta, la oferta de Hotmart de la campana (el off= del link de su pagina).
+    from bridge.agent_campaigns import parse_campaign
+
+    schemas = sys.modules[_load_plugin().__name__ + ".schemas"]
+    description = schemas._CAMPAIGN["description"]
+    assert "codigo_oferta" in description
+    assert "declarada en la instancia" in description
+    draft = {
+        "clave": "black-november-2026", "nombre": "Black November", "etiqueta": "black-november",
+        "macro_etiqueta": 77, "desde": "2026-11-20T00:00:00-06:00", "hasta": "2026-12-01T00:00:00-06:00",
+        "palabras_clave": ["Black November"], "oferta": {"codigo_oferta": "wmkq4ba9"},
+        "asesoramiento": ["Si pregunta por el bono, el de la página de Black."],
+    }
+    assert parse_campaign(draft)["oferta"] == {"codigo_oferta": "wmkq4ba9"}

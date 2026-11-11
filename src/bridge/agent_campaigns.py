@@ -46,6 +46,9 @@ from .campaign_inbound_entry import (
     EntrySegment,
     normalize_entry_text,
 )
+from .campaign_entry import CampaignEntry as OfferCampaignEntry
+from .campaign_entry import agent_campaign_entries
+from .segment_labels import ORIGIN_AGENT_CAMPAIGN, SegmentLabel
 from .commercial_knowledge import CommercialKnowledge
 from .flow_change_api import looks_like_identifier
 from .instance_manifest import RESERVED_CHATWOOT_LABELS, InstanceManifest
@@ -94,7 +97,8 @@ _KEY_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789-")
 _REQUIRED = {"clave", "nombre", "etiqueta", "macro_etiqueta", "desde", "hasta", "asesoramiento"}
 _OPTIONAL = {"palabras_clave", "pregunta_entrada", "instruccion", "oferta", "se_puede_decir", "no_confirmado",
              "promesas_prohibidas", "faq", "preguntas_del_alta"}
-_OFFER_KEYS = {"producto", "precio", "moneda", "precio_antes", "cupon", "incluye", "garantia", "medios", "reemplaza"}
+_OFFER_KEYS = {"producto", "precio", "moneda", "precio_antes", "cupon", "codigo_oferta", "frenar_descuento_carrito",
+               "incluye", "garantia", "medios", "reemplaza"}
 _LIST_SECTIONS = ("se_puede_decir", "no_confirmado", "promesas_prohibidas")
 _QA_SECTIONS = ("faq", "preguntas_del_alta")
 # Las etiquetas que no pueden abrir una campana: las mismas que un segmento del manifiesto.
@@ -160,6 +164,12 @@ def _offer(raw: Any) -> dict[str, Any]:
     for key, value in raw.items():
         if key in ("incluye", "medios", "reemplaza"):
             out[key] = _texts(raw, key, f"oferta.{key}")
+        elif key == "frenar_descuento_carrito":
+            # E-410 C8: un si/no. Solo se guarda en true: false es lo de hoy.
+            if type(value) is not bool:
+                raise _refused("oferta.frenar_descuento_carrito", "not_a_boolean")
+            if value:
+                out[key] = True
         else:
             if not isinstance(value, str):
                 raise _refused(f"oferta.{key}", "not_a_text")
@@ -319,6 +329,10 @@ class CampaignContext:
     base: CommercialKnowledge
     manifest_catalog: SegmentCatalog
     reserved_macros: frozenset[int] = frozenset()
+    # E-410: AGENT_CAMPAIGN_OFFER_LINK_ENABLED. Sin el, una campana con
+    # oferta.codigo_oferta no se valida ni se sirve: su bloque prometeria un link
+    # con esa oferta que no sale.
+    offer_link_enabled: bool = False
 
     @property
     def product_names(self) -> dict[str, str]:
@@ -349,6 +363,29 @@ def expected_check_sha(draft: Mapping[str, Any], *, version: int, context: Campa
     """El ``chequeo_sha`` que tiene que tener hoy esta campana (la misma funcion que el cargador)."""
     raw = segment_mapping(draft, ally_ref=context.manifest.ally_ref, version=version)
     return calcular_chequeo_sha(raw, base_sha256=context.base.rendered_sha256, otros=context.others)
+
+
+def declared_offers(manifest: InstanceManifest) -> tuple[Any, ...]:
+    """Todas las ofertas declaradas de la instancia: las del principal y las de [[productos]]."""
+    offers = list(manifest.offers)
+    for product in manifest.products:
+        if product.commerce is not None:
+            offers.extend(product.commerce.offers)
+    return tuple(offers)
+
+
+def default_offer_codes(manifest: InstanceManifest) -> frozenset[str]:
+    """Las ofertas por defecto de la instancia: la del principal y la de cada producto."""
+    return frozenset(offer.code for offer in declared_offers(manifest) if offer.default)
+
+
+def offer_entry_taken(manifest: InstanceManifest, offer_code: str) -> bool:
+    """Si la oferta, o la landing de esa oferta, ya es de una ``[[campanas]]`` del manifiesto (D3 de E-411)."""
+    landings = {offer.landing_id for offer in declared_offers(manifest) if offer.code == offer_code}
+    for campaign in getattr(manifest, "campaigns", ()) or ():
+        if offer_code in campaign.offers or landings & set(campaign.landings):
+            return True
+    return False
 
 
 def _finding(code: str, field: str | None = None, detail: str | None = None) -> dict[str, Any]:
@@ -399,7 +436,57 @@ def instance_blocks(draft: Mapping[str, Any], *, context: CampaignContext, now: 
         if coupon is not None:
             # El producto no lo puede verificar: la API de Hotmart no esta en este camino.
             warnings.append(_finding("campaign_coupon_not_verified", "oferta.cupon"))
+        offer_code = loaded.knowledge.offer.offer_code if loaded.knowledge.offer is not None else None
+        if offer_code is not None:
+            # E-410: la oferta del link tiene que ser una oferta declarada del producto
+            # de la campana (el principal, o el de oferta.producto). Si esta activa en
+            # Hotmart y en el catalogo de la base no lo ve este camino: lo dice la
+            # reserva (blocked_campaign_offer, y se deriva).
+            codes = manifest.offer_codes_of_product(loaded.knowledge.offer.product)
+            if not context.offer_link_enabled:
+                blocks.append(_finding("campaign_offer_link_disabled", "oferta.codigo_oferta"))
+            if codes is None or offer_code not in codes:
+                blocks.append(_finding("campaign_offer_unknown", "oferta.codigo_oferta"))
+            elif offer_code in default_offer_codes(manifest):
+                # Hallazgo 3 de la revision: la oferta por defecto ya es la del link de
+                # siempre, y como entrada por oferta etiquetaria todo carrito de su landing.
+                blocks.append(_finding("campaign_offer_is_default", "oferta.codigo_oferta"))
+            elif offer_entry_taken(manifest, offer_code):
+                # E-411, D3: el carrito de esa oferta ya lo etiqueta una campana del
+                # manifiesto; el AE no le saca la oferta.
+                blocks.append(_finding("campaign_offer_entry_taken", "oferta.codigo_oferta"))
+            warnings.append(_finding("campaign_offer_not_verified", "oferta.codigo_oferta"))
     return blocks, warnings, loaded
+
+
+class _LiveLabels:
+    """La fuente viva de las etiquetas de segmento (``SegmentLabelSource``)."""
+
+    live = True
+
+    def __init__(self, catalog: "LiveSegmentCatalog") -> None:
+        self._catalog = catalog
+
+    def segments(self) -> tuple[SegmentLabel, ...]:
+        return self._catalog._label_segments
+
+    def labeler(self, label: str) -> Any:
+        return self._catalog._label_labelers.get(label)
+
+
+class _LiveEntries:
+    """La fuente viva de la entrada por landing u oferta (``CampaignEntrySource``)."""
+
+    live = True
+
+    def __init__(self, catalog: "LiveSegmentCatalog") -> None:
+        self._catalog = catalog
+
+    def campaigns(self) -> tuple[OfferCampaignEntry, ...]:
+        return self._catalog._entry_campaigns
+
+    def labeler(self, label: str) -> Any:
+        return self._catalog._label_labelers.get(label)
 
 
 # Lo que hace que una campana publicada no se sirva. Los dice la pagina, en palabras.
@@ -442,6 +529,17 @@ class LiveSegmentCatalog:
         self._make_labeler: Callable[[str, int], Any] | None = None
         self._labelers: dict[tuple[str, int], Any] = {}
         self._task: asyncio.Task[None] | None = None
+        # E-411: las etiquetas de segmento y la entrada por oferta, con las del AE.
+        self._labels_bound = False
+        self._label_base: tuple[SegmentLabel, ...] = ()
+        self._label_base_labelers: dict[str, Any] = {}
+        self._entry_campaigns_base: tuple[OfferCampaignEntry, ...] = ()
+        self._label_segments: tuple[SegmentLabel, ...] = ()
+        self._label_labelers: dict[str, Any] = {}
+        self._entry_campaigns: tuple[OfferCampaignEntry, ...] = ()
+        self._label_ae: tuple[SegmentLabel, ...] = ()
+        self._label_ae_labelers: dict[str, Any] = {}
+        self._entry_campaigns_ae: tuple[OfferCampaignEntry, ...] = ()
 
     # -- la interfaz de SegmentCatalog --------------------------------------------
 
@@ -486,6 +584,70 @@ class LiveSegmentCatalog:
         self._entry_base_labelers = dict(entry.labelers)
         self._make_labeler = make_labeler
 
+    def bind_labels(self, *, segments: Sequence[SegmentLabel] = (), labelers: Mapping[str, Any] | None = None,
+                    campaigns: Sequence[OfferCampaignEntry] = (),
+                    make_labeler: Callable[[str, int], Any]) -> None:
+        """La herencia, el ``etiquetar`` del flujo y la entrada por oferta (E-411).
+
+        ``segments``/``labelers``: los del manifiesto (lo de hoy). ``campaigns``: las
+        ``[[campanas]]``. En cada recarga se suman las campanas servidas del AE, con el
+        mismo etiquetador que usa la palabra clave.
+        """
+        self._labels_bound = True
+        self._label_base = tuple(segments)
+        self._label_base_labelers = {**self._label_base_labelers, **dict(labelers or {})}
+        self._entry_campaigns_base = tuple(campaigns) or self._entry_campaigns_base
+        if self._make_labeler is None:
+            self._make_labeler = make_labeler
+        self._label_segments = (*self._label_base, *self._label_ae)
+        self._label_labelers = {**self._label_base_labelers, **self._label_ae_labelers}
+        self._entry_campaigns = (*self._entry_campaigns_base, *self._entry_campaigns_ae)
+
+    def bind_entry_campaigns(self, campaigns: Sequence[OfferCampaignEntry], *, labelers: Mapping[str, Any],
+                             make_labeler: Callable[[str, int], Any]) -> None:
+        """La entrada por oferta (E-411): las ``[[campanas]]`` y sus etiquetadores, sin tocar los segmentos."""
+        self.bind_labels(segments=self._label_base, labelers=labelers, campaigns=campaigns,
+                         make_labeler=make_labeler)
+
+    def label_segments(self) -> tuple[SegmentLabel, ...]:
+        return self._label_segments
+
+    def label_source(self) -> "_LiveLabels":
+        return _LiveLabels(self)
+
+    def entry_source(self) -> "_LiveEntries":
+        return _LiveEntries(self)
+
+    def _rebuild_labels(self, loaded: Sequence[tuple[str, Mapping[str, Any], LoadedSegment]]) -> None:
+        segments: list[SegmentLabel] = []
+        labelers: dict[str, Any] = {}
+        served: list[tuple[SegmentLabel, str | None]] = []
+        for _, _row, segment in loaded:
+            macro = segment.label_macro_id
+            label = SegmentLabel(key=segment.key, label=segment.label, macro_id=macro,
+                                 valid_from=segment.knowledge.valid_from,
+                                 valid_until=segment.knowledge.valid_until, origin=ORIGIN_AGENT_CAMPAIGN)
+            segments.append(label)
+            if macro is not None:
+                labelers[segment.label] = self._labeler(segment.label, int(macro))
+            offer = segment.knowledge.offer
+            code = offer.offer_code if offer is not None else None
+            if code is not None and code in default_offer_codes(self._context.manifest):
+                # La oferta por defecto no entra por oferta: etiquetaria todo carrito de su landing.
+                code = None
+            if code is not None and offer_entry_taken(self._context.manifest, code):
+                # D3 de E-411: se sigue sirviendo (bloque y palabra clave), sin la entrada por oferta.
+                logger.warning("agent_campaign_entry_skipped key=%s reason=offer_taken", segment.key)
+                code = None
+            served.append((label, code))
+        entries = agent_campaign_entries(served, declared_offers(self._context.manifest))
+        self._label_ae = tuple(segments)
+        self._label_ae_labelers = labelers
+        self._entry_campaigns_ae = entries
+        self._label_segments = (*self._label_base, *self._label_ae)
+        self._label_labelers = {**self._label_base_labelers, **self._label_ae_labelers}
+        self._entry_campaigns = (*self._entry_campaigns_base, *self._entry_campaigns_ae)
+
     def _labeler(self, label: str, macro: int) -> Any:
         assert self._make_labeler is not None
         # El mismo objeto entre recargas: recuerda el macro verificado y las conversaciones etiquetadas.
@@ -512,6 +674,9 @@ class LiveSegmentCatalog:
             raise _NotServable(NOT_SERVED_DRAFT) from error
         if draft["macro_etiqueta"] in self._context.reserved_macros:
             raise _NotServable(NOT_SERVED_CONFLICT)
+        if draft.get("oferta", {}).get("codigo_oferta") is not None and not self._context.offer_link_enabled:
+            # E-410: sin AGENT_CAMPAIGN_OFFER_LINK_ENABLED el bloque prometeria un link que no sale.
+            raise _NotServable(NOT_SERVED_DRAFT)
         try:
             verificar_huella(dict(segment.raw), base=self._context.base, otros=self._context.others)
         except (ChequeoError, SegmentCheckError) as error:
@@ -546,6 +711,8 @@ class LiveSegmentCatalog:
                 kept.append(item)
             loaded = kept
             self._reload_entry(loaded)
+        if self._labels_bound:
+            self._rebuild_labels(loaded)
         self._catalog = build_catalog([*manifest_catalog.segments, *(item[2] for item in loaded)],
                                       base_bytes=manifest_catalog.base_bytes)
         self._served = {item[0] for item in loaded}

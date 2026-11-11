@@ -1,0 +1,46 @@
+{
+  "_capture": {
+    "fecha": "2026-11-10T22:24:48Z",
+    "origen": "Checkout publico de Hotmart pedido sin sesion con curl (E-410, la oferta de Black de ATT1). Se leyo el estado que trae la pagina (__NUXT_DATA__): la oferta cargada, el producto, el precio en USD, el checkoutMode que resuelve la pagina y los order bumps. Sin cookies ni credenciales; sin telefonos ni mails de personas (el mail del productor que trae la pagina no se copio).",
+    "producto": "D98014973Y (producto 5071808, Alimenta tu Tiroides), el mismo producto y hotlink que la oferta por defecto de ATT1 (gopi6lh7, tests/fixtures/instances/att1/instancia.toml)",
+    "sck_de_prueba": "hermes~v1~ mas 26 caracteres sinteticos: la forma del marcador del agente, no un link emitido"
+  },
+  "oferta_de_la_campana": "wmkq4ba9",
+  "oferta_por_defecto": "gopi6lh7",
+  "medido": [
+    {
+      "url": "https://pay.hotmart.com/D98014973Y?off=wmkq4ba9",
+      "http": 200,
+      "oferta_cargada": "wmkq4ba9",
+      "product_id": 5071808,
+      "precio_usd": 47,
+      "checkout_mode": null,
+      "order_bumps": []
+    },
+    {
+      "url": "https://pay.hotmart.com/D98014973Y?off=wmkq4ba9&checkoutMode=10&src=hermes&sck=hermes~v1~01TEST0000000000000000000X",
+      "http": 200,
+      "oferta_cargada": "wmkq4ba9",
+      "product_id": 5071808,
+      "precio_usd": 47,
+      "checkout_mode": "CUSTOM",
+      "order_bumps": ["uwwm3z4u", "4t8u8m5u"]
+    },
+    {
+      "url": "https://pay.hotmart.com/D98014973Y?off=gopi6lh7&checkoutMode=10&src=hermes&sck=hermes~v1~01TEST0000000000000000000X",
+      "http": 200,
+      "oferta_cargada": "gopi6lh7",
+      "product_id": 5071808,
+      "precio_usd": 47,
+      "checkout_mode": "CUSTOM",
+      "order_bumps": ["uwwm3z4u", "4t8u8m5u", "8xc249ip", "zeml7to8"]
+    }
+  ],
+  "lectura": [
+    "La oferta wmkq4ba9 existe y carga en el checkout publico del mismo hotlink que la oferta por defecto.",
+    "Con checkoutMode=10 (el que copia add_instance_offers.py de la fila por defecto de ATT1) la pagina resuelve el checkout personalizado (CUSTOM), igual que con gopi6lh7: el modo de la fila por defecto sirve para esta oferta.",
+    "src=hermes y el sck con la forma del marcador no rompen el checkout: carga la misma oferta, el mismo producto y el mismo precio.",
+    "El precio que muestra la oferta de Black es el mismo que la por defecto (47 USD); lo que cambia son los order bumps (dos en vez de cuatro). Que el bono de Black venga por la oferta lo dice Hotmart, no esta pagina."
+  ],
+  "link_de_campana_esperado": "https://pay.hotmart.com/D98014973Y?off=wmkq4ba9&checkoutMode=10&src=hermes&sck=hermes~v1~01TEST0000000000000000000X"
+}

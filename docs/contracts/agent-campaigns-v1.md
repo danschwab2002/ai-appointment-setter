@@ -10,7 +10,7 @@
 
 ## Lo que entra y lo que no
 
-Entra quien llega con la **palabra clave** o responde que sí a la **pregunta de entrada**; el cupón va en el link. **No entra:** la campaña por landing y carrito propio, el envío a una lista y el juez adentro del bridge (va por comando nuestro). No se construyó el §8b de `campaign-inbound-entry-v1`.
+Entra quien llega con la **palabra clave** o responde que sí a la **pregunta de entrada**; el cupón va en el link. Con `AGENT_CAMPAIGN_LABEL_PATHS_ENABLED` (E-411) entra también por el carrito, el pago rechazado y la intención de su oferta (`codigo_oferta`, `campaign-entry-v1` §4b), por la herencia de la etiqueta a otra conversación de la misma persona y por el `etiquetar` de un flujo (`segment-labels-v1` §7b). **No entra:** el envío a una lista y el juez adentro del bridge (va por comando nuestro). No se construyó el §8b de `campaign-inbound-entry-v1`.
 
 ## El recorrido
 
@@ -54,6 +54,17 @@ Las tablas (`agent_campaigns`, `agent_campaign_events`) no tienen permisos para 
 ## Las rutas del AE
 
 Bajo `/internal/automation-expert/v1`, con `AUTOMATION_EXPERT_CHANGE_TOKEN`: `POST /campaigns/preview`, `POST /campaigns`, `POST /campaigns/{id}/validate`, `GET /campaigns?estado=abiertas|todas&limit=`, `GET /campaigns/{id}`. Validar exige `SETTER_VERSION` y `GIT_SHA` en la imagen.
+
+## La oferta propia de la campaña (E-410)
+
+- **`oferta.codigo_oferta`**: la oferta de Hotmart de la campaña, si tiene una propia (el `off=` del link de pago de su página). Con `AGENT_CAMPAIGN_OFFER_LINK_ENABLED`, el link del agente en la campaña sale con esa oferta (`segment-knowledge-v1`, «La oferta de la campaña en el link»).
+- **Bloqueo `campaign_offer_unknown`** (campo `oferta.codigo_oferta`): el código no es una oferta declarada del producto de la campaña en el manifiesto (`[[hotmart.ofertas]]` del principal, o las de `[[productos]]` si hay `oferta.producto`). La oferta se declara en `instancia.toml` y se siembra en el catálogo de la base con `scripts/add_instance_offers.py` **antes** de armar la campaña.
+- **Bloqueo `campaign_offer_link_disabled`**: la instancia no tiene `AGENT_CAMPAIGN_OFFER_LINK_ENABLED`. Sin el flag una campaña con `codigo_oferta` tampoco se sirve (`contenido_invalido`): su bloque le diría al agente que el link sale con la oferta y saldría la de siempre.
+- **Bloqueo `campaign_offer_is_default`**: la oferta es la por defecto de su producto (el link ya sale con ella, y como entrada por oferta etiquetaría todo carrito de su landing).
+- **Aviso `campaign_offer_not_verified`**: el bridge no ve si la oferta está activa en Hotmart ni en el catálogo de la base; eso lo dice la reserva al emitir.
+- **Bloqueo `campaign_offer_entry_taken`** (E-411, campo `oferta.codigo_oferta`): la oferta, o la landing de esa oferta, ya es de una `[[campanas]]` del manifiesto. Gana el manifiesto.
+- **`oferta.frenar_descuento_carrito`** (`true`; `false` no se guarda): la campaña frena el descuento del carrito aunque no traiga cupón (E-410 C8, `segment-knowledge-v1`).
+- **Una campaña publicada no se edita**: para sumarle la oferta, se pausa y se arma la versión siguiente con el campo, que pasa otra vez por el juez y la aprobación. `CHECK_RULES_VERSION` no cambió con E-410 (D4): el `chequeo_sha` de una campaña sin el campo es el mismo y sigue sirviéndose.
 
 ## Lo que el arranque exige
 

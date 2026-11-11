@@ -80,10 +80,23 @@ PREAMBLE = (
     "dice algo distinto del conocimiento general, manda este bloque. No cambia cómo "
     "respondes, el link de pago ni cuándo derivar."
 )
+# El de una campana con oferta propia ([oferta].codigo_oferta, E-410): el link
+# no es el de siempre, es el de la oferta de la campana. Sin el campo, el
+# preambulo de arriba, byte a byte.
+PREAMBLE_CAMPAIGN_OFFER = (
+    "Esta persona está en esta campaña. Lo de este bloque vale para ella y, donde "
+    "dice algo distinto del conocimiento general, manda este bloque. No cambia cómo "
+    "respondes ni cuándo derivar. El link de pago lo arma el sistema con la oferta "
+    "de esta campaña."
+)
+CAMPAIGN_OFFER_LINE = "- El enlace de pago de esta campaña es el de su oferta: pedilo como siempre."
 
 _REF = re.compile(r"[a-z0-9][a-z0-9-]{0,127}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _COUPON = re.compile(r"[A-Za-z0-9_-]{2,64}")
+# El codigo de una oferta de Hotmart, la forma del check de
+# additional_offer_codes (20260928000200) y de la reserva por oferta.
+OFFER_CODE = re.compile(r"[A-Za-z0-9]{4,32}")
 
 _TOP_REQUIRED = {"cabecera", "vigencia", "asesoramiento"}
 _TOP_OPTIONAL = {
@@ -101,6 +114,8 @@ _OFFER_KEYS = {
     "moneda",
     "precio_antes",
     "cupon",
+    "codigo_oferta",
+    "frenar_descuento_carrito",
     "incluye",
     "garantia",
     "medios",
@@ -133,6 +148,13 @@ class SegmentOffer:
     guarantee: str | None
     methods: tuple[str, ...]
     replaces: tuple[str, ...]
+    # La oferta de Hotmart de la campana (E-410). No se nombra en ``reemplaza``:
+    # no es un dato que el agente diga, es la oferta del link.
+    offer_code: str | None = None
+    # E-410 C8: la campana frena el descuento del carrito (los frenos de E-339)
+    # aunque no traiga cupon. Por defecto False: sin el campo, como hoy. No va al
+    # render: es una regla del producto, no algo que el agente diga.
+    stop_cart_discount: bool = False
 
 
 @dataclass(frozen=True)
@@ -187,10 +209,11 @@ class SegmentKnowledge:
 
         # ``hasta`` es exclusivo: hasta 2026-12-01T00:00 se lee «hasta el 30/11 23:59».
         until = (self.valid_until - timedelta(seconds=1)).astimezone(ZoneInfo(self.time_zone))
+        campaign_offer = self.offer is not None and self.offer.offer_code is not None
         lines = [
             f"# Segmento: {self.name} (vigente hasta el {until:%d/%m %H:%M}, hora de la aliada)",
             "",
-            PREAMBLE,
+            PREAMBLE_CAMPAIGN_OFFER if campaign_offer else PREAMBLE,
         ]
         if self.instruction:
             lines += ["", "## Cómo usar este bloque", "", self.instruction]
@@ -540,8 +563,16 @@ def load_declared_segment(
     manifest: InstanceManifest,
     base: CommercialKnowledge,
     require_approved: bool = True,
+    offer_link_enabled: bool | None = None,
 ) -> LoadedSegment:
-    """Lee y valida el archivo de un segmento declarado, contra el manifiesto."""
+    """Lee y valida el archivo de un segmento declarado, contra el manifiesto.
+
+    ``offer_link_enabled`` (E-410): lo que dice ``AGENT_CAMPAIGN_OFFER_LINK_ENABLED``
+    en el bridge. En ``False``, un segmento con ``[oferta].codigo_oferta`` no se
+    carga: su bloque le diria al agente que el link sale con la oferta de la
+    campana y saldria la de siempre. ``None`` (la validacion de la instancia, sin
+    el entorno del bridge): no se mira.
+    """
 
     path = instance_dir / declaration.knowledge_path
     where = f"agente.segmentos '{declaration.key}'"
@@ -572,6 +603,20 @@ def load_declared_segment(
         raise SegmentError(
             f"{where}: el segmento es de '{segment.ally_ref}' y el manifiesto de '{manifest.ally_ref}'"
         )
+    if segment.offer is not None and segment.offer.offer_code is not None:
+        # La oferta de la campana tiene que ser una oferta declarada del producto
+        # del segmento (el principal si no dice producto): si no, el link no se
+        # podria emitir (E-410).
+        codes = manifest.offer_codes_of_product(segment.offer.product)
+        if codes is None or segment.offer.offer_code not in codes:
+            raise SegmentError(
+                f"{where}: oferta.codigo_oferta '{segment.offer.offer_code}' no es una oferta "
+                "declarada del producto de la campana en el manifiesto"
+            )
+        if offer_link_enabled is False:
+            raise SegmentError(
+                f"{where}: oferta.codigo_oferta requires AGENT_CAMPAIGN_OFFER_LINK_ENABLED"
+            )
     expected_name = f"{segment.key}-v{segment.version}.toml"
     if Path(declaration.knowledge_path).name != expected_name:
         raise SegmentError(
@@ -630,12 +675,15 @@ def load_segment_catalog(
     manifest: InstanceManifest,
     instance_dir: Path,
     base: CommercialKnowledge,
+    *,
+    offer_link_enabled: bool | None = None,
 ) -> SegmentCatalog:
     """El catalogo que carga el bridge al arrancar: solo segmentos aprobados."""
 
     loaded = tuple(
         load_declared_segment(
-            declaration, instance_dir=instance_dir, manifest=manifest, base=base
+            declaration, instance_dir=instance_dir, manifest=manifest, base=base,
+            offer_link_enabled=offer_link_enabled,
         )
         for declaration in manifest.agent_segments
     )
@@ -683,6 +731,14 @@ def _offer(
     coupon = _optional_text(raw, "cupon", "oferta.cupon")
     if coupon is not None and _COUPON.fullmatch(coupon) is None:
         raise SegmentError("oferta.cupon debe ser un codigo (letras, numeros, guiones; 2 a 64)")
+    offer_code = _optional_text(raw, "codigo_oferta", "oferta.codigo_oferta")
+    if offer_code is not None and OFFER_CODE.fullmatch(offer_code) is None:
+        raise SegmentError(
+            "oferta.codigo_oferta debe ser un codigo de oferta de Hotmart (letras y numeros, 4 a 32)"
+        )
+    stop_cart_discount = raw.get("frenar_descuento_carrito", False)
+    if type(stop_cart_discount) is not bool:
+        raise SegmentError("oferta.frenar_descuento_carrito debe ser true o false")
     includes = _list(raw, "incluye", "oferta.incluye")
     methods = _list(raw, "medios", "oferta.medios")
     replaces = _list(raw, "reemplaza", "oferta.reemplaza")
@@ -714,6 +770,8 @@ def _offer(
         guarantee=_optional_text(raw, "garantia", "oferta.garantia"),
         methods=methods,
         replaces=replaces,
+        offer_code=offer_code,
+        stop_cart_discount=stop_cart_discount,
     )
 
 
@@ -727,6 +785,8 @@ def _render_offer(offer: SegmentOffer) -> list[str]:
         lines.append(f"- Precio de antes: {offer.currency} {offer.price_before}.")
     if offer.coupon is not None:
         lines.append(f"- Cupón de la campaña: {offer.coupon}.")
+    if offer.offer_code is not None:
+        lines.append(CAMPAIGN_OFFER_LINE)
     if offer.guarantee is not None:
         lines.append(f"- Garantía en esta campaña: {offer.guarantee}")
     if offer.replaces:

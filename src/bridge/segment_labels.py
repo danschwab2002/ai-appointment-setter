@@ -71,6 +71,12 @@ class SegmentLabelsConfigError(ValueError):
     """La declaracion de los segmentos no sirve para etiquetar."""
 
 
+# De donde viene un segmento (E-411): el manifiesto ([[agente.segmentos]]) o una
+# campana del Automation Expert servida por el catalogo vivo de la base.
+ORIGIN_MANIFEST = "manifiesto"
+ORIGIN_AGENT_CAMPAIGN = "campana_ae"
+
+
 @dataclass(frozen=True)
 class SegmentLabel:
     """Un segmento visto desde su etiqueta: la clave, la etiqueta, su macro y su vigencia."""
@@ -80,6 +86,7 @@ class SegmentLabel:
     macro_id: int | None
     valid_from: datetime | None = None
     valid_until: datetime | None = None
+    origin: str = ORIGIN_MANIFEST
 
     def state_at(self, now: datetime) -> str:
         """``hasta`` es exclusivo, como en PR-A (D-E311-2)."""
@@ -180,6 +187,41 @@ class _Labeler(Protocol):
     async def ensure(self, conversation_id: int, *, source: str) -> str: ...
 
 
+class SegmentLabelSource(Protocol):
+    """De donde leen los caminos de la etiqueta sus segmentos y etiquetadores (E-411).
+
+    Se lee en cada llamada (``plan``, ``apply``): la fuente fija devuelve siempre lo
+    mismo (lo de hoy, el manifiesto); la viva (el catalogo de las campanas del AE)
+    cambia cuando cambia la fila de la base.
+    """
+
+    live: bool
+
+    def segments(self) -> tuple[SegmentLabel, ...]: ...
+
+    def labeler(self, label: str) -> _Labeler | None: ...
+
+
+class StaticSegmentLabels:
+    """La fuente fija: los segmentos y etiquetadores que se armaron al arrancar."""
+
+    live = False
+
+    def __init__(self, segments: Iterable[SegmentLabel], labelers: Mapping[str, _Labeler]) -> None:
+        self._segments = tuple(segments)
+        self._labelers = dict(labelers)
+
+    def segments(self) -> tuple[SegmentLabel, ...]:
+        return self._segments
+
+    def labeler(self, label: str) -> _Labeler | None:
+        return self._labelers.get(label)
+
+    @property
+    def labelers(self) -> Mapping[str, _Labeler]:
+        return dict(self._labelers)
+
+
 class _TailReader(Protocol):
     async def get_flow_engine_native_step_tail(self, action_id: str) -> Any: ...
 
@@ -241,23 +283,38 @@ class NativeSegmentLabels:
     def __init__(
         self,
         *,
-        segments: Iterable[SegmentLabel],
-        labelers: Mapping[str, _Labeler],
+        segments: Iterable[SegmentLabel] = (),
+        labelers: Mapping[str, _Labeler] | None = None,
+        source: SegmentLabelSource | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
-        by_label = {segment.label: segment for segment in segments}
-        if not labelers or set(labelers) - set(by_label):
-            raise SegmentLabelsConfigError("segment_labelers_invalid")
-        for label, labeler in labelers.items():
-            if labeler.label != label:
+        if source is None:
+            # La fuente fija de hoy: se valida al construir, como siempre.
+            labelers = dict(labelers or {})
+            by_label = {segment.label: segment for segment in segments}
+            if not labelers or set(labelers) - set(by_label):
                 raise SegmentLabelsConfigError("segment_labelers_invalid")
-        self._segments = by_label
-        self._labelers = dict(labelers)
+            for label, labeler in labelers.items():
+                if labeler.label != label:
+                    raise SegmentLabelsConfigError("segment_labelers_invalid")
+            source = StaticSegmentLabels(by_label.values(), labelers)
+        self._source = source
         self._clock = clock
+
+    def _labelable(self) -> tuple[dict[str, SegmentLabel], dict[str, _Labeler]]:
+        segments: dict[str, SegmentLabel] = {}
+        labelers: dict[str, _Labeler] = {}
+        for segment in self._source.segments():
+            labeler = self._source.labeler(segment.label)
+            if labeler is None:
+                continue
+            segments[segment.label] = segment
+            labelers[segment.label] = labeler
+        return segments, labelers
 
     @property
     def labels(self) -> frozenset[str]:
-        return frozenset(self._labelers)
+        return frozenset(self._labelable()[1])
 
     async def plan(self, supabase: _TailReader, *, action_id: str) -> NativeSegmentLabelPlan | None:
         """El plan de la etiqueta para la accion de un recorrido nativo, o None.
@@ -277,9 +334,10 @@ class NativeSegmentLabels:
             )
             return None
         label = getattr(tail, "etiquetar", None) if tail is not None else None
-        if not isinstance(label, str) or label not in self._labelers:
+        segments, labelers = self._labelable()
+        if not isinstance(label, str) or label not in labelers:
             return None
-        segment = self._segments[label]
+        segment = segments[label]
         state = segment.state_at(self._clock())
         if state in (STATE_NOT_STARTED, STATE_EXPIRED):
             logger.info(
@@ -290,7 +348,7 @@ class NativeSegmentLabels:
             )
             return None
         return NativeSegmentLabelPlan(
-            action_id=action_id, segment=segment, labeler=self._labelers[label]
+            action_id=action_id, segment=segment, labeler=labelers[label]
         )
 
 
@@ -346,24 +404,32 @@ class SegmentLabelInheritance:
         *,
         client: _ContactConversations,
         inbox_id: int,
-        segments: Iterable[SegmentLabel],
-        labelers: Mapping[str, _Labeler],
+        segments: Iterable[SegmentLabel] = (),
+        labelers: Mapping[str, _Labeler] | None = None,
+        source: SegmentLabelSource | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         remembered: int = DEFAULT_REMEMBERED_CONVERSATIONS,
     ) -> None:
-        segments = tuple(segments)
-        if type(inbox_id) is not int or inbox_id < 1 or not segments or remembered < 1:
+        if type(inbox_id) is not int or inbox_id < 1 or remembered < 1:
             raise SegmentLabelsConfigError("segment_inheritance_invalid")
-        if set(labelers) - {segment.label for segment in segments}:
-            raise SegmentLabelsConfigError("segment_labelers_invalid")
+        if source is None:
+            # La fuente fija de hoy: se valida al construir, como siempre.
+            segments = tuple(segments)
+            labelers = dict(labelers or {})
+            if not segments:
+                raise SegmentLabelsConfigError("segment_inheritance_invalid")
+            if set(labelers) - {segment.label for segment in segments}:
+                raise SegmentLabelsConfigError("segment_labelers_invalid")
+            source = StaticSegmentLabels(segments, labelers)
         self._client = client
         self._inbox_id = inbox_id
-        self._segments = {segment.label: segment for segment in segments}
-        self._labelers = dict(labelers)
+        self._source = source
         self._clock = clock
         self._remembered = remembered
         # conversacion -> lo que heredo (vacio: se miro y no habia nada).
         self._seen: OrderedDict[int, tuple[str, ...]] = OrderedDict()
+        # Con que etiquetas de segmento se miro cada una (solo cuenta con la fuente viva).
+        self._seen_with: dict[int, frozenset[str]] = {}
 
     async def apply(self, payload: dict[str, Any], *, conversation_id: int) -> dict[str, Any]:
         """El payload del turno con las etiquetas heredadas. Nunca lanza.
@@ -376,12 +442,28 @@ class SegmentLabelInheritance:
           el macro y se suman al turno. Una lectura que falla no se recuerda: el
           proximo turno vuelve a intentar.
         """
+        segments = {segment.label: segment for segment in self._source.segments()}
         labels = set(conversation_labels(payload))
-        if labels & set(self._segments):
+        if labels & set(segments):
             return payload
-        if conversation_id in self._seen:
+        if conversation_id in self._seen and (
+            not self._source.live
+            or self._seen_with.get(conversation_id) == frozenset(segments)
+        ):
+            # Con la fuente viva, lo recordado vale mientras los segmentos sean los
+            # mismos: una campana publicada despues se vuelve a mirar.
             self._seen.move_to_end(conversation_id)
             return with_labels(payload, self._seen[conversation_id])
+        if self._source.live and all(
+            segment.state_at(self._clock()) == STATE_EXPIRED for segment in segments.values()
+        ):
+            # E-411: con la fuente viva y ningun segmento sin vencer no hay nada que
+            # heredar: no se llama a Chatwoot (lo de quien no esta en ninguna
+            # campana). No se recuerda: si aparece una campana, se mira.
+            logger.info(
+                "segment_label_inheritance outcome=sin_segmentos conversation=%s", conversation_id
+            )
+            return payload
         contact_id = webhook_contact_id(payload)
         if contact_id is None:
             logger.info(
@@ -409,17 +491,24 @@ class SegmentLabelInheritance:
             if other_id == conversation_id:
                 continue
             for label in getattr(other, "labels", ()) or ():
-                segment = self._segments.get(label)
+                segment = segments.get(label)
                 if segment is None or label in found:
                     continue
                 if segment.state_at(now) == STATE_EXPIRED:
+                    continue
+                if segment.origin == ORIGIN_AGENT_CAMPAIGN and not _active_since(
+                    other, segment.valid_from
+                ):
+                    # D1 de E-411: la etiqueta de una campana del AE se puede volver a
+                    # usar en otra campana. Solo se hereda de una conversacion con
+                    # actividad desde el desde de la campana vigente.
                     continue
                 found.append(label)
                 if isinstance(other_id, int):
                     sources.append(other_id)
         inherited = tuple(found)
         for label in inherited:
-            labeler = self._labelers.get(label)
+            labeler = self._source.labeler(label)
             outcome = (
                 await labeler.ensure(conversation_id, source="segment_inheritance")
                 if labeler is not None
@@ -430,7 +519,7 @@ class SegmentLabelInheritance:
                 "from=%s outcome=%s",
                 conversation_id,
                 contact_id,
-                self._segments[label].key,
+                segments[label].key,
                 label,
                 ",".join(str(source) for source in dict.fromkeys(sources)),
                 outcome,
@@ -442,14 +531,28 @@ class SegmentLabelInheritance:
                 contact_id,
                 sum(1 for other in others if getattr(other, "conversation_id", None) != conversation_id),
             )
-        self._remember(conversation_id, inherited)
+        self._remember(conversation_id, inherited, frozenset(segments))
         return with_labels(payload, inherited)
 
-    def _remember(self, conversation_id: int, labels: tuple[str, ...]) -> None:
+    def _remember(
+        self, conversation_id: int, labels: tuple[str, ...], with_segments: frozenset[str] = frozenset()
+    ) -> None:
         self._seen[conversation_id] = labels
+        self._seen_with[conversation_id] = with_segments
         self._seen.move_to_end(conversation_id)
         while len(self._seen) > self._remembered:
-            self._seen.popitem(last=False)
+            dropped, _ = self._seen.popitem(last=False)
+            self._seen_with.pop(dropped, None)
+
+
+def _active_since(conversation: object, start: datetime | None) -> bool:
+    """Si la conversacion tuvo actividad desde ``start`` (``last_activity_at`` en epoch)."""
+    if start is None:
+        return False
+    activity = getattr(conversation, "last_activity_at", None)
+    if type(activity) is not int:
+        return False
+    return activity >= int(start.timestamp())
 
 
 BeforeSend = Callable[[int], Awaitable[object]]
@@ -528,17 +631,24 @@ class SegmentLabelsSetup:
     segments: tuple[SegmentLabel, ...] = ()
     native: NativeSegmentLabels | None = None
     inheritance: SegmentLabelInheritance | None = None
+    # E-411: con AGENT_CAMPAIGN_LABEL_PATHS_ENABLED, la fuente viva (el manifiesto
+    # mas las campanas del AE). None: los segmentos fijos de arriba, lo de hoy.
+    source: SegmentLabelSource | None = None
 
     @property
     def validator_enabled(self) -> bool:
         """El validador y el AE ven los segmentos solo con el flag del motor."""
         return self.native is not None
 
+    def current_segments(self) -> tuple[SegmentLabel, ...]:
+        """Los segmentos de ahora: los de la fuente viva, o los fijos."""
+        return self.source.segments() if self.source is not None else self.segments
+
     def validator_labels(self, now: datetime) -> list[dict[str, str]]:
-        return validator_segment_labels(self.segments, now=now) if self.validator_enabled else []
+        return validator_segment_labels(self.current_segments(), now=now) if self.validator_enabled else []
 
 
-def segment_labels_setup(settings: Any, control_client: Any) -> SegmentLabelsSetup:
+def segment_labels_setup(settings: Any, control_client: Any, *, live: Any = None) -> SegmentLabelsSetup:
     """Los etiquetadores de los segmentos, o nada sin los flags. Falla cerrado.
 
     ``FLOW_ENGINE_SEGMENT_LABELS_ENABLED`` pide el motor de flujos, el cliente de
@@ -547,6 +657,12 @@ def segment_labels_setup(settings: Any, control_client: Any) -> SegmentLabelsSet
     cargados (``AGENT_SEGMENTS_ENABLED`` de PR-A) y el inbox: heredar una etiqueta
     que el agente no usa no sirve. El macro de un segmento no puede ser el de la
     pausa, la reanudacion, la baja ni el de cliente.
+
+    ``live`` (E-411, con ``AGENT_CAMPAIGN_LABEL_PATHS_ENABLED``): el catalogo vivo
+    de las campanas del AE. Con el, el arranque no exige ``[[agente.segmentos]]``
+    ni un segmento con macro (como ``campaign_inbound_entry_setup`` con
+    ``campaigns_live``), y la herencia y el plan nativo leen la fuente viva: los
+    segmentos del manifiesto mas las campanas servidas. Sin ``live``, lo de hoy.
     """
     from .product_label import ProductLabeler
 
@@ -562,7 +678,7 @@ def segment_labels_setup(settings: Any, control_client: Any) -> SegmentLabelsSet
     if control_client is None:
         raise ValueError(f"{flag} requires the Chatwoot control client")
     segments = declared_segment_labels(manifest, catalog)
-    if not segments:
+    if not segments and live is None:
         raise ValueError(f"{flag} requires [[agente.segmentos]] in the manifest")
     reserved = {
         getattr(settings, name, None)
@@ -583,15 +699,28 @@ def segment_labels_setup(settings: Any, control_client: Any) -> SegmentLabelsSet
         labelers[segment.label] = ProductLabeler(
             client=control_client, label=segment.label, macro_id=segment.macro_id
         )
+    source: SegmentLabelSource | None = None
+    if live is not None:
+        live.bind_labels(
+            segments=segments,
+            labelers=labelers,
+            make_labeler=lambda label, macro_id: ProductLabeler(
+                client=control_client, label=label, macro_id=macro_id
+            ),
+        )
+        source = live.label_source()
     native = None
     if motor:
         if not getattr(settings, "flow_engine_enabled", False):
             raise ValueError("FLOW_ENGINE_SEGMENT_LABELS_ENABLED requires FLOW_ENGINE_ENABLED")
-        if not labelers:
-            raise ValueError(
-                "FLOW_ENGINE_SEGMENT_LABELS_ENABLED requires a segment with macro_etiqueta"
-            )
-        native = NativeSegmentLabels(segments=segments, labelers=labelers)
+        if source is not None:
+            native = NativeSegmentLabels(source=source)
+        else:
+            if not labelers:
+                raise ValueError(
+                    "FLOW_ENGINE_SEGMENT_LABELS_ENABLED requires a segment with macro_etiqueta"
+                )
+            native = NativeSegmentLabels(segments=segments, labelers=labelers)
     inheritance = None
     if inherit:
         if catalog is None or not getattr(settings, "agent_segments_enabled", False):
@@ -599,7 +728,11 @@ def segment_labels_setup(settings: Any, control_client: Any) -> SegmentLabelsSet
         inbox_id = getattr(settings, "chatwoot_inbox_id", None)
         if type(inbox_id) is not int:
             raise ValueError("SEGMENT_LABEL_INHERITANCE_ENABLED requires CHATWOOT_INBOX_ID")
-        inheritance = SegmentLabelInheritance(
-            client=control_client, inbox_id=inbox_id, segments=segments, labelers=labelers
+        inheritance = (
+            SegmentLabelInheritance(client=control_client, inbox_id=inbox_id, source=source)
+            if source is not None
+            else SegmentLabelInheritance(
+                client=control_client, inbox_id=inbox_id, segments=segments, labelers=labelers
+            )
         )
-    return SegmentLabelsSetup(segments=segments, native=native, inheritance=inheritance)
+    return SegmentLabelsSetup(segments=segments, native=native, inheritance=inheritance, source=source)

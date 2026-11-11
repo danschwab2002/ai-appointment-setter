@@ -27,6 +27,17 @@ The link repeats the offer the lead already saw. The reserve RPC resolves it fro
 - `default_offer_not_in_catalog`: the lead has a live intent but its offer is not an active catalog row. The link carries the default; `lead_offer_code` keeps the offer the lead saw.
 - `default_no_intent`: the lead has no live intent in the funnel (cold inbound). The link carries the default.
 - `catalog_default`: rows issued before migration `20260922000100`.
+- `campaign` (E-410, migration `20261110000500`): the link carries the offer of the campaign of the turn. Only `reserve_portable_checkout_issuance_for_offer_v1` writes it, and the row keeps the campaign key in `campaign_ref` (non-null exactly when `offer_resolution = 'campaign'`, immutable like the rest of the row). `lead_offer_code` keeps the offer of the lead's live intent, if any.
+
+### The reserve with the offer of a campaign (E-410)
+
+`reserve_portable_checkout_issuance_for_offer_v1(p_commercial_case_id, p_external_user_id, p_chatwoot_account_id, p_chatwoot_inbox_id, p_chatwoot_conversation_id, p_trigger_external_message_id, p_issuance_ulid, p_funnel_ref, p_offer_code, p_campaign_ref, p_now)`, `service_role` only. It is derived from the live definition of `reserve_portable_checkout_issuance_for_funnel_v1` with counted replacements (the migration aborts if that definition changed) and keeps every check of it: case, scope, the funnel binding in the inbox, contact, opt-out, conversation, identity and the purchase of the product through any offer.
+
+- `p_offer_code` (`^[A-Za-z0-9]{4,32}$`) and `p_campaign_ref` (a slug) are required; otherwise `invalid_request`.
+- The offer is the `active` catalog row with the same tenant, scope, scope version, product and funnel as the default offer, and `offer_code = p_offer_code` (highest `version`). If there is none: `blocked_campaign_offer`, and nothing is written.
+- The lead's intent does not replace the offer of the campaign; its precheckout submission still provides the `sck` and the `fbclid`.
+- Replay: the same message returns the same issuance only if it was reserved with the same offer, as `campaign`, for the same campaign; otherwise `replay_conflict`.
+- Authorization, finalization and purchase correlation do not change: they look at the case, the scope and the `sck`, not at the offer.
 
 A known purchase of the product by the same phone, through any offer, blocks the issuance (`purchase_already_approved`).
 

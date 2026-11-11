@@ -506,3 +506,42 @@ def test_cli_bad_input_exits_2(tmp_path: Path) -> None:
 
     assert sc.main(["chequear", str(segment), "--grabadas", clean]) == 2
     assert sc.main(["chequear", str(EXAMPLE), "--grabadas", clean]) == 2  # sin instancia
+
+
+# ------------------------------------- la oferta de la campana (E-410)
+
+# El chequeo_sha de hoy de campana-ejemplo-v1 contra el base v14 de ATT1,
+# calculado con origin/main (v1.35.0) antes de E-410. CHECK_RULES_VERSION no
+# sube (D4): una campana sin oferta.codigo_oferta conserva su sha y sigue
+# sirviendose.
+EXAMPLE_CHECK_SHA_BEFORE_E410 = "0fe245eea3ad98bbd1878f0ebadd113f98ec2816dbfd6ab649e91c87006e35cf"
+
+
+def test_without_the_offer_code_the_check_sha_is_the_one_of_before(example, base) -> None:
+    assert "codigo_oferta" not in example["oferta"]
+    assert sc.calcular_chequeo_sha(example, base_sha256=base.rendered_sha256) == EXAMPLE_CHECK_SHA_BEFORE_E410
+
+
+def test_the_offer_code_is_parsed_and_goes_to_the_judge_in_the_toml(example_text, base) -> None:
+    text = _with_key(example_text, "[oferta]\n", '[oferta]\ncodigo_oferta = "wmkq4ba9"\n')
+    segment = sc.parse_segment(tomllib.loads(text))
+    assert segment.offer_code == "wmkq4ba9"
+    spy = Spy([EMPTY, EMPTY, EMPTY])
+    _run(text, base, spy)
+    system, user = spy.calls[0][0]["content"], spy.calls[0][1]["content"]
+    assert 'codigo_oferta = "wmkq4ba9"' in user
+    sentence = system.split("oferta.codigo_oferta es la oferta de Hotmart de la campana", 1)
+    assert len(sentence) == 2
+    assert "no es un item" in sentence[1][:120]
+
+
+@pytest.mark.parametrize("code", ["abc", "wm-kq4ba9", "x" * 33])
+def test_an_offer_code_without_the_shape_is_refused(example_text, code: str) -> None:
+    text = _with_key(example_text, "[oferta]\n", f'[oferta]\ncodigo_oferta = "{code}"\n')
+    with pytest.raises(sc.SegmentCheckError, match="oferta.codigo_oferta"):
+        sc.parse_segment(tomllib.loads(text))
+
+
+def test_the_fixed_question_of_the_price_points_to_the_offer_code() -> None:
+    fields = {question.key: question.field for question in sc.FIXED_QUESTIONS}
+    assert fields["alta-04"] == "[oferta].cupon o [oferta].codigo_oferta"

@@ -42,6 +42,7 @@ from bridge.agent_campaigns import (
 )
 from bridge.app import create_app
 from bridge.campaign_inbound_entry import CampaignEntry
+from bridge.instance_manifest import InstanceManifest
 from bridge.segment_check import calcular_chequeo_sha
 from bridge.segment_knowledge import SegmentCatalog, SegmentKnowledge, load_segment_catalog
 
@@ -63,17 +64,18 @@ def _draft(**overrides: Any) -> dict[str, Any]:
     return draft
 
 
-def _context(tmp_path: Path, *, with_manifest_segment: bool = False) -> CampaignContext:
+def _context(tmp_path: Path, *, with_manifest_segment: bool = False, offer_link: bool = True) -> CampaignContext:
     if with_manifest_segment:
         settings = _segment_settings(tmp_path, window=ALWAYS)
         manifest = settings.instance_manifest
         return CampaignContext(manifest=manifest, base=settings.commercial_knowledge,
-                               manifest_catalog=settings.agent_segment_catalog, reserved_macros=frozenset({5}))
+                               manifest_catalog=settings.agent_segment_catalog, reserved_macros=frozenset({5}),
+                               offer_link_enabled=offer_link)
     settings = _manifest_settings(tmp_path)
     assert settings.commercial_knowledge is not None
     return CampaignContext(manifest=settings.instance_manifest, base=settings.commercial_knowledge,
                            manifest_catalog=SegmentCatalog((), len(settings.commercial_knowledge.render().encode("utf-8"))),
-                           reserved_macros=frozenset({5}))
+                           reserved_macros=frozenset({5}), offer_link_enabled=offer_link)
 
 
 def _row(context: CampaignContext, *, draft: dict[str, Any] | None = None, version: int = 1, check_sha: str | None = None,
@@ -540,3 +542,178 @@ def test_the_manifest_catalog_rule_still_stops_the_start_with_a_bad_file(tmp_pat
     assert settings.instance_manifest is not None and settings.commercial_knowledge is not None
     with pytest.raises(SegmentError):
         load_segment_catalog(settings.instance_manifest, tmp_path / "instancia", settings.commercial_knowledge)
+
+
+# ------------------------------------- la oferta de la campana en el link (E-410)
+#
+# oferta.codigo_oferta: la oferta de Hotmart con la que sale el link del agente.
+# Las ofertas son las del manifiesto de ATT1 (tests/fixtures/instances/att1/
+# instancia.toml); wmkq4ba9 es la de Black, que existe en el checkout publico
+# (tests/fixtures/hotmart_checkout_offer_black_att1_20261110.json) y todavia
+# no esta declarada.
+
+
+def _with_offer_code(code: str, **offer: Any) -> dict[str, Any]:
+    return _draft(oferta={"precio": "37", "moneda": "USD", "reemplaza": ["precio", "moneda"],
+                          "codigo_oferta": code, **offer})
+
+
+def test_the_offer_code_is_part_of_the_draft_and_of_the_segment(tmp_path: Path) -> None:
+    body = parse_campaign(_with_offer_code("bmaztyhg"))
+    assert body["oferta"]["codigo_oferta"] == "bmaztyhg"
+    context = _context(tmp_path)
+    blocks, warnings, segment = instance_blocks(body, context=context, now=NOW)
+    assert blocks == []
+    assert _codes(warnings) == ["campaign_offer_not_verified"]
+    assert segment is not None and segment.knowledge.offer is not None
+    assert segment.knowledge.offer.offer_code == "bmaztyhg"
+    assert "El link de pago lo arma el sistema con la oferta de esta campaña." in segment.rendered
+
+
+def test_an_offer_the_instance_does_not_declare_is_blocked(tmp_path: Path) -> None:
+    blocks, warnings, _ = instance_blocks(parse_campaign(_with_offer_code("wmkq4ba9")),
+                                          context=_context(tmp_path), now=NOW)
+    assert {"code": "campaign_offer_unknown", "field": "oferta.codigo_oferta"} in blocks
+    assert "campaign_offer_not_verified" in _codes(warnings)
+
+
+def test_an_offer_with_the_wrong_shape_is_a_segment_error(tmp_path: Path) -> None:
+    blocks, _, _ = instance_blocks(parse_campaign(_with_offer_code("wm-kq")), context=_context(tmp_path), now=NOW)
+    assert "campaign_segment_invalid" in _codes(blocks)
+
+
+def test_the_offer_code_and_the_coupon_together_warn_both(tmp_path: Path) -> None:
+    blocks, warnings, _ = instance_blocks(parse_campaign(_with_offer_code("2uafw5bg", cupon="BLACK37")),
+                                          context=_context(tmp_path), now=NOW)
+    assert blocks == []
+    assert _codes(warnings) == ["campaign_coupon_not_verified", "campaign_offer_not_verified"]
+
+
+def test_with_several_products_the_offer_has_to_be_of_the_product_of_the_campaign(tmp_path: Path) -> None:
+    from test_multi_product_manifest import SECOND
+
+    context = _context(tmp_path)
+    payload = tomllib.loads((Path(__file__).parent / "fixtures" / "instances" / "att1" / "instancia.toml")
+                            .read_text(encoding="utf-8"))
+    payload["productos"] = [{"clave": "att1"}, copy.deepcopy(SECOND)]
+    for product in payload["productos"]:
+        product.pop("etiqueta", None)
+        product.pop("macro_etiqueta", None)
+    two = InstanceManifest.from_mapping(payload)
+    context = replace(context, manifest=replace(context.manifest, products=two.products))
+    # Sin oferta.producto la campana es del principal: la del segundo producto no sirve.
+    blocks, _, _ = instance_blocks(parse_campaign(_with_offer_code("prueba2b")), context=context, now=NOW)
+    assert "campaign_offer_unknown" in _codes(blocks)
+    blocks, _, _ = instance_blocks(parse_campaign(_with_offer_code("bmaztyhg")), context=context, now=NOW)
+    assert "campaign_offer_unknown" not in _codes(blocks)
+
+
+
+# ------------------------------------- las dos listas del catalogo vivo (E-411 C11)
+
+
+def _offer_row(context: CampaignContext, code: str = "bmaztyhg", **kwargs: Any) -> dict[str, Any]:
+    draft = _draft(oferta={"precio": "37", "moneda": "USD", "reemplaza": ["precio", "moneda"], "codigo_oferta": code})
+    return _row(context, draft=draft, **kwargs)
+
+
+def _labels_bound(context: CampaignContext, db: _Db) -> tuple[LiveSegmentCatalog, CampaignEntry, _Labeler]:
+    live, entry, labeler = _bound(context, db)
+    live.bind_labels(segments=(), labelers={}, campaigns=(), make_labeler=lambda label, macro: labeler)
+    return live, entry, labeler
+
+
+def test_a_row_appears_in_both_lists_and_leaves_them_when_it_goes(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    db = _Db([_offer_row(context)])
+    live, _, labeler = _labels_bound(context, db)
+    labels, entries = live.label_source(), live.entry_source()
+    assert labels.segments() == () and entries.campaigns() == ()
+
+    asyncio.run(live.refresh())
+    [segment] = labels.segments()
+    assert (segment.key, segment.label, segment.macro_id, segment.origin) == (
+        "black-november-2026", LABEL, MACRO, "campana_ae")
+    [campaign] = entries.campaigns()
+    assert campaign.offers == frozenset({"bmaztyhg"})
+    assert campaign.landings == frozenset({"org-a"})  # la landing de bmaztyhg en el manifiesto de ATT1
+    # El mismo etiquetador que la palabra clave, para los cuatro caminos.
+    assert labels.labeler(LABEL) is labeler and entries.labeler(LABEL) is labeler
+
+    db.rows = []
+    asyncio.run(live.refresh())
+    assert labels.segments() == () and entries.campaigns() == ()
+
+
+def test_a_campaign_without_its_own_offer_labels_but_does_not_enter_by_offer(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    live, _, _ = _labels_bound(context, _Db([_row(context)]))
+    asyncio.run(live.refresh())
+    assert [segment.label for segment in live.label_source().segments()] == [LABEL]
+    assert live.entry_source().campaigns() == ()
+
+
+def test_a_failed_read_keeps_both_lists(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    db = _Db([_offer_row(context)])
+    live, _, _ = _labels_bound(context, db)
+    asyncio.run(live.refresh())
+    db.down = True
+    db.rows = []
+    assert asyncio.run(live.refresh()) is False
+    assert len(live.label_source().segments()) == 1 and len(live.entry_source().campaigns()) == 1
+
+
+def _with_manifest_campaign(context: CampaignContext, **campaign: Any) -> CampaignContext:
+    from bridge.instance_manifest import Campaign
+
+    values = {"segment": "otra", "landings": (), "offers": ()}
+    values.update(campaign)
+    return replace(context, manifest=replace(context.manifest, campaigns=(Campaign(**values),)))
+
+
+@pytest.mark.parametrize("taken", [{"offers": ("bmaztyhg",)}, {"landings": ("org-a",)}], ids=["oferta", "landing"])
+def test_an_offer_or_its_landing_of_a_manifest_campaign_is_blocked(tmp_path: Path, taken: dict[str, Any]) -> None:
+    context = _with_manifest_campaign(_context(tmp_path), **taken)
+    blocks, _, _ = instance_blocks(parse_campaign(_with_offer_code("bmaztyhg")), context=context, now=NOW)
+    assert {"code": "campaign_offer_entry_taken", "field": "oferta.codigo_oferta"} in blocks
+
+
+def test_a_published_campaign_that_clashes_keeps_being_served_without_the_offer_entry(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="bridge")
+    plain = _context(tmp_path)
+    row = _offer_row(plain)
+    context = _with_manifest_campaign(plain, offers=("bmaztyhg",))
+    live, _, _ = _labels_bound(context, _Db([row]))
+    asyncio.run(live.refresh())
+    assert live.serving_state(CAMPAIGN) == "served"
+    assert [segment.label for segment in live.label_source().segments()] == [LABEL]
+    assert live.entry_source().campaigns() == ()
+    assert "agent_campaign_entry_skipped key=black-november-2026 reason=offer_taken" in caplog.text
+
+
+# ------------------------------------- revision (E-410/E-411): el flag y la oferta por defecto
+
+
+def test_without_the_offer_link_flag_a_campaign_with_its_offer_is_blocked_and_not_served(tmp_path: Path) -> None:
+    # Hallazgo 1: con el flag apagado el bloque prometeria un link con la oferta que no sale.
+    off = _context(tmp_path, offer_link=False)
+    blocks, _, _ = instance_blocks(parse_campaign(_with_offer_code("bmaztyhg")), context=off, now=NOW)
+    assert {"code": "campaign_offer_link_disabled", "field": "oferta.codigo_oferta"} in blocks
+    row = _offer_row(_context(tmp_path / "otra"))
+    live = _live(off, _Db([row]))
+    asyncio.run(live.refresh())
+    assert live.serving_state(CAMPAIGN) == "contenido_invalido"
+    # Una campana sin la oferta se sirve igual con el flag apagado.
+    plain = _live(off, _Db([_row(off)]))
+    asyncio.run(plain.refresh())
+    assert plain.serving_state(CAMPAIGN) == "served"
+
+
+def test_the_default_offer_is_not_an_offer_of_a_campaign(tmp_path: Path) -> None:
+    # Hallazgo 3: gopi6lh7 es la por defecto de ATT1: el link ya sale con ella, y como
+    # entrada por oferta etiquetaria todo carrito de su landing.
+    blocks, _, _ = instance_blocks(parse_campaign(_with_offer_code("gopi6lh7")), context=_context(tmp_path), now=NOW)
+    assert {"code": "campaign_offer_is_default", "field": "oferta.codigo_oferta"} in blocks

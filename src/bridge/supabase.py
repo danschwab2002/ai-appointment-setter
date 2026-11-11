@@ -6081,6 +6081,8 @@ class SupabaseClient:
         now: str,
         phone_equivalence: bool = False,
         funnel_ref: str | None = None,
+        offer_code: str | None = None,
+        campaign_ref: str | None = None,
     ) -> CheckoutIssuanceReservation:
         """Atomically persist one V2 checkout issuance before Chatwoot.
 
@@ -6094,6 +6096,14 @@ class SupabaseClient:
         reserve_portable_checkout_issuance_for_funnel_v1: la portable, con la
         oferta del producto de ese funnel. Exige un binding activo del funnel
         en el mismo inbox; si no, ``blocked_funnel``.
+
+        Con ``offer_code`` (la oferta de la campana del turno, E-410, con
+        AGENT_CAMPAIGN_OFFER_LINK_ENABLED) pega en
+        reserve_portable_checkout_issuance_for_offer_v1: la de funnel, con esa
+        oferta y la clave de la campana (``campaign_ref``). Exige la portable,
+        el funnel (con un solo producto, el del principal) y la campana. Si la
+        oferta no esta activa en el catalogo del funnel, ``blocked_campaign_offer``.
+        Sin ``offer_code`` el pedido es byte a byte el de siempre.
         """
 
         payload: dict[str, object] = {
@@ -6106,7 +6116,19 @@ class SupabaseClient:
             "p_issuance_ulid": issuance_ulid,
             "p_now": now,
         }
-        if funnel_ref is not None:
+        if offer_code is not None:
+            if not phone_equivalence:
+                raise ValueError("an offer reserve is portable: it needs phone_equivalence")
+            if funnel_ref is None or campaign_ref is None:
+                raise ValueError("an offer reserve needs the funnel_ref and the campaign_ref")
+            operation = "portable_checkout_issuance_for_offer_reserve"
+            path = "/rest/v1/rpc/reserve_portable_checkout_issuance_for_offer_v1"
+            payload["p_funnel_ref"] = funnel_ref
+            payload["p_offer_code"] = offer_code
+            payload["p_campaign_ref"] = campaign_ref
+        elif campaign_ref is not None:
+            raise ValueError("a campaign_ref without an offer_code is not a reserve")
+        elif funnel_ref is not None:
             if not phone_equivalence:
                 raise ValueError("a funnel reserve is portable: it needs phone_equivalence")
             operation = "portable_checkout_issuance_for_funnel_reserve"
@@ -6143,6 +6165,8 @@ class SupabaseClient:
         }
         if funnel_ref is not None:
             allowed.add("blocked_funnel")
+        if offer_code is not None:
+            allowed.add("blocked_campaign_offer")
         if outcome not in allowed:
             raise SupabaseCommittedResponseError(operation)
         values = {

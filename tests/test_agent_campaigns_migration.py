@@ -18,8 +18,10 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
     sql = _sql()
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
     # El sondeo de Meta y el aviso en el hilo (20261109000100, E-361): dos columnas, una tabla y cuatro RPC.
-    assert names[-1] == "20261109000100_meta_template_request_notices_v1.sql"
-    assert names[-2] == MIGRATION.name
+    # La oferta de la campana en el link del agente (20261110000500, E-410): una reserva, una columna y el trigger.
+    assert names[-1] == "20261110000500_campaign_offer_checkout_issuance_v1.sql"
+    assert names[-2] == "20261109000100_meta_template_request_notices_v1.sql"
+    assert names[-3] == MIGRATION.name
     assert sql.count("\nbegin;\n") == 1 and sql.rstrip().endswith("commit;")
     assert "set local lock_timeout = '5s';" in sql
     assert "agent_campaigns_already_applied" in sql and "agent_campaigns_prerequisite_missing" in sql

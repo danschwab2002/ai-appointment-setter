@@ -95,7 +95,7 @@ from bridge.purchase_agent_pause import (
 from bridge.product_label import ProductLabeler
 from bridge.product_routes import HotmartUnrouted, ProductRoute, ProductRoutes, followup_product_labels
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
-from bridge.payment_link_coupon import coupon_applied_in_context, mark_payment_link_coupon, mark_segment_link_coupon, segment_coupon_fits_product, segment_coupon_for_labels, segment_link_coupon, validate_payment_link_coupon_code  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
+from bridge.payment_link_coupon import coupon_applied_in_context, mark_payment_link_coupon, mark_segment_link_coupon, segment_cart_discount_brake, segment_coupon_fits_product, segment_coupon_for_labels, segment_link_coupon, segment_link_offer, SegmentOfferLink, validate_payment_link_coupon_code  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
 from bridge.filtering import EventDecision, classify_chatwoot_event
 from bridge.agent_provenance import AgentTurn, CONTEXT_BUILDER_VERSION
 from bridge.hermes import AGENT_TURN_FAILED_REASON_CODE, HermesShadowProcessor, agent_turn_failure_to_hand_off, payment_link_product  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
@@ -416,6 +416,14 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # aprueba un duenio en la pagina, sin subir nada al servidor. Portable: por
     # instancia, solo prenderlo.
     "agent_campaigns_enabled",
+    # E-410: el link del agente sale con la oferta de la campana vigente
+    # ([oferta].codigo_oferta). La regla es del producto; por instancia, solo
+    # prenderlo (con la oferta declarada y sembrada en el catalogo).
+    "agent_campaign_offer_link_enabled",
+    # E-411: la herencia, el etiquetar del flujo y la entrada por landing u
+    # oferta leen tambien las campanas del AE. Exige AGENT_CAMPAIGNS_ENABLED;
+    # cada camino sigue detras de su flag. Por instancia, solo prenderlo.
+    "agent_campaign_label_paths_enabled",
     "hotmart_purchase_worker_enabled",
     "lead_precheckout_enabled",
     # El adaptador de GHL traduce el formulario a lead.precheckout y lo manda
@@ -987,6 +995,15 @@ class Settings:
     # E-355 (bridge/agent_campaigns.py, contrato agent-campaigns-v1): con el flag,
     # el catalogo de segmentos suma la campana publicada desde la base.
     agent_campaigns_enabled: bool = False
+    # E-410 (contrato segment-knowledge-v1, «La oferta de la campana en el
+    # link»): con el flag, un segmento vigente con [oferta].codigo_oferta hace
+    # que el link del agente se reserve con esa oferta. Apagado, la reserva y su
+    # pedido son los de siempre, byte a byte.
+    agent_campaign_offer_link_enabled: bool = False
+    # E-411 (contratos segment-labels-v1 y campaign-entry-v1): con el flag, los
+    # tres caminos de la etiqueta leen la fuente viva (manifiesto mas campanas
+    # del AE). Apagado, las fuentes fijas de hoy.
+    agent_campaign_label_paths_enabled: bool = False
     precheckout_form_enabled: bool = False
     precheckout_form_token: str | None = None
     precheckout_max_age_seconds: int = 300
@@ -1675,11 +1692,23 @@ class Settings:
                     "AGENT_SEGMENTS_ENABLED requires INSTANCE_MANIFEST_PATH and "
                     "COMMERCIAL_KNOWLEDGE_ENABLED"
                 )
+        agent_campaign_offer_link_enabled = (
+            os.getenv("AGENT_CAMPAIGN_OFFER_LINK_ENABLED", "false").strip().lower()
+            == "true"
+        )
+        if agent_segments_enabled:
+            assert instance_manifest is not None and commercial_knowledge is not None
             agent_segment_catalog = load_segment_catalog(
                 instance_manifest,
                 Path(str(instance_manifest_path)).parent,
                 commercial_knowledge,
+                # E-410: sin el flag, una campana con codigo_oferta no carga.
+                offer_link_enabled=agent_campaign_offer_link_enabled,
             )
+        if agent_campaign_offer_link_enabled and not agent_segments_enabled:
+            # La oferta sale del segmento vigente del turno: sin segmentos no hay
+            # de donde. Falla al arrancar, como los demas flags de segmentos.
+            raise ValueError("AGENT_CAMPAIGN_OFFER_LINK_ENABLED requires AGENT_SEGMENTS_ENABLED")
         hotmart_api_credentials_file_value = (
             os.getenv("HOTMART_API_CREDENTIALS_FILE", "").strip()
         )
@@ -2348,6 +2377,11 @@ class Settings:
             agent_segment_catalog=agent_segment_catalog,
             agent_campaigns_enabled=(
                 os.getenv("AGENT_CAMPAIGNS_ENABLED", "false").strip().lower() == "true"
+            ),
+            agent_campaign_offer_link_enabled=agent_campaign_offer_link_enabled,
+            agent_campaign_label_paths_enabled=(
+                os.getenv("AGENT_CAMPAIGN_LABEL_PATHS_ENABLED", "false").strip().lower()
+                == "true"
             ),
             precheckout_form_enabled=precheckout_form_enabled,
             precheckout_form_token=precheckout_form_token,
@@ -4508,15 +4542,36 @@ class _PhoneEquivalentCheckoutIssuance:
     Con ``funnel_ref`` (varios productos, 2c-3a) la reserva es la del funnel del
     producto que nombro el agente: su oferta, su hotlink y su intencion. Con un
     solo producto no se pasa y la reserva es la de siempre.
+
+    Con ``offer_code`` (E-410, la oferta de la campana del turno con
+    AGENT_CAMPAIGN_OFFER_LINK_ENABLED) la reserva es la por oferta, con el funnel
+    del producto del link (con un solo producto, el del principal) y la clave de
+    la campana. Sin ``offer_code``, lo de arriba sin cambios.
     """
 
-    def __init__(self, client: object, funnel_ref: str | None = None) -> None:
+    def __init__(
+        self,
+        client: object,
+        funnel_ref: str | None = None,
+        *,
+        offer_code: str | None = None,
+        campaign_ref: str | None = None,
+    ) -> None:
+        if (offer_code is None) != (campaign_ref is None) or (
+            offer_code is not None and funnel_ref is None
+        ):
+            raise ValueError("an offer reserve needs the offer, the campaign and the funnel")
         self._client = client
         self._funnel_ref = funnel_ref
+        self._offer_code = offer_code
+        self._campaign_ref = campaign_ref
 
     async def reserve_chatwoot_checkout_issuance_v2(self, **kwargs: object) -> object:
         if self._funnel_ref is not None:
             kwargs["funnel_ref"] = self._funnel_ref
+        if self._offer_code is not None:
+            kwargs["offer_code"] = self._offer_code
+            kwargs["campaign_ref"] = self._campaign_ref
         return await self._client.reserve_chatwoot_checkout_issuance_v2(  # type: ignore[attr-defined]
             phone_equivalence=True, **kwargs
         )
@@ -4823,6 +4878,7 @@ def create_app(
             manifest=campaign_manifest,
             base=settings.commercial_knowledge,
             manifest_catalog=settings.agent_segment_catalog,
+            offer_link_enabled=settings.agent_campaign_offer_link_enabled,
             reserved_macros=frozenset(
                 macro
                 for macro in (
@@ -5496,12 +5552,30 @@ def create_app(
 
     # E-316 (segment-labels-v1): las etiquetas de segmento, con el macro de cada
     # [[agente.segmentos]] (macro_etiqueta). Sin los dos flags, nada.
-    segment_labels_setup = _segment_labels_setup(settings, control_client)
+    # E-411: con AGENT_CAMPAIGN_LABEL_PATHS_ENABLED, los tres caminos leen el
+    # catalogo vivo de las campanas del AE (falla cerrado sin AGENT_CAMPAIGNS_ENABLED).
+    label_paths_live = None
+    if settings.agent_campaign_label_paths_enabled:
+        if agent_campaign_live is None:
+            raise ValueError(
+                "AGENT_CAMPAIGN_LABEL_PATHS_ENABLED requires AGENT_CAMPAIGNS_ENABLED"
+            )
+        label_paths_live = agent_campaign_live
+    # Sin el flag, la llamada de siempre (sin ``live``): lo de hoy, igual.
+    segment_labels_setup = (
+        _segment_labels_setup(settings, control_client)
+        if label_paths_live is None
+        else _segment_labels_setup(settings, control_client, live=label_paths_live)
+    )
     native_segment_labels = segment_labels_setup.native
     # E-321 (campaign-entry-v1): con el flag, el mismo plan suma la etiqueta de la
     # campana de la landing (o la oferta) del recorrido. Sin el flag, el de E-316.
-    native_segment_labels = _campaign_entry_labels(
-        settings, control_client, native_segment_labels
+    native_segment_labels = (
+        _campaign_entry_labels(settings, control_client, native_segment_labels)
+        if label_paths_live is None
+        else _campaign_entry_labels(
+            settings, control_client, native_segment_labels, live=label_paths_live
+        )
     )
     segment_label_inheritance = segment_labels_setup.inheritance
 
@@ -6919,10 +6993,12 @@ def create_app(
                 "customer_status_coupon_skipped conversation=%s", conversation_id
             )
             return
-        campaign = segment_link_coupon(
+        campaign = segment_cart_discount_brake(
             segment_catalog, context.get(SEGMENT_CONTEXT_KEY)
         )
         if campaign is not None:
+            # E-410 C8: tambien una campana sin cupon con
+            # [oferta].frenar_descuento_carrito (sin el campo, la de siempre).
             # PR-A2 (E-338, diseno E-310 §2.6): con una campana con cupon
             # vigente no se renueva el cupon del carrito por respuesta ni se le
             # dice al agente que hay uno. Los dos no se suman.
@@ -7331,6 +7407,42 @@ def create_app(
                 (external_user_id, wa_id, *equivalent_whatsapp_phones(wa_id))
             )
         )
+
+    def agent_link_campaign_offer(
+        context: dict[str, object] | None, *, link_product: str | None = None
+    ) -> SegmentOfferLink | None:
+        """La oferta de la campana del turno para el link del agente (E-410), o None.
+
+        Solo la llama la rama del link con AGENT_CAMPAIGN_OFFER_LINK_ENABLED. La
+        oferta es de su producto (``[oferta].producto``, o el principal): un link
+        de otro producto sale como siempre (la misma regla que el cupon, D10 de
+        E-338). Los logs dicen la clave de la campana, nunca el codigo.
+        """
+        campaign = segment_link_offer(
+            segment_catalog,
+            context.get(SEGMENT_CONTEXT_KEY) if isinstance(context, dict) else None,
+        )
+        if campaign is None:
+            return None
+        conversation_ref = (
+            context.get("conversation_ref") if isinstance(context, dict) else None
+        )
+        if not segment_coupon_fits_product(
+            campaign,  # type: ignore[arg-type]
+            link_product=link_product,
+            principal_product=commercial_ally_routes.principal.key,
+        ):
+            logger.info(
+                "segment_link_offer_other_product key=%s product=%s conversation=%s",
+                campaign.key,
+                link_product,
+                conversation_ref,
+            )
+            return None
+        logger.info(
+            "segment_link_offer key=%s conversation=%s", campaign.key, conversation_ref
+        )
+        return campaign
 
     def agent_link_coupon_code(
         context: dict[str, object] | None, *, link_product: str | None = None
@@ -9012,6 +9124,15 @@ def create_app(
             assert settings.chatwoot_inbox_id is not None
             assert control_client is not None
             link_coupon_code = agent_link_coupon_code(context, link_product=link_product)
+            link_offer = (
+                agent_link_campaign_offer(context, link_product=link_product)
+                if settings.agent_campaign_offer_link_enabled
+                and whatsapp_inbound_equivalence
+                else None
+            )
+            if link_offer is not None and link_funnel_ref is None:
+                # Con un solo producto, el funnel del principal (D10 de E-408).
+                link_funnel_ref = commercial_ally_routes.principal.config.funnel_ref
             link_conversation_id = conversation_id
             link_trigger_id = message_id
 
@@ -9041,7 +9162,12 @@ def create_app(
                     # dos formas del movil. Sin manifiesto, como siempre.
                     supabase=(
                         _PhoneEquivalentCheckoutIssuance(
-                            shared_supabase, funnel_ref=link_funnel_ref
+                            shared_supabase,
+                            funnel_ref=link_funnel_ref,
+                            offer_code=(
+                                link_offer.offer_code if link_offer is not None else None
+                            ),
+                            campaign_ref=link_offer.key if link_offer is not None else None,
                         )
                         if whatsapp_inbound_equivalence
                         else shared_supabase
@@ -9094,7 +9220,13 @@ def create_app(
                     **completed_proposal,
                     "decision": "handoff",
                     "qualification_status": "needs_human",
-                    "reason_code": f"payment_link_{reason}",
+                    # E-410, D2: la oferta de la campana no se pudo emitir (fuera
+                    # del catalogo o retirada). Se deriva; nunca la por defecto.
+                    "reason_code": (
+                        "payment_link_campaign_offer_unavailable"
+                        if reason == "blocked_campaign_offer"
+                        else f"payment_link_{reason}"
+                    ),
                 })
                 return
             logger.info(
@@ -10482,7 +10614,7 @@ def create_app(
                 data = {
                     **data,
                     **automation_expert_segments(
-                        segment_labels_setup.segments,
+                        segment_labels_setup.current_segments(),
                         data.get("flows") or [],  # type: ignore[arg-type]
                         now=datetime.now(UTC),
                     ),
