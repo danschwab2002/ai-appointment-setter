@@ -208,6 +208,28 @@ def test_an_offer_the_instance_does_not_accept_still_stops(tmp_path: Path, offer
     with pytest.raises(SupabaseError, match="followup_recipient_not_allowlisted"):
         asyncio.run(_dispatcher(authority, chatwoot, tmp_path).dispatch_due(now=NOW))
     assert _templates(chatwoot) == []
+    # E-432 (las compras de Black de ATT1, E-422): con una oferta del producto
+    # que la instancia no declara, la base guarda el motivo propio y cierra sin
+    # reintentos; sin oferta, el motivo y los reintentos de siempre.
+    [finalization] = authority.finalizations
+    if offer is None:
+        assert finalization["reason_code"] == "pre_request_failed"
+        assert finalization["next_attempt_at"] is not None
+    else:
+        assert finalization["reason_code"] == "recipient_offer_not_declared"
+        assert finalization["next_attempt_at"] is None
+
+
+def test_another_product_keeps_the_old_reason(tmp_path: Path) -> None:
+    # Otro producto no es una oferta sin declarar: es un destinatario ajeno.
+    row = {**copy.deepcopy(ROWS["execution_context"]), "offer_code": "otra0001",
+           "product_name": "Otro producto"}
+    authority = _DatabaseContextAuthority(row)
+    chatwoot = _RealWelcomeChatwoot()
+
+    with pytest.raises(SupabaseError, match="followup_recipient_not_allowlisted"):
+        asyncio.run(_dispatcher(authority, chatwoot, tmp_path).dispatch_due(now=NOW))
+    assert [f["reason_code"] for f in authority.finalizations] == ["pre_request_failed"]
 
 
 def test_the_context_parser_reads_the_database_row_unchanged() -> None:

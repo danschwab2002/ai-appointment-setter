@@ -219,12 +219,13 @@ def test_d2_a_rejected_start_leaves_the_attempt_reserved_and_goes_on_with_the_ba
         # :1518-1525, el gate final de Meta cerrado.
         pytest.param(None, 200, False, "final_meta_gate_closed", None, id="gate final cerrado"),
         # :1317-1334, una oferta fuera del binding (la de GHL): cierra el
-        # intento y corta el lote.
+        # intento y corta el lote. Desde E-432 con su motivo y sin reintento:
+        # reintentar no declara la oferta.
         pytest.param(
             "83utgyow",
             200,
             True,
-            "pre_request_failed",
+            "recipient_offer_not_declared",
             "followup_recipient_not_allowlisted",
             id="oferta fuera del binding",
         ),
@@ -260,7 +261,9 @@ def test_d3_a_failure_before_the_request_is_retried_a_minute_after_it(
     assert finalization["outcome"] == "failed_before_request"
     assert finalization["reason_code"] == reason
     assert finalization["now"] == FINAL_NOW
-    assert finalization["next_attempt_at"] == RETRY_AT
+    assert finalization["next_attempt_at"] == (
+        None if reason == "recipient_offer_not_declared" else RETRY_AT
+    )
     assert finalization["reconciliation_deadline"] is None
     assert "request_started" not in authority.events
     assert _messages(chatwoot) == []

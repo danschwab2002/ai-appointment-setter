@@ -436,6 +436,46 @@ def _is_authorized_followup_recipient(
     )
 
 
+RECIPIENT_OFFER_NOT_DECLARED = "recipient_offer_not_declared"
+
+
+def _recipient_offer_not_declared(
+    *,
+    execution_context: FollowupExecutionContext,
+    commercial_ally_config: CommercialAllyConfig | None,
+    portable_recipient_enabled: bool = False,
+    product_routes: ProductRoutes | None = None,
+) -> bool:
+    """Whether a refused recipient was refused only for an undeclared offer (E-432).
+
+    True when the portable boundary is on, the event carries an offer and its
+    product is one the instance declares, but the offer is not one of that
+    product's ``accepted_offer_codes``. That is the Black purchases of ATT1
+    (E-422: ``wmkq4ba9`` was sold and never declared): the welcome cannot go
+    out until someone declares the offer, so retrying is useless. A missing
+    offer, another product or the legacy boundary keep the old reason.
+    """
+    if (
+        not portable_recipient_enabled
+        or commercial_ally_config is None
+        or execution_context.buyer_phone is None
+        or not execution_context.offer_code
+    ):
+        return False
+    configs = [commercial_ally_config]
+    if product_routes is not None and len(product_routes) > 1:
+        configs.extend(route.config for route in product_routes if not route.principal)
+    same_product = [
+        config
+        for config in configs
+        if execution_context.product_name == config.product_name
+    ]
+    return bool(same_product) and all(
+        execution_context.offer_code not in config.accepted_offer_codes
+        for config in same_product
+    )
+
+
 def _validate_followup_message_proposal(
     proposal: FollowupMessageProposal | FollowupHandoffSuggestion,
 ) -> None:
@@ -2901,11 +2941,39 @@ class DurableDispatcher:
                                 ),
                                 product_routes=self._dispatch_product_routes,
                             ):
-                                await self._finalize_pre_request_failure(
-                                    action=action,
-                                    attempt=attempt,
-                                    reason_code="pre_request_failed",
-                                )
+                                # E-432: una oferta que la instancia no declara
+                                # queda en la base con su motivo y sin
+                                # reintentos (no se arregla sola); el resto
+                                # sigue como antes. El error del log no cambia.
+                                if _recipient_offer_not_declared(
+                                    execution_context=execution_context,
+                                    commercial_ally_config=(
+                                        self._commercial_ally_config
+                                    ),
+                                    portable_recipient_enabled=(
+                                        self._portable_recipient_enabled
+                                    ),
+                                    product_routes=self._dispatch_product_routes,
+                                ):
+                                    logger.warning(
+                                        "durable_followup_offer_not_declared "
+                                        "action_id=%s attempt_id=%s offer=%s",
+                                        action.action_id,
+                                        attempt.attempt_id,
+                                        execution_context.offer_code,
+                                    )
+                                    await self._finalize_pre_request_failure(
+                                        action=action,
+                                        attempt=attempt,
+                                        reason_code=RECIPIENT_OFFER_NOT_DECLARED,
+                                        retryable=False,
+                                    )
+                                else:
+                                    await self._finalize_pre_request_failure(
+                                        action=action,
+                                        attempt=attempt,
+                                        reason_code="pre_request_failed",
+                                    )
                                 raise SupabaseError(
                                     "followup_recipient_not_allowlisted"
                                 )
