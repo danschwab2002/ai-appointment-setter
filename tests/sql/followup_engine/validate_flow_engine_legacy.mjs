@@ -1388,7 +1388,7 @@ const CASES = [
   },
   {
     id: 'G14', ventana: 'abierta',
-    que: 'El cierre que llama el despachador con un nombre rechazado (failed_before_request, template_parameters_missing, sin reintento): la accion queda permanent_failed y el caso abierto, con su secuencia activa; despues, otro carrito de la misma oferta no arranca. No es el binding: plan_cart_recovery intenta abrir otra secuencia en el caso, la base da 23505 (followup_sequences_one_active_per_case_idx) y el adaptador deja el evento con create_recovery_case_failed.',
+    que: 'El cierre que llama el despachador con un nombre rechazado (failed_before_request, template_parameters_missing, sin reintento): la accion queda permanent_failed y, como al caso no le queda otro toque, el caso se cierra en unreachable con su secuencia completada (20261111000100, E-423); despues, otro carrito de la misma oferta arranca en otro caso. Hasta E-423 el caso quedaba abierto con su secuencia activa, plan_cart_recovery intentaba abrir otra secuencia en el, la base daba 23505 (followup_sequences_one_active_per_case_idx) y el adaptador dejaba el evento con create_recovery_case_failed.',
     fija: '5b (F#7)',
     run: async (ctx) => {
       const lead = personOf(ctx, 'A');
@@ -1402,8 +1402,8 @@ const CASES = [
       await resolveAndPlan(ctx, again);
     },
     check: (record) => record.final.acciones.a1.estado === 'permanent_failed'
-      && ['grace_period', 'active'].includes(record.final.casos.c1.estado)
-      && stepsOf(record, 'plan')[1]?.arranco === false,
+      && record.final.casos.c1.estado === 'unreachable'
+      && stepsOf(record, 'plan')[1]?.arranco === true,
   },
   {
     id: 'G15', ventana: 'abierta',

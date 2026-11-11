@@ -9,8 +9,9 @@ que hace hoy el despachador, que el motor reusa entero (la capa ``despacho`` de
 
 * **D1.** El nombre rechazado cierra sin reintento (``worker.py:1322-1338``). Es
   la excepcion 5 de §1.7 (``nombre_inseguro_cierra``) y la entrada de la 5b: sin
-  proximo intento, la base deja la accion ``permanent_failed`` y el caso abierto
-  para siempre (eso lo fija G14 en PGlite).
+  proximo intento, la base deja la accion ``permanent_failed``; hasta E-423 el
+  caso quedaba abierto para siempre, y desde 20261111000100 se cierra en
+  ``unreachable`` si no le queda otro toque (eso lo fija G14 en PGlite).
 * **D2.** El arranque rechazado (``PilotRequestStartRejectedError``) deja el
   intento reservado y sigue con el resto del lote (``:1541-1563``).
 * **D3.** El fallo antes del pedido se reintenta a un minuto de la hora del fallo

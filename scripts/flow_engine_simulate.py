@@ -96,11 +96,14 @@ LIENZO_SCHEMA = "setter-simulacion-lienzo/v1"
 # adelanta el envio ni abre otro caso); las politicas y los flujos que traduce el
 # fixture no cambiaron, asi que las definiciones siguen siendo las de c7fa8ef. El
 # traductor lo cambio la T2.1 (los varios toques, 2026-10-21) sin cambiar lo que
-# traduce de la captura del 16/10: su sha256 es el de despues de la T2.1.
+# traduce de la captura del 16/10: su sha256 es el de despues de la T2.1. Los
+# casos se regeneraron otra vez con 20261111000100 (E-423: G14, el caso cuyo
+# unico toque no sale se cierra en unreachable y el carrito siguiente arranca);
+# las politicas y los flujos que traduce el fixture tampoco cambiaron.
 BASE = "c7fa8ef"
 LEGACY_FILES = {
     "tests/fixtures/flow_engine/legacy_recovery_cases.json":
-        "68bcbfe7a1df77f8e2db0fb6a22cc8fdcbb3e8ae6eeefce939780abda3cc9da7",
+        "0ec561b764661933f2bd94105012258bcce725f1a291c634257b709a2954a71e",
     "tests/flow_store_translator.py": "9f61e478b7dde6f459098afbf5190ed02b6a2b75ab89de1d371a4924d3ab7630",
 }
 LEGACY_CHANGED = "las definiciones de hoy son del 16/10; el legado cambio despues"

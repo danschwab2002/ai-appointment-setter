@@ -1330,6 +1330,19 @@ results.purchase = {
     [slipPatch('v_old_offer', 'old'), slipPatch('v_new_offer', 'new')],
     [slipPatch('v_old_class', 'old'), slipPatch('v_new_class', 'new')],
   ];
+  // 20261111000200 (E-423) le suma al portable, y solo a el, la rama del pago
+  // pendiente cancelado que tampoco clasifica la intencion. Se aplica despues
+  // de los de la ficha: su texto viejo es parte del texto nuevo de la ficha.
+  const pendingBlock = readFileSync(
+    join(root, 'supabase/migrations/20261111000200_pending_cancel_keeps_first_contact_v1.sql'),
+    'utf8',
+  ).split('do $pending_cancel$')[1]?.split('$pending_cancel$;')[0];
+  const pendingPatch = (name, tag) => {
+    const match = pendingBlock?.match(new RegExp(`${name} constant text := \\$${tag}\\$([\\s\\S]*?)\\$${tag}\\$;`));
+    if (!match) throw new Error(`pending cancel correlator patch ${name} not found`);
+    return match[1];
+  };
+  slipPatches.push([pendingPatch('v_old', 'old'), pendingPatch('v_new', 'new')]);
   const drift = one((await db.query(`
     with definitions as (
       select
@@ -1337,13 +1350,13 @@ results.purchase = {
         pg_get_functiondef('public._correlate_portable_hotmart_purchase_intent(uuid)'::regprocedure) as portable
     )
     select
-      replace(replace(
+      replace(replace(replace(
       replace(
         replace(shared, 'public.correlate_hotmart_purchase_intent(',
           'public._correlate_portable_hotmart_purchase_intent('),
         'intent.normalized_phone = v_phone',
         'intent.normalized_phone = any(public._whatsapp_phone_variants(v_phone))'
-      ), $1, $2), $3, $4) = portable as derived,
+      ), $1, $2), $3, $4), $5, $6) = portable as derived,
       (length(shared) - length(replace(shared, 'intent.normalized_phone = v_phone', '')))
         / length('intent.normalized_phone = v_phone') as exact_comparisons,
       position('_whatsapp_phone_' in shared) as shared_mentions_equivalence
