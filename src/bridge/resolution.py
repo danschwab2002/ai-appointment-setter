@@ -116,6 +116,56 @@ async def _stored_whatsapp_identity(
     return phone
 
 
+# E-441: los motivos de «no entra» de un evento de Hotmart sin telefono. Llevan
+# el prefijo de los rechazos del planificador del piloto, asi la lectura los
+# cuenta como «no entra» y no como una falla de planificacion.
+BUYER_WITHOUT_PHONE_REJECTION = "pilot_scope_rejected:buyer_without_phone"
+BUYER_WITHOUT_PHONE_AMBIGUOUS_REJECTION = (
+    "pilot_scope_rejected:buyer_without_phone_identity_ambiguous"
+)
+
+
+async def _identity_for_event_without_phone(
+    supabase: SupabaseClient,
+    *,
+    contact_id: str | None,
+    chatwoot_account_id: int,
+    chatwoot_inbox_id: int,
+) -> str:
+    """The stored WhatsApp identity to plan an event that brought no phone.
+
+    Portable runtime only (E-441). Hotmart sends some carts with only the
+    email and the name of the buyer. Before, the plan had no identity and the
+    pilot planner refused it in Python (``pilot_plan_cart_recovery_requires_
+    identity``), recorded as ``create_recovery_case_failed``: the person who
+    had filled the form with permission got no message at all.
+
+    Returns the one active identity of this inbox that the matched contact
+    already has. Raises ``PilotPlanRejectedError`` (a «no entra», not a
+    failure) when there is no matched contact or no identity, or when the
+    contact has more than one and none can be chosen. A failed read is a
+    ``SupabaseError`` and keeps the old generic failure.
+    """
+    if contact_id is None:
+        raise PilotPlanRejectedError(BUYER_WITHOUT_PHONE_REJECTION)
+    identities = await supabase.find_contact_active_whatsapp_identities(
+        contact_id=contact_id,
+        chatwoot_account_id=chatwoot_account_id,
+        chatwoot_inbox_id=chatwoot_inbox_id,
+    )
+    own = sorted({identity.external_user_id for identity in identities})
+    if not own:
+        raise PilotPlanRejectedError(BUYER_WITHOUT_PHONE_REJECTION)
+    if len(own) > 1:
+        raise PilotPlanRejectedError(BUYER_WITHOUT_PHONE_AMBIGUOUS_REJECTION)
+    logger.info(
+        "resolution_whatsapp_identity_for_event_without_phone contact_id=%s region=%s",
+        contact_id,
+        whatsapp_phone_region(own[0]),
+    )
+    return own[0]
+
+
 async def _admit_through_engine(
     supabase: SupabaseClient,
     *,
@@ -409,10 +459,9 @@ async def resolve_event(
                 buyer.creation_date_ms / 1000,
                 tz=timezone.utc,
             ).isoformat()
-            portable_identity_allowed = (
+            portable_boundary_matches = (
                 commercial_ally_config is not None
                 and pilot_boundary is not None
-                and buyer.buyer_phone is not None
                 and chatwoot_account_id
                 == commercial_ally_config.chatwoot_account_id
                 and chatwoot_inbox_id == commercial_ally_config.chatwoot_inbox_id
@@ -422,6 +471,24 @@ async def resolve_event(
                 and pilot_boundary.channel_account_ref
                 == f"chatwoot-inbox:{commercial_ally_config.chatwoot_inbox_id}"
             )
+            # E-441: Hotmart puede mandar el evento sin ningun telefono (solo
+            # email y nombre). Si el contacto ya existe con su identidad de
+            # WhatsApp de esta bandeja (la guardo el formulario), el plan usa
+            # esa. Sin identidad guardada el evento no entra, con su motivo.
+            stored_identity_without_phone: str | None = None
+            if portable_boundary_matches and buyer.buyer_phone is None:
+                assert chatwoot_account_id is not None
+                assert chatwoot_inbox_id is not None
+                stored_identity_without_phone = await _identity_for_event_without_phone(
+                    supabase,
+                    contact_id=contact_id if match is not None else None,
+                    chatwoot_account_id=chatwoot_account_id,
+                    chatwoot_inbox_id=chatwoot_inbox_id,
+                )
+            portable_identity_allowed = portable_boundary_matches and (
+                buyer.buyer_phone is not None
+                or stored_identity_without_phone is not None
+            )
             legacy_identity_allowed = (
                 buyer.buyer_phone is not None
                 and chatwoot_account_id is not None
@@ -430,7 +497,9 @@ async def resolve_event(
             )
             identity_allowed = portable_identity_allowed or legacy_identity_allowed
             external_user_id = buyer.buyer_phone if identity_allowed else None
-            if (
+            if stored_identity_without_phone is not None:
+                external_user_id = stored_identity_without_phone
+            elif (
                 portable_identity_allowed
                 and match is not None
                 and external_user_id is not None

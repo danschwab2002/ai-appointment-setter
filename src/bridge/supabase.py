@@ -1672,7 +1672,7 @@ class ChannelIdentitySummary:
 
 @dataclass(frozen=True)
 class WhatsAppIdentityMatch:
-    """An active WhatsApp identity found by one of the forms of a phone."""
+    """An active WhatsApp identity found by a phone form or by its contact."""
 
     channel_identity_id: str
     contact_id: str
@@ -10085,6 +10085,75 @@ class SupabaseClient:
                     contact_id=_required_string(
                         row, "contact_id", operation=operation
                     ),
+                    external_user_id=external_user_id,
+                )
+            )
+        return matches
+
+    async def find_contact_active_whatsapp_identities(
+        self,
+        *,
+        contact_id: str,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+    ) -> list[WhatsAppIdentityMatch]:
+        """Active WhatsApp identities of one contact in one Chatwoot inbox.
+
+        Read only (E-441). Hotmart can report a cart without any phone; when
+        the contact already exists (the landing form saved it, with its
+        WhatsApp identity), the plan uses that identity. Same inbox condition
+        as ``find_active_whatsapp_identities`` (``metadata ->> 'inbox_id'``).
+        """
+        operation = "find_contact_active_whatsapp_identities"
+        if (
+            not isinstance(contact_id, str)
+            or not contact_id.strip()
+            or not isinstance(chatwoot_account_id, int)
+            or isinstance(chatwoot_account_id, bool)
+            or chatwoot_account_id <= 0
+            or not isinstance(chatwoot_inbox_id, int)
+            or isinstance(chatwoot_inbox_id, bool)
+            or chatwoot_inbox_id <= 0
+        ):
+            raise SupabaseError(f"{operation}_invalid_input")
+        response = await self._request(
+            "GET",
+            "/rest/v1/channel_identities",
+            params={
+                "select": "id,contact_id,external_user_id,metadata",
+                "contact_id": f"eq.{contact_id}",
+                "channel": "eq.whatsapp",
+                "account_id": f"eq.chatwoot:{chatwoot_account_id}",
+                "identity_status": "eq.active",
+                "order": "created_at.asc",
+            },
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        matches: list[WhatsAppIdentityMatch] = []
+        for row in rows:
+            if _required_string(row, "contact_id", operation=operation) != contact_id:
+                raise _invalid_row_error(operation)
+            external_user_id = _required_string(
+                row, "external_user_id", operation=operation
+            )
+            if _PHONE_DIGITS_RE.fullmatch(external_user_id) is None:
+                continue
+            metadata = row.get("metadata")
+            if metadata is not None and not isinstance(metadata, dict):
+                raise _invalid_row_error(operation)
+            inbox = (metadata or {}).get("inbox_id")
+            if isinstance(inbox, bool) or not isinstance(inbox, (int, str)):
+                continue
+            if str(inbox) != str(chatwoot_inbox_id):
+                continue
+            matches.append(
+                WhatsAppIdentityMatch(
+                    channel_identity_id=_required_string(
+                        row, "id", operation=operation
+                    ),
+                    contact_id=contact_id,
                     external_user_id=external_user_id,
                 )
             )
