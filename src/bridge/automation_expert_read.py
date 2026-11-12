@@ -29,6 +29,8 @@ from urllib.parse import urlsplit
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+from .meta_error import meta_error_code_of
+
 CONTRACT = "automation-expert-read-v1"
 # 1.3.0 (E-208, M16 P5 y P8): la ficha del legado, quien ejecuta cada flujo de
 # negocio (business_flows) y las rutas, divergencias y rechazos del motor v1.
@@ -60,7 +62,6 @@ _PHONE_SEPARATORS = frozenset(" \t\n\r\u00a0-.()+")
 _CONVERSATION_RE = re.compile(r"#?([0-9]{1,6})")
 _SEVEN_DIGITS_RE = re.compile(r"[0-9]{7}")
 _SCOPE_LABEL_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,127} v[1-9][0-9]{0,8}$")
-_META_ERROR_CODE_RE = re.compile(r"^(\d{3,6})(?:\D|$)")
 _EVENT_TYPE_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,79}$")
 _SHORT_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
@@ -1212,11 +1213,8 @@ def _meta_error_code(message: Mapping[str, object]) -> str | None:
     attributes = message.get("content_attributes")
     if not isinstance(attributes, dict):
         return None
-    error = attributes.get("external_error")
-    if not isinstance(error, str):
-        return None
-    match = _META_ERROR_CODE_RE.match(error.strip())
-    return match.group(1) if match else None
+    # E-486: tambien el JSON adentro de un string (meta_error_code_of).
+    return meta_error_code_of(attributes.get("external_error"))
 
 
 @dataclass(frozen=True)
