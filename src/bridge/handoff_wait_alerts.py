@@ -77,8 +77,12 @@ _EVENT_CODES = {
 # La ventana de servicio de Meta: 24 h desde el ultimo mensaje de la persona.
 SERVICE_WINDOW_SECONDS = 86_400
 # Dan (03/11): avisar cuando faltan 2 h, para que el equipo conteste con texto
-# y no con plantilla.
-WINDOW_WARNING_SECONDS = 7_200
+# y no con plantilla. E-486: configurable por instancia
+# (HANDOFF_WAIT_ALERT_WINDOW_WARNING_HOURS, 1-20, default 2 = lo de siempre).
+# Con 4, el recordatorio sale a las 20 h del ultimo mensaje: junto con el de
+# las 2 h de HND-006 queda el "2 h y 20 h" del plan, sin un tipo de aviso nuevo.
+DEFAULT_WINDOW_WARNING_HOURS = 2
+WINDOW_WARNING_SECONDS = DEFAULT_WINDOW_WARNING_HOURS * 3600
 DEFAULT_AFTER_HOURS = 2
 DEFAULT_MAX_AGE_HOURS = 168
 DEFAULT_SCAN_INTERVAL_SECONDS = 600.0
@@ -227,6 +231,7 @@ def evaluate_wait_alerts(
     now_epoch: int,
     after_seconds: int,
     max_age_seconds: int,
+    window_warning_seconds: int = WINDOW_WARNING_SECONDS,
 ) -> tuple[tuple[WaitAlert, ...], str | None]:
     """Decidir que avisos tocan en una conversacion, o por que ninguno.
 
@@ -244,6 +249,9 @@ def evaluate_wait_alerts(
         or isinstance(max_age_seconds, bool)
         or not isinstance(max_age_seconds, int)
         or max_age_seconds <= 0
+        or isinstance(window_warning_seconds, bool)
+        or not isinstance(window_warning_seconds, int)
+        or not 0 < window_warning_seconds < SERVICE_WINDOW_SECONDS
     ):
         raise ValueError("invalid handoff wait evaluation configuration")
     if not isinstance(details, dict):
@@ -286,7 +294,7 @@ def evaluate_wait_alerts(
         if inbound:
             last_inbound = max(inbound, key=lambda item: item.message_id)
             closes = last_inbound.created_at + SERVICE_WINDOW_SECONDS
-            if closes - WINDOW_WARNING_SECONDS <= now_epoch < closes:
+            if closes - window_warning_seconds <= now_epoch < closes:
                 alerts.append(
                     WaitAlert(
                         kind="window_closing",
@@ -356,18 +364,20 @@ class HandoffWaitAlertSweeper:
         inbox_id: int,
         after_hours: int = DEFAULT_AFTER_HOURS,
         max_age_hours: int = DEFAULT_MAX_AGE_HOURS,
+        window_warning_hours: int = DEFAULT_WINDOW_WARNING_HOURS,
         scan_interval_seconds: float = DEFAULT_SCAN_INTERVAL_SECONDS,
         max_pages: int = DEFAULT_MAX_PAGES,
         max_conversations_per_scan: int = DEFAULT_MAX_CONVERSATIONS_PER_SCAN,
         clock: Callable[[], float] = time.time,
     ) -> None:
-        for value in (account_id, inbox_id, after_hours, max_age_hours):
+        for value in (account_id, inbox_id, after_hours, max_age_hours, window_warning_hours):
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError("invalid handoff wait alert configuration")
         if (
             producer is None
             or not 1 <= after_hours <= 72
             or not 24 <= max_age_hours <= 720
+            or not 1 <= window_warning_hours <= 20
             or isinstance(scan_interval_seconds, bool)
             or not isinstance(scan_interval_seconds, (int, float))
             or not math.isfinite(scan_interval_seconds)
@@ -384,6 +394,7 @@ class HandoffWaitAlertSweeper:
         self._after_seconds = after_hours * 3600
         self._after_hours = after_hours
         self._max_age_seconds = max_age_hours * 3600
+        self._window_warning_seconds = window_warning_hours * 3600
         self._scan_interval_seconds = float(scan_interval_seconds)
         self._max_pages = max_pages
         self._max_conversations_per_scan = max_conversations_per_scan
@@ -471,6 +482,7 @@ class HandoffWaitAlertSweeper:
                 now_epoch=now_epoch,
                 after_seconds=self._after_seconds,
                 max_age_seconds=self._max_age_seconds,
+                window_warning_seconds=self._window_warning_seconds,
             )
             if not alerts:
                 counts[skip or "nothing_due"] += 1

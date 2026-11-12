@@ -18,7 +18,7 @@ manifiesto v2 se traduce a ese binding con ``to_commercial_ally_config``.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import re
 import tomllib
@@ -31,6 +31,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from .approved_templates import TemplateHeaderMedia
 from .commercial_ally import CommercialAllyConfig, OfferLanding
 from .flow_definition import check_client_ok
+from .handoff_notice import (
+    ServiceHours,
+    city_of_zone,
+    default_service_hours,
+    parse_day,
+)
 from .payment_slip import (
     PAYMENT_SLIP_TEMPLATE_PARAMETERS,
     PaymentSlipMethod,
@@ -150,7 +156,15 @@ _TOP_KEYS_REQUIRED = {
     "flujos",
     "guardas",
 }
-_TOP_KEYS_OPTIONAL = {"slack", "revision_diaria", "adaptadores", "productos", "ficha", "campanas"}
+_TOP_KEYS_OPTIONAL = {
+    "slack",
+    "revision_diaria",
+    "adaptadores",
+    "productos",
+    "ficha",
+    "campanas",
+    "atencion",
+}
 
 # La etiqueta de Chatwoot de un producto. Chatwoot pasa el titulo a minusculas y
 # acepta letras, numeros, guiones y guiones bajos.
@@ -390,6 +404,15 @@ class InstanceManifest:
     # [plantillas.imagenes]: la imagen fija del encabezado de cada plantilla, por su nombre en Meta
     # (E-370). Vacio = ninguna: una plantilla con encabezado de imagen no sale.
     template_images: tuple[tuple[str, TemplateHeaderMedia], ...] = ()
+    # [atencion] (E-486): cuando atiende el equipo, para el aviso al derivar.
+    # None = no esta declarado: rige el horario de por defecto de las aliadas.
+    attention: ServiceHours | None = None
+
+    @property
+    def service_hours(self) -> ServiceHours:
+        """El horario del equipo: el de [atencion] o el de por defecto (09:00 a 20:00)."""
+
+        return self.attention or default_service_hours(self.time_zone)
 
     @property
     def template_image_names(self) -> frozenset[str]:
@@ -703,6 +726,7 @@ class InstanceManifest:
             payload, events, all_offers
         )
         campaigns = _campaigns(payload.get("campanas"), agent_segments, all_offers)
+        attention = _attention(payload.get("atencion"), time_zone)
 
         manifest = cls(
             product_version=product_version,
@@ -743,6 +767,7 @@ class InstanceManifest:
             client_ok=client_ok,
             agent_segments=agent_segments,
             campaigns=campaigns,
+            attention=attention,
         )
         for flow, enabled in manifest.flows.items():
             blockers = manifest.flow_blockers(flow)
@@ -1058,6 +1083,56 @@ def _hotmart(
     price = _price(table.get("precio"), f"{where}.precio")
     offers = _offers(table.get("ofertas"), f"{where}.ofertas")
     return product_id, hotlink, product_name, currency, price, offers
+
+
+_HOUR_MINUTE = re.compile(r"([01][0-9]|2[0-3]):([0-5][0-9])")
+
+
+def _attention(value: object, time_zone: str) -> ServiceHours | None:
+    """[atencion] (E-486): dias, desde y hasta, en la zona de la instancia.
+
+    Ejemplo (el horario de por defecto de las aliadas):
+
+        [atencion]
+        dias = ["lunes", "martes", "miercoles", "jueves", "viernes"]
+        desde = "09:00"
+        hasta = "20:00"
+        ciudad = "Ciudad de México"   # opcional; si no, sale de la zona
+    """
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ManifestError("atencion debe ser una tabla")
+    _exact_keys("atencion", value, {"dias", "desde", "hasta"}, {"ciudad"})
+    names = _str_list(value["dias"], "atencion.dias")
+    days: list[int] = []
+    for name in names:
+        day = parse_day(name)
+        if day is None:
+            raise ManifestError(f"atencion.dias: '{name}' no es un dia de la semana")
+        if day in days:
+            raise ManifestError(f"atencion.dias: '{name}' esta repetido")
+        days.append(day)
+    if not days:
+        raise ManifestError("atencion.dias no puede estar vacio")
+    bounds: list[time] = []
+    for key in ("desde", "hasta"):
+        raw = _str(value, key, f"atencion.{key}")
+        match = _HOUR_MINUTE.fullmatch(raw)
+        if match is None:
+            raise ManifestError(f"atencion.{key} debe ser HH:MM")
+        bounds.append(time(int(match.group(1)), int(match.group(2))))
+    start, end = bounds
+    if start >= end:
+        raise ManifestError("atencion.desde debe ser antes que atencion.hasta")
+    city = (
+        _str(value, "ciudad", "atencion.ciudad")
+        if "ciudad" in value
+        else city_of_zone(time_zone)
+    )
+    return ServiceHours(
+        days=tuple(sorted(days)), start=start, end=end, time_zone=time_zone, city=city
+    )
 
 
 def _exact_keys(

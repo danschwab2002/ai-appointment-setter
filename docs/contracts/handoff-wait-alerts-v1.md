@@ -20,6 +20,8 @@ Al canal de Slack de la aliada, por su conector (el mismo productor que `HND-001
 
 **Lo que cuenta como respuesta del equipo:** un mensaje público saliente (`message_type` 1 o 3) de un `user` de Chatwoot, el mismo criterio con el que el bridge marca `attended_at`. El agente (`agent_bot`) y las notas privadas, también la del bridge, no cuentan. Si el historial ya muestra la respuesta, la derivación se da por atendida aunque `attended_at` todavía no haya llegado.
 
+**El recordatorio de la ventana (E-486):** HND-005 sale `HANDOFF_WAIT_ALERT_WINDOW_WARNING_HOURS` antes de que cierre la ventana de 24 h (1-20, por defecto 2, lo de siempre). Con 4, sale a las 20 h del último mensaje de la persona.
+
 **Lo que nunca avisa:** una conversación que no está abierta, una con `automation_opted_out` (las bajas «No más mensajes»: 11 de las 14 que esperaban en ATT1 el 02/11), una pausada cuyo último saliente fue del agente (la pausa al comprar, la confirmación de una baja), y lo que empezó a esperar hace más de `HANDOFF_WAIT_ALERT_MAX_AGE_HOURS` (168 por defecto). La lectura de la base ya deja afuera las derivaciones más viejas que ese techo.
 
 ## Sin corte por horario

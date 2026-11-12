@@ -122,7 +122,7 @@ cobraron…») queda absorbida: ese renglón ahora manda a la ruta. El freno del
 - **El aviso a la clienta al derivar (D12).** Con `decision="handoff"` el bridge
   no manda el `reply` del modelo (F-033): lo único que le llega a la persona es
   el aviso fijo de `HANDOFF_NOTICE_ENABLED` (F-034, «Le paso tu consulta al
-  equipo y te responden por este mismo chat.»), que hoy es para todas o para
+  equipo para que la revise.» desde la 1.37.0), que hoy es para todas o para
   nadie. Escribir el aviso en el SOUL sería texto que nunca sale. D12 («solo con
   clientas») es un cambio del bridge: mandar ese aviso cuando la entrada trae
   `customer_status`, aunque `HANDOFF_NOTICE_ENABLED` esté apagado. Va en un PR

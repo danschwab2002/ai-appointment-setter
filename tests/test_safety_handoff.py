@@ -358,3 +358,16 @@ def test_the_slack_card_of_a_safety_handoff_says_urgent() -> None:
 
 def test_the_slack_card_of_any_other_handoff_is_the_same_as_today() -> None:
     assert _card("policy_requires_human")["text"] == "[p2] Nueva derivación · ATT1"
+
+
+@pytest.fixture(autouse=True)
+def _inside_service_hours(monkeypatch: pytest.MonkeyPatch) -> None:
+    """E-486: el aviso depende de la hora; estos tests derivan dentro del
+    horario (martes 10/11, 11:00 de Ciudad de Mexico), con la frase sola."""
+    from datetime import UTC, datetime
+
+    from bridge import handoff_notice
+
+    monkeypatch.setattr(
+        handoff_notice, "current_time", lambda: datetime(2026, 11, 10, 17, 0, tzinfo=UTC)
+    )

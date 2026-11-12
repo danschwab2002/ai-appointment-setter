@@ -91,6 +91,7 @@ def _evaluate(details: dict, messages: list[dict], *, now: int, handoff=None, **
         now_epoch=now,
         after_seconds=kw.get("after", TWO_HOURS),
         max_age_seconds=kw.get("max_age", WEEK),
+        **({"window_warning_seconds": kw["window"]} if "window" in kw else {}),
     )
 
 
@@ -494,3 +495,24 @@ def test_the_sweeper_rejects_an_impossible_configuration() -> None:
                 inbox_id=13,
                         **kwargs,
             )
+
+
+def test_the_window_reminder_hours_are_configurable() -> None:
+    # E-486: con 4 h el recordatorio sale a las 20 h del ultimo mensaje.
+    details, messages = _until(2839)
+    closes = 1791668934 + 86400
+    four = 4 * 3600
+    due = _evaluate(details, messages, handoff=_handoff(), now=closes - four, window=four)[0]
+    assert [a.kind for a in due] == ["unattended", "window_closing"]
+    early = _evaluate(details, messages, handoff=_handoff(), now=closes - four - 1, window=four)[0]
+    assert [a.kind for a in early] == ["unattended"]
+    # El default sigue en 2 h: a las 3 h del cierre no sale.
+    default = _evaluate(details, messages, handoff=_handoff(), now=closes - 3 * 3600)[0]
+    assert [a.kind for a in default] == ["unattended"]
+
+
+@pytest.mark.parametrize("window", [0, 86_400, True])
+def test_an_impossible_window_reminder_is_rejected(window: object) -> None:
+    details, messages = _until(2839)
+    with pytest.raises(ValueError):
+        _evaluate(details, messages, handoff=_handoff(), now=1791668934, window=window)
