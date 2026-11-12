@@ -102,7 +102,20 @@ def test_the_distribution_copies_the_plugin_and_names_its_variables() -> None:
                                         "list_chatwoot_labels", "create_chatwoot_label",
                                         "add_chatwoot_label_to_conversation", "list_chatwoot_macros",
                                         "create_chatwoot_label_macro", "preview_campaign", "propose_campaign",
-                                        "validate_campaign", "get_campaign", "list_campaigns"]
+                                        "validate_campaign", "get_campaign", "list_campaigns",
+                                        "get_approval_page"]
+
+
+def test_the_soul_sends_the_approval_page_without_a_proposal() -> None:
+    # E-465: el agente le dijo a Dan que la pagina solo se abre con el boton de una propuesta y que vale
+    # 24 horas. La pagina se abre siempre; lo que vence es la propuesta validada.
+    soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
+    assert "**La página de aprobación se abre siempre, sin propuesta.**" in soul
+    assert "«Entrar con Slack»" in soul and "no armes un cambio para que aparezca" in soul
+    assert "el botón vale 24 horas" not in soul
+    assert "la propuesta validada vale 24 horas" in soul
+    for path in ("flujos/crear-un-flujo", "flujos/pasar-flujo-al-sistema-nuevo"):
+        assert "`get_approval_page`" in _skill(path), path
 
 
 def test_the_soul_never_asks_for_a_phone_or_a_mail() -> None:

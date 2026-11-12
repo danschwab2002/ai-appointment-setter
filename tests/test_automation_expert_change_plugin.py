@@ -34,7 +34,9 @@ TOOLS = ["get_flow_definitions", "propose_flow_change", "validate_flow_change", 
          "list_chatwoot_macros",
          # agent-campaigns-v1 (E-355): armar una campana. Publicarla es de la pagina.
          "create_chatwoot_label_macro", "preview_campaign", "propose_campaign", "validate_campaign",
-         "get_campaign", "list_campaigns"]
+         "get_campaign", "list_campaigns",
+         # E-465: el link de la pagina de aprobacion, sin propuesta.
+         "get_approval_page"]
 
 
 def _load_plugin() -> ModuleType:

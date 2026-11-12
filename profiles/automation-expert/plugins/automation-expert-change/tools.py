@@ -361,6 +361,15 @@ def _maybe_post_approval_button(proposal_id: str, out: dict[str, object]) -> Non
         data["approval_button"] = button
 
 
+def get_approval_page(params: dict[str, object], **kwargs: object) -> str:
+    """El link de la pagina de aprobacion de la instancia (E-465), sin propuesta. No llama al bridge.
+
+    Sale de la misma base que el boton (``FLOW_APPROVAL_BASE_URL``) y solo con la pagina prendida.
+    """
+    del params, kwargs
+    return _dumps(approval_button.approval_page(_profile_setting))
+
+
 LIST_STATES = ("abiertas", "todas")
 
 

@@ -41,7 +41,7 @@ TIMEOUT_SECONDS = 10
 BUTTON_TEXT = "Revisar y aprobar"
 MESSAGE_TEXT = (
     "*La propuesta quedó validada.* La revisa y la aprueba una persona de la lista de aprobadores, "
-    "en la página que abre el botón. El botón vale 24 horas."
+    "en la página que abre el botón. La propuesta validada vale 24 horas."
 )
 FALLBACK_TEXT = "La propuesta quedó validada. Revisar y aprobar:"
 
@@ -85,6 +85,11 @@ def enabled(setting: Callable[[str], str]) -> bool:
 
 def approval_url(base_url: str, proposal_id: str, *, page_prefix: str = PAGE_PREFIX) -> str:
     """El link de la pagina. Solo https, solo el dominio, y un UUID canonico al final."""
+    return f"{_base(base_url)}{page_prefix}{UUID(proposal_id)}"
+
+
+def _base(base_url: str) -> str:
+    """La base configurada, validada: solo https y solo el dominio, sin ruta ni credenciales."""
     base = base_url.strip().rstrip("/")
     parsed = urlparse(base)
     if (
@@ -98,7 +103,34 @@ def approval_url(base_url: str, proposal_id: str, *, page_prefix: str = PAGE_PRE
         or parsed.fragment
     ):
         raise ValueError("flow_approval_base_url_invalid")
-    return f"{base}{page_prefix}{UUID(proposal_id)}"
+    return base
+
+
+# El indice de la pagina (E-465): GET /flow-approval/ lista los flujos de la instancia, y desde ahi un
+# aprobador los pausa y carga su telefono al grupo de prueba. No hace falta una propuesta abierta: entra
+# con «Sign in with Slack» (sin ?p= vuelve al indice) y la sesion dura 8 horas. Misma base que el boton,
+# y el link no lleva ningun id, asi que este si vuelve al agente para que lo pase.
+INDEX_PATH = "/flow-approval/"
+INDEX_NOTE = ("Es la página de aprobación de esta instancia. Se abre en cualquier momento, sin una propuesta "
+              "abierta: la persona entra con «Entrar con Slack» (la sesión dura 8 horas) y ahí ve todos los "
+              "flujos, los pausa y carga su teléfono al grupo de prueba. Solo entra quien está en la lista de "
+              "aprobadores.")
+
+
+def index_url(base_url: str) -> str:
+    """El link del indice de la pagina, con las mismas reglas que ``approval_url``."""
+    return f"{_base(base_url)}{INDEX_PATH}"
+
+
+def approval_page(setting: Callable[[str], str]) -> dict[str, object]:
+    """La pagina de aprobacion para pasarle a la persona. No llama a nadie: solo arma el link."""
+    if not enabled(setting):
+        return {"error": "approval_page_not_enabled"}
+    try:
+        url = index_url(setting(BASE_URL_SETTING))
+    except ValueError:
+        return {"error": "approval_page_not_enabled"}
+    return {"data": {"url": url, "note": INDEX_NOTE}}
 
 
 def build_message(*, channel: str, thread_ts: str | None, url: str, message_text: str = MESSAGE_TEXT,

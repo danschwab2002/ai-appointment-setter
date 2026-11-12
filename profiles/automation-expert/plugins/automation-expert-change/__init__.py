@@ -48,6 +48,10 @@ from .tools import (
 from .schemas import GET_TEMPLATE_REQUEST, LIST_TEMPLATE_REQUESTS, PROPOSE_TEMPLATE, VALIDATE_TEMPLATE  # noqa: E402
 from .tools import get_template_request, list_template_requests, propose_template, validate_template  # noqa: E402
 
+# E-465: el link de la pagina de aprobacion, sin propuesta (ver los flujos, pausar, cargar un telefono).
+from .schemas import GET_APPROVAL_PAGE  # noqa: E402
+from .tools import get_approval_page  # noqa: E402
+
 _TEMPLATE_TOOLS = frozenset({"propose_template", "validate_template", "list_template_requests",
                              "get_template_request"})
 _TOOLS = frozenset({"get_flow_definitions", "propose_flow_change", "validate_flow_change", "get_flow_change",
@@ -56,7 +60,9 @@ _TOOLS = frozenset({"get_flow_definitions", "propose_flow_change", "validate_flo
                     "list_chatwoot_labels", "create_chatwoot_label", "add_chatwoot_label_to_conversation",
                     "list_chatwoot_macros", "create_chatwoot_label_macro",
                     # agent-campaigns-v1 (E-355): armar una campana; publicarla es de la pagina.
-                    "preview_campaign", "propose_campaign", "validate_campaign", "get_campaign", "list_campaigns"})
+                    "preview_campaign", "propose_campaign", "validate_campaign", "get_campaign", "list_campaigns",
+                    # E-465: el link de la pagina de aprobacion.
+                    "get_approval_page"})
 
 
 def make_profile_guard(profile_name):
@@ -96,6 +102,7 @@ def register(ctx):
         ("validate_campaign", VALIDATE_CAMPAIGN, validate_campaign),
         ("get_campaign", GET_CAMPAIGN, get_campaign),
         ("list_campaigns", LIST_CAMPAIGNS, list_campaigns),
+        ("get_approval_page", GET_APPROVAL_PAGE, get_approval_page),
     ):
         ctx.register_tool(name=name, toolset="automation_expert_change", schema=schema, handler=handler)
     ctx.register_hook("pre_tool_call", make_profile_guard(getattr(ctx, "profile_name", None)))

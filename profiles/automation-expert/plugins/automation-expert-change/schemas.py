@@ -224,6 +224,16 @@ GET_TEMPLATE_REQUEST = {
     },
 }
 
+GET_APPROVAL_PAGE = {
+    "name": "get_approval_page",
+    "description": (
+        "El link de la página de aprobación de esta instancia, para pasárselo a la persona: ahí ve todos los "
+        "flujos, los pausa y carga su teléfono al grupo de prueba, sin una propuesta abierta. Entra con "
+        "«Entrar con Slack». Con approval_page_not_enabled, esta instancia no tiene la página."
+    ),
+    "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+}
+
 GET_FLOW_CHANGE = {
     "name": "get_flow_change",
     "description": "Relee una propuesta: su estado, sus ítems, su vista previa y sus últimos eventos. Solo lee.",
