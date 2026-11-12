@@ -31,6 +31,20 @@ from typing import Any
 from zoneinfo import available_timezones
 
 from .automation_expert_read import looks_like_identifier
+from .flow_audience import (
+    AUDIENCE_FORMS,
+    DEFAULT_FORM_WINDOW,
+    DEFAULT_PER_HOUR,
+    DEFAULT_PER_OCCURRENCE,
+    PROBLEM_INVALID,
+    PROBLEM_MISSING,
+    PROBLEM_UNKNOWN,
+    Problem,
+    audience_form,
+    check_audience_trigger,
+    check_para,
+    check_ritmo,
+)
 
 SCHEMA = "setter-flujo/v1"
 
@@ -155,9 +169,12 @@ MAX_PATH_CHARS = 512
 MAX_TEXT_CHARS = 300
 
 _TOP_KEYS = (
-    "esquema", "flujo", "producto", "nombre", "version", "estado", "dispara", "entra",
-    "pasos", "termina", "horario", "topes", "prioridad",
+    "esquema", "flujo", "producto", "nombre", "version", "estado", "dispara", "para", "entra",
+    "pasos", "termina", "horario", "topes", "prioridad", "ritmo",
 )
+# Los disparadores (E-484): un evento, un silencio, o una de las tres formas del
+# disparo por audiencia (flow_audience), que van con ``para`` y, opcional, ``ritmo``.
+TRIGGER_KEYS = ("evento", "silencio") + AUDIENCE_FORMS
 _STEP_KEYS: Mapping[str, tuple[str, ...]] = {
     "esperar": ("esperar",),
     "plantilla": ("plantilla", "idioma", "variables", "boton"),
@@ -1394,6 +1411,10 @@ def check_definition(definition: object, *, published: bool = False,
 
     if "dispara" in definition:
         _check_trigger(out, definition["dispara"])
+    if "para" in definition:
+        _add_problems(out, check_para(definition["para"]))
+    if "ritmo" in definition:
+        _add_problems(out, check_ritmo(definition["ritmo"]))
     if "entra" in definition:
         _check_entry(out, definition["entra"])
     if "pasos" in definition:
@@ -1418,11 +1439,21 @@ def check_definition(definition: object, *, published: bool = False,
     return tuple(out.findings)
 
 
+def _add_problems(out: _Collector, problems: Iterable[Problem]) -> None:
+    """Los problemas de forma de ``flow_audience`` como hallazgos de la regla 1."""
+    specs = {PROBLEM_UNKNOWN: UNKNOWN_KEY, PROBLEM_INVALID: INVALID_VALUE, PROBLEM_MISSING: REQUIRED_KEY_MISSING}
+    for problem in problems:
+        out.add(specs[problem.kind], problem.path, reason=problem.reason)
+
+
 def _check_trigger(out: _Collector, trigger: object) -> None:
     if not isinstance(trigger, Mapping):
         out.add(INVALID_VALUE, ("dispara",), reason="dispara es un objeto con evento o con silencio.")
         return
-    _check_keys(out, trigger, ("dispara",), ("evento", "silencio"))
+    _check_keys(out, trigger, ("dispara",), TRIGGER_KEYS)
+    for form in AUDIENCE_FORMS:
+        if form in trigger:
+            _add_problems(out, check_audience_trigger(form, trigger[form]))
     if "evento" in trigger:
         _check_enum(out, trigger["evento"], ("dispara", "evento"), EVENTS)
     if "silencio" in trigger:
@@ -1711,7 +1742,10 @@ def _is_date(value: object) -> bool:
 
 @dataclass(frozen=True)
 class Trigger:
-    """El disparador de una definicion: ``evento`` (con su valor si se sabe) o ``silencio``."""
+    """El disparador de una definicion: ``evento`` (con su valor si se sabe), ``silencio`` o ``audiencia``.
+
+    Con ``audiencia`` (E-484), ``event`` es la forma: ``fecha``, ``cada`` o ``manual``.
+    """
 
     kind: str
     event: str | None = None
@@ -1728,17 +1762,23 @@ class Trigger:
     def event_known(self) -> bool:
         return self.kind == "silencio" or self.event is not None
 
+    @property
+    def is_audience(self) -> bool:
+        return self.kind == "audiencia"
+
 
 def trigger_of(definition: Mapping[str, Any]) -> Trigger | None:
     """El disparador, si hay exactamente uno. Un evento sin valor conocido va con ``event`` en None."""
     trigger = definition.get("dispara")
     if not isinstance(trigger, Mapping):
         return None
-    present = [key for key in ("evento", "silencio") if key in trigger]
+    present = [key for key in TRIGGER_KEYS if key in trigger]
     if len(present) != 1:
         return None
     if present[0] == "silencio":
         return Trigger("silencio")
+    if present[0] in AUDIENCE_FORMS:
+        return Trigger("audiencia", audience_form(trigger))
     event = trigger["evento"]
     return Trigger("evento", event if isinstance(event, str) and event in EVENTS else None)
 
@@ -1845,12 +1885,26 @@ class _Defaults:
                 if repeat is not None:
                     if trigger.kind == "silencio":
                         pair = ("conversacion", NEVER)
+                    elif trigger.is_audience:
+                        # DEFAULT_REVISAR_DAN (mapa §2.3): la misma persona, otra vez a los 7 dias.
+                        pair = ("persona", "7d")
                     elif trigger.is_purchase:
                         pair = ("persona", NEVER)
                     else:
                         pair = ("persona_y_oferta", "0m")
                     self._key(repeat, ("topes", "repeticion"), "una_por", lambda: pair[0])
                     self._key(repeat, ("topes", "repeticion"), "otra_despues_de", lambda: pair[1])
+
+        if trigger is not None and trigger.is_audience:
+            # E-484: el ritmo y la ventana del formulario, escritos, para que la vista previa los muestre.
+            # DEFAULT_REVISAR_DAN (D10): 200 por hora y 1.000 por ocurrencia; 30 dias de formulario.
+            para = definition.get("para")
+            if isinstance(para, dict) and para.get("es") == "prospecta":
+                self._key(para, ("para",), "formulario_en", lambda: DEFAULT_FORM_WINDOW)
+            ritmo = self._container(definition, (), "ritmo")
+            if ritmo is not None:
+                self._key(ritmo, ("ritmo",), "por_hora", lambda: DEFAULT_PER_HOUR)
+                self._key(ritmo, ("ritmo",), "por_ocurrencia", lambda: DEFAULT_PER_OCCURRENCE)
 
         priority = self._container(definition, (), "prioridad")
         if priority is not None:
@@ -1953,7 +2007,9 @@ _SKIP = object()
 
 
 _SUB_ORDER: Mapping[str, tuple[str, ...]] = {
-    "dispara": ("evento", "silencio"),
+    "dispara": TRIGGER_KEYS,
+    "para": ("es", "etiquetas", "producto", "formulario_en", "excluye"),
+    "ritmo": ("por_hora", "por_ocurrencia"),
     "entra": ("permiso", "contesto_a"),
     "termina": ("si", "vence"),
     "horario": ("zona", "desde", "hasta"),
