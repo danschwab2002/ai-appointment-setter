@@ -181,15 +181,41 @@ def test_a_published_proposal_is_read_only_and_links_to_the_version_it_made() ->
     page = _page(client)
     assert "Cómo terminó" in page and "ya está publicada" in page and "Tu decisión" not in page
     assert f'<a href="{HISTORY_PAGE}">Volver al historial</a>' in page
-    # Solo lectura: ni aprobar, ni descartar, ni pausar ni la cohorte desde aca.
+    # Ni aprobar ni descartar la propuesta.
     assert '<form method="post" action="/flow-approval/p/' not in page
-    assert 'action="/flow-approval/pause"' not in page and 'action="/flow-approval/cohort"' not in page
     assert "Aprobar y publicar" not in page and "Descartar este pedido" not in page
+    # E-486 (8b): el flujo sigue en cohorte: se suma un telefono (y se pausa)
+    # desde la propuesta publicada, y el POST vuelve a esta propuesta.
+    assert 'action="/flow-approval/cohort"' in page and 'action="/flow-approval/pause"' in page
+    assert "Sumar un teléfono a la cohorte de bienvenida" in page
+    assert f'name="p" value="{PROPOSAL}"' in page
     assert f'<a href="{VERSION_PATH}">att1/bienvenida, versión 1</a>' in page
     assert f"Aprobada por <code>{BRAYAN}</code> por Slack" in page
     assert "Se publicó · att1/bienvenida" in page
     # La rival abierta del mismo flujo no se avisa en una cerrada.
     assert "Hay otra propuesta abierta" not in page
+
+
+def test_a_published_proposal_whose_flow_is_on_shows_no_cohort_form() -> None:
+    # E-486 (8b): la cohorte solo con el flujo en cohorte.
+    db = PostgrestEmulator()
+    _published(db)
+    for flow in db.flows:
+        flow["state"] = "prendido"
+    client, db = _signed(db)
+    page = _page(client)
+    assert 'action="/flow-approval/cohort"' not in page
+    assert 'action="/flow-approval/pause"' in page
+
+
+def test_a_discarded_proposal_with_its_flow_in_cohort_still_has_no_buttons() -> None:
+    db = PostgrestEmulator()
+    db.add_welcome_in_cohort()
+    db.proposal.update(status="descartada", effective_status="descartada", closed_by_kind="slack",
+                       closed_by_ref=DAN, closed_at="2026-10-28T03:00:00Z", close_reason="ya no va")
+    client, db = _signed(db)
+    page = _page(client)
+    assert 'action="/flow-approval/cohort"' not in page and 'action="/flow-approval/pause"' not in page
 
 
 def test_a_discarded_proposal_shows_who_and_why_escaped() -> None:
