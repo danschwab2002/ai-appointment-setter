@@ -3486,12 +3486,14 @@ def test_replays_an_existing_multipart_manifest_when_feature_flag_is_off(
     tmp_path: Path,
 ) -> None:
     secret = "webhook-secret"
-    # Más de 160 caracteres: una más corta sale en un globo sin el modelo.
+    # Más de 280 caracteres (E-486, D12): una más corta sale en un globo sin el modelo.
     first_part = (
-        "Primera parte de una respuesta larga, con el detalle del programa, cómo se accede y qué incluye."
+        "Primera parte de una respuesta larga, con el detalle del programa, cómo se accede, qué incluye "
+        "y cuánto tiempo queda abierto el acceso después de la compra."
     )
     second_part = (
-        "Segunda parte, con la pregunta que sigue para entender qué necesitás antes de pasarte el enlace de pago."
+        "Segunda parte, con la pregunta que sigue para entender qué necesitás antes de pasarte el enlace de pago, "
+        "sin apurarte ni repetir lo que ya hablamos."
     )
     reply = f"{first_part} {second_part}"
     model_calls = 0
@@ -3602,12 +3604,14 @@ def test_missing_manifest_after_claim_does_not_send_from_the_app(
     tmp_path: Path,
 ) -> None:
     secret = "webhook-secret"
-    # Más de 160 caracteres: una más corta sale en un globo sin el modelo.
+    # Más de 280 caracteres (E-486, D12): una más corta sale en un globo sin el modelo.
     first_part = (
-        "Primera parte de una respuesta larga, con el detalle del programa, cómo se accede y qué incluye."
+        "Primera parte de una respuesta larga, con el detalle del programa, cómo se accede, qué incluye "
+        "y cuánto tiempo queda abierto el acceso después de la compra."
     )
     second_part = (
-        "Segunda parte, con la pregunta que sigue para entender qué necesitás antes de pasarte el enlace de pago."
+        "Segunda parte, con la pregunta que sigue para entender qué necesitás antes de pasarte el enlace de pago, "
+        "sin apurarte ni repetir lo que ya hablamos."
     )
     reply = f"{first_part} {second_part}"
 
