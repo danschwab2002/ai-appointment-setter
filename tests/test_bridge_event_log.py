@@ -282,6 +282,7 @@ def test_every_reviewed_event_is_a_hotmart_line_present_in_the_code() -> None:
             "campaign_inbound_entry.py",
             "followup_discount.py",
             "agent_campaigns.py",
+            "hermes.py",
         )
     )
     for name in LOGGED_INFO_EVENTS:
@@ -296,6 +297,8 @@ def test_every_reviewed_event_is_a_hotmart_line_present_in_the_code() -> None:
                 "agent_campaign_",
                 "chatwoot_inbound_attachment_",
                 "safety_handoff_",
+                "agent_output_",
+                "handoff_notice_",
             )
         ), name
         assert f'"{name} ' in sources, name

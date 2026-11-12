@@ -159,14 +159,18 @@ def test_the_real_link_request_with_its_product_completes_and_is_kept(tmp_path: 
     assert len(keys) == 1
 
 
-def test_without_products_the_same_real_answer_is_invalid(tmp_path: Path) -> None:
+def test_without_products_the_same_real_answer_completes_without_product(tmp_path: Path) -> None:
+    # E-486: sin [[productos]] la clave `product` se descarta antes de validar
+    # (Maribel #120, ATT1 #726); antes el turno terminaba en invalid_agent_output.
     processor, keys = _processor(tmp_path, _content("01-enlace-con-formulario"))
 
     _run(processor, "link-sin-productos")
 
-    assert processor.get_completed_proposal(delivery_id="link-sin-productos") is None
-    assert processor.has_result(delivery_id="link-sin-productos")
-    assert len(keys) == 2  # el reintento, y despues invalid_agent_output
+    proposal = processor.get_completed_proposal(delivery_id="link-sin-productos")
+    assert proposal is not None
+    assert "product" not in proposal
+    assert payment_link_product(proposal, ()) is None
+    assert len(keys) == 1
 
 
 @pytest.mark.parametrize("case", ["03-pregunta-programa", "06-sin-productos"])

@@ -6,6 +6,7 @@ import asyncio
 import fcntl
 import hashlib
 import json
+import logging
 import os
 import re
 import tempfile
@@ -15,7 +16,7 @@ from typing import Protocol
 
 import httpx
 
-from bridge.agent_provenance import AgentTurn, build_turn
+from bridge.agent_provenance import AgentTurn, build_turn, external_conversation_id
 from bridge.campaign_inbound_entry import CAMPAIGN_ANSWER_KEY
 
 
@@ -52,6 +53,8 @@ _DECISION_STATUSES = {
 }
 
 _MAX_PROPOSAL_ATTEMPTS = 2
+
+logger = logging.getLogger(__name__)
 
 # E-175: el motivo de la derivacion de un turno del agente que fallo, y los
 # resultados `failed` que derivan. `chatwoot_history_not_configured` no esta:
@@ -191,6 +194,8 @@ def _parse_whole_agent_proposal(content: object) -> dict[str, object] | None:
     return None
 
 
+MAX_REPLY_CHARS = 1000
+
 _PROPOSAL_KEYS = frozenset({
     "decision",
     "qualification_status",
@@ -218,10 +223,18 @@ def payment_link_product(
     return None
 
 
-def _is_valid_proposal(
-    proposal: dict[str, object],
+def proposal_rejection_reason(
+    proposal: object,
     product_keys: frozenset[str] = frozenset(),
-) -> bool:
+) -> str | None:
+    """La regla que rompe una propuesta, o None si es valida (E-486).
+
+    Es la misma validacion de siempre, pero dice QUE fallo: alimenta el log
+    `agent_output_invalid` y el mensaje con el que se corrige el reintento.
+    Las reglas son nombres fijos, nunca texto de la persona ni del modelo.
+    """
+    if not isinstance(proposal, dict):
+        return "not_json"
     # Las seis claves de siempre. Con productos declarados en el manifiesto
     # (2b), una septima opcional, `product`: null o la clave de un producto
     # declarado. Sin productos, `product` invalida la propuesta como cualquier
@@ -234,38 +247,40 @@ def _is_valid_proposal(
         if product is not None and (
             not isinstance(product, str) or product not in product_keys
         ):
-            return False
+            return "unknown_product"
     else:
-        return False
+        return "extra_key"
 
     decision = proposal["decision"]
     if not isinstance(decision, str) or decision not in _DECISION_STATUSES:
-        return False
+        return "decision"
     # Con dos productos o mas, el link sin producto no se puede armar.
     if decision == "send_payment_link" and product is None and len(product_keys) > 1:
-        return False
+        return "link_without_product"
     if proposal["qualification_status"] != _DECISION_STATUSES.get(decision):
-        return False
+        return "qualification_status"
 
     reason_code = proposal["reason_code"]
     if not isinstance(reason_code, str) or re.fullmatch(
         r"[a-z0-9_]{1,64}", reason_code
     ) is None:
-        return False
+        return "reason_code"
 
     reply = proposal["reply"]
-    if not isinstance(reply, str) or not reply or len(reply) > 1000:
-        return False
+    if not isinstance(reply, str) or not reply:
+        return "reply_empty"
+    if len(reply) > MAX_REPLY_CHARS:
+        return "reply_too_long"
     if reply.count("?") > 1:
-        return False
+        return "too_many_questions"
     if decision == "send_payment_link" and any(
         marker in reply.lower() for marker in ("http://", "https://", "www.")
     ):
-        return False
+        return "url_in_reply"
 
     captured = proposal["captured_fields"]
     if not isinstance(captured, dict) or set(captured) != _CAPTURED_FIELDS:
-        return False
+        return "schema"
     if any(
         value is not None
         and (
@@ -276,34 +291,104 @@ def _is_valid_proposal(
         for field, value in captured.items()
         if field in _TEXT_CAPTURED_FIELDS
     ):
-        return False
+        return "schema"
     company_size = captured["company_size"]
     if company_size is not None and (
         not isinstance(company_size, int)
         or isinstance(company_size, bool)
         or company_size <= 0
     ):
-        return False
+        return "schema"
     if any(
         value is not None and not isinstance(value, bool)
         for field, value in captured.items()
         if field in _BOOLEAN_CAPTURED_FIELDS
     ):
-        return False
+        return "schema"
 
     missing = proposal["missing_fields"]
     if not isinstance(missing, list):
-        return False
+        return "schema"
     if not all(isinstance(field, str) for field in missing):
-        return False
+        return "schema"
     if len(missing) != len(set(missing)):
-        return False
-    return all(
+        return "schema"
+    if not all(
         isinstance(field, str)
         and field in _CAPTURED_FIELDS
         and captured[field] is None
         for field in missing
+    ):
+        return "schema"
+    return None
+
+
+def _is_valid_proposal(
+    proposal: dict[str, object],
+    product_keys: frozenset[str] = frozenset(),
+) -> bool:
+    # Las seis claves de siempre. Con productos declarados en el manifiesto
+    # (2b), una septima opcional, `product`: null o la clave de un producto
+    # declarado. Sin productos, `product` invalida la propuesta como cualquier
+    # otra clave de mas: Johanna no cambia. (El procesador la descarta antes
+    # de validar: `normalize_proposal`, E-486.)
+    return proposal_rejection_reason(proposal, product_keys) is None
+
+
+def normalize_proposal(
+    proposal: dict[str, object], product_keys: frozenset[str]
+) -> dict[str, object]:
+    """Saca lo inofensivo antes de validar (E-486).
+
+    Sin productos declarados en la instancia, una clave `product` no tiene a
+    que apuntar: el link sale igual sin producto (`payment_link_product`
+    devuelve None). Maribel #120 y ATT1 #726: el modelo la sumaba al hablar de
+    "el producto" y el turno entero terminaba derivado. Con productos
+    declarados no se toca nada: un producto que no existe sigue invalidando.
+    """
+    if not product_keys and "product" in proposal:
+        cleaned = dict(proposal)
+        cleaned.pop("product")
+        return cleaned
+    return proposal
+
+
+# Lo que se le dice al modelo en el reintento, por regla. Texto fijo del
+# producto: nunca lleva lo que escribio la persona ni lo que contesto el modelo.
+_RETRY_CORRECTIONS = {
+    "not_json": "no era un objeto JSON. Devolve solo el objeto JSON, sin texto antes ni despues.",
+    "extra_key": "tenia claves de mas. Usa solo las claves del formato.",
+    "unknown_product": "`product` no es uno de los productos de la entrada.",
+    "decision": "`decision` no es uno de los valores permitidos.",
+    "link_without_product": "falta `product` para pedir el enlace.",
+    "qualification_status": "`qualification_status` no corresponde a `decision`.",
+    "reason_code": "`reason_code` tiene que ser minusculas, numeros y guiones bajos.",
+    "reply_empty": "`reply` esta vacio.",
+    "too_many_questions": "`reply` tiene mas de una pregunta. Deja una sola.",
+    "url_in_reply": "`reply` trae una direccion web; el enlace lo manda el sistema.",
+    "schema": "`captured_fields` o `missing_fields` no tienen la forma pedida.",
+}
+
+
+def retry_correction(rule: str, proposal: object = None) -> str:
+    """El mensaje corto que corrige el segundo intento (E-486)."""
+    if rule == "reply_too_long" and isinstance(proposal, dict):
+        reply = proposal.get("reply")
+        size = len(reply) if isinstance(reply, str) else 0
+        detail = (
+            f"`reply` tiene {size} caracteres y el maximo es {MAX_REPLY_CHARS}. "
+            "Acortalo."
+        )
+    elif rule == "reply_too_long":
+        detail = f"`reply` supera los {MAX_REPLY_CHARS} caracteres. Acortalo."
+    else:
+        detail = _RETRY_CORRECTIONS.get(rule, "no cumplia el formato.")
+    return (
+        f"Tu respuesta anterior no se pudo usar: {detail} "
+        "Devolve solo el objeto JSON."
     )
+
+
 
 
 class TurnProvenanceRecorder(Protocol):
@@ -587,6 +672,9 @@ class HermesShadowProcessor:
         # Lo ultimo que Hermes dijo que contesto. Se arrastra fuera del
         # bucle porque el punto terminal de salida invalida esta despues.
         model_answered: str | None = None
+        # E-486: la regla que rompio el intento anterior. El reintento la
+        # lleva como un mensaje corto, en vez de repetir el mismo pedido.
+        correction: str | None = None
         for attempt in range(1, _MAX_PROPOSAL_ATTEMPTS + 1):
             try:
                 async with httpx.AsyncClient(
@@ -618,6 +706,11 @@ class HermesShadowProcessor:
                                         context, ensure_ascii=False
                                     ),
                                 },
+                                *(
+                                    [{"role": "user", "content": correction}]
+                                    if correction
+                                    else []
+                                ),
                             ],
                         },
                     )
@@ -677,9 +770,10 @@ class HermesShadowProcessor:
                 # registra nada, como sin respuesta clara.
                 campaign_answer = raw_answer if raw_answer in ("si", "no") else None
 
-            if isinstance(proposal, dict) and _is_valid_proposal(
-                proposal, self._product_keys
-            ):
+            if isinstance(proposal, dict):
+                proposal = normalize_proposal(proposal, self._product_keys)
+            rule = proposal_rejection_reason(proposal, self._product_keys)
+            if rule is None and isinstance(proposal, dict):
                 completed: dict[str, object] = {
                     "status": "completed",
                     "delivery_id_hash": digest,
@@ -704,6 +798,16 @@ class HermesShadowProcessor:
                     extra_system=extra_system,
                 )
                 return
+
+            # Sin contenido: la regla, el intento y el numero de conversacion.
+            conversation = external_conversation_id(context)
+            logger.info(
+                "agent_output_invalid attempt=%d rule=%s conversation=%s",
+                attempt,
+                rule,
+                conversation if conversation is not None else "-",
+            )
+            correction = retry_correction(rule or "not_json", proposal)
 
         self._persist_result(
             digest=digest,
