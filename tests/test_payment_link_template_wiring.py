@@ -533,3 +533,32 @@ def test_payment_link_template_is_read_from_the_environment(
     settings = _settings_from_env(monkeypatch)
     assert settings.payment_link_template_name == "johanna_enlace_pago_01"
     assert settings.payment_link_template_language == "es_EC"
+
+
+def test_655_three_messages_in_55_seconds_do_not_hand_off_the_link(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """E-486 (item 2): la secuencia real de la #655 de ATT1 (02/11), anonimizada.
+
+    Tres mensajes de la persona en 55 s (16:39:03, 16:39:23 y 16:39:58Z), el
+    pedido del link en el segundo, y Chatwoot frena el envio con
+    conversation_advanced. Con el bridge v1.26.0 (dd3c7da) se derivo como
+    payment_link_conversation_advanced; desde E-292 (v1.27.0) el link se da
+    por superado, no se deriva ni se pausa, y el tercer mensaje tiene su turno.
+    """
+    trigger = _chatwoot().messages[0]
+    first = {**trigger, "id": 901, "created_at": trigger["created_at"] - 20,
+             "content": "Hola, tengo una duda"}
+    third = {**trigger, "id": 903, "created_at": trigger["created_at"] + 35,
+             "content": "Es para pagar con tarjeta"}
+    chatwoot = _advanced_chatwoot(third)
+    chatwoot.messages.insert(0, first)
+    supabase = StubPaymentLinkSupabase()
+
+    with caplog.at_level(logging.INFO, logger="bridge.app"):
+        _deliver(_settings(tmp_path), chatwoot, supabase)
+
+    assert supabase.handoff_calls == []
+    assert "label:automation_paused" not in chatwoot.events
+    assert "payment_link_conversation_advanced" not in caplog.text
+    assert "payment_link_superseded reason=contact_wrote_after_trigger" in caplog.text
