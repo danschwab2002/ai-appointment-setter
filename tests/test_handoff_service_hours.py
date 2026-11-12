@@ -21,26 +21,29 @@ ROOT = Path(__file__).resolve().parents[1]
 ATT1 = ROOT / "tests" / "fixtures" / "instances" / "att1" / "instancia.toml"
 
 CDMX = default_service_hours("America/Mexico_City")
-# Martes 10/11 11:00 de CDMX (17:00Z) y viernes 13/11 20:00 (sabado 02:00Z).
+# Martes 10/11 11:00 de CDMX (17:00Z), viernes 13/11 20:00 (sabado 02:00Z),
+# sabado 14/11 11:00 (dentro, Dan 12/11) y domingo 15/11 11:00 (fuera).
 TUESDAY_11 = datetime(2026, 11, 10, 17, 0, tzinfo=UTC)
 FRIDAY_20 = datetime(2026, 11, 14, 2, 0, tzinfo=UTC)
 SATURDAY_11 = datetime(2026, 11, 14, 17, 0, tzinfo=UTC)
+SUNDAY_11 = datetime(2026, 11, 15, 17, 0, tzinfo=UTC)
 
 
-def test_the_default_is_nine_to_eight_weekdays_in_the_instance_zone() -> None:
-    assert CDMX.days == (0, 1, 2, 3, 4)
+def test_the_default_is_nine_to_eight_monday_to_saturday_in_the_instance_zone() -> None:
+    assert CDMX.days == (0, 1, 2, 3, 4, 5)
     assert (CDMX.start, CDMX.end) == (time(9, 0), time(20, 0))
     assert CDMX.city == "Ciudad de México"
 
 
-def test_inside_hours_only_the_fixed_sentence() -> None:
-    assert handoff_notice_text(CDMX, TUESDAY_11) == HANDOFF_NOTICE_TEXT
+@pytest.mark.parametrize("now", [TUESDAY_11, SATURDAY_11])
+def test_inside_hours_only_the_fixed_sentence(now: datetime) -> None:
+    assert handoff_notice_text(CDMX, now) == HANDOFF_NOTICE_TEXT
 
 
-@pytest.mark.parametrize("now", [FRIDAY_20, SATURDAY_11])
+@pytest.mark.parametrize("now", [FRIDAY_20, SUNDAY_11])
 def test_outside_hours_the_second_sentence(now: datetime) -> None:
     assert handoff_notice_text(CDMX, now) == (
-        f"{HANDOFF_NOTICE_TEXT} El equipo atiende de lunes a viernes de "
+        f"{HANDOFF_NOTICE_TEXT} El equipo atiende de lunes a sábado de "
         "09:00 a 20:00 (hora de Ciudad de México)."
     )
 

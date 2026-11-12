@@ -20,7 +20,7 @@ anunciar que alguien va a responder). Dice que la consulta pasa al equipo
 "para que la revise" y, si la derivacion cae fuera del horario de atencion de
 la instancia, suma una segunda frase fija con ese horario. El horario sale de
 `[atencion]` del manifiesto; sin el bloque, el de por defecto de las aliadas
-(09:00 a 20:00, lunes a viernes, en la zona de la instancia). Sin manifiesto
+(09:00 a 20:00, lunes a sábado, en la zona de la instancia). Sin manifiesto
 (Johanna), sin horario: solo la primera frase.
 """
 
@@ -36,9 +36,9 @@ HANDOFF_NOTICE_TEXT = "Le paso tu consulta al equipo para que la revise."
 
 DAY_NAMES = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
 
-# El horario de por defecto de las aliadas (Dan, 12/11): 09:00 a 20:00. Los
-# dias no los dijo: lunes a viernes, marcado para revisar (E-486).
-DEFAULT_SERVICE_DAYS: tuple[int, ...] = (0, 1, 2, 3, 4)
+# El horario de por defecto de las aliadas (Dan, 12/11): lunes a sabado de
+# 09:00 a 20:00 (E-486).
+DEFAULT_SERVICE_DAYS: tuple[int, ...] = (0, 1, 2, 3, 4, 5)
 DEFAULT_SERVICE_START = time(9, 0)
 DEFAULT_SERVICE_END = time(20, 0)
 

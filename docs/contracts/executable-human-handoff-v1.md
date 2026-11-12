@@ -31,15 +31,15 @@ que alguien vaya a responder, no da un nombre de persona y no dice que escribe
 una IA. **Desde la 1.37.0 (E-486, D1)**: antes decía «…y te responden por este
 mismo chat», que chocaba con el conocimiento de las aliadas. Si la derivación
 cae fuera del horario del equipo, el aviso suma una segunda frase fija: «El
-equipo atiende de lunes a viernes de 09:00 a 20:00 (hora de Ciudad de México).»
+equipo atiende de lunes a sábado de 09:00 a 20:00 (hora de Ciudad de México).»
 El horario sale de `[atencion]` del manifiesto (`dias`, `desde`, `hasta` en
 `HH:MM`, `ciudad` opcional, en `instancia.zona_horaria`); sin el bloque rige el
-de por defecto de las aliadas, 09:00 a 20:00 de lunes a viernes. Sin manifiesto
+de por defecto de las aliadas, 09:00 a 20:00 de lunes a sábado. Sin manifiesto
 (Johanna), solo la primera frase.
 
 ```toml
 [atencion]
-dias = ["lunes", "martes", "miercoles", "jueves", "viernes"]
+dias = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado"]
 desde = "09:00"
 hasta = "20:00"
 ```

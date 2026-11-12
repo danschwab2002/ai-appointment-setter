@@ -1094,7 +1094,7 @@ def _attention(value: object, time_zone: str) -> ServiceHours | None:
     Ejemplo (el horario de por defecto de las aliadas):
 
         [atencion]
-        dias = ["lunes", "martes", "miercoles", "jueves", "viernes"]
+        dias = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado"]
         desde = "09:00"
         hasta = "20:00"
         ciudad = "Ciudad de México"   # opcional; si no, sale de la zona
