@@ -1,0 +1,33 @@
+{
+  "_capture": {
+    "origen": "Base de ATT1 (servicio setter-att1_att1-db, autohospedada), public.webhook_events, evento 19fa20a6 (PURCHASE_OUT_OF_SHOPPING_CART del 2026-11-10 17:52Z, processing_error create_recovery_case_failed), tal como lo guardo el bridge. Lectura en sesion de solo lectura por psql dentro del contenedor (default_transaction_read_only=on), el 2026-11-11.",
+    "captured_at": "2026-11-11",
+    "anonimizado": "id del evento, data.buyer.name, data.buyer.email y data.buyer_ip reemplazados por valores falsos (IP del rango de documentacion 192.0.2.0/24). Lo demas tal cual llego: event, version, creation_date, producto, oferta, affiliate y checkout_country.",
+    "lo_que_prueba": "El carrito de Hotmart SIN telefono: data.buyer trae solo email y name (ni phone ni checkout_phone). Los 16 carritos de ATT1 con create_recovery_case_failed de los ultimos 30 dias tienen exactamente esta forma (claves de data: affiliate, buyer, buyer_ip, checkout_country, offer, product; de buyer: email, name). E-440/E-441."
+  },
+  "payload": {
+    "id": "00000000-0000-4000-8000-000000000441",
+    "data": {
+      "buyer": {
+        "name": "Persona Prueba 441",
+        "email": "persona.prueba441@example.com"
+      },
+      "offer": {
+        "code": "bmaztyhg"
+      },
+      "product": {
+        "id": 5071808,
+        "name": "Alimenta tu Tiroides"
+      },
+      "buyer_ip": "192.0.2.41",
+      "affiliate": true,
+      "checkout_country": {
+        "iso": "BR",
+        "name": "Brasil"
+      }
+    },
+    "event": "PURCHASE_OUT_OF_SHOPPING_CART",
+    "version": "2.0.0",
+    "creation_date": 1794333129744
+  }
+}

@@ -569,7 +569,9 @@ def test_an_offer_outside_the_binding_is_not_sent(tmp_path: Path) -> None:
         _run(_dispatcher(authority, chatwoot, tmp_path))
 
     assert chatwoot.posts("/messages") == []
-    assert authority.finalizations[-1]["reason_code"] == "pre_request_failed"
+    # E-432: el motivo propio y sin reintento (antes, pre_request_failed x4).
+    assert authority.finalizations[-1]["reason_code"] == "recipient_offer_not_declared"
+    assert authority.finalizations[-1]["next_attempt_at"] is None
 
 
 # -------------------------------------------------------------- the greeting
