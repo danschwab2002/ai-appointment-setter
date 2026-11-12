@@ -52,6 +52,10 @@ from .tools import get_template_request, list_template_requests, propose_templat
 from .schemas import GET_APPROVAL_PAGE  # noqa: E402
 from .tools import get_approval_page  # noqa: E402
 
+# E-486 (8d): sumar a alguien al grupo de prueba; el bridge chequea que pida un aprobador.
+from .schemas import ADD_TO_TEST_GROUP  # noqa: E402
+from .tools import add_to_test_group  # noqa: E402
+
 _TEMPLATE_TOOLS = frozenset({"propose_template", "validate_template", "list_template_requests",
                              "get_template_request"})
 _TOOLS = frozenset({"get_flow_definitions", "propose_flow_change", "validate_flow_change", "get_flow_change",
@@ -62,7 +66,9 @@ _TOOLS = frozenset({"get_flow_definitions", "propose_flow_change", "validate_flo
                     # agent-campaigns-v1 (E-355): armar una campana; publicarla es de la pagina.
                     "preview_campaign", "propose_campaign", "validate_campaign", "get_campaign", "list_campaigns",
                     # E-465: el link de la pagina de aprobacion.
-                    "get_approval_page"})
+                    "get_approval_page",
+                    # E-486: el grupo de prueba, solo agregar y solo un aprobador.
+                    "add_to_test_group"})
 
 
 def make_profile_guard(profile_name):
@@ -103,6 +109,7 @@ def register(ctx):
         ("get_campaign", GET_CAMPAIGN, get_campaign),
         ("list_campaigns", LIST_CAMPAIGNS, list_campaigns),
         ("get_approval_page", GET_APPROVAL_PAGE, get_approval_page),
+        ("add_to_test_group", ADD_TO_TEST_GROUP, add_to_test_group),
     ):
         ctx.register_tool(name=name, toolset="automation_expert_change", schema=schema, handler=handler)
     ctx.register_hook("pre_tool_call", make_profile_guard(getattr(ctx, "profile_name", None)))

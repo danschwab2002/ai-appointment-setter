@@ -423,3 +423,28 @@ LIST_CAMPAIGNS = {
         "additionalProperties": False,
     },
 }
+
+# E-486 (8d): sumar a alguien al grupo de prueba de un flujo en cohorte.
+ADD_TO_TEST_GROUP = {
+    "name": "add_to_test_group",
+    "description": (
+        "Suma a una persona al grupo de prueba (cohorte) de un flujo nativo que está en cohorte. Solo agrega, "
+        "hasta 5 personas. Va por el número de conversación de Chatwoot o por el teléfono, uno de los dos: "
+        "usalo solo con el dato que te dio un aprobador; nunca pidas un teléfono primero. Con not_an_approver, "
+        "quien te habla no es aprobador: pasale el link de get_approval_page. Con cohort_tool_not_enabled, "
+        "esta instancia no lo tiene prendido. La respuesta nunca trae el teléfono: no lo repitas."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "product": {"type": "string", "description": "La clave del producto del flujo (product_ref)."},
+            "flow": {"type": "string", "description": "La clave del flujo (flow_key)."},
+            "conversation_id": {"type": "integer", "minimum": 1,
+                                "description": "El número de conversación de Chatwoot de la persona."},
+            "phone": {"type": "string", "maxLength": 32,
+                      "description": "El teléfono de la persona, con código de país."},
+        },
+        "required": ["product", "flow"],
+        "additionalProperties": False,
+    },
+}

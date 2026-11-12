@@ -1,6 +1,6 @@
 name: automation-expert-change
-version: "0.7.0"
-description: Proponer y validar un cambio de flujo (flow-change-cycle-v1), dejar el link para aprobarlo en la pagina del bridge, pasar el link de esa pagina sin propuesta, leer el catalogo de plantillas y las propuestas con su estado, y leer y crear etiquetas de Chatwoot (sumarle una a una conversacion) y leer sus macros. Nunca aprueba, publica ni borra.
+version: "0.8.0"
+description: Proponer y validar un cambio de flujo (flow-change-cycle-v1), dejar el link para aprobarlo en la pagina del bridge, pasar el link de esa pagina sin propuesta, sumar a alguien al grupo de prueba de un flujo en cohorte (solo un aprobador), leer el catalogo de plantillas y las propuestas con su estado, y leer y crear etiquetas de Chatwoot (sumarle una a una conversacion) y leer sus macros. Nunca aprueba, publica ni borra.
 author: ai-appointment-setter
 provides_tools:
   - get_flow_definitions
@@ -24,6 +24,7 @@ provides_tools:
   - get_campaign
   - list_campaigns
   - get_approval_page
+  - add_to_test_group
 provides_hooks:
   - pre_tool_call
 requires_env:
