@@ -507,6 +507,9 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # motor nativo o al legado. Lo especifico (los flujos de intencion) es de la
     # base; por instancia, solo prenderlo.
     "flow_engine_native_intent_enabled",
+    # E-483: los toques siguientes de un flujo nativo de varios toques
+    # (20261112210000). Lo especifico (que flujos) es de la base.
+    "flow_engine_native_multitouch_enabled",
     # E-316 (segment-labels-v1): la etiqueta de un segmento antes del primer
     # turno del agente, la que pone el motor nativo antes del primer envio y la
     # que se hereda de otra conversacion del contacto. Lo especifico (que
@@ -1192,6 +1195,10 @@ class Settings:
     # decide en la base si es del motor nativo (un flujo de intencion) o del
     # legado. Apagado (ATT1), el formulario sigue por el codigo de hoy.
     flow_engine_native_intent_enabled: bool = False
+    # E-483 (20261112210000): los toques siguientes de un flujo nativo de varios
+    # toques. Apagado, el toque siguiente cierra sin salir
+    # (flow_engine_native_multitouch_disabled) y lo de hoy no cambia.
+    flow_engine_native_multitouch_enabled: bool = False
     # E-316 (segment-labels-v1, PR-C de los segmentos): el paso etiquetar de un
     # flujo nativo acepta la etiqueta de cada [[agente.segmentos]] con macro, con
     # cualquier disparador, y el motor la pone antes del primer envio. Apagado, el
@@ -2733,6 +2740,10 @@ class Settings:
             ),
             flow_engine_native_intent_enabled=(
                 os.getenv("FLOW_ENGINE_NATIVE_INTENT_ENABLED", "false").lower()
+                == "true"
+            ),
+            flow_engine_native_multitouch_enabled=(
+                os.getenv("FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED", "false").lower()
                 == "true"
             ),
             flow_engine_segment_labels_enabled=(
@@ -6559,6 +6570,7 @@ def create_app(
         )
         durable_dispatcher = DurableDispatcher(
             flow_engine_enabled=settings.flow_engine_enabled,
+            native_multitouch_enabled=settings.flow_engine_native_multitouch_enabled,
             native_client_labeler=native_client_labeler,
             native_segment_labels=native_segment_labels,
             segment_catalog=segment_catalog,

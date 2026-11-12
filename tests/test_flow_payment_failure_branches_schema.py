@@ -315,8 +315,11 @@ def test_what_the_native_engine_does_not_run_with_the_branches(change: Any, code
 
 
 def test_the_purchase_the_cart_and_the_first_contact_do_not_change() -> None:
-    for event in ("compra", "carrito", "intencion"):
-        assert NATIVE_CAPABILITIES_BY_TRIGGER[event] is ENGINE_CAPABILITIES_NATIVE
+    # La compra no cambia; el carrito y el formulario suman varios toques (E-483), sin condicion ni boton.
+    assert NATIVE_CAPABILITIES_BY_TRIGGER["compra"] is ENGINE_CAPABILITIES_NATIVE
+    for event in ("carrito", "intencion"):
+        assert NATIVE_CAPABILITIES_BY_TRIGGER[event].step_types == ENGINE_CAPABILITIES_NATIVE.step_types
+        assert NATIVE_CAPABILITIES_BY_TRIGGER[event].buttons == frozenset()
     assert "condicion" not in ENGINE_CAPABILITIES_NATIVE.step_types
     assert ENGINE_CAPABILITIES_NATIVE.buttons == frozenset()
     cart = copy.deepcopy(CART)

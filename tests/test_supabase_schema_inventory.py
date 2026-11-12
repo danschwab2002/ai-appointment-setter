@@ -2070,16 +2070,28 @@ def test_campaign_offer_checkout_issuance_fingerprint() -> None:
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
 
 
-def test_read_results_fingerprint_is_last() -> None:
+def test_read_results_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261112200000 (E-507): los numeros del tablero, solo service_role.
-    fingerprint = sql.split("'20261112200000'", 1)[1].split("select\n    version,", 1)[0]
+    fingerprint = sql.split("'20261112200000'", 1)[1].split("'20261112210000'", 1)[0].rsplit("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261112200000_read_results_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",1,'read_results')")
+    assert compact_fingerprint.endswith(",1,'read_results'")
     assert "read_results_v1(timestamptz,timestamptz,text,text[],integer,integer)" in compact_fingerprint
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
+
+
+def test_e483_native_multitouch_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261112210000 (E-483): la forma nativa de tres toques y lo que abre la base.
+    fingerprint = sql.split("'20261112210000'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261112210000_e483_native_multitouch_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'e483_native_multitouch')")
+    assert "_flow_engine_native_steps(text)" in compact_fingerprint
+    assert "_flow_engine_native_unsupported(jsonb)" in compact_fingerprint
 
 
 def test_pending_cancel_keeps_first_contact_fingerprint() -> None:

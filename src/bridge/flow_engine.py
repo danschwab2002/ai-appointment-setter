@@ -74,7 +74,7 @@ from .flow_policy import STEPS_BY_LEGACY_KIND
 from .flow_schedule import DEFAULT_ZONE, LAST_MINUTE, Franja, franja_of, is_open, next_open
 
 __all__ = [
-    "ENGINE_CAPABILITIES_NATIVE", "ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE", "ENGINE_CAPABILITIES_NATIVE_SILENCE", "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_PARAMETERS", "NATIVE_CAPABILITIES_BY_TRIGGER", "NATIVE_SILENCE_TRIGGER", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
+    "ENGINE_CAPABILITIES_NATIVE", "ENGINE_CAPABILITIES_NATIVE_MULTITOUCH", "ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE", "NATIVE_MULTITOUCH_TRIGGERS", "NATIVE_TOUCH_STEP_PREFIX", "ENGINE_CAPABILITIES_NATIVE_SILENCE", "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_PARAMETERS", "NATIVE_CAPABILITIES_BY_TRIGGER", "NATIVE_SILENCE_TRIGGER", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
     "BolsaLedger", "ControlLine", "Eligible", "EngineCapabilities", "EngineFlow", "Firing", "FlowRef",
     "GateDecision", "GateFacts", "PersonView", "Plan", "PlanInvalid", "PlanNotSupported", "PlannedStep",
     "RunView", "StartDecision", "evaluate_gate", "first_eligible", "legacy_motivo", "native_not_supported", "native_payment_failure_branches", "native_trigger_key", "native_variables_fit", "not_supported", "plan_start",
@@ -131,6 +131,9 @@ class EngineCapabilities:
     buttons: frozenset[str]           # "checkout"
     exits: frozenset[str]             # "compra", y "contesta" solo con un silencio
     relations_between_engine_flows_only: bool
+    # E-483: la salida contesta tambien con un disparo de evento (el nativo de varios toques: la
+    # reevaluacion corta el toque siguiente con la respuesta, prospect_replied).
+    reply_exit_with_events: bool = False
 
 
 ENGINE_CAPABILITIES_V1 = EngineCapabilities(
@@ -256,7 +259,8 @@ def not_supported(definition: Mapping[str, Any], capabilities: EngineCapabilitie
     for exit_name in exits if isinstance(exits, list) else ():
         if exit_name not in capabilities.exits:
             add(f"salida_{exit_name}")
-        elif exit_name == "contesta" and trigger is not None and trigger.kind == "evento":
+        elif exit_name == "contesta" and trigger is not None and trigger.kind == "evento" \
+                and not capabilities.reply_exit_with_events:
             # Con un disparo de evento, contesta es «todavia no» (diseno, §2.10).
             add("contesta_con_disparo_de_evento")
     return tuple(found)
@@ -317,6 +321,28 @@ ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE = dataclasses.replace(
     buttons=frozenset({"checkout"}),
 )
 NATIVE_PAYMENT_FAILURE_TRIGGER = "pago_fallido"
+# E-483 (C1 y C5 del mapa del 12/11, 20261112210000): el carrito, el formulario y el pago rechazado nativos
+# mandan hasta tres toques, con la espera entre uno y otro (la forma de la base suma native_touch_2 y
+# native_touch_3). Con mas de un envio: la salida contesta escrita (la reevaluacion corta el toque siguiente
+# con la respuesta), el boton solo en el primero y sin condicion (C3, todavia no). La compra (la bienvenida)
+# sigue de un envio. El bridge manda los toques siguientes solo con FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED.
+NATIVE_MULTITOUCH_TRIGGERS = frozenset({"carrito", "intencion", NATIVE_PAYMENT_FAILURE_TRIGGER})
+NATIVE_MAX_SENDS = 3
+NATIVE_TOUCH_STEP_PREFIX = "native_touch_"
+ENGINE_CAPABILITIES_NATIVE_MULTITOUCH = dataclasses.replace(
+    ENGINE_CAPABILITIES_NATIVE,
+    max_sends_per_path=NATIVE_MAX_SENDS,
+    waits_between_sends=True,
+    exits=frozenset({"compra", "contesta"}),
+    reply_exit_with_events=True,
+)
+ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE_MULTITOUCH = dataclasses.replace(
+    ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE,
+    max_sends_per_path=NATIVE_MAX_SENDS,
+    waits_between_sends=True,
+    exits=frozenset({"compra", "contesta"}),
+    reply_exit_with_events=True,
+)
 # Las variables del seguimiento, en su orden: las que manda el barrido (FollowupTemplate.params).
 FOLLOWUP_VARIABLES = ("nombre", "producto")
 # La ventana del silencio nativo, en minutos (P22-3, E-269): la del barrido del legado, de 24 a 72 h.
@@ -341,7 +367,8 @@ NATIVE_PERMISSION_BY_TRIGGER: Mapping[str, str] = MappingProxyType(
 # ``NATIVE_PERMISSION_BY_TRIGGER``, como hasta ahora.
 NATIVE_CAPABILITIES_BY_TRIGGER: Mapping[str, EngineCapabilities] = MappingProxyType({
     **{event: ENGINE_CAPABILITIES_NATIVE for event in sorted(ENGINE_CAPABILITIES_NATIVE.triggers)},
-    NATIVE_PAYMENT_FAILURE_TRIGGER: ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE,
+    **{event: ENGINE_CAPABILITIES_NATIVE_MULTITOUCH for event in sorted(NATIVE_MULTITOUCH_TRIGGERS)},
+    NATIVE_PAYMENT_FAILURE_TRIGGER: ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE_MULTITOUCH,
     NATIVE_SILENCE_TRIGGER: ENGINE_CAPABILITIES_NATIVE_SILENCE,
 })
 # Con que repite cada disparador nativo: un evento, por persona o por persona y oferta; el silencio, como
@@ -493,6 +520,35 @@ def _native_payment_failure_not_supported(definition: Mapping[str, Any], add: Ca
         add(f"{NOT_SUPPORTED}:rama_de_un_envio")
 
 
+def _native_multitouch_not_supported(definition: Mapping[str, Any], key: str | None,
+                                     add: Callable[[str], None]) -> None:
+    """Lo que un nativo de varios toques exige ademas de sus capacidades (E-483, 20261112210000).
+
+    Lo mismo que mira la base: con mas de un envio, la salida contesta escrita, el boton solo en el primer
+    envio y ninguna condicion (una condicion despues de un envio es C3). Y el pago rechazado con una
+    plantilla antes de su cadena, tampoco: elegiria la rama despues de un envio.
+    """
+    steps = definition.get("pasos")
+    if not isinstance(steps, list):
+        return
+    sends = [index for index, step in enumerate(steps) if step_type(step) in ("plantilla", "conversar")]
+    has_condition = any(step_type(step) == "condicion" for step in steps)
+    if key == NATIVE_PAYMENT_FAILURE_TRIGGER and sends and has_condition:
+        add(f"{NOT_SUPPORTED}:condicion_despues_de_un_envio")
+    if len(sends) <= 1 or key not in NATIVE_MULTITOUCH_TRIGGERS:
+        return
+    ends = definition.get("termina")
+    exits = ends.get("si") if isinstance(ends, Mapping) else None
+    if not isinstance(exits, list) or "contesta" not in exits:
+        add(f"{NOT_SUPPORTED}:varios_envios_sin_contesta")
+    if has_condition:
+        add(f"{NOT_SUPPORTED}:condicion_despues_de_un_envio")
+    for index in sends[1:]:
+        step = steps[index]
+        if isinstance(step, Mapping) and "boton" in step:
+            add(f"{NOT_SUPPORTED}:boton_despues_del_primer_envio")
+
+
 def native_not_supported(definition: Mapping[str, Any]) -> tuple[str, ...]:
     """Lo que el motor nativo no ejecuta de una definicion, en orden; vacio si la ejecuta.
 
@@ -536,6 +592,7 @@ def native_not_supported(definition: Mapping[str, Any]) -> tuple[str, ...]:
         add(NATIVE_UNSUPPORTED_PRIORITY)
     for code in not_supported(definition, capabilities):
         add(code)
+    _native_multitouch_not_supported(definition, key, add)
     if key == NATIVE_SILENCE_TRIGGER:
         _native_silence_not_supported(definition, add)
     if key == NATIVE_PAYMENT_FAILURE_TRIGGER:

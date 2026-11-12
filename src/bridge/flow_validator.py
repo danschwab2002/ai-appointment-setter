@@ -90,6 +90,7 @@ from .flow_definition import (
     ROUTE_NOT_READ,
 )
 from .flow_engine import (
+    NATIVE_MULTITOUCH_TRIGGERS,
     NATIVE_SILENCE_TRIGGER,
     NATIVE_UNSUPPORTED_PERMISSION,
     NATIVE_UNSUPPORTED_PRIORITY,
@@ -583,6 +584,20 @@ _NATIVE_EXITS_TEXT: Mapping[str, str] = MappingProxyType({
     "intencion": ("El primer contacto corta cuando la persona compra, abandona el carrito, se le rechaza el pago, "
                   "se da de baja o la pasan a una persona, y esas son sus únicas salidas: no se pueden sumar otras."),
 })
+def _exits_of(definition: Mapping[str, Any] | None) -> frozenset[str] | None:
+    ends = definition.get("termina") if isinstance(definition, Mapping) else None
+    exits = ends.get("si") if isinstance(ends, Mapping) else None
+    if not isinstance(exits, list) or not all(isinstance(item, str) for item in exits):
+        return None
+    return frozenset(exits)
+
+
+def _only_reply_exit_changed(active: Mapping[str, Any] | None, proposed: Mapping[str, Any]) -> bool:
+    """Si de las salidas solo cambia ``contesta`` (E-483): es la unica que el nativo de varios toques suma."""
+    before, after = _exits_of(active), _exits_of(proposed)
+    return before is not None and after is not None and before - {"contesta"} == after - {"contesta"}
+
+
 def _native_shape_for_the_owner(what: str) -> tuple[str, str]:
     """El motivo y la alternativa de una forma que el motor nativo no ejecuta, para el AE (E-357).
 
@@ -592,11 +607,24 @@ def _native_shape_for_the_owner(what: str) -> tuple[str, str]:
     drop = "Sacá eso de la propuesta y decile al dueño que hoy no se puede."
     fix = "Corregilo en la propuesta."
     if what == TOO_MANY_SENDS or what == "conversar":
-        return ("Este flujo manda un solo mensaje por persona: el sistema nuevo todavía no manda dos seguidos.",
-                drop + " Si quiere más de un mensaje, decile que esa capacidad todavía no está.")
-    if what in ("espera_despues_del_envio", "espera_entre_envios"):
-        return ("Una espera después del mensaje no hace nada: el flujo termina cuando lo manda.",
-                "Poné la espera antes del mensaje. " + fix)
+        return ("El carrito, el primer contacto y el pago rechazado mandan hasta tres mensajes por persona; la "
+                "bienvenida y el seguimiento, uno solo.",
+                drop + " Si quiere más mensajes de los que ese flujo manda, decile que esa capacidad todavía no está.")
+    # E-483: lo que exige un flujo nativo de varios mensajes (20261112210000).
+    if what == "varios_envios_sin_contesta":
+        return ("Con más de un mensaje, el flujo corta cuando la persona contesta: si contestó, no le llega el siguiente.",
+                "Sumá la salida de que conteste. " + fix)
+    if what == "boton_despues_del_primer_envio":
+        return ("Solo el primer mensaje puede llevar el botón de pago; los siguientes, todavía no.", fix)
+    if what == "condicion_despues_de_un_envio":
+        return ("Elegir el mensaje según el caso después de haber mandado otro todavía no se puede: las variantes "
+                "van en el primer mensaje del pago rechazado.", drop)
+    if what == "espera_entre_envios":
+        return ("Entre un mensaje y el siguiente tiene que haber una espera de al menos un minuto.",
+                "Poné una espera entre los dos mensajes. " + fix)
+    if what == "espera_despues_del_envio":
+        return ("Una espera después del último mensaje no hace nada: el flujo termina cuando lo manda.",
+                "Sacá la espera del final o poné un mensaje después. " + fix)
     if what == "condicion":
         return ("Solo el pago rechazado elige el mensaje según el caso: este flujo manda siempre el mismo.", drop)
     if what == "condicion_dato":
@@ -1467,11 +1495,12 @@ class _Run:
         """
         for key in _scope_keys(_scope_view(active), _scope_view(subject.definition)):
             if subject.flow.is_native:
-                self._native_scope(subject, key)
+                self._native_scope(subject, key, active)
             else:
                 subject.emitter.add(CHANGE_OUTSIDE_1B_SCOPE, key)
 
-    def _native_scope(self, subject: _Subject, key: tuple[Segment, ...]) -> None:
+    def _native_scope(self, subject: _Subject, key: tuple[Segment, ...],
+                      active: Mapping[str, Any] | None = None) -> None:
         """Si el cambio de ``key`` en un flujo nativo se publica, o por que no (flow-change-cycle-v1 1.12.0).
 
         Se abre solo lo que el motor lee: ``pasos`` (dentro de la regla 14, que en fase publish mira cada
@@ -1495,6 +1524,9 @@ class _Run:
         elif key == ("prioridad", "le_gana_a"):
             emitter.add(NATIVE_CHANGE_PRIORITY_WINS, key)
         elif key == ("termina", "si"):
+            if trigger in NATIVE_MULTITOUCH_TRIGGERS and _only_reply_exit_changed(active, subject.definition):
+                # E-483: que conteste ahora lo lee el motor (corta el toque siguiente, 20261112210000).
+                return
             emitter.add(NATIVE_CHANGE_EXITS, key, reason=_NATIVE_EXITS_TEXT.get(trigger or ""))
         elif key in (("entra", "contesto_a"), ("entra", "permiso")):
             emitter.add(NATIVE_CHANGE_ENTRY, key)

@@ -6953,6 +6953,27 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         1,
         'read_results'
+    union all
+    select
+        '20261112210000',
+        '20261112210000_e483_native_multitouch_v1.sql',
+        -- El motor nativo manda hasta tres toques (E-483): la forma del carrito
+        -- con sus tres ranuras ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_steps(text)')
+              and position('native_touch_3' in definition) > 0
+        )::int
+        -- ... y lo que abre la base, con la marca.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_unsupported(jsonb)')
+              and position('e483_native_multitouch: end' in definition) > 0
+        )::int,
+        2,
+        'e483_native_multitouch'
 )
 select
     version,

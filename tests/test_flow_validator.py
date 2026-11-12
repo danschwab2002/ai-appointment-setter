@@ -697,8 +697,9 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
     ),
     # E-357 (P28): lo que el AE no cambia de la estructura de un nativo, cada uno con su vecino que si.
     "native_change_exits": (
+        # E-483: sumar contesta a un nativo de varios toques ya se publica; al seguimiento no se le cambian.
+        lambda: _native_change(_silence(), lambda d: d["termina"]["si"].remove("contesta")),
         lambda: _native_change(_form(), lambda d: d["termina"]["si"].append("contesta")),
-        lambda: _native_change(_form(), lambda d: d["termina"].update(vence="2d")),
     ),
     "native_change_repeat_silence": (
         lambda: _native_change(_silence(), lambda d: d["topes"]["repeticion"].update(otra_despues_de="24h")),

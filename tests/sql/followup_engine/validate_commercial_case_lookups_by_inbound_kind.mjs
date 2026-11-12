@@ -84,13 +84,17 @@ const MIGRATIONS = readdirSync(join(root, 'supabase/migrations'))
 // flow_engine_native_silence_sweep_missing. 20261103000900 (las ramas del
 // pago rechazado nativo, E-306) suma by_branch a read_flow_sales_v1 sobre la
 // definicion con el link del silencio de 20261101000200: sin ella aborta con
-// 55000 unexpected_flow_sales_definition.
+// 55000 unexpected_flow_sales_definition. 20261112210000 (el nativo de varios
+// toques, E-483) reemplaza la forma del pago rechazado con el cupon fijo y la
+// cadena de 20261103000900: sin ella aborta con 55000
+// unexpected_flow_engine_native_steps_definition.
 const DERIVED_FROM_MIGRATION = [
   '20261010000100_portable_conversation_followup_claim.sql',
   '20261101000200_flow_engine_native_silence_v1.sql',
   '20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql',
   '20261102000300_flow_engine_native_silence_sweep_v1.sql',
   '20261103000900_flow_engine_native_payment_failure_branches_v1.sql',
+  '20261112210000_e483_native_multitouch_v1.sql',
 ];
 for (const name of DERIVED_FROM_MIGRATION) {
   if (!MIGRATIONS.includes(name) || name <= MIGRATION) {

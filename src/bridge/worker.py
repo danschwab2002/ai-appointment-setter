@@ -110,6 +110,7 @@ from bridge.payment_slip_first_touch import (
     payment_slip_ingestion_reason,
 )
 from bridge.flow_engine_runtime import READ_OK, FlowEngineRuntime
+from bridge.flow_engine import NATIVE_TOUCH_STEP_PREFIX
 from bridge.native_flows import (
     NATIVE_ANCHOR,
     NATIVE_NEEDS_DIRECT_TEMPLATE,
@@ -199,6 +200,8 @@ NATIVE_BRANCH_DATA_UNAVAILABLE = "flow_engine_native_branch_data_unavailable"
 NATIVE_BRANCH_RECORD_UNAVAILABLE = "flow_engine_native_branch_record_unavailable"
 NATIVE_BRANCH_STALE = "flow_engine_native_branch_stale"
 NATIVE_CHECKOUT_UNAVAILABLE = "flow_engine_native_checkout_unavailable"
+# E-483: el toque siguiente de un flujo nativo con FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED apagado.
+NATIVE_MULTITOUCH_DISABLED = "flow_engine_native_multitouch_disabled"
 NATIVE_QUEUE_REFRESH_SECONDS = 60.0
 # E-339: no se pudo leer si la persona viene por una campana con cupon, o no se
 # pudo cerrar su caso. A2 y Z no salen a ciegas: se reintenta.
@@ -949,6 +952,7 @@ class DurableDispatcher:
         payment_failure_variants: PaymentFailureVariantsConfig | None = None,
         payment_failure_followup: PaymentFailureFollowupConfig | None = None,
         flow_engine_enabled: bool = False,
+        native_multitouch_enabled: bool = False,
         native_client_labeler: ProductLabeler | None = None,
         purchase_pause_after_native_welcome: PurchaseAgentPause | None = None,
         native_segment_labels: NativeSegmentLabels | None = None,
@@ -1081,6 +1085,8 @@ class DurableDispatcher:
         # por mark_flow_engine_request_started_v1. Sin el flag, o con otra
         # politica, ninguna llamada nueva.
         self._flow_engine_enabled = flow_engine_enabled
+        # E-483: los toques siguientes de un flujo nativo (native_touch_2 y 3, 20261112210000).
+        self._native_multitouch_enabled = native_multitouch_enabled
         # flow-engine-v2 (E-065): la etiqueta cliente del paso etiquetar, por
         # un macro que solo la suma. Sin macro configurado, solo la nota.
         self._native_client_labeler = native_client_labeler
@@ -1501,7 +1507,11 @@ class DurableDispatcher:
         category stay those of today.
         """
         trigger_kind = _flow_trigger(action)
-        if action.anchor_type == NATIVE_ANCHOR:
+        if action.anchor_type == NATIVE_ANCHOR or (
+            step_template is not None and action.step_key.startswith(NATIVE_TOUCH_STEP_PREFIX)
+        ):
+            # E-483: un toque siguiente de un flujo nativo (native_touch_2 y 3) esta anclado al
+            # mensaje aceptado del toque anterior, no al evento: se reconoce por su step_key.
             # flow-engine-v2: el paso de un flujo nativo sale solo con la
             # plantilla de su version fijada; nunca con la del manifiesto.
             return await self._compose_native_step_proposal(
@@ -2008,7 +2018,25 @@ class DurableDispatcher:
             return _ApprovedTemplateComposition(
                 failure_reason=NATIVE_STEP_CONTEXT_UNAVAILABLE
             )
-        if action.action_type != "first_contact_review" or step_template.step_key != action.step_key:
+        following = action.step_key.startswith(NATIVE_TOUCH_STEP_PREFIX)
+        if following and not self._native_multitouch_enabled:
+            # E-483: sin FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED el toque siguiente cierra sin salir.
+            logger.warning(
+                "flow_engine_native_multitouch_disabled action_id=%s step=%s",
+                action.action_id,
+                action.step_key,
+            )
+            return _ApprovedTemplateComposition(
+                failure_reason=NATIVE_MULTITOUCH_DISABLED, retryable=False
+            )
+        expected_type = "no_reply_review" if following else "first_contact_review"
+        if action.action_type != expected_type or step_template.step_key != action.step_key:
+            return self._native_step_unsupported(action, step_template)
+        if following and (
+            step_template.template_branches is not None
+            or step_template.template_button is not None
+        ):
+            # Un toque siguiente no elige rama ni lleva boton (la base no lo abre, 20261112210000).
             return self._native_step_unsupported(action, step_template)
         template_name = step_template.template_name
         template_language = step_template.template_language
