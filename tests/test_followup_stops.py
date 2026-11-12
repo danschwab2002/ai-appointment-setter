@@ -383,3 +383,36 @@ def test_the_chatwoot_read_marks_the_action_and_keeps_the_evidence(tmp_path: Pat
     # La reevaluacion de la base recibe lo mismo de siempre: el «no» no viaja a la RPC.
     assert declined == answered
     assert declined is not None and set(declined) == set(EVIDENCE)
+
+
+# --- E-486: el pago declarado ---------------------------------------------------
+
+from bridge.lead_decline import LEAD_DECLARED_PAYMENT  # noqa: E402
+
+MARIBEL_9_PAYMENT = "Hola, voy a hacer el pago en OXXO. Muchas gracias. 🌸"
+
+
+def test_maribel_9_said_she_pays_in_oxxo_and_gets_no_coupon() -> None:
+    details, messages = _att1_21(MARIBEL_9_PAYMENT)
+    decision = _evaluate(details, messages)
+    assert decision.candidate is None
+    assert decision.skip_reason == LEAD_DECLARED_PAYMENT
+    assert LEAD_DECLARED_PAYMENT in FOLLOWUP_STOP_REASONS
+
+
+def test_a_declared_payment_older_than_72_hours_no_longer_stops() -> None:
+    details, messages = _att1_21(MARIBEL_9_PAYMENT)
+    newest = max(m["created_at"] for m in messages if m["message_type"] == 0)
+    decision = evaluate_followup_candidate(
+        details,
+        messages,
+        expected_inbox_id=11,
+        now_epoch=newest + 73 * HOUR,
+        max_inbound_age_seconds=200 * HOUR,
+    )
+    assert decision.skip_reason != LEAD_DECLARED_PAYMENT
+
+
+def test_without_the_stop_a_declared_payment_is_what_it_was() -> None:
+    details, messages = _att1_21(MARIBEL_9_PAYMENT)
+    assert _evaluate(details, messages, stop_on_lead_decline=False).candidate is not None

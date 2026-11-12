@@ -119,3 +119,61 @@ def test_a_decline_is_not_an_opt_out_and_an_opt_out_stays_an_opt_out() -> None:
 def test_what_is_not_text_or_too_long_does_not_count() -> None:
     assert detect_lead_decline([None, 42, {"content": "ya no me interesa"}]) is None
     assert detect_lead_decline(["ya no me interesa " + "x" * 2_000]) is None
+
+
+# --------------------------------------------------- E-486: el pago declarado
+
+from bridge.lead_decline import (  # noqa: E402
+    DECLARED_PAYMENT_HOLD_SECONDS,
+    LEAD_DECLARED_PAYMENT,
+    detect_declared_payment,
+)
+
+
+def test_the_declared_payment_motive_and_hold() -> None:
+    assert LEAD_DECLARED_PAYMENT == "lead_declared_payment"
+    assert DECLARED_PAYMENT_HOLD_SECONDS == 72 * 3600
+
+
+def test_maribel_9_declared_the_payment_in_oxxo() -> None:
+    # Maribel #9 (29/10): le salio el seguimiento con cupon igual.
+    match = detect_declared_payment(MARIBEL_9)
+    assert match is not None
+    assert (match.rule_key, match.message_index) == ("will_pay", 0)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Ya pagué",
+        "ya pagué, te mando el comprobante",
+        "Hola buenas tardes, ya hice el pago",
+        "Ya realicé el pago en OXXO",
+        "mañana pago",
+        "Ahorita pago, gracias",
+        "voy a pagar en OXXO",
+        "Ok, lo voy a pagar en efectivo",
+        "Gracias, voy a hacer el pago mañana",
+    ],
+)
+def test_a_declared_payment_counts(text: str) -> None:
+    assert detect_declared_payment([text]) is not None
+    # No es un rechazo: el «no» claro no cambia.
+    assert detect_lead_decline([text]) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "¿Puedo pagar en OXXO?",
+        "¿ya pagué?",
+        "Todavía no pagué",
+        "No voy a pagar",
+        "cuánto tengo que pagar",
+        "voy a pagar si me hacen el descuento",
+        "si lo pago con tarjeta me sale más caro",
+        "> ya pagué",
+    ],
+)
+def test_a_question_a_negation_or_a_condition_does_not_count(text: str) -> None:
+    assert detect_declared_payment([text]) is None

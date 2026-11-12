@@ -36,7 +36,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from bridge.business_auto_reply import TEMPLATE_MARKERS
 from bridge.cart_discount import country_for_phone, format_moment, timezone_for_country
-from bridge.lead_decline import detect_lead_decline
+from bridge.lead_decline import detect_declared_payment, detect_lead_decline
 from bridge.opt_out import detect_explicit_opt_out
 
 __all__ = [
@@ -109,7 +109,8 @@ def prospect_texts_after_last_template(history: Iterable[object]) -> list[object
 def reply_may_renew(history: Iterable[object]) -> bool:
     """Si lo que escribio la persona puede pedir la renovacion.
 
-    No, si desde nuestra ultima plantilla hay una baja o un «no» claro: Z es
+    No, si desde nuestra ultima plantilla hay una baja, un «no» claro o un pago
+    declarado (E-486): Z es
     marketing, y a quien dijo que no, no se le manda (F-150). Cada mensaje se
     lee tambien solo (como si fuera la primera respuesta): «No, gracias» corta
     aunque venga despues de otro mensaje. Es mas estricto que el seguimiento a
@@ -120,6 +121,10 @@ def reply_may_renew(history: Iterable[object]) -> bool:
     if detect_explicit_opt_out(texts) is not None:
         return False
     if detect_lead_decline(texts) is not None:
+        return False
+    # E-486: «ya pague» / «voy a pagar en OXXO» como respuesta a A2 no pide la
+    # renovacion: Z es marketing con cupon para alguien que ya dijo que paga.
+    if detect_declared_payment(texts) is not None:
         return False
     return all(detect_lead_decline([text]) is None for text in texts)
 
