@@ -15,16 +15,20 @@ import httpx
 
 
 # A reply shorter than this stays in one bubble and never reaches the model.
-SHORT_REPLY_MAX_CHARS = 160
-# The most bubbles a new split may produce.
-MAX_REPLY_PARTS = 3
+# E-486 (D12): 160 -> 280. The QA of 12/11 counted 30 of 116 turns with 3 or
+# more bubbles; a two-sentence answer now stays in one.
+SHORT_REPLY_MAX_CHARS = 280
+# The most bubbles a new split may produce. E-486 (D12): 3 -> 2, so a reply
+# plus the payment-link template is at most 3 messages. A split in 3 or more
+# falls back to one bubble, like a split in 4 did before.
+MAX_REPLY_PARTS = 2
 # Manifests persisted before the cap went down to 3 may hold 4 parts; they
 # must keep loading so a replayed batch is not re-split or failed closed.
 _MANIFEST_MAX_PARTS = 4
 
 _SYSTEM_PROMPT = """You split an already approved WhatsApp reply into natural message bubbles.
 Return only one JSON object with exactly this shape: {\"parts\":[\"...\"]}.
-Use between 1 and 3 non-empty parts according to length and natural sentence boundaries.
+Use between 1 and 2 non-empty parts according to length and natural sentence boundaries.
 Do not add, remove, translate, correct, summarize, reorder, or rewrite any word or punctuation.
 Only boundary whitespace may change. Short replies should remain one part.
 """

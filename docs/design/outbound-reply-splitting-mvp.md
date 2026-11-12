@@ -69,7 +69,7 @@ Reglas:
 
 ## Decisiones aprobadas
 
-1. El resultado admite entre **1 y 3 partes**; una respuesta de menos de **160 caracteres** queda en una sola y no se le pide nada al modelo (manifiesto `fallback` con `reason: "short_reply"`). Revisado el 29/10 (E-178, D4): con 1 a 4 partes, el modelo liviano partía en 3 globos respuestas de unos 75 caracteres. El cambio vale para todas las instancias, sin flag.
+1. El resultado admite entre **1 y 3 partes**; una respuesta de menos de **160 caracteres** queda en una sola y no se le pide nada al modelo (manifiesto `fallback` con `reason: "short_reply"`). Revisado el 29/10 (E-178, D4): con 1 a 4 partes, el modelo liviano partía en 3 globos respuestas de unos 75 caracteres. El cambio vale para todas las instancias, sin flag. **Desde la 1.37.0 (E-486, D12): entre 1 y 2 partes y umbral de 280 caracteres**; una división en 3 o más va en un solo globo, así el texto más la plantilla del link son 3 mensajes como mucho. Sin flag.
 2. El delay inicial es **2 segundos fijos** entre partes y será configurable por entorno.
 
 ## Fallback aprobado

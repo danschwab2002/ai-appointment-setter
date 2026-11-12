@@ -36,7 +36,14 @@ TEXT = (
     "Claro, el acceso es de por vida. Te cuento que el pago se puede hacer con "
     "tarjeta o en efectivo. Te dejo el link para completar tu compra:"
 )
+# E-486 (D12): el texto va en dos globos como mucho, y el link en el tercero.
 PARTS = (
+    "Claro, el acceso es de por vida.",
+    "Te cuento que el pago se puede hacer con tarjeta o en efectivo. "
+    "Te dejo el link para completar tu compra:",
+)
+# Un divisor que todavia devuelve tres globos: ya no se acepta.
+THREE_PARTS = (
     "Claro, el acceso es de por vida.",
     "Te cuento que el pago se puede hacer con tarjeta o en efectivo.",
     "Te dejo el link para completar tu compra:",
@@ -104,7 +111,7 @@ def _deliver(db, control, *, sleeps, splitter, template=LINK_TEMPLATE, preamble=
     ))
 
 
-def test_three_text_bubbles_then_the_template_alone() -> None:
+def test_two_text_bubbles_then_the_template_alone() -> None:
     db = FakeSupabase()
     control = PartsControl()
     sleeps: list[float] = []
@@ -115,22 +122,22 @@ def test_three_text_bubbles_then_the_template_alone() -> None:
     assert calls == [TEXT]
     assert [s["content"] for s in control.sends] == [*PARTS, f"{LINK_BODY}\n{URL}"]
     assert [(s["part_index"], s["part_count"]) for s in control.sends] == [
-        (1, 4), (2, 4), (3, 4), (4, 4),
+        (1, 3), (2, 3), (3, 3),
     ]
     assert [s["prior_parts"] for s in control.sends] == [
-        (), PARTS[:1], PARTS[:2], PARTS,
+        (), PARTS[:1], PARTS,
     ]
     # Solo el mensaje del link autoriza la emision, y es el que la cierra.
-    assert control.authorized_parts == [4]
-    assert all("pre_send_authorizer" not in s for s in control.sends[:3])
-    assert all("template_params" not in s for s in control.sends[:3])
-    assert control.sends[3]["template_params"]["name"] == LINK_TEMPLATE
+    assert control.authorized_parts == [3]
+    assert all("pre_send_authorizer" not in s for s in control.sends[:2])
+    assert all("template_params" not in s for s in control.sends[:2])
+    assert control.sends[2]["template_params"]["name"] == LINK_TEMPLATE
     # Ningun globo del texto lleva la URL.
-    assert all("pay.hotmart.com" not in s["content"] for s in control.sends[:3])
-    assert sleeps == [2.5, 2.5, 2.5]
+    assert all("pay.hotmart.com" not in s["content"] for s in control.sends[:2])
+    assert sleeps == [2.5, 2.5]
     assert result.outcome == "sent"
-    assert result.chatwoot_message_id == 7104
-    assert db.calls[-1][1]["chatwoot_message_id"] == 7104
+    assert result.chatwoot_message_id == 7103
+    assert db.calls[-1][1]["chatwoot_message_id"] == 7103
 
 
 def test_the_fallback_url_goes_alone_after_the_split_text() -> None:
@@ -141,10 +148,10 @@ def test_the_fallback_url_goes_alone_after_the_split_text() -> None:
     result = _deliver(db, control, sleeps=sleeps, splitter=_splitter(PARTS))
 
     assert [s["content"] for s in control.sends] == [*PARTS, URL]
-    assert control.sends[-1]["part_index"] == control.sends[-1]["part_count"] == 4
+    assert control.sends[-1]["part_index"] == control.sends[-1]["part_count"] == 3
     assert "template_params" not in control.sends[-1]
-    assert control.authorized_parts == [4]
-    assert result.chatwoot_message_id == 7104
+    assert control.authorized_parts == [3]
+    assert result.chatwoot_message_id == 7103
 
 
 @pytest.mark.parametrize(
@@ -153,7 +160,9 @@ def test_the_fallback_url_goes_alone_after_the_split_text() -> None:
         # El divisor reescribio una palabra: no se acepta.
         ("Claro, el acceso es para siempre.", *PARTS[1:]),
         # Un manifiesto viejo de cuatro globos no deja lugar para el link.
-        ("Claro,", "el acceso es de por vida.", *PARTS[1:]),
+        ("Claro,", "el acceso es de por vida.", *THREE_PARTS[1:]),
+        # E-486 (D12): tres globos de texto tampoco.
+        THREE_PARTS,
         (),
     ],
 )
@@ -333,17 +342,17 @@ def test_a_retry_that_loses_the_template_does_not_repeat_the_text(tmp_path: Path
     assert [post["content_attributes"] for post in transport.posts] == [
         {
             "appointment_setter_reply_hash": hashlib.sha256(
-                f"{batch}:{index}:4".encode()
+                f"{batch}:{index}:3".encode()
             ).hexdigest(),
             "appointment_setter_reply_batch_hash": batch,
             "appointment_setter_reply_part_index": index,
-            "appointment_setter_reply_part_count": 4,
+            "appointment_setter_reply_part_count": 3,
         }
-        for index in (1, 2, 3, 4)
+        for index in (1, 2, 3)
     ]
     assert "template_params" not in transport.posts[-1]
     assert db.calls[-1][0] == "finalize"
-    assert db.calls[-1][1]["chatwoot_message_id"] == 604
+    assert db.calls[-1][1]["chatwoot_message_id"] == 603
     # La fila de la emision es la misma en los dos intentos.
     reserves = [kwargs for name, kwargs in db.calls if name == "reserve"]
     assert len(reserves) == 2
