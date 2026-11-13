@@ -116,6 +116,52 @@ async def _stored_whatsapp_identity(
     return phone
 
 
+async def _identity_link_destination(
+    supabase: SupabaseClient,
+    *,
+    webhook_event_id: str,
+    contact_id: str,
+    external_user_id: str | None,
+    chatwoot_account_id: int | None,
+    chatwoot_inbox_id: int | None,
+) -> str | None:
+    """The phone a cart tied by the identity-link decider writes to (E-536).
+
+    The base decides it (``bind_identity_link_contact_v1``): the consented
+    phone of the tie, and the contact of the event left with it. None from the
+    base, or a failed read, keeps ``external_user_id``.
+    """
+    from bridge.identity_link_store import IdentityLinkSupabaseStore
+
+    try:
+        linked = await IdentityLinkSupabaseStore(supabase).bind_identity_link_contact(
+            webhook_event_id=webhook_event_id, contact_id=contact_id
+        )
+    except SupabaseError as exc:
+        logger.warning(
+            "identity_link_bind_failed event_id=%s error=%s",
+            webhook_event_id,
+            type(exc).__name__,
+        )
+        return external_user_id
+    if linked is None or linked == external_user_id:
+        return external_user_id
+    logger.info(
+        "identity_link_destination event_id=%s region=%s",
+        webhook_event_id,
+        whatsapp_phone_region(linked),
+    )
+    if chatwoot_account_id is None or chatwoot_inbox_id is None:
+        return linked
+    return await _stored_whatsapp_identity(
+        supabase,
+        contact_id=contact_id,
+        phone=linked,
+        chatwoot_account_id=chatwoot_account_id,
+        chatwoot_inbox_id=chatwoot_inbox_id,
+    )
+
+
 # E-441: los motivos de «no entra» de un evento de Hotmart sin telefono. Llevan
 # el prefijo de los rechazos del planificador del piloto, asi la lectura los
 # cuenta como «no entra» y no como una falla de planificacion.
@@ -268,6 +314,7 @@ async def resolve_event(
     native_payment_failure_product_ref: str | None = None,
     native_payment_slip_product_ref: str | None = None,
     native_only: bool = False,
+    identity_link_bind: bool = False,
 ) -> SituationReport:
     """Resolve identity for one webhook event and return a situation report.
 
@@ -293,6 +340,13 @@ async def resolve_event(
     only its native flows can take it. What no native flow takes ends
     ``ignored``, with no legacy plan and no case: the legacy scopes are the
     principal's. Only with several products.
+
+    ``identity_link_bind`` (E-536, identity-link-decider-v1): with the decider
+    in ``vivo``, a cart the decider tied to the consented intent writes to the
+    phone of the tie (always the consented one), never to the checkout phone,
+    and the contact of the event is left with it (the send goes to
+    ``contacts.phone``). Without a tie, the base answers None and nothing
+    changes. A failed read keeps today's phone: the planner then refuses it.
     """
     if event_type == EVENT_PURCHASE_CANCELED:
         buyer = (
@@ -515,6 +569,19 @@ async def resolve_event(
                     supabase,
                     contact_id=contact_id,
                     phone=external_user_id,
+                    chatwoot_account_id=chatwoot_account_id,
+                    chatwoot_inbox_id=chatwoot_inbox_id,
+                )
+            if (
+                identity_link_bind
+                and portable_identity_allowed
+                and buyer.event_type == EVENT_CART_ABANDONMENT
+            ):
+                external_user_id = await _identity_link_destination(
+                    supabase,
+                    webhook_event_id=webhook_event_id,
+                    contact_id=contact_id,
+                    external_user_id=external_user_id,
                     chatwoot_account_id=chatwoot_account_id,
                     chatwoot_inbox_id=chatwoot_inbox_id,
                 )

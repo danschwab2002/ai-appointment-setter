@@ -132,7 +132,11 @@ export const buildWorld = async (hooks = {}) => {
   if (hooks.beforeTarget) await hooks.beforeTarget(db, applyTarget);
   await applyTarget();
   if (hooks.afterTarget) await hooks.afterTarget(db, applyTarget);
-  for (const name of migrationNames.slice(targetIndex + 1)) await apply(join(root, 'supabase/migrations', name));
+  // hooks.skip: migraciones posteriores que no se aplican (la prueba en rojo de
+  // validate_identity_link_decider.mjs las aplica despues, sobre el mismo mundo).
+  for (const name of migrationNames.slice(targetIndex + 1)) {
+    if (!(hooks.skip ?? []).includes(name)) await apply(join(root, 'supabase/migrations', name));
+  }
 
   const required = (value, label) => {
     if (value === undefined || value === null || value === '') fail(`al fixture de ATT1 le falta ${label}`);

@@ -136,6 +136,10 @@ EXPLANATIONS = {
     "superseded_by_provider_event": "Llegó un evento de Hotmart de un flujo que le gana, y este paso se canceló.",
     "pilot_runtime_not_armed": "El flujo no estaba prendido cuando llegó el evento.",
     "pilot_audience_intent_unresolved": "No se encontró un formulario con permiso de WhatsApp de esta persona para este evento.",
+    # E-536 (identity-link-decider-v1): el correlador que decide solo ató el
+    # carrito en conflicto (otro mail o telefono que el del formulario) y lo
+    # volvió a encolar.
+    "identity_link_requeued": "El correlador ató el carrito al formulario con permiso de la persona y lo volvió a encolar.",
     "pilot_audience_consented_intent_prior_opt_out": "La persona se había dado de baja antes de que llegara el evento.",
     "pilot_contact_not_in_cohort": "La persona no estaba en la cohorte de prueba del flujo.",
     "pilot_scope_version_mismatch": "El paso era de una versión del flujo que ya no está activa, y no arrancó.",

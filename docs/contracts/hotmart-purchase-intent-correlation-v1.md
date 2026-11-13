@@ -15,7 +15,9 @@ La intención nace en `purchase_intents` mediante el adapter observado
 - `PURCHASE_OUT_OF_SHOPPING_CART`: salida oficial del checkout.
 
 No se infiere abandono por silencio ni por tiempo transcurrido. El nombre del comprador
-nunca participa en identidad.
+nunca participa en identidad del correlador. (El correlador que decide solo, §9, usa un
+número de parecido del nombre, nunca el texto y nunca solo, para decidir un conflicto ya
+registrado: no cambia este ledger.)
 
 Los wrappers `admit_and_correlate_hotmart_purchase_approved` y
 `admit_and_correlate_hotmart_cart_abandonment` admiten evento, identidad canónica y
@@ -169,3 +171,9 @@ public._correlate_portable_hotmart_purchase_intent(p_webhook_event_id uuid)
 - **Brasil** (el noveno dígito) queda fuera de la regla: no hay medición.
 
 Prueba: `tests/sql/followup_engine/validate_whatsapp_phone_equivalence.mjs` (México y Argentina en los dos sentidos, y que el correlador compartido sigue dando `conflict` con `52` contra `521`) y `tests/sql/followup_engine/real_postgres_hotmart_intent_correlation.py`.
+
+## 9. El conflicto de carrito puede atarse después (2026-11-13, E-536)
+
+Un `conflict / email_phone_conflict` de `PURCHASE_OUT_OF_SHOPPING_CART` con una sola candidata puede atarse después a esa intención, sin reescribir este ledger: lo decide el correlador que decide solo ([identity-link-decider-v1.md](identity-link-decider-v1.md)) y lo registra en sus propias tablas (`identity_link_decisions`, append-only). La fila de `hotmart_purchase_intent_correlations` queda como estaba (`conflict`), y la intención sigue en `identity_conflict` con `activation_authorized = false`. Lo único que cambia es que las puertas del carrito leen la intención con `_cart_event_intent_v1` (la resuelta, o la atada vigente) y que el chequeo del permiso deja de cortar por esas dos condiciones solo con una atadura vigente. Revocarla, o una compra posterior, la deja sin efecto.
+
+El nombre entra ahí como un número de parecido (0-100, pares de letras), nunca como texto, y nunca alcanza solo: la regla R2 exige además el mail exactamente igual, y el modelo, un rasgo fuerte (teléfono canónico o mail iguales).

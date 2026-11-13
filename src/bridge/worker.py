@@ -4435,9 +4435,13 @@ class ResolutionWorker:
         purchase_agent_pause: PurchaseAgentPause | None = None,
         native_payment_slip_enabled: bool = False,
         native_payment_slip_methods: tuple[PaymentSlipMethod, ...] | None = None,
+        identity_link_bind: bool = False,
     ) -> None:
         self._supabase = supabase
         self._poll_interval = poll_interval_seconds
+        # E-536 (identity-link-decider-v1): con IDENTITY_LINK_MODE=vivo, el carrito
+        # atado por el correlador escribe al telefono de la atadura (resolution.py).
+        self._identity_link_bind = identity_link_bind
         # E-100: con PURCHASE_AGENT_PAUSE_ENABLED, la compra aprobada pausa al
         # agente en la conversacion del comprador y la pasa al equipo. Sin el
         # flag, ninguna llamada nueva.
@@ -4966,6 +4970,8 @@ class ResolutionWorker:
             pilot_boundary = self._payment_failure_planning.pilot_boundary
         try:
             resolver_kwargs: dict[str, Any] = {}
+            if self._identity_link_bind:
+                resolver_kwargs["identity_link_bind"] = True
             if native_only_route is not None:
                 resolver_kwargs["commercial_ally_config"] = native_only_route.config
                 resolver_kwargs["native_only"] = True

@@ -482,7 +482,11 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261112220000 (el disparo por audiencia, E-484) suma sus siete.
     # 20261112230000 (el tope por persona del nativo, E-483, C6) suma su arranque.
     # 20261113200000 (la ficha nativa, E-528, C4) suma la lectura de la ficha.
-    assert len(allowlisted) == 219
+    # 20261114000100 y 20261114000150 (el correlador que decide solo y su
+    # pregunta, E-536) suman sus trece.
+    assert len(allowlisted) == 232
+    assert "complete_identity_link_decision_v1(uuid, uuid, bigint, text, text, text, text, text, text, text[], text, text)" in allowlisted
+    assert "record_identity_link_answer_v1(text, text, bigint, text, bigint)" in allowlisted
     assert "get_flow_engine_native_payment_slip_context_v1(uuid, text, bigint, timestamp with time zone)" in allowlisted
     assert "mark_flow_engine_request_started_v2(uuid, uuid, text, bigint, timestamp with time zone, jsonb)" in allowlisted
     assert "release_flow_audience_members_v1(uuid, timestamp with time zone, integer)" in allowlisted
@@ -2101,15 +2105,15 @@ def test_flow_audience_triggers_fingerprint() -> None:
     assert "release_flow_audience_members_v1(uuid,timestamptz,integer)" in compact_fingerprint
 
 
-def test_e528_native_payment_slip_fingerprint_is_last() -> None:
+def test_e528_native_payment_slip_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261113200000 (E-528, C4): el disparador, la secuencia de una ficha, la espera anclada y la
     # lectura de la ficha, solo de service_role.
-    fingerprint = sql.split("'20261113200000'", 1)[1].split("select\n    version,", 1)[0]
+    fingerprint = sql.split("'20261113200000'", 1)[1].split("'20261114000100'", 1)[0].rsplit("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261113200000_e528_native_payment_slip_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",4,'e528_native_payment_slip')")
+    assert compact_fingerprint.endswith(",4,'e528_native_payment_slip'")
     assert "get_flow_engine_native_payment_slip_context_v1(uuid,text,bigint,timestamptz)" in compact_fingerprint
 
 
@@ -2291,3 +2295,18 @@ def test_schema_inventory_recognizes_the_native_version_guard_of_publish() -> No
     assert compact.endswith(",1,'flow_change_publish_native_version_guard'")
     assert "to_regprocedure('public._flow_change_publish(text,text,uuid,text,jsonb)')" in compact
     assert "position('flow_change_publish_native_version_guard'indefinition)>0" in compact
+
+
+def test_identity_link_fingerprints_are_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # Las filas de 20261114000100 y 20261114000150 (E-536): la decision con RLS, los dos reemplazos con su marca
+    # y las RPC de service_role; la cola de la pregunta y la respuesta.
+    decider = sql.split("'20261114000100'", 1)[1].split("'20261114000150'", 1)[0].rsplit("union all", 1)[0]
+    question = sql.split("'20261114000150'", 1)[1].split("select\n    version,", 1)[0]
+    compact_decider = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", decider))
+    compact_question = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", question))
+
+    assert compact_decider.endswith(",4,'identity_link_decider'")
+    assert "complete_identity_link_decision_v1(uuid,uuid,bigint,text,text,text,text,text,text,text[],text,text)" in compact_decider
+    assert compact_question.endswith(",2,'identity_link_question')")
+    assert "record_identity_link_answer_v1(text,text,bigint,text,bigint)" in compact_question
