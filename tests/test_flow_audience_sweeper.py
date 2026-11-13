@@ -248,21 +248,54 @@ def test_the_health_file_reader_is_fail_closed(tmp_path: Any) -> None:
     assert fs.health_verdict(fs.file_health_reader(good)(), now=NOW).allows
 
 
-def test_the_health_file_of_meta_salud_is_read_by_instance_with_its_write_time(tmp_path: Any) -> None:
-    # La forma de /var/lib/meta-salud/estado.json (meta_salud.py, correr()): una lectura por
-    # instancia, sin hora; la hora es la de la ultima escritura del archivo.
+def test_the_health_file_of_meta_salud_is_read_by_instance_with_its_own_reading_time(tmp_path: Any) -> None:
+    # La forma de /var/lib/meta-salud/estado.json (meta_salud.py, correr()): una lectura por instancia. La hora
+    # es la leido_en de la lectura de la instancia, nunca la de la escritura del archivo.
     state = tmp_path / "estado.json"
+    fresh = (NOW - timedelta(hours=3)).isoformat()
     state.write_text(json.dumps({
-        "att1": {"calidad": "GREEN", "limite": "TIER_10K", "estado_numero": "CONNECTED", "puede_enviar": "AVAILABLE"},
-        "maribel": {"calidad": "YELLOW", "limite": "TIER_1K", "estado_numero": "CONNECTED"},
+        "att1": {"calidad": "GREEN", "limite": "TIER_10K", "estado_numero": "CONNECTED", "puede_enviar": "AVAILABLE",
+                 "leido_en": fresh},
+        "maribel": {"calidad": "YELLOW", "limite": "TIER_1K", "estado_numero": "CONNECTED", "leido_en": fresh},
         "entregas": {}}), encoding="utf-8")
-    written = (NOW - timedelta(hours=3)).timestamp()
-    os.utime(state, (written, written))
     assert fs.health_verdict(fs.file_health_reader(state, instance_key="att1")(), now=NOW).allows
     assert fs.health_verdict(fs.file_health_reader(state, instance_key="maribel")(), now=NOW).brake_reason == \
         "meta_salud:yellow"
     assert fs.file_health_reader(state, instance_key="johanna")() is None
+
+
+def test_a_later_write_of_the_file_does_not_refresh_an_old_reading(tmp_path: Any) -> None:
+    # Correccion de la revision (2026-11-13): el timer de las entregas reescribe el estado.json cada hora sin volver
+    # a leer la salud. Con la hora del archivo como leido_en, una lectura de hace 30 h parecia de recien y el freno
+    # por lectura vieja no vencia nunca.
+    # La lectura de la salud de hace 30 h, como la deja meta_salud.py hoy (sin leido_en por instancia).
+    state = tmp_path / "estado.json"
+    state.write_text(json.dumps({"att1": {"calidad": "GREEN", "puede_enviar": "AVAILABLE"}}), encoding="utf-8")
     old = (NOW - timedelta(hours=30)).timestamp()
     os.utime(state, (old, old))
+    # La segunda escritura (otra clave, la misma lectura de la salud), recien.
+    document = json.loads(state.read_text(encoding="utf-8"))
+    document["entregas"] = {"att1": {"episodio": None}}
+    state.write_text(json.dumps(document), encoding="utf-8")
+    recent = (NOW - timedelta(minutes=5)).timestamp()
+    os.utime(state, (recent, recent))
+    assert not fs.health_verdict(fs.file_health_reader(state, instance_key="att1")(), now=NOW).allows
+    # Con su leido_en de hace 30 h, la segunda escritura tampoco la refresca.
+    document["att1"]["leido_en"] = (NOW - timedelta(hours=30)).isoformat()
+    state.write_text(json.dumps(document), encoding="utf-8")
+    os.utime(state, (recent, recent))
     assert fs.health_verdict(fs.file_health_reader(state, instance_key="att1")(), now=NOW).brake_reason == \
         fs.BRAKE_STALE
+
+
+def test_a_reading_without_its_time_is_an_unknown_reading(tmp_path: Any) -> None:
+    # Sin leido_en de la instancia (el estado.json de hoy de meta_salud.py) la lectura no tiene hora: frena.
+    state = tmp_path / "estado.json"
+    state.write_text(json.dumps({"att1": {"calidad": "GREEN", "puede_enviar": "AVAILABLE"}}), encoding="utf-8")
+    recent = (NOW - timedelta(minutes=5)).timestamp()
+    os.utime(state, (recent, recent))
+    assert fs.health_verdict(fs.file_health_reader(state, instance_key="att1")(), now=NOW).brake_reason == \
+        fs.BRAKE_NO_READING
+    loose = tmp_path / "suelta.json"
+    loose.write_text(json.dumps({"calidad": "GREEN"}), encoding="utf-8")
+    assert fs.health_verdict(fs.file_health_reader(loose)(), now=NOW).brake_reason == fs.BRAKE_NO_READING

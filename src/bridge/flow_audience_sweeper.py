@@ -32,7 +32,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -128,14 +127,15 @@ def file_health_reader(path: Path, *, instance_key: str | None = None) -> Callab
     """La lectura de la salud que deja el timer de la salud en un JSON; None si no se puede leer.
 
     Acepta las dos formas: una lectura suelta (``{"calidad", "leido_en", ...}``) o el
-    ``estado.json`` de ``meta_salud.py`` (``{"<instancia>": {"calidad", ...}}``), del que
-    toma ``instance_key``. Si la lectura no trae ``leido_en``, la hora es la de la
-    ultima escritura del archivo (``meta_salud.py`` lo reescribe en cada corrida).
+    ``estado.json`` de ``meta_salud.py`` (``{"<instancia>": {"calidad", "leido_en", ...}}``), del que
+    toma ``instance_key``. La hora es la ``leido_en`` de la lectura, nunca la de la escritura del
+    archivo: otro proceso (el timer de las entregas, cada hora) reescribe el mismo archivo sin volver a
+    leer la salud, y con la hora del archivo un freno nunca venceria. Sin ``leido_en`` la lectura
+    queda sin hora y ``health_verdict`` frena (``BRAKE_NO_READING``, fail-closed).
     """
     def read() -> Mapping[str, Any] | None:
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
-            written = datetime.fromtimestamp(os.stat(path).st_mtime, timezone.utc)
         except (OSError, ValueError):
             return None
         if not isinstance(value, dict):
@@ -144,8 +144,6 @@ def file_health_reader(path: Path, *, instance_key: str | None = None) -> Callab
             value = value.get(instance_key)
             if not isinstance(value, dict):
                 return None
-        if "leido_en" not in value:
-            value = {**value, "leido_en": written.isoformat()}
         return value
     return read
 
