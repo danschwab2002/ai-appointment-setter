@@ -85,11 +85,13 @@ from .flow_definition import (
     parse_items,
     step_type,
     trigger_of,
+    TRIGGER_KEYS,
     CONDITION_CHAIN_MAX_LEVELS,
     ITEMS_MAX_BYTES,
     ROUTE_MOTOR,
     ROUTE_NOT_READ,
 )
+from .flow_audience import AUDIENCE_FORMS, PERMISSION_BY_STATUS
 from .flow_engine import (
     NATIVE_MULTITOUCH_TRIGGERS,
     NATIVE_SILENCE_TRIGGER,
@@ -164,6 +166,24 @@ SILENCE_WINDOW_INVALID = _spec(
 PERMISSION_TRIGGER_MISMATCH = _spec(
     "permission_trigger_mismatch", 3, KIND_FORM,
     "formulario va solo con un evento, conversacion solo con un silencio y compra solo con el disparador compra.",
+)
+# E-484 (H6): el disparo por audiencia (fecha, cada, manual) va con para, y para y ritmo solo con el.
+AUDIENCE_REQUIRES_PARA = _spec(
+    "audience_requires_para", 2, KIND_FORM,
+    "Un envío por fecha, cada cierto tiempo o manual dice a quién le llega, en para.",
+    alternative="Sumar para con es: prospecta o clienta.",
+)
+PARA_REQUIRES_AUDIENCE_TRIGGER = _spec(
+    "para_requires_audience_trigger", 2, KIND_FORM,
+    "para y ritmo van solo con un envío por fecha, cada cierto tiempo o manual.",
+    alternative="Sacar para y ritmo; un evento o un silencio ya dicen a quién le llega.",
+)
+# D6: una difusion solo a quien dejo el formulario con permiso (prospecta) o a una clienta con el OK del
+# cliente (compra); conversacion no alcanza: escribirnos una vez no es aceptar mensajes de marketing.
+AUDIENCE_PERMISSION_MISMATCH = _spec(
+    "audience_permission_mismatch", 3, KIND_FORM,
+    "Un envío a una audiencia va a prospectas con permiso formulario o a clientas con permiso compra; conversación no alcanza.",
+    alternative="Usar permiso formulario con es: prospecta, o permiso compra con es: clienta.",
 )
 CONTESTO_A_REQUIRES_CONVERSATION = _spec(
     "contesto_a_requires_conversation", 3, KIND_FORM,
@@ -891,6 +911,7 @@ EMPTY_BRANCH_WITH_LE_GANA_A = _spec(
 
 _VALIDATOR_CODES: tuple[CodeSpec, ...] = (
     TRIGGER_NOT_EXACTLY_ONE, SILENCE_WINDOW_INVALID, PERMISSION_TRIGGER_MISMATCH,
+    AUDIENCE_REQUIRES_PARA, PARA_REQUIRES_AUDIENCE_TRIGGER, AUDIENCE_PERMISSION_MISMATCH,
     CONTESTO_A_REQUIRES_CONVERSATION, PURCHASE_EXIT_MISSING, PURCHASE_EXIT_WITH_PURCHASE_TRIGGER,
     FICHA_VENCIDA_REQUIRES_FICHA_TRIGGER, MEDIO_DE_PAGO_REQUIRES_FICHA_TRIGGER,
     TIPO_DE_RECHAZO_REQUIRES_PAYMENT_FAILURE_TRIGGER, RECHAZOS_REQUIRES_PAYMENT_FAILURE_TRIGGER,
@@ -1779,10 +1800,17 @@ class _Run:
         trigger = _mapping(definition.get("dispara"))
         if trigger is None:
             return
-        present = [key for key in ("evento", "silencio") if key in trigger]
+        present = [key for key in TRIGGER_KEYS if key in trigger]
         if len(present) != 1:
             emitter.add(TRIGGER_NOT_EXACTLY_ONE, ("dispara",))
             return
+        audience = present[0] in AUDIENCE_FORMS
+        if audience and "para" not in definition:
+            emitter.add(AUDIENCE_REQUIRES_PARA, ("para",))
+        elif not audience:
+            for key in ("para", "ritmo"):
+                if key in definition:
+                    emitter.add(PARA_REQUIRES_AUDIENCE_TRIGGER, (key,))
         silence = _mapping(trigger.get("silencio"))
         if silence is None:
             return
@@ -1800,7 +1828,12 @@ class _Run:
             return
         permission = entry.get("permiso")
         known = isinstance(permission, str) and permission in PERMISSIONS
-        if trigger is not None and known:
+        if trigger is not None and known and trigger.is_audience:
+            status = _get(definition, "para", "es")
+            expected = PERMISSION_BY_STATUS.get(status) if isinstance(status, str) else None
+            if permission == "conversacion" or (expected is not None and permission != expected):
+                emitter.add(AUDIENCE_PERMISSION_MISMATCH, ("entra", "permiso"))
+        elif trigger is not None and known:
             if permission == "formulario":
                 fits: bool | None = trigger.kind == "evento"
             elif permission == "conversacion":

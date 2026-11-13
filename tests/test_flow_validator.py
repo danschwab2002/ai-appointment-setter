@@ -439,6 +439,18 @@ def _legacy_run(pasos: list[dict[str, Any]], key: str = "carrito") -> list[Findi
     return run(with_(flow_def(key), lambda d: d.update(pasos=pasos)), key, in_world=legacy(key))
 
 
+def _difusion(**changes: Any) -> dict[str, Any]:
+    """E-484 (H6): un envio por fecha a prospectas con permiso, lo minimo que escribe el agente."""
+    definition: dict[str, Any] = {
+        "nombre": "Recordatorio de Black",
+        "dispara": {"fecha": {"el": "2026-12-01T10:00", "zona": "America/Mexico_City"}},
+        "para": {"es": "prospecta"}, "entra": {"permiso": "formulario"},
+        "pasos": [copy.deepcopy(CONFIRMED_STEP)], "horario": "siempre",
+    }
+    definition.update(changes)
+    return definition
+
+
 CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]] = {
     # Regla 1.
     "unknown_key": (
@@ -925,6 +937,19 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
         lambda: _legacy_purchase([copy.deepcopy(HELLO_WORLD_STEP), {"etiquetar": "cliente"}]),
         lambda: _legacy_purchase([copy.deepcopy(HELLO_WORLD_STEP)]),
     ),
+    # E-484 (H6): el disparo por audiencia.
+    "audience_requires_para": (
+        lambda: run_new({key: value for key, value in _difusion().items() if key != "para"}, "difusion"),
+        lambda: run_new(_difusion(), "difusion"),
+    ),
+    "para_requires_audience_trigger": (
+        lambda: run(with_(flow_def("carrito"), lambda d: d.update(para={"es": "prospecta"}))),
+        lambda: run(flow_def("carrito")),
+    ),
+    "audience_permission_mismatch": (
+        lambda: run_new(_difusion(entra={"permiso": "conversacion"}), "difusion"),
+        lambda: run_new(_difusion(), "difusion"),
+    ),
     "empty_branch_with_le_gana_a": (
         lambda: run(with_(flow_def("carrito"), lambda d: d.update(pasos=[{
             "condicion": {"dato": "ventana", "es": ["abierta"]}, "entonces": [TEMPLATE_STEP], "si_no": []}]))),
@@ -976,12 +1001,27 @@ def test_the_texts_of_every_code_are_clean_single_lines() -> None:
             assert spec.limit and spec.alternative, spec.code
 
 
+@pytest.mark.parametrize("dispara", [
+    {"fecha": {"el": "2026-12-01T10:00", "zona": "America/Mexico_City"}},
+    {"manual": {}},
+], ids=["fecha", "manual"])
+def test_an_audience_flow_is_clean_only_with_the_native_multitouch_flag(dispara: dict[str, Any]) -> None:
+    """E-484 sobre E-483 (AUD): con FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED el envio a una audiencia no tiene
+    hallazgos (las reglas 2 y 3 de la audiencia y la 14 del nativo); sin el, motor_nativo:disparador."""
+    definition = _difusion(dispara=dispara)
+    assert found(run_new(definition, "difusion", instance=_running(multitouch=True))) == set()
+    off = found(run_new(definition, "difusion", instance=_running(multitouch=False)))
+    assert "motor_nativo:disparador" in off
+    assert found(run_new(definition, "difusion")) >= {"motor_nativo:disparador"}
+
+
 def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
     rules = {code: {rule for rule, _ in pairs} for code, pairs in fv.CODE_RULES.items()}
     expected_rules = {
         1: {"unknown_key", "invalid_value", "duplicate_key", "version_set_by_cycle", "default_pool_invalid"},
-        2: {"trigger_not_exactly_one", "silence_window_invalid"},
-        3: {"permission_trigger_mismatch", "contesto_a_requires_conversation"},
+        2: {"trigger_not_exactly_one", "silence_window_invalid", "audience_requires_para",
+            "para_requires_audience_trigger"},
+        3: {"permission_trigger_mismatch", "contesto_a_requires_conversation", "audience_permission_mismatch"},
         4: {"purchase_exit_missing", "purchase_exit_with_purchase_trigger"},
         5: {"ficha_vencida_requires_ficha_trigger", "medio_de_pago_requires_ficha_trigger",
             "tipo_de_rechazo_requires_payment_failure_trigger", "rechazos_requires_payment_failure_trigger",

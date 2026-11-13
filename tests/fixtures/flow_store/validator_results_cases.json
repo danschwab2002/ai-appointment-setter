@@ -1,7 +1,7 @@
 {
  "_generated": {
   "generator": "tests/test_flow_validator.py (test_the_bridge_json_with_the_base_is_the_one_in_the_repo)",
-  "date": "2026-11-12",
+  "date": "2026-11-13",
   "from": "los casos negativo y positivo de cada codigo de CASES, dos bordes del resultado y validator_json() con las dos fases y los dos actores",
   "regenerate": "FLOW_STORE_FIXTURE_DIR=tests/fixtures/flow_store uv run pytest tests/test_flow_validator.py"
  },
@@ -81,6 +81,190 @@
     "rules_version": 1,
     "phase": "publish",
     "actor": "operador"
+   }
+  },
+  {
+   "code": "audience_permission_mismatch",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 3,
+      "code": "audience_permission_mismatch",
+      "kind": "forma",
+      "path": "/0/definicion/entra/permiso",
+      "reason": "Un envío a una audiencia va a prospectas con permiso formulario o a clientas con permiso compra; conversación no alcanza.",
+      "alternative": "Usar permiso formulario con es: prospecta, o permiso compra con es: clienta."
+     },
+     {
+      "rule": 14,
+      "code": "motor_nativo:disparador",
+      "kind": "todavia_no",
+      "path": "/0/definicion/dispara",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "El motor nativo de esta versión solo arranca con la compra, con el carrito, con el pago rechazado, con el formulario o con el silencio en que lo último lo dijo el agente.",
+      "alternative": "Disparar con dispara: {evento: compra}, {evento: carrito}, {evento: pago_fallido}, {evento: intencion} o {silencio: {lo_ultimo: agente, ...}}. Otro disparador es de un flujo del legado."
+     },
+     {
+      "rule": 14,
+      "code": "motor_nativo:permiso",
+      "kind": "todavia_no",
+      "path": "/0/definicion/entra/permiso",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "El motor nativo de esta versión entra con permiso: compra si lo dispara la compra, con permiso: formulario si lo dispara el carrito, el pago rechazado o el formulario, y con permiso: conversacion si lo dispara el silencio.",
+      "alternative": "Con la compra, permiso: compra y el OK del cliente; con el carrito, el pago rechazado o el formulario, permiso: formulario; con el silencio, permiso: conversacion."
+     },
+     {
+      "rule": 14,
+      "code": "motor_nativo:forma",
+      "kind": "todavia_no",
+      "path": "/0/definicion/dispara",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "Eso, en este flujo, hoy no se puede hacer.",
+      "alternative": "Sacá eso de la propuesta y decile al dueño que hoy no se puede."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "audience_permission_mismatch",
+   "case": "positivo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 14,
+      "code": "motor_nativo:disparador",
+      "kind": "todavia_no",
+      "path": "/0/definicion/dispara",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "El motor nativo de esta versión solo arranca con la compra, con el carrito, con el pago rechazado, con el formulario o con el silencio en que lo último lo dijo el agente.",
+      "alternative": "Disparar con dispara: {evento: compra}, {evento: carrito}, {evento: pago_fallido}, {evento: intencion} o {silencio: {lo_ultimo: agente, ...}}. Otro disparador es de un flujo del legado."
+     },
+     {
+      "rule": 14,
+      "code": "motor_nativo:permiso",
+      "kind": "todavia_no",
+      "path": "/0/definicion/entra/permiso",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "El motor nativo de esta versión entra con permiso: compra si lo dispara la compra, con permiso: formulario si lo dispara el carrito, el pago rechazado o el formulario, y con permiso: conversacion si lo dispara el silencio.",
+      "alternative": "Con la compra, permiso: compra y el OK del cliente; con el carrito, el pago rechazado o el formulario, permiso: formulario; con el silencio, permiso: conversacion."
+     },
+     {
+      "rule": 14,
+      "code": "motor_nativo:forma",
+      "kind": "todavia_no",
+      "path": "/0/definicion/dispara",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "Eso, en este flujo, hoy no se puede hacer.",
+      "alternative": "Sacá eso de la propuesta y decile al dueño que hoy no se puede."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "audience_requires_para",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 2,
+      "code": "audience_requires_para",
+      "kind": "forma",
+      "path": "/0/definicion/para",
+      "reason": "Un envío por fecha, cada cierto tiempo o manual dice a quién le llega, en para.",
+      "alternative": "Sumar para con es: prospecta o clienta."
+     },
+     {
+      "rule": 14,
+      "code": "motor_nativo:disparador",
+      "kind": "todavia_no",
+      "path": "/0/definicion/dispara",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "El motor nativo de esta versión solo arranca con la compra, con el carrito, con el pago rechazado, con el formulario o con el silencio en que lo último lo dijo el agente.",
+      "alternative": "Disparar con dispara: {evento: compra}, {evento: carrito}, {evento: pago_fallido}, {evento: intencion} o {silencio: {lo_ultimo: agente, ...}}. Otro disparador es de un flujo del legado."
+     },
+     {
+      "rule": 14,
+      "code": "motor_nativo:permiso",
+      "kind": "todavia_no",
+      "path": "/0/definicion/entra/permiso",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "El motor nativo de esta versión entra con permiso: compra si lo dispara la compra, con permiso: formulario si lo dispara el carrito, el pago rechazado o el formulario, y con permiso: conversacion si lo dispara el silencio.",
+      "alternative": "Con la compra, permiso: compra y el OK del cliente; con el carrito, el pago rechazado o el formulario, permiso: formulario; con el silencio, permiso: conversacion."
+     },
+     {
+      "rule": 14,
+      "code": "motor_nativo:forma",
+      "kind": "todavia_no",
+      "path": "/0/definicion/dispara",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "Eso, en este flujo, hoy no se puede hacer.",
+      "alternative": "Sacá eso de la propuesta y decile al dueño que hoy no se puede."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "audience_requires_para",
+   "case": "positivo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 14,
+      "code": "motor_nativo:disparador",
+      "kind": "todavia_no",
+      "path": "/0/definicion/dispara",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "El motor nativo de esta versión solo arranca con la compra, con el carrito, con el pago rechazado, con el formulario o con el silencio en que lo último lo dijo el agente.",
+      "alternative": "Disparar con dispara: {evento: compra}, {evento: carrito}, {evento: pago_fallido}, {evento: intencion} o {silencio: {lo_ultimo: agente, ...}}. Otro disparador es de un flujo del legado."
+     },
+     {
+      "rule": 14,
+      "code": "motor_nativo:permiso",
+      "kind": "todavia_no",
+      "path": "/0/definicion/entra/permiso",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "El motor nativo de esta versión entra con permiso: compra si lo dispara la compra, con permiso: formulario si lo dispara el carrito, el pago rechazado o el formulario, y con permiso: conversacion si lo dispara el silencio.",
+      "alternative": "Con la compra, permiso: compra y el OK del cliente; con el carrito, el pago rechazado o el formulario, permiso: formulario; con el silencio, permiso: conversacion."
+     },
+     {
+      "rule": 14,
+      "code": "motor_nativo:forma",
+      "kind": "todavia_no",
+      "path": "/0/definicion/dispara",
+      "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
+      "reason": "Eso, en este flujo, hoy no se puede hacer.",
+      "alternative": "Sacá eso de la propuesta y decile al dueño que hoy no se puede."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
    }
   },
   {
@@ -2873,6 +3057,43 @@
     "rules_version": 1,
     "phase": "publish",
     "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "para_requires_audience_trigger",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 2,
+      "code": "para_requires_audience_trigger",
+      "kind": "forma",
+      "path": "/0/definicion/para",
+      "reason": "para y ritmo van solo con un envío por fecha, cada cierto tiempo o manual.",
+      "alternative": "Sacar para y ritmo; un evento o un silencio ya dicen a quién le llega."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "para_requires_audience_trigger",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
    }
   },
   {

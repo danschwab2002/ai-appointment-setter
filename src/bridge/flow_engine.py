@@ -71,6 +71,7 @@ from .flow_definition import (
     step_type,
     trigger_of,
 )
+from .flow_audience import AUDIENCE_FORMS, PERMISSION_BY_STATUS, audience_form
 from .flow_policy import STEPS_BY_LEGACY_KIND
 from .flow_schedule import DEFAULT_ZONE, LAST_MINUTE, Franja, franja_of, is_open, next_open
 
@@ -416,10 +417,10 @@ NATIVE_REPEAT_BY_TRIGGER: Mapping[str, tuple[str, ...]] = MappingProxyType({
 # FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED (``NativeRuntime.native_multitouch``); sin el, la audiencia es
 # ``motor_nativo:disparador``, como antes.
 NATIVE_AUDIENCE_TRIGGER = "audiencia"
-# La interfaz minima del disparo por audiencia de E-484 (``flow_audience.AUDIENCE_FORMS``): las tres formas,
-# cada una un objeto, y ninguna otra clave en ``dispara``. Al integrar E-484 se puede leer de ahi.
-NATIVE_AUDIENCE_FORMS = ("fecha", "cada", "manual")
-NATIVE_AUDIENCE_PERMISSIONS = frozenset({"formulario", "compra"})
+# El disparo por audiencia de E-484: una sola fuente, ``flow_audience`` (las tres formas y el permiso de cada
+# ``para.es``: prospecta con formulario, clienta con compra). Aca son alias para quien ya los importaba.
+NATIVE_AUDIENCE_FORMS = AUDIENCE_FORMS
+NATIVE_AUDIENCE_PERMISSIONS = frozenset(PERMISSION_BY_STATUS.values())
 ENGINE_CAPABILITIES_NATIVE_AUDIENCE = dataclasses.replace(
     ENGINE_CAPABILITIES_NATIVE_MULTITOUCH,
     triggers=frozenset({NATIVE_AUDIENCE_TRIGGER}),
@@ -427,12 +428,14 @@ ENGINE_CAPABILITIES_NATIVE_AUDIENCE = dataclasses.replace(
 
 
 def native_audience_form(definition: Mapping[str, Any]) -> str | None:
-    """``fecha``, ``cada`` o ``manual`` si ``dispara`` es exactamente una de ellas con un objeto (E-484)."""
+    """``fecha``, ``cada`` o ``manual`` si ``dispara`` es exactamente una de ellas con un objeto (E-484).
+
+    La forma es la de ``flow_audience.audience_form``; el motor exige ademas que el valor sea un objeto,
+    como ``_flow_engine_native_trigger`` en la base (20261112210600).
+    """
     trigger = definition.get("dispara")
-    if not isinstance(trigger, Mapping) or len(trigger) != 1:
-        return None
-    (key,) = tuple(trigger)
-    return key if key in NATIVE_AUDIENCE_FORMS and isinstance(trigger.get(key), Mapping) else None
+    key = audience_form(trigger)
+    return key if key is not None and isinstance(trigger.get(key), Mapping) else None
 
 
 # Las variables que el bridge sabe llenar en un paso nativo de la compra
@@ -794,8 +797,8 @@ def native_not_supported(definition: Mapping[str, Any], *, audience: bool = Fals
     if isinstance(priority, Mapping) and "no_arranca_mientras" in priority \
             and not isinstance(priority.get("no_arranca_mientras"), list):
         add(NATIVE_UNSUPPORTED_PRIORITY)
-    # El disparo por audiencia ya lo miro native_trigger_key: not_supported lo lee sin dispara (el
-    # trigger_of de esta rama no lo conoce; lo que la definicion no trae no se marca).
+    # El disparo por audiencia ya lo miro native_trigger_key: not_supported lo lee sin dispara (trigger_of
+    # lo da como Trigger("audiencia", "<forma>") y la forma no es un disparador de las capacidades).
     shape = {k: v for k, v in definition.items() if k != "dispara"} if key == NATIVE_AUDIENCE_TRIGGER \
         else definition
     for code in not_supported(shape, capabilities):
