@@ -138,7 +138,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026102800030
   // El cupon propio por persona en el nativo (20261112210500, E-483, C2).
   '20261112210500_e483_native_personal_coupon_v1.sql',
   // El evento de un disparo por audiencia en el nativo (20261112210600, E-483, para E-484).
-  '20261112210600_e483_native_audience_source_v1.sql', '20261112220000_flow_audience_triggers_v1.sql', '20261112230000_e483_native_person_cap_v1.sql'])) {
+  '20261112210600_e483_native_audience_source_v1.sql', '20261112220000_flow_audience_triggers_v1.sql', '20261112230000_e483_native_person_cap_v1.sql',
+  // La ficha de OXXO nativa (20261113200000, E-528, C4).
+  '20261113200000_e528_native_payment_slip_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de sumar ofertas`, names.slice(position + 1));
 }
 if (maribel.name !== 'maribel_retomar_proceso_01' || maribel.category !== 'MARKETING') {
@@ -474,8 +476,9 @@ results.compra = { reevaluacion: cut.decision.decision, motivo: cut.decision.rea
       public._flow_engine_native_unsupported($6::jsonb) as f`,
   [JSON.stringify({ ...CART, entra: { permiso: 'compra' } }),
     JSON.stringify({ ...CART, dispara: { evento: 'compra' } }),
-    // El pago rechazado es nativo desde 20261030000200 (E-207): la ficha todavia no.
-    JSON.stringify({ ...CART, dispara: { evento: 'ficha_impresa' } }),
+    // El pago rechazado es nativo desde 20261030000200 (E-207) y la ficha impresa desde 20261113200000
+    // (E-528, C4): la ficha vencida como disparador todavia no.
+    JSON.stringify({ ...CART, dispara: { evento: 'ficha_vencida' } }),
     // El carrito de tres toques del legado (A1, A2 y Z): el nativo manda uno solo.
     JSON.stringify(world.cartDefinition(A.funnel)),
     JSON.stringify({ ...CART, pasos: [{ conversar: 'agente' }] }),

@@ -310,7 +310,9 @@ const rows = await db.query(`
       ('settle_flow_audience_member_v1(uuid,uuid,text)'),
       ('read_flow_audience_occurrences_v1(jsonb,integer)'),
       -- 20261112230000: el arranque nativo con el tope por persona (E-483, C6).
-      ('mark_flow_engine_request_started_v2(uuid,uuid,text,bigint,timestamp with time zone,jsonb)')
+      ('mark_flow_engine_request_started_v2(uuid,uuid,text,bigint,timestamp with time zone,jsonb)'),
+      -- 20261113200000: la lectura de la ficha nativa (E-528, C4).
+      ('get_flow_engine_native_payment_slip_context_v1(uuid,text,bigint,timestamp with time zone)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -344,6 +346,7 @@ const result = rows.rows[0];
 // 20261112210500 (el cupon propio de un paso nativo, E-483 C2) suma su lectura: 210.
 // 20261112220000 (el disparo por audiencia, E-484) suma sus siete de service_role: 217.
 // 20261112230000 (el tope por persona del nativo, E-483 C6) suma su arranque: 218.
+// 20261113200000 (la ficha nativa, E-528 C4) suma la lectura de la ficha: 219.
 // Historical baseline guard was `result.expected_count !== 63`; the current
 // baseline is 68 RPCs, daily feedback adds fourteen, payment links add three,
 // the one-shot operator disposition adds one, and correlation event context
@@ -395,7 +398,7 @@ const result = rows.rows[0];
 // claim, settle and block the retry, and mark the 131026 notice.
 // The personal coupon of a native step (20261112210500, E-483, C2) adds the read of the bridge.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 218) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 219) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

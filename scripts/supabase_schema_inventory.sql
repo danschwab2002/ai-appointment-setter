@@ -7271,6 +7271,43 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'e483_native_person_cap'
+    union all
+    select
+        '20261113200000',
+        '20261113200000_e528_native_payment_slip_v1.sql',
+        -- La ficha de OXXO nativa (E-528, C4): el disparador ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_trigger(jsonb)')
+              and position('e528_native_payment_slip_trigger' in definition) > 0
+        )::int
+        -- ... la secuencia de una ficha en la admision ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_admit_native_flow(public.flow_controls,public.webhook_events,uuid,text,timestamptz,bigint,bigint,text)')
+              and position('e528_native_payment_slip_sequence' in definition) > 0
+        )::int
+        -- ... la espera anclada en el compilador ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_compile_policy_core(jsonb,text,integer,text,text)')
+              and position('e528_native_payment_slip_wait' in definition) > 0
+        )::int
+        -- ... y la lectura de la ficha, solo de service_role y security definer.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_flow_engine_native_payment_slip_context_v1(uuid,text,bigint,timestamptz)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        4,
+        'e528_native_payment_slip'
 )
 select
     version,

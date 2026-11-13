@@ -185,6 +185,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261112220000",
         # El tope por persona del nativo (20261112230000, E-483, C6).
         "20261112230000",
+        # La ficha de OXXO nativa (20261113200000, E-528, C4).
+        "20261113200000",
     ]
 
     sql = _sql()

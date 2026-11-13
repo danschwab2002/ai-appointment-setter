@@ -96,7 +96,8 @@ def test_the_new_test_runs_with_npm_test() -> None:
         "node validate_e483_native_condition_after_send.mjs --check && node validate_e483_payment_failure_by_phone.mjs"
         " && node validate_e483_native_personal_coupon.mjs --check"
         " && node validate_e483_native_audience_source.mjs && node validate_flow_audience_triggers.mjs && node validate_flow_audience_native_e2e.mjs"
-        " && node validate_e483_native_legacy_double_case_touches.mjs --check && node validate_e483_native_person_cap.mjs")
+        " && node validate_e483_native_legacy_double_case_touches.mjs --check && node validate_e483_native_person_cap.mjs"
+        " && node validate_e528_native_payment_slip.mjs")
 
 
 # -- El cliente de la base -------------------------------------------------------

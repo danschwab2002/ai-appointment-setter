@@ -125,7 +125,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026110300100
   // El cupon propio por persona en el nativo (20261112210500, E-483, C2).
   '20261112210500_e483_native_personal_coupon_v1.sql',
   // El evento de un disparo por audiencia en el nativo (20261112210600, E-483, para E-484).
-  '20261112210600_e483_native_audience_source_v1.sql', '20261112220000_flow_audience_triggers_v1.sql', '20261112230000_e483_native_person_cap_v1.sql'])) {
+  '20261112210600_e483_native_audience_source_v1.sql', '20261112220000_flow_audience_triggers_v1.sql', '20261112230000_e483_native_person_cap_v1.sql',
+  // La ficha de OXXO nativa (20261113200000, E-528, C4).
+  '20261113200000_e528_native_payment_slip_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la del aviso de derivaciones sin atender`, names.slice(position + 1));
 }
 if (TEMPLATES.length !== 4 || REFUSALS.length !== 3 || REFUSALS[1].persona !== REFUSALS[2].persona) {

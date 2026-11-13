@@ -95,7 +95,9 @@ const MIGRATIONS = readdirSync(join(root, 'supabase/migrations'))
 // unexpected_flow_engine_native_steps_definition. 20261112210600 (el evento
 // de un disparo por audiencia, E-483 para E-484) parcha lo que abre la base
 // sobre la de 20261112210500: sin ella aborta con 55000
-// unexpected_e483_native_audience_definition.
+// unexpected_e483_native_audience_definition. 20261113200000 (la ficha
+// nativa, E-528 C4) parcha la admision sobre la de 20261112210600: sin ella
+// aborta con 55000 e528_native_payment_slip_missing.
 const DERIVED_FROM_MIGRATION = [
   '20261010000100_portable_conversation_followup_claim.sql',
   '20261101000200_flow_engine_native_silence_v1.sql',
@@ -106,6 +108,7 @@ const DERIVED_FROM_MIGRATION = [
   '20261112210300_e483_native_condition_after_send_v1.sql',
   '20261112210500_e483_native_personal_coupon_v1.sql',
   '20261112210600_e483_native_audience_source_v1.sql',
+  '20261113200000_e528_native_payment_slip_v1.sql',
 ];
 for (const name of DERIVED_FROM_MIGRATION) {
   if (!MIGRATIONS.includes(name) || name <= MIGRATION) {

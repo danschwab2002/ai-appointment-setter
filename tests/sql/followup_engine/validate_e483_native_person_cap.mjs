@@ -41,8 +41,10 @@ const results = {};
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify([])) {
-  fail(`despues de ${MIGRATION} no va ninguna`, names.slice(position + 1));
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify([
+  // La ficha de OXXO nativa (20261113200000, E-528, C4).
+  '20261113200000_e528_native_payment_slip_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de la ficha nativa`, names.slice(position + 1));
 }
 
 // ---------------------------------------------------------------------------

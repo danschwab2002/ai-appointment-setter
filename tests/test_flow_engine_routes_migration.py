@@ -173,6 +173,8 @@ def test_it_is_one_transaction_and_comes_right_after_the_t4b() -> None:
         "20261112210600_e483_native_audience_source_v1.sql",
         "20261112220000_flow_audience_triggers_v1.sql",
         "20261112230000_e483_native_person_cap_v1.sql",
+        # La ficha de OXXO nativa (20261113200000, E-528, C4).
+        "20261113200000_e528_native_payment_slip_v1.sql",
     ]
 
 

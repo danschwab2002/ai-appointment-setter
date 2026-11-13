@@ -246,7 +246,9 @@ expected_service_role(signature) as (
         ('public.settle_flow_audience_member_v1(uuid, uuid, text)'),
         ('public.read_flow_audience_occurrences_v1(jsonb, integer)'),
         -- 20261112230000: el arranque nativo con el tope por persona (E-483, C6).
-        ('public.mark_flow_engine_request_started_v2(uuid, uuid, text, bigint, timestamp with time zone, jsonb)')
+        ('public.mark_flow_engine_request_started_v2(uuid, uuid, text, bigint, timestamp with time zone, jsonb)'),
+        -- 20261113200000: la lectura de la ficha nativa (E-528, C4).
+        ('public.get_flow_engine_native_payment_slip_context_v1(uuid, text, bigint, timestamp with time zone)')
 ),
 functions as (
     select

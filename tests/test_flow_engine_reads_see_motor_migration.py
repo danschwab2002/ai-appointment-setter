@@ -170,6 +170,8 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
         "20261112210600_e483_native_audience_source_v1.sql",
         "20261112220000_flow_audience_triggers_v1.sql",
         "20261112230000_e483_native_person_cap_v1.sql",
+        # La ficha de OXXO nativa (20261113200000, E-528, C4).
+        "20261113200000_e528_native_payment_slip_v1.sql",
     ]
     native = (MIGRATIONS / "20261024000200_flow_engine_native_v1.sql").read_text(encoding="utf-8")
     assert "read_automation_expert_flows_v1" not in native

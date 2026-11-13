@@ -202,4 +202,4 @@ def test_the_migration_follows_the_mold() -> None:
 
 def test_the_new_test_runs_with_npm_test() -> None:
     package = json.loads((ROOT / "tests/sql/followup_engine/package.json").read_text(encoding="utf-8"))
-    assert package["scripts"]["test"].endswith(" && node validate_e483_native_person_cap.mjs")
+    assert package["scripts"]["test"].endswith(" && node validate_e483_native_person_cap.mjs && node validate_e528_native_payment_slip.mjs")
