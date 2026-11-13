@@ -416,3 +416,15 @@ def test_a_declared_payment_older_than_72_hours_no_longer_stops() -> None:
 def test_without_the_stop_a_declared_payment_is_what_it_was() -> None:
     details, messages = _att1_21(MARIBEL_9_PAYMENT)
     assert _evaluate(details, messages, stop_on_lead_decline=False).candidate is not None
+
+
+def test_the_snapshot_keeps_the_hour_of_the_last_declared_payment() -> None:
+    # E-486 (item 5.2): el despachador compara esta hora con su reloj (72 h).
+    snapshot = _snapshot(_c1_and_after(
+        (41, 0, "contact", MARIBEL_9_PAYMENT),
+        (42, 1, "agent_bot", "Perfecto, quedo atenta."),
+        (43, 0, "contact", "Gracias"),
+    ))
+    assert snapshot.declared_payment_at == 141
+    assert snapshot.declined_after_anchor is False
+    assert _snapshot(_c1_and_after((41, 0, "contact", "¿Puedo pagar mañana?"))).declared_payment_at is None

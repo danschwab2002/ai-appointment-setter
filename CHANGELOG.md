@@ -12,6 +12,29 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+E-486 (calidad del agente, primer bloque de la 1.37.0) y E-465. **Sin migración.** Rige al subir, sin flag, salvo `HANDOFF_WAIT_ALERT_WINDOW_WARNING_HOURS` (opcional, 2 = lo de hoy). **Cambian dos profiles:** el SOUL común del agente comercial y el Automation Expert (`automation-expert-change` 0.8.0).
+
+### Agregado
+
+- **El horario del equipo en el aviso de derivación (E-486, D1, Dan 12/11).** Bloque opcional `[atencion]` del manifiesto (`dias`, `desde`, `hasta`, `ciudad`, en `instancia.zona_horaria`); sin el bloque, lunes a sábado de 09:00 a 20:00. Fuera de horario el aviso suma «El equipo atiende de lunes a sábado de 09:00 a 20:00 (hora de Ciudad de México).». Sin manifiesto (Johanna), sin horario.
+- **`HANDOFF_WAIT_ALERT_WINDOW_WARNING_HOURS` (E-486, 1d):** cuántas horas antes de que cierre la ventana de 24 h sale el recordatorio HND-005 (1-20, por defecto 2).
+- **Sumar un teléfono a la cohorte desde una propuesta publicada (E-486, 8b):** la página de una propuesta cuyo flujo sigue en cohorte muestra «Sumar un teléfono» y «Pausar». Detrás de `FLOW_APPROVAL_ENABLED`, como antes.
+- **El AE pasa el link de la página de aprobación sin una propuesta abierta (E-465, Dan 12/11):** herramienta `get_approval_page`. Y `add_to_test_group` (E-486, 8d, lado del AE): mientras el bridge no tenga su ruta, contesta `cohort_tool_not_enabled` y el AE manda el link de la página.
+
+### Cambiado
+
+- **El aviso de derivación ya no promete respuesta (E-486, D1):** «Le paso tu consulta al equipo para que la revise.»
+- **Un turno del agente que falla nombra la regla que rompió y el reintento la corrige (E-486, 4).** Sin `[[productos]]`, una clave `product` se descarta en vez de invalidar la respuesta. Log nuevo `agent_output_invalid`, sin contenido.
+- **El pago declarado frena los seguimientos (E-486, 5).** «Ya pagué», «voy a pagar en OXXO», «mañana pago» en las últimas 72 h: el seguimiento con cupón no sale (`lead_declared_payment`), la respuesta no renueva Z, y A2, Z y B2 del despachador cierran sin reintento. Con manifiesto, la reactivación también corta ante un «no» claro o un pago declarado. Johanna, igual.
+- **El código de error de Meta se lee aunque venga como JSON dentro de un texto (E-486, 6).**
+- **A lo sumo 2 globos por respuesta y umbral corto de 280 caracteres (E-486, 7c, D12).**
+- **La variante «banco» del pago rechazado (E-486, conversación 260 de Maribel, 12/11).** Si la persona contesta de su banco (lo nombra, ya habló con él, el banco se lo rechazó, qué decirle), el agente ya no deriva: sugiere reintentar habilitando las compras en línea en la app del banco, otra tarjeta u otro medio, y pide el enlace. Es una regla del SOUL común (ATT1 y Maribel); para que entre bajo el tope de 20.000 caracteres de Hermes se acortaron tres frases sin cambiar la regla.
+
+### Qué hace quien actualiza
+
+- **Nada en el manifiesto.** `[atencion]` es opcional.
+- **Los profiles, después del bridge**, desde el árbol del tag: el SOUL común del agente comercial y la distribución de automation-expert (plugins/, skills/). Después, conversación nueva con el AE (no `/new`).
+
 ## [1.36.0] - 2026-11-12
 
 Una menor sobre la 1.35.0, con 3 PR (#449, #450 y #451) y 3 migraciones. Lo de las campañas llega apagado: `AGENT_CAMPAIGN_OFFER_LINK_ENABLED` y `AGENT_CAMPAIGN_LABEL_PATHS_ENABLED` quedan ausentes, y `[oferta].frenar_descuento_carrito` vale `false` si no se escribe (#449, E-410 y E-411). **Rigen al subir, sin flag:** el cierre del caso cuyo último toque no sale y el pago pendiente cancelado que ya no clasifica la intención (#450, E-423, por sus migraciones), y del #451 la compra o el carrito de una oferta no declarada que cierra en un intento (E-432) y el carrito de Hotmart sin teléfono que le escribe a quien dejó el formulario (E-441). Los casos que ya estaban trabados no se cierran solos (ver «Qué hace quien actualiza»). **El Automation Expert cambia** (E-410: pregunta la oferta de la campaña): llega a una conversación nueva con el AE, y una charla abierta sigue con lo de antes. **Al subir cambia un profile:** instalar la distribucion en automation-expert (plugins/, skills/). El conector de Slack no cambia de código.

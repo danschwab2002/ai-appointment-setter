@@ -223,6 +223,7 @@ def _dispatch(
     close: str | Exception = "closed",
     contact: list[str] | Exception | None = None,
     attempt_number: int = 1,
+    declared_payment_at: int | None = None,
     **reads: Any,
 ) -> tuple[_ReminderChatwoot, _ClosingAuthority]:
     """A2 o Z con la lectura canonica real: las etiquetas salen del snapshot.
@@ -261,6 +262,7 @@ def _dispatch(
             human_activity_after_anchor=False,
             checkpoint_message_id=888,
             checkpoint_created_at=1_790_000_000,
+            declared_payment_at=declared_payment_at,
         )
 
     authority.get_followup_chatwoot_context = context  # type: ignore[method-assign]
@@ -991,3 +993,44 @@ def test_the_app_gives_the_catalog_to_the_native_sweeper_only_with_the_flag(
 )
 def test_the_coupon_logs_reach_the_container(event: str) -> None:
     assert event in LOGGED_INFO_EVENTS
+
+
+# --- E-486 (item 5.2): «ya pague» / «voy a pagar» antes de A2 y Z -------------
+
+
+@pytest.mark.parametrize("step_key", STEPS)
+def test_a2_and_z_do_not_go_out_after_a_declared_payment(
+    tmp_path: Path, step_key: str
+) -> None:
+    from bridge.lead_decline import LEAD_DECLARED_PAYMENT
+
+    # Maribel #9: «voy a hacer el pago en OXXO» una hora antes.
+    chatwoot, authority = _dispatch(
+        step_key,
+        tmp_path,
+        labels=(),
+        catalog=None,
+        declared_payment_at=int(_now().timestamp()) - 3600,
+    )
+
+    closed = _nothing_went_out(chatwoot, authority)
+    assert closed["reason_code"] == LEAD_DECLARED_PAYMENT
+    assert closed["next_attempt_at"] is None
+    assert authority.closes == []
+
+
+def test_a_declared_payment_older_than_72_hours_does_not_hold_a2(tmp_path: Path) -> None:
+    from bridge.lead_decline import LEAD_DECLARED_PAYMENT
+
+    _, authority = _dispatch(
+        CART_SECOND_TOUCH_STEP,
+        tmp_path,
+        labels=(),
+        catalog=None,
+        declared_payment_at=int(_now().timestamp()) - 73 * 3600,
+    )
+
+    assert all(
+        final.get("reason_code") != LEAD_DECLARED_PAYMENT
+        for final in authority.finalizations
+    )

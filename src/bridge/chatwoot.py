@@ -23,7 +23,7 @@ from bridge.filtering import (
     matches_allowed_whatsapp_identity,
     matches_allowed_whatsapp_phone,
 )
-from bridge.lead_decline import detect_lead_decline
+from bridge.lead_decline import detect_declared_payment, detect_lead_decline
 from bridge.reply_splitter import reply_batch_hash, reply_part_hash
 
 # Decision y reason code del agente que viajan como content_attributes del
@@ -97,6 +97,10 @@ class CanonicalConversationSnapshot:
     # (bridge.lead_decline). El recordatorio de la ficha (C3) lo usa para no
     # salir; nada mas lo lee.
     declined_after_anchor: bool = False
+    # E-486 (item 5.2): la hora (epoch) del ultimo «ya pague» / «voy a pagar»
+    # afirmado despues del ancla, o None. El despachador la compara con su
+    # reloj (72 h) antes de A2, Z y B2.
+    declared_payment_at: int | None = None
 
     @property
     def automation_paused(self) -> bool:
@@ -692,6 +696,15 @@ class ChatwootClient:
             )
             is not None
         )
+        created = {message_id: created_at for message_id, created_at, *_ in normalized}
+        declared_payment_at = next(
+            (
+                created[message_id]
+                for message_id in sorted(inbound_after_ids, reverse=True)
+                if detect_declared_payment([contents.get(message_id)]) is not None
+            ),
+            None,
+        )
         checkpoint = messages[-1] if messages else None
         checkpoint_id = checkpoint.get("id") if checkpoint else None
         checkpoint_at = checkpoint.get("created_at") if checkpoint else None
@@ -716,6 +729,7 @@ class ChatwootClient:
             checkpoint_created_at=checkpoint_at,
             human_assignee_present=human_assignee_present,
             declined_after_anchor=declined,
+            declared_payment_at=declared_payment_at,
         )
 
     async def _get_canonical_messages(
