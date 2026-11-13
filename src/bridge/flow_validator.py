@@ -37,6 +37,7 @@ from .flow_definition import (
     COHORT,
     DEFINITION_CODES,
     FICHA_EVENTS,
+    FICHA_VARIABLES,
     INVALID_VALUE,
     KIND_CYCLE,
     KIND_FORM,
@@ -55,6 +56,7 @@ from .flow_definition import (
     CodeSpec,
     Finding,
     FlowWorld,
+    InstanceRuntime,
     InstanceView,
     ProposalItem,
     ProposalItemsInvalid,
@@ -78,18 +80,24 @@ from .flow_definition import (
     json_size,
     loads_strict,
     normalize_definition,
+    due_anchor_max_minutes,
+    parse_due_anchor,
     parse_duration,
     parse_flow_ref,
     parse_hour,
     parse_items,
     step_type,
     trigger_of,
+    TRIGGER_KEYS,
     CONDITION_CHAIN_MAX_LEVELS,
     ITEMS_MAX_BYTES,
     ROUTE_MOTOR,
     ROUTE_NOT_READ,
 )
+from .flow_audience import AUDIENCE_FORMS, PERMISSION_BY_STATUS
 from .flow_engine import (
+    NATIVE_MULTITOUCH_TRIGGERS,
+    NATIVE_PAYMENT_SLIP_TRIGGER,
     NATIVE_SILENCE_TRIGGER,
     NATIVE_UNSUPPORTED_PERMISSION,
     NATIVE_UNSUPPORTED_PRIORITY,
@@ -163,6 +171,24 @@ PERMISSION_TRIGGER_MISMATCH = _spec(
     "permission_trigger_mismatch", 3, KIND_FORM,
     "formulario va solo con un evento, conversacion solo con un silencio y compra solo con el disparador compra.",
 )
+# E-484 (H6): el disparo por audiencia (fecha, cada, manual) va con para, y para y ritmo solo con el.
+AUDIENCE_REQUIRES_PARA = _spec(
+    "audience_requires_para", 2, KIND_FORM,
+    "Un envío por fecha, cada cierto tiempo o manual dice a quién le llega, en para.",
+    alternative="Sumar para con es: prospecta o clienta.",
+)
+PARA_REQUIRES_AUDIENCE_TRIGGER = _spec(
+    "para_requires_audience_trigger", 2, KIND_FORM,
+    "para y ritmo van solo con un envío por fecha, cada cierto tiempo o manual.",
+    alternative="Sacar para y ritmo; un evento o un silencio ya dicen a quién le llega.",
+)
+# D6: una difusion solo a quien dejo el formulario con permiso (prospecta) o a una clienta con el OK del
+# cliente (compra); conversacion no alcanza: escribirnos una vez no es aceptar mensajes de marketing.
+AUDIENCE_PERMISSION_MISMATCH = _spec(
+    "audience_permission_mismatch", 3, KIND_FORM,
+    "Un envío a una audiencia va a prospectas con permiso formulario o a clientas con permiso compra; conversación no alcanza.",
+    alternative="Usar permiso formulario con es: prospecta, o permiso compra con es: clienta.",
+)
 CONTESTO_A_REQUIRES_CONVERSATION = _spec(
     "contesto_a_requires_conversation", 3, KIND_FORM,
     "contesto_a vale solo con permiso: conversacion.",
@@ -207,6 +233,17 @@ PAYMENT_FAILURE_DATUM_SPECS = {
 FICHA_LINK_REQUIRES_FICHA_TRIGGER = _spec(
     "ficha_link_requires_ficha_trigger", 5, KIND_FORM,
     "El link ficha va solo con los disparadores de la ficha.",
+)
+# E-528 (C4, P25-1): el vencimiento de la ficha y la espera anclada a el, solo con ficha_impresa.
+VENCIMIENTO_REQUIRES_FICHA_TRIGGER = _spec(
+    "vencimiento_requires_ficha_trigger", 5, KIND_FORM,
+    "vencimiento es el día en que vence la ficha: va solo con el disparador ficha_impresa.",
+    alternative="Sacar vencimiento de las variables; con el cupón, el vencimiento es vence.",
+)
+DUE_ANCHOR_REQUIRES_FICHA_TRIGGER = _spec(
+    "due_anchor_requires_ficha_trigger", 5, KIND_FORM,
+    "Una espera hasta el vencimiento va solo con ficha_impresa, después del primer mensaje y a una hora dentro del horario.",
+    alternative="Escribir la espera como una duración (60m, 24h, 1d).",
 )
 COUPON_REQUIRES_CHECKOUT_LINK = _spec(
     "coupon_requires_checkout_link", 5, KIND_FORM,
@@ -554,6 +591,19 @@ NATIVE_CHANGE_PRIORITY_WINS = _spec(
     "Hoy un flujo no le puede ganar a otro. Lo que sí se puede decir es que este flujo no arranque mientras la persona está en otro.",
     alternative="Cambiá el pedido a «que no arranque mientras está en ese otro flujo», en el flujo que tiene que esperar, y confirmalo con el dueño.",
 )
+# E-483 (C7, migracion 20261112210200): con FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED la admision nativa corta los
+# recorridos en curso de la misma persona de los flujos de le_gana_a. Solo nombra flujos del mismo producto que
+# corren en el sistema nuevo: el carrito de hoy (el del legado, tambien con la ruta motor) no se toca.
+NATIVE_CHANGE_PRIORITY_WINS_REF = _spec(
+    "native_change_priority_wins_ref", None, KIND_CYCLE,
+    "Un flujo solo puede cortar a otro del mismo producto que corra en el sistema nuevo: a este no lo cortaría.",
+    alternative=_DROP_THAT_CHANGE + "Si el dueño quiere cortar un flujo que corre en el sistema anterior, como el "
+                "carrito de hoy, el equipo técnico tiene que pasarlo antes al sistema nuevo.",
+)
+# Solo cortan los flujos que arrancan con la admision de un evento de Hotmart (admit_flow_engine_event_v1).
+NATIVE_PRIORITY_WINS_TRIGGERS = frozenset({"compra", "carrito", "pago_fallido"})
+_NATIVE_PRIORITY_WINS_TRIGGER = ("Solo el carrito, el pago rechazado y la bienvenida pueden cortar a otro flujo: "
+                                 "este no lo cortaría.")
 NATIVE_CHANGE_PRIORITY_REF = _spec(
     "native_change_priority_ref", None, KIND_CYCLE,
     "Un flujo solo puede esperar a otro del mismo producto y que corra en el sistema nuevo: con este no cambiaría nada.",
@@ -583,6 +633,20 @@ _NATIVE_EXITS_TEXT: Mapping[str, str] = MappingProxyType({
     "intencion": ("El primer contacto corta cuando la persona compra, abandona el carrito, se le rechaza el pago, "
                   "se da de baja o la pasan a una persona, y esas son sus únicas salidas: no se pueden sumar otras."),
 })
+def _exits_of(definition: Mapping[str, Any] | None) -> frozenset[str] | None:
+    ends = definition.get("termina") if isinstance(definition, Mapping) else None
+    exits = ends.get("si") if isinstance(ends, Mapping) else None
+    if not isinstance(exits, list) or not all(isinstance(item, str) for item in exits):
+        return None
+    return frozenset(exits)
+
+
+def _only_reply_exit_changed(active: Mapping[str, Any] | None, proposed: Mapping[str, Any]) -> bool:
+    """Si de las salidas solo cambia ``contesta`` (E-483): es la unica que el nativo de varios toques suma."""
+    before, after = _exits_of(active), _exits_of(proposed)
+    return before is not None and after is not None and before - {"contesta"} == after - {"contesta"}
+
+
 def _native_shape_for_the_owner(what: str) -> tuple[str, str]:
     """El motivo y la alternativa de una forma que el motor nativo no ejecuta, para el AE (E-357).
 
@@ -592,31 +656,62 @@ def _native_shape_for_the_owner(what: str) -> tuple[str, str]:
     drop = "Sacá eso de la propuesta y decile al dueño que hoy no se puede."
     fix = "Corregilo en la propuesta."
     if what == TOO_MANY_SENDS or what == "conversar":
-        return ("Este flujo manda un solo mensaje por persona: el sistema nuevo todavía no manda dos seguidos.",
-                drop + " Si quiere más de un mensaje, decile que esa capacidad todavía no está.")
-    if what in ("espera_despues_del_envio", "espera_entre_envios"):
-        return ("Una espera después del mensaje no hace nada: el flujo termina cuando lo manda.",
-                "Poné la espera antes del mensaje. " + fix)
+        return ("El carrito, el primer contacto y el pago rechazado mandan hasta tres mensajes por persona; la "
+                "bienvenida y el seguimiento, uno solo.",
+                drop + " Si quiere más mensajes de los que ese flujo manda, decile que esa capacidad todavía no está.")
+    # E-483: lo que exige un flujo nativo de varios mensajes (20261112210000).
+    if what == "varios_envios_sin_contesta":
+        return ("Con más de un mensaje, el flujo corta cuando la persona contesta: si contestó, no le llega el siguiente.",
+                "Sumá la salida de que conteste. " + fix)
+    if what == "boton_despues_del_primer_envio":
+        return ("Solo el primer mensaje puede llevar el botón de pago; los siguientes, todavía no.", fix)
+    if what == "condicion_despues_de_un_envio":
+        # E-483 (C3, 20261112210300): la variante se elige una sola vez, antes del primer mensaje; cada una
+        # puede seguir con sus mensajes.
+        return ("El mensaje se elige según el caso una sola vez, antes del primero: después de mandar uno no se "
+                "puede volver a elegir. Lo que sí se puede es que cada variante del pago rechazado siga con sus "
+                "propios mensajes.",
+                "Poné la elección al principio y, adentro de cada variante, su mensaje y los que siguen. " + fix)
+    if what == "espera_entre_envios":
+        return ("Entre un mensaje y el siguiente tiene que haber una espera de al menos un minuto.",
+                "Poné una espera entre los dos mensajes. " + fix)
+    if what == "espera_despues_del_envio":
+        return ("Una espera después del último mensaje no hace nada: el flujo termina cuando lo manda.",
+                "Sacá la espera del final o poné un mensaje después. " + fix)
     if what == "condicion":
         return ("Solo el pago rechazado elige el mensaje según el caso: este flujo manda siempre el mismo.", drop)
     if what == "condicion_dato":
         return ("Las variantes del pago rechazado solo pueden mirar el tipo de rechazo, cuántas veces se rechazó o "
                 "si tuvo descuento antes.", fix)
     if what in ("condicion_no_al_final", "rama_de_un_envio"):
-        return ("Las variantes van al final del flujo y cada una manda un solo mensaje, sin esperas adentro.", fix)
+        return ("Las variantes van al final del flujo: cada una empieza con su mensaje y puede seguir con hasta dos "
+                "más, con una espera antes de cada uno.", fix)
+    if what == "ramas_con_otras_esperas":
+        return ("Todas las variantes del pago rechazado tienen que esperar lo mismo entre un mensaje y el "
+                "siguiente (por ejemplo, 24 horas en todas).", "Igualá las esperas de las variantes. " + fix)
     if what == "etiquetar":
         return ("El seguimiento solo manda su mensaje: no pone etiquetas.", drop)
     if what == "boton_sin_cupon":
         return ("El seguimiento siempre lleva el botón de pago con su cupón.", fix)
     if what == "cupon_personal":
-        return ("El cupón distinto para cada persona todavía no está en el sistema nuevo.",
+        # E-483 (C2, 20261112210500): el cupon propio va en el carrito y en el pago rechazado sin variantes.
+        return ("El cupón distinto para cada persona solo va en el carrito y en el pago rechazado sin variantes, "
+                "en el botón de pago: en este flujo, o en las variantes del pago rechazado, todavía no.",
                 drop + " Un mismo cupón para todos sí se puede, si ya estaba en el flujo.")
+    if what == "cupones_personales_de_mas":
+        return ("Cada persona recibe como mucho dos cupones propios en un flujo: el primero y una renovación.",
+                "Dejá el cupón propio en dos mensajes como mucho. " + fix)
+    if what == "boton_sin_cupon_personal":
+        return ("En el carrito, el botón de pago va solo con el cupón propio de cada persona.",
+                "Poné el cupón propio en ese botón o sacá el botón. " + fix)
     if what.startswith("boton_"):
         return ("Este flujo no lleva un botón propio: usa los botones que ya trae la plantilla aprobada.", drop)
     if what == "variables_seguimiento":
         return ("El seguimiento siempre usa el nombre de la persona y el producto, en ese orden.", fix)
     if what.startswith("variable") or what == "variables_differ":
-        return ("Este mensaje solo puede usar el nombre de la persona y el producto.", fix)
+        # E-483 (C2): con el cupon propio, tambien el precio y el vencimiento, y cuando en el primero.
+        return ("Este mensaje solo puede usar el nombre de la persona y el producto; con el cupón propio, también "
+                "el precio y hasta cuándo vale, y en el primer mensaje cuándo dejó la compra.", fix)
     if what == "contesto_a":
         return ("El seguimiento solo le escribe a quien ya contestó alguna plantilla: eso no se cambia.", fix)
     if what == "silencio_ventana":
@@ -660,6 +755,100 @@ NATIVE_TRIGGER_OTHER_PRODUCT = _spec(
     "El seguimiento nuevo por silencio corre solo en el producto principal de la cuenta: en este producto no mandaría ningún mensaje.",
     alternative="No se arregla cambiando los mensajes. Decile al dueño que hoy esto solo se puede publicar en el producto principal.",
 )
+@dataclass(frozen=True)
+class NativeRuntime(InstanceRuntime):
+    """``InstanceRuntime`` con los toques siguientes de un nativo de varios (E-483).
+
+    ``native_multitouch`` es ``FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED`` del bridge. Va aca y no como campo de
+    ``InstanceRuntime`` para no tocar ``flow_definition.py`` (lo reserva E-484); al integrar las dos ramas
+    se puede subir. Un ``InstanceRuntime`` a secas es «apagado», que es lo que corre si nadie lo prendio.
+    """
+
+    native_multitouch: bool = False
+    # E-483 (C2): FLOW_ENGINE_NATIVE_PERSONAL_COUPON_ENABLED, el toque nativo con el cupon propio.
+    native_personal_coupon: bool = False
+    # E-528 (C4): FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED, la ficha de OXXO nativa (ficha_impresa).
+    native_payment_slip: bool = False
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not isinstance(self.native_multitouch, bool) or not isinstance(self.native_personal_coupon, bool) \
+                or not isinstance(self.native_payment_slip, bool):
+            raise ValueError("instance_runtime_invalid")
+
+    def to_json(self) -> dict[str, Any]:
+        return {**super().to_json(), "native_multitouch_enabled": self.native_multitouch,
+                "native_personal_coupon_enabled": self.native_personal_coupon,
+                "native_payment_slip_enabled": self.native_payment_slip}
+
+
+def runtime_runs_multitouch(runtime: InstanceRuntime | None) -> bool:
+    """Si el bridge manda los toques siguientes de un nativo (E-483); un runtime sin el dato, no."""
+    return isinstance(runtime, NativeRuntime) and runtime.native_multitouch
+
+
+def runtime_runs_payment_slip(runtime: InstanceRuntime | None) -> bool:
+    """Si el bridge ejecuta la ficha nativa (E-528, C4); un runtime sin el dato, no."""
+    return isinstance(runtime, NativeRuntime) and runtime.native_payment_slip
+
+
+def runtime_runs_personal_coupon(runtime: InstanceRuntime | None) -> bool:
+    """Si el bridge arma el toque nativo con el cupon propio (E-483, C2); un runtime sin el dato, no."""
+    return isinstance(runtime, NativeRuntime) and runtime.native_personal_coupon
+
+
+def _personal_coupon_sends(steps: object) -> int:
+    """Los envios con el boton del cupon propio (``{link: checkout, cupon: personal}``), ramas incluidas."""
+    if not isinstance(steps, list):
+        return 0
+    total = 0
+    for step in steps:
+        if step_type(step) == "plantilla" and isinstance(step, Mapping):
+            button = step.get("boton")
+            total += 1 if isinstance(button, Mapping) and is_personal_coupon(button.get("cupon")) else 0
+        elif step_type(step) == "condicion" and isinstance(step, Mapping):
+            total += sum(_personal_coupon_sends(step.get(name)) for name in ("entonces", "si_no"))
+    return total
+
+
+# E-483: un nativo de varios mensajes con FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED apagado. La base lo abre y
+# lo publica, pero el bridge cierra el segundo y el tercero sin mandarlos
+# (flow_engine_native_multitouch_disabled): sale solo el primero. Bloqueo para el AE y para el operador
+# (correccion de la revision, 2026-11-13: mejor no publicar que mandar solo el primero).
+NATIVE_MULTITOUCH_NOT_RUNNING = _spec(
+    "native_multitouch_not_running", None, KIND_CYCLE,
+    "Esta cuenta todavía no manda más de un mensaje por flujo en el sistema nuevo: si se publica, le llegaría "
+    "solo el primero y los siguientes no saldrían.",
+    alternative="No se arregla cambiando la propuesta, salvo dejando un solo mensaje. Decile al dueño que el "
+                "equipo técnico tiene que prender los mensajes siguientes en su cuenta antes de publicar uno de "
+                "varios.",
+)
+# E-483 (C2, 20261112210500): un nativo con el cupon propio con FLOW_ENGINE_NATIVE_PERSONAL_COUPON_ENABLED
+# apagado. La base lo publica y el trabajador del cupon crearia el codigo en Hotmart, pero el bridge cierra el
+# toque sin mandarlo (flow_engine_native_personal_coupon_disabled): crearia cupones reales que nadie recibe. Bloqueo
+# para el AE y para el operador (correccion de la revision, 2026-11-13).
+NATIVE_PERSONAL_COUPON_NOT_RUNNING = _spec(
+    "native_personal_coupon_not_running", None, KIND_CYCLE,
+    "Esta cuenta todavía no manda el cupón propio de cada persona en el sistema nuevo: si se publica, los mensajes "
+    "con ese cupón no saldrían.",
+    alternative="No se arregla cambiando la propuesta, salvo sacando el cupón propio de los mensajes. Decile al "
+                "dueño que el equipo técnico tiene que prender el cupón propio en su cuenta antes de publicarlo.",
+)
+# E-483 (C8, 20261112210100): en_curso: cancelar en un nativo con FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED apagado.
+# La base cancela al publicar sin mirar el flag (los toques que esperan, tambien el primero de quien todavia no lo
+# recibio): es lo unico de C8 que correria con el flag apagado. Bloqueo para el AE; al operador se le avisa.
+NATIVE_CANCEL_IN_FLIGHT_NOT_RUNNING = _spec(
+    "native_cancel_in_flight_not_running", None, KIND_CYCLE,
+    "Esta cuenta todavía no tiene prendidos los mensajes siguientes del sistema nuevo: cortar a la gente que está a "
+    "mitad de los mensajes todavía no se puede pedir.",
+    alternative="Usar en_curso: seguir. Si el dueño necesita cortar a quienes esperan, el equipo técnico tiene que "
+                "prender los mensajes siguientes en su cuenta antes.",
+)
+NATIVE_CANCEL_IN_FLIGHT_NOT_RUNNING_WARNING = _spec(
+    "native_cancel_in_flight_not_running_warning", None, KIND_WARNING,
+    "Esta cuenta todavía no tiene prendido FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED: publicado con en_curso: cancelar, "
+    "la base igual cancela al publicar los mensajes que esperan de quienes empezaron con otra versión.",
+)
 TRIGGER_CHANGE_IS_ANOTHER_FLOW = _spec(
     "trigger_change_is_another_flow", None, KIND_CYCLE,
     "Un disparador distinto es otro flujo: otro evento, o un silencio con otro lo_ultimo.",
@@ -687,11 +876,19 @@ FLOW_HAS_NO_VERSION = _spec(
     "Un flujo sin versión no se prende.",
     alternative="Publicar su primera versión en la misma propuesta.",
 )
+# E-483 (C8): cancelar lo que espera se aplica solo en un flujo nativo (la base lo hace al publicar,
+# 20261112210100). En el legado (con o sin la ruta motor) lo que esta en curso sigue con su version, y migrar
+# no existe en ninguno: los dos siguen con este codigo.
 EN_CURSO_NOT_SUPPORTED = _spec(
     "en_curso_not_supported", None, KIND_CYCLE,
-    "Hasta el motor, lo que está en curso sigue con la versión que lo empezó.",
-    alternative="Usar en_curso: seguir.",
+    "Cortar a la gente que está a mitad de los mensajes solo se puede en un flujo del sistema nuevo de mensajes. "
+    "En este flujo, lo que ya empezó sigue con la versión que lo empezó; pasarlo a la versión nueva todavía no "
+    "existe en ningún flujo.",
+    alternative="Usar en_curso: seguir. Si el dueño necesita cortar a quienes esperan en este flujo, el equipo "
+                "técnico tiene que pasarlo antes al sistema nuevo de mensajes.",
 )
+# Lo que esta en curso: seguir en cualquier flujo, cancelar solo en uno nativo (E-483, C8).
+IN_FLIGHT_CANCEL = "cancelar"
 CLIENT_PURCHASE_OK_MISSING = _spec(
     "client_purchase_ok_missing", None, KIND_CYCLE,
     "Pasar a permiso: compra pide el OK del cliente: quién lo dio, por qué medio y la fecha.",
@@ -744,11 +941,13 @@ EMPTY_BRANCH_WITH_LE_GANA_A = _spec(
 
 _VALIDATOR_CODES: tuple[CodeSpec, ...] = (
     TRIGGER_NOT_EXACTLY_ONE, SILENCE_WINDOW_INVALID, PERMISSION_TRIGGER_MISMATCH,
+    AUDIENCE_REQUIRES_PARA, PARA_REQUIRES_AUDIENCE_TRIGGER, AUDIENCE_PERMISSION_MISMATCH,
     CONTESTO_A_REQUIRES_CONVERSATION, PURCHASE_EXIT_MISSING, PURCHASE_EXIT_WITH_PURCHASE_TRIGGER,
     FICHA_VENCIDA_REQUIRES_FICHA_TRIGGER, MEDIO_DE_PAGO_REQUIRES_FICHA_TRIGGER,
     TIPO_DE_RECHAZO_REQUIRES_PAYMENT_FAILURE_TRIGGER, RECHAZOS_REQUIRES_PAYMENT_FAILURE_TRIGGER,
     DESCUENTO_PREVIO_REQUIRES_PAYMENT_FAILURE_TRIGGER,
-    FICHA_LINK_REQUIRES_FICHA_TRIGGER, COUPON_REQUIRES_CHECKOUT_LINK, EVENT_REQUIRES_VENCE,
+    FICHA_LINK_REQUIRES_FICHA_TRIGGER, VENCIMIENTO_REQUIRES_FICHA_TRIGGER, DUE_ANCHOR_REQUIRES_FICHA_TRIGGER,
+    COUPON_REQUIRES_CHECKOUT_LINK, EVENT_REQUIRES_VENCE,
     SILENCE_FORBIDS_VENCE, CONVERSAR_OUTSIDE_OPEN_WINDOW_BRANCH, TERMINAL_STEP_NOT_LAST,
     NESTED_CONDITION, HOUR_INVALID, WINDOW_NOT_INCREASING, ZONE_INVALID, ZONE_CHANGED,
     POOL_ZONE_MISMATCH, CAP_INVALID, DAILY_CAP_EXCEEDS_TOTAL, UNKNOWN_FLOW_REFERENCE,
@@ -769,9 +968,11 @@ _VALIDATOR_CODES: tuple[CodeSpec, ...] = (
     ENGINE_NOT_SUPPORTED_NATIVE_REPEAT, ENGINE_NOT_SUPPORTED_NATIVE_PRIORITY, ENGINE_NOT_SUPPORTED_NATIVE_SHAPE,
     ENGINE_NOT_SUPPORTED_ETIQUETAR, CHANGE_OUTSIDE_1B_SCOPE, TRIGGER_CHANGE_IS_ANOTHER_FLOW, FLOW_CHANGE_STALE_BASE,
     NATIVE_CHANGE_EXITS, NATIVE_CHANGE_REPEAT_SILENCE, NATIVE_CHANGE_PRIORITY_SILENCE, NATIVE_CHANGE_PRIORITY_WINS,
-    NATIVE_CHANGE_PRIORITY_REF, NATIVE_CHANGE_ENTRY, NATIVE_CHANGE_POOL, NATIVE_CHANGE_OTHER,
+    NATIVE_CHANGE_PRIORITY_WINS_REF, NATIVE_CHANGE_PRIORITY_REF, NATIVE_CHANGE_ENTRY, NATIVE_CHANGE_POOL, NATIVE_CHANGE_OTHER,
     CHANGE_WITHOUT_EFFECT_LEGACY_ROUTE, NATIVE_ENGINE_NOT_RUNNING, NATIVE_FIRST_CONTACT_NOT_RUNNING,
-    NATIVE_SILENCE_NOT_RUNNING, NATIVE_TRIGGER_OTHER_PRODUCT,
+    NATIVE_SILENCE_NOT_RUNNING, NATIVE_TRIGGER_OTHER_PRODUCT, NATIVE_MULTITOUCH_NOT_RUNNING,
+    NATIVE_PERSONAL_COUPON_NOT_RUNNING,
+    NATIVE_CANCEL_IN_FLIGHT_NOT_RUNNING, NATIVE_CANCEL_IN_FLIGHT_NOT_RUNNING_WARNING,
     ROLLBACK_TARGET_NOT_FOUND, ROLLBACK_TARGET_IS_ACTIVE, STATE_TRANSITION_INVALID,
     FLOW_HAS_NO_VERSION, EN_CURSO_NOT_SUPPORTED, CLIENT_PURCHASE_OK_MISSING,
     ALWAYS_WITH_MARKETING, RECOVERY_WITHOUT_CAP, SILENCE_WITHOUT_PURCHASE_EXIT,
@@ -914,7 +1115,10 @@ def _max_waits(steps: object, depth: int = 0) -> int | None:
     for step in steps:
         kind = step_type(step)
         if kind == "esperar":
+            # E-528 (P25-1): una espera anclada al vencimiento cuenta lo mas que puede esperar.
             minutes = parse_duration(step["esperar"])
+            if minutes is None:
+                minutes = due_anchor_max_minutes(step["esperar"])
             if minutes is None:
                 return None
             total += minutes
@@ -1208,7 +1412,8 @@ class _Run:
         self._normalize()
         self._stale_base()
         for index, (item, flow) in enumerate(zip(self.items, self.flows)):
-            if item.tipo in ("version", "volver") and item.en_curso != "seguir":
+            if item.tipo in ("version", "volver") and not (
+                    item.en_curso == "seguir" or (item.en_curso == IN_FLIGHT_CANCEL and flow.is_native)):
                 self.blocks.append(EN_CURSO_NOT_SUPPORTED.at(finding_path((index, "en_curso"))))
             if item.is_new_flow:
                 if item.prender != COHORT:
@@ -1362,6 +1567,9 @@ class _Run:
           sin barredor es peor que no mandar: la barrera del legado (``blocked_native_flow``) le saca la
           conversacion al seguimiento de hoy.
         """
+        self._multitouch_without_effect()
+        self._personal_coupon_without_effect()
+        self._cancel_without_multitouch()
         if self.actor != "automation_expert":
             return
         runtime = self.instance.runtime
@@ -1390,6 +1598,68 @@ class _Run:
             elif trigger == NATIVE_SILENCE_TRIGGER and flow.product_ref != runtime.main_product:
                 self.blocks.append(NATIVE_TRIGGER_OTHER_PRODUCT.at(at))
 
+    def _multitouch_without_effect(self) -> None:
+        """Un nativo de varios mensajes con los toques siguientes apagados en el bridge (E-483).
+
+        La base publica hasta tres envios (20261112210000) y el bridge manda el segundo y el tercero solo con
+        ``FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED``; apagado, los cierra sin mandar. Mira lo mismo que
+        ``_without_effect`` (``nuevo``, ``version``, ``volver`` y ``prender``) y solo si la instancia dice lo
+        que corre: ni el AE ni el operador lo publican (mejor no publicar que mandar solo el primero). Con el
+        motor apagado ya bloquea ``native_engine_not_running`` al AE.
+        """
+        runtime = self.instance.runtime
+        if runtime is None or runtime_runs_multitouch(runtime) or not runtime.engine_enabled:
+            return
+        for index, (item, flow) in enumerate(zip(self.items, self.flows)):
+            if not flow.is_native or (item.tipo not in ("version", "volver", "prender") and not item.is_new_flow):
+                continue
+            definition = self.effective.get(flow.flow_id)
+            if not isinstance(definition, Mapping) or _max_sends(definition.get("pasos")) <= 1:
+                continue
+            if native_trigger_key(definition, payment_slip=True) == NATIVE_PAYMENT_SLIP_TRIGGER:
+                # E-528 (C4): C3 de la ficha nativa sale con FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED, no con los
+                # toques siguientes de un nativo; sin ese flag la ficha ya es motor_nativo:disparador.
+                continue
+            self.blocks.append(NATIVE_MULTITOUCH_NOT_RUNNING.at(finding_path((index,))))
+
+    def _cancel_without_multitouch(self) -> None:
+        """``en_curso: cancelar`` en un nativo con los toques siguientes apagados en el bridge (E-483, C8).
+
+        La base lo aplica al publicar sin mirar el flag (20261112210100). Mira la ``version`` y el ``volver`` de
+        un nativo y solo si la instancia dice lo que corre (el molde de ``_multitouch_without_effect``): el AE no
+        lo publica; al operador se le avisa. No pide el motor prendido: la base cancela igual.
+        """
+        runtime = self.instance.runtime
+        if runtime is None or runtime_runs_multitouch(runtime):
+            return
+        for index, (item, flow) in enumerate(zip(self.items, self.flows)):
+            if item.tipo not in ("version", "volver") or item.en_curso != IN_FLIGHT_CANCEL or not flow.is_native:
+                continue
+            at = finding_path((index, "en_curso"))
+            if self.actor == "automation_expert":
+                self.blocks.append(NATIVE_CANCEL_IN_FLIGHT_NOT_RUNNING.at(at))
+            else:
+                self.warnings.append(NATIVE_CANCEL_IN_FLIGHT_NOT_RUNNING_WARNING.at(at))
+
+    def _personal_coupon_without_effect(self) -> None:
+        """Un nativo con el cupon propio con ese toque apagado en el bridge (E-483, C2).
+
+        La base lo publica (20261112210500) y el bridge arma el toque con el cupon solo con
+        ``FLOW_ENGINE_NATIVE_PERSONAL_COUPON_ENABLED``; apagado, lo cierra sin mandarlo. El mismo molde que
+        ``_multitouch_without_effect``: solo si la instancia dice lo que corre; ni el AE ni el operador lo publican
+        (el trabajador del cupon crearia el codigo en Hotmart para un toque que no sale).
+        """
+        runtime = self.instance.runtime
+        if runtime is None or runtime_runs_personal_coupon(runtime) or not runtime.engine_enabled:
+            return
+        for index, (item, flow) in enumerate(zip(self.items, self.flows)):
+            if not flow.is_native or (item.tipo not in ("version", "volver", "prender") and not item.is_new_flow):
+                continue
+            definition = self.effective.get(flow.flow_id)
+            if not isinstance(definition, Mapping) or not _personal_coupon_sends(definition.get("pasos")):
+                continue
+            self.blocks.append(NATIVE_PERSONAL_COUPON_NOT_RUNNING.at(finding_path((index,))))
+
     def _switch_off(self, index: int, item: ProposalItem, flow: WorldFlow) -> None:
         if flow.state == "apagado":
             self.blocks.append(STATE_TRANSITION_INVALID.at(finding_path((index, "tipo"))))
@@ -1413,6 +1683,9 @@ class _Run:
                     emitter.add(TRIGGER_CHANGE_IS_ANOTHER_FLOW, ("dispara",))
                 if self.actor == "automation_expert":
                     self._scope(subject, active)
+            elif self.actor == "automation_expert" and subject.item.is_new_flow:
+                # E-483 (C7): el flujo nuevo con le_gana_a, con la misma regla que una version.
+                self._native_priority_wins(subject)
         self._rule2(emitter, definition)
         self._rule3(emitter, definition)
         self._rule4(emitter, definition)
@@ -1467,11 +1740,12 @@ class _Run:
         """
         for key in _scope_keys(_scope_view(active), _scope_view(subject.definition)):
             if subject.flow.is_native:
-                self._native_scope(subject, key)
+                self._native_scope(subject, key, active)
             else:
                 subject.emitter.add(CHANGE_OUTSIDE_1B_SCOPE, key)
 
-    def _native_scope(self, subject: _Subject, key: tuple[Segment, ...]) -> None:
+    def _native_scope(self, subject: _Subject, key: tuple[Segment, ...],
+                      active: Mapping[str, Any] | None = None) -> None:
         """Si el cambio de ``key`` en un flujo nativo se publica, o por que no (flow-change-cycle-v1 1.12.0).
 
         Se abre solo lo que el motor lee: ``pasos`` (dentro de la regla 14, que en fase publish mira cada
@@ -1493,8 +1767,11 @@ class _Run:
             else:
                 self._native_priority_refs(subject)
         elif key == ("prioridad", "le_gana_a"):
-            emitter.add(NATIVE_CHANGE_PRIORITY_WINS, key)
+            self._native_priority_wins(subject)
         elif key == ("termina", "si"):
+            if trigger in NATIVE_MULTITOUCH_TRIGGERS and _only_reply_exit_changed(active, subject.definition):
+                # E-483: que conteste ahora lo lee el motor (corta el toque siguiente, 20261112210000).
+                return
             emitter.add(NATIVE_CHANGE_EXITS, key, reason=_NATIVE_EXITS_TEXT.get(trigger or ""))
         elif key in (("entra", "contesto_a"), ("entra", "permiso")):
             emitter.add(NATIVE_CHANGE_ENTRY, key)
@@ -1502,6 +1779,43 @@ class _Run:
             emitter.add(NATIVE_CHANGE_POOL, key)
         else:
             emitter.add(NATIVE_CHANGE_OTHER, key)
+
+    def _native_priority_wins(self, subject: _Subject) -> None:
+        """``prioridad.le_gana_a`` de un flujo nativo que propone el AE (E-483, C7, 20261112210200).
+
+        La admision nativa la lee solo si el bridge corre los toques siguientes
+        (``FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED``: ``runtime_runs_multitouch``), y solo en los flujos que
+        arrancan con un evento de Hotmart (``NATIVE_PRIORITY_WINS_TRIGGERS``): sin eso, ``native_change_priority_wins``
+        como antes. Con eso, cada flujo de la lista tiene que ser un nativo del mismo producto, por su clave, que
+        no sea el seguimiento (su corrida no es un recorrido): si no, ``native_change_priority_wins_ref``. Sacar
+        la lista entera siempre se puede.
+        """
+        definition = subject.definition
+        emitter = subject.emitter
+        refs = _refs(definition, "prioridad", "le_gana_a")
+        if not refs:
+            return
+        at = ("prioridad", "le_gana_a")
+        if not runtime_runs_multitouch(self.instance.runtime):
+            emitter.add(NATIVE_CHANGE_PRIORITY_WINS, at)
+            return
+        if native_trigger_key(definition) not in NATIVE_PRIORITY_WINS_TRIGGERS:
+            emitter.add(NATIVE_CHANGE_PRIORITY_WINS, at, reason=_NATIVE_PRIORITY_WINS_TRIGGER)
+            return
+        flow = subject.flow
+        own_product = _own_product(definition, flow)
+        for index, ref in enumerate(refs):
+            if is_unresolved(ref):
+                continue
+            parsed = parse_flow_ref(ref, own_product)
+            other = self.world.find(*parsed) if parsed is not None else None
+            if other is None:
+                continue  # unknown_flow_reference, de la regla 10
+            active = other.active_definition
+            silence = active is not None and native_trigger_key(active) == NATIVE_SILENCE_TRIGGER
+            if ref != other.flow_key or other.product_ref != own_product or other.flow_id == flow.flow_id \
+                    or not other.is_native or silence:
+                emitter.add(NATIVE_CHANGE_PRIORITY_WINS_REF, at + (index,))
 
     def _native_priority_refs(self, subject: _Subject) -> None:
         """Cada flujo de ``no_arranca_mientras`` lo puede leer la base (``_flow_engine_admit_native_flow``).
@@ -1536,10 +1850,17 @@ class _Run:
         trigger = _mapping(definition.get("dispara"))
         if trigger is None:
             return
-        present = [key for key in ("evento", "silencio") if key in trigger]
+        present = [key for key in TRIGGER_KEYS if key in trigger]
         if len(present) != 1:
             emitter.add(TRIGGER_NOT_EXACTLY_ONE, ("dispara",))
             return
+        audience = present[0] in AUDIENCE_FORMS
+        if audience and "para" not in definition:
+            emitter.add(AUDIENCE_REQUIRES_PARA, ("para",))
+        elif not audience:
+            for key in ("para", "ritmo"):
+                if key in definition:
+                    emitter.add(PARA_REQUIRES_AUDIENCE_TRIGGER, (key,))
         silence = _mapping(trigger.get("silencio"))
         if silence is None:
             return
@@ -1557,7 +1878,12 @@ class _Run:
             return
         permission = entry.get("permiso")
         known = isinstance(permission, str) and permission in PERMISSIONS
-        if trigger is not None and known:
+        if trigger is not None and known and trigger.is_audience:
+            status = _get(definition, "para", "es")
+            expected = PERMISSION_BY_STATUS.get(status) if isinstance(status, str) else None
+            if permission == "conversacion" or (expected is not None and permission != expected):
+                emitter.add(AUDIENCE_PERMISSION_MISMATCH, ("entra", "permiso"))
+        elif trigger is not None and known:
             if permission == "formulario":
                 fits: bool | None = trigger.kind == "evento"
             elif permission == "conversacion":
@@ -1606,6 +1932,8 @@ class _Run:
             for index, reason in enumerate(reasons):
                 if reason == "ficha_vencida" and not printed:
                     emitter.add(FICHA_VENCIDA_REQUIRES_FICHA_TRIGGER, ("termina", "si", index))
+        printed_trigger = None if ficha is None else (trigger is not None and trigger.event == "ficha_impresa")
+        self._rule5_due_anchor(emitter, definition, printed_trigger)
         for step, at, _, _, _, _ in _iter_steps(definition.get("pasos"), ("pasos",)):
             kind = step_type(step)
             if kind == "plantilla":
@@ -1614,6 +1942,10 @@ class _Run:
                     for index, variable in enumerate(variables):
                         if variable == "medio_de_pago":
                             emitter.add(MEDIO_DE_PAGO_REQUIRES_FICHA_TRIGGER, at + ("variables", index))
+                if isinstance(variables, list) and printed_trigger is False:
+                    for index, variable in enumerate(variables):
+                        if variable in FICHA_VARIABLES:
+                            emitter.add(VENCIMIENTO_REQUIRES_FICHA_TRIGGER, at + ("variables", index))
                 button = _mapping(step.get("boton"))
                 if button is not None:
                     link = button.get("link")
@@ -1636,6 +1968,30 @@ class _Run:
             elif kind == "etiquetar" and trigger is not None and not (
                     trigger.kind == "evento" and trigger.event is None) and not trigger.is_purchase:
                 emitter.add(ETIQUETAR_REQUIRES_PURCHASE_TRIGGER, at + ("etiquetar",))
+
+    def _rule5_due_anchor(self, emitter: _Emitter, definition: Mapping[str, Any], printed: bool | None) -> None:
+        """La espera anclada al vencimiento (E-528, P25-1): solo con ficha_impresa, despues del primer envio
+        y con ``a_las`` dentro del horario. Con el disparador sin resolver no se mira.
+        """
+        if printed is None:
+            return
+        window = _mapping(definition.get("horario"))
+        start = parse_hour(window.get("desde")) if window is not None else None
+        end = parse_hour(window.get("hasta")) if window is not None else None
+        sent = False
+        for step, at, *_ in _iter_steps(definition.get("pasos"), ("pasos",)):
+            kind = step_type(step)
+            if kind in ("plantilla", "conversar"):
+                sent = True
+                continue
+            if kind != "esperar" or not isinstance(step, Mapping):
+                continue
+            anchor = parse_due_anchor(step.get("esperar"))
+            if anchor is None:
+                continue
+            outside = start is not None and end is not None and not start <= anchor[1] <= end
+            if not printed or not sent or outside:
+                emitter.add(DUE_ANCHOR_REQUIRES_FICHA_TRIGGER, at + ("esperar",))
 
     def _rule5_variables(self, emitter: _Emitter, definition: Mapping[str, Any]) -> None:
         """Las variables de la 1.1, en la regla 5: precio y vence solo con cupon personal, cuando solo
@@ -2031,7 +2387,11 @@ class _Run:
                 if step_type(step) == "etiquetar":
                     emitter.add(ENGINE_NOT_SUPPORTED_ETIQUETAR, at + ("etiquetar",))
             return
-        codes = native_not_supported(definition)
+        # E-483, para E-484 (20261112210600): el disparo por audiencia lo admite la base solo si el bridge lo
+        # pide (FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED); sin el flag, motor_nativo:disparador como antes.
+        # E-528 (C4, 20261113200000): la ficha, solo con FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED.
+        codes = native_not_supported(definition, audience=runtime_runs_multitouch(self.instance.runtime),
+                                     payment_slip=runtime_runs_payment_slip(self.instance.runtime))
         if self.actor == "automation_expert" and f"{NOT_SUPPORTED}:{TOO_MANY_SENDS}" in codes:
             # Dos mensajes seguidos son dos problemas para el motor (la espera en el medio y el segundo envio) y
             # uno solo para el dueno: el del mensaje de mas. Los dos caen en el mismo camino y se contaria solo el primero.

@@ -42,7 +42,7 @@ import logging
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 
 from bridge.slack_notifications import NotificationProducer
@@ -234,8 +234,23 @@ class FlowEngineRuntime:
         clock: Callable[[], float] = time.monotonic,
         cart_touches_enabled: bool = True,
         native_intent_enabled: bool = False,
+        native_priority_wins: bool = False,
+        native_audience: bool = False,
+        payment_failure_by_phone_offers: Callable[[], Iterable[str]] | None = None,
     ) -> None:
         self.instance: dict[str, object] = dict(instance)
+        # E-483 (pieza PF, 20261112210400): las ofertas de las campanas vigentes cuyo pago
+        # rechazado sin formulario entra con el telefono de Hotmart
+        # (FLOW_ENGINE_NATIVE_PAYMENT_FAILURE_BY_PHONE_ENABLED). None con el flag apagado: la
+        # admision de antes.
+        self.payment_failure_by_phone_offers = payment_failure_by_phone_offers
+        # E-483 (C7): si la admision nativa corta los recorridos de le_gana_a
+        # (FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED). Apagado, la admision de antes.
+        self.native_priority_wins = native_priority_wins
+        # E-483 (AUD, 20261112210600) para E-484: si la admision nativa toma la persona de una lista
+        # de audiencia (FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED). Apagado, el disparo por audiencia no abre
+        # ningun recorrido.
+        self.native_audience = native_audience
         # E-165: si el bridge corre A1 con cupon y A2/Z. Sin ellos el motor arranca igual (por sus
         # flujos nativos), y el carrito de una ruta del legado en motor va forzado al legado.
         self.cart_touches_enabled = cart_touches_enabled

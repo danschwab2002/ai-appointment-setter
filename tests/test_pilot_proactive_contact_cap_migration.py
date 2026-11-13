@@ -170,6 +170,23 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261111000200",
         # Los numeros del tablero (20261112200000, E-507).
         "20261112200000",
+        "20261112210000",
+        "20261112210100",
+        "20261112210200",
+        # El pago rechazado completo en el nativo (20261112210300, E-483, C3).
+        "20261112210300",
+        # El pago rechazado sin formulario de una oferta de campana (20261112210400, E-483, pieza PF).
+        "20261112210400",
+        # El cupon propio por persona en el nativo (20261112210500, E-483, C2).
+        "20261112210500",
+        # El evento de un disparo por audiencia en el nativo (20261112210600, E-483, para E-484).
+        "20261112210600",
+        # El disparo por audiencia y su lista congelada (20261112220000, E-484).
+        "20261112220000",
+        # El tope por persona del nativo (20261112230000, E-483, C6).
+        "20261112230000",
+        # La ficha de OXXO nativa (20261113200000, E-528, C4).
+        "20261113200000",
     ]
 
     sql = _sql()

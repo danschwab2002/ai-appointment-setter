@@ -100,7 +100,10 @@ class _AdmissionBase:
     async def find_active_whatsapp_identities(self, **_: Any) -> list[Any]:
         return []
 
-    async def admit_flow_engine_event(self, instance: Any, flow_event: dict[str, Any]) -> tuple[Any, ...]:
+    async def admit_flow_engine_event(self, instance: Any, flow_event: dict[str, Any], *,
+                                      priority_wins: bool = False) -> tuple[Any, ...]:
+        # E-483 (C7): la clave del bridge para le_gana_a; apagada con el flag de hoy.
+        assert priority_wins is False
         self.flow_events.append(flow_event)
         return (FlowEngineNativeAdmissionRow("flow-1", "motor_arranco", None, "case-1", "action-1", True),)
 

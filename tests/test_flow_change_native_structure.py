@@ -71,8 +71,8 @@ FOUR = ("carrito", "pago_rechazado", "primer_contacto", "bienvenida")
 OUT_OF_SCOPE = {"change_outside_1b_scope"}
 STRUCTURE_BLOCKS = {
     "native_change_exits", "native_change_repeat_silence", "native_change_priority_silence",
-    "native_change_priority_wins", "native_change_priority_ref", "native_change_entry", "native_change_pool",
-    "native_change_other",
+    "native_change_priority_wins", "native_change_priority_wins_ref", "native_change_priority_ref",
+    "native_change_entry", "native_change_pool", "native_change_other",
 }
 TECHNICAL = re.compile(r"\boperador\b|motor nativo|\bnativo\b|\blegado\b|\bscope\b|[a-z]+_[a-z]+|\{\{")
 
@@ -181,8 +181,10 @@ def _publish_blocks(definition: dict[str, Any], change: Any, key: str = "nativo"
 
 
 @pytest.mark.parametrize(("name", "change", "said"), [
-    ("carrito", lambda d: d["pasos"].extend([{"esperar": "1h"}, copy.deepcopy(CONFIRMED_STEP)]), "un solo mensaje por persona"),
-    ("carrito", lambda d: d["pasos"].append({"esperar": "1h"}), "después del mensaje no hace nada"),
+    # E-483: el carrito manda hasta tres mensajes; con mas de uno, corta si la persona contesta.
+    ("carrito", lambda d: d["pasos"].extend([{"esperar": "1h"}, copy.deepcopy(CONFIRMED_STEP)]),
+     "corta cuando la persona contesta"),
+    ("carrito", lambda d: d["pasos"].append({"esperar": "1h"}), "después del último mensaje no hace nada"),
     ("bienvenida", lambda d: d["pasos"].insert(0, {"condicion": {"dato": "tipo_de_rechazo", "es": ["banco"]},
                                                     "entonces": [copy.deepcopy(CONFIRMED_STEP)],
                                                     "si_no": [copy.deepcopy(CONFIRMED_STEP)]}), "pago rechazado"),
@@ -249,9 +251,11 @@ def test_a_flow_can_wait_for_one_the_engine_route_runs(route: str) -> None:
 
 
 def test_an_exit_change_is_said_once_even_when_the_engine_would_not_run_it_either() -> None:
+    # E-483: sumar contesta ya se publica en el carrito (la lee el nativo de varios toques); al seguimiento
+    # (el silencio) no se le cambian las salidas.
     def add(d: dict[str, Any]) -> None:
-        d["termina"]["si"].append("contesta")
-    blocks = _published_by_the_ae("carrito", add).blocks
+        d["termina"]["si"].remove("contesta")
+    blocks = _published_by_the_ae("seguimiento", add).blocks
     assert [f.code for f in blocks if f.path == "/0/definicion/termina/si"] == ["native_change_exits"]
 
 

@@ -43,7 +43,14 @@ const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.end
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Lo que venga despues no puede redefinir la lectura ni la intencion del recorrido sin mirar esta prueba.
-for (const name of names.slice(position + 1)) {
+// Revisadas: el pago rechazado sin formulario (20261112210400, E-483, pieza PF) abre un recorrido sin
+// intencion (audience_hotmart_phone); la lectura no cambia y da la oferta sin landing (lo afirma
+// validate_e483_payment_failure_by_phone.mjs).
+// La ficha nativa (20261113200000, E-528, C4) abre su recorrido con la intencion de la ficha, como el carrito
+// (la restriccion audience_by_trigger la suma); la lectura no cambia.
+const REVIEWED = new Set(['20261112210400_e483_payment_failure_by_phone_v1.sql',
+  '20261113200000_e528_native_payment_slip_v1.sql']);
+for (const name of names.slice(position + 1).filter((candidate) => !REVIEWED.has(candidate))) {
   const text = readFileSync(join(root, 'supabase/migrations', name), 'utf8');
   if (text.includes('flow_engine_native_campaign_origin') || text.includes('audience_purchase_intent_id')) {
     fail(`${name} toca la lectura o la intencion del recorrido: revisar esta prueba`);

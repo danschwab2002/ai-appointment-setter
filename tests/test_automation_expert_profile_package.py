@@ -129,7 +129,7 @@ def _skill(path: str) -> str:
 
 
 SKILLS = ("flujos/armar-una-campana", "flujos/crear-un-flujo", "flujos/cambiar-un-flujo", "flujos/pasar-flujo-al-sistema-nuevo",
-          "flujos/pedir-plantilla-a-meta",
+          "flujos/pedir-plantilla-a-meta", "flujos/programar-un-envio",
           "plataformas/hotmart", "plataformas/ghl-formularios", "plataformas/chatwoot-whatsapp")
 
 

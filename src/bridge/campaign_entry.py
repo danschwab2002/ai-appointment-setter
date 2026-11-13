@@ -223,6 +223,21 @@ class CampaignEntryLabels:
         self._flow_labels = flow_labels
         self._clock = clock
 
+    def campaign_offers(self) -> frozenset[str]:
+        """Las ofertas de las campanas vigentes de la fuente (manifiesto y AE con ``codigo_oferta``).
+
+        E-483 (pieza PF): el pago rechazado sin formulario de una de estas ofertas entra al recorrido
+        nativo con el telefono de Hotmart, y ``plan`` le pone la etiqueta de su campana por la oferta
+        (``match_campaign``: sin intencion no hay landing). Mismas campanas y misma vigencia que ``plan``.
+        """
+        now = self._clock()
+        return frozenset(
+            offer
+            for campaign in self._source.campaigns()
+            if campaign.segment.state_at(now) == STATE_ACTIVE
+            for offer in campaign.offers
+        )
+
     async def plan(self, supabase: Any, *, action_id: str) -> NativeSegmentLabelPlan | None:
         """El plan del flujo si lo hay; si no, el de la campana de la landing u oferta. Nunca lanza."""
         if self._flow_labels is not None:

@@ -183,8 +183,26 @@ class PilotRequestStartRejectedError(SupabaseError):
         super().__init__(f"pilot_request_start_rejected:{reason}")
 
 
+@dataclass(frozen=True)
+class NativePersonCap:
+    """The per-person cap of the native engine (E-483, C6; 20261112230000).
+
+    ``max_sends`` proactive native sends per person in the last
+    ``window_hours`` hours (1-20 and 1-720, the ranges of the base). With it,
+    an engine step starts through ``mark_flow_engine_request_started_v2``; a
+    native step over the cap ends ``terminado`` with ``tope_por_persona``.
+    """
+
+    max_sends: int
+    window_hours: int
+
+    def as_json(self) -> dict[str, int]:
+        return {"max_sends": self.max_sends, "window_hours": self.window_hours}
+
+
 class FlowEngineRunTerminated(SupabaseError):
-    """The engine closed the attempt itself: its flow was turned off.
+    """The engine closed the attempt itself: its flow was turned off, or the
+    native step was over the per-person cap (``tope_por_persona``, E-483 C6).
 
     ``mark_flow_engine_request_started_v1`` answered ``terminado``: the base
     already completed the attempt (``failed_before_request``), cancelled the
@@ -2315,6 +2333,18 @@ class RecoveryCouponForCase:
     status: str
     expires_at: datetime
     verified_at: datetime | None
+
+
+@dataclass(frozen=True)
+class FlowEngineNativeStepCoupon:
+    """El cupon propio que declara un paso nativo (E-483, C2, 20261112210500).
+
+    ``ordinal`` sale de la politica del paso (1 o 2). ``coupon`` es ``None`` mientras el trabajador del
+    cupon no lo sembro.
+    """
+
+    ordinal: int
+    coupon: RecoveryCouponForCase | None
 
 
 # E-267 (20261102000100): el cupon personal que el agente puede nombrar en su
@@ -7071,8 +7101,13 @@ class SupabaseClient:
         worker_id: str,
         lease_generation: int,
         now: str,
+        person_cap: NativePersonCap | None = None,
     ) -> DeliveryAttempt:
         """Start one attempt of an engine run (contract flow-engine-v1, 7.2).
+
+        With ``person_cap`` (FLOW_ENGINE_NATIVE_PERSON_CAP_ENABLED, E-483 C6)
+        the start goes through ``mark_flow_engine_request_started_v2`` with the
+        cap of the instance; without it, through the v1, as before.
 
         ``request_started`` is the attempt of ``mark_followup_request_started``,
         with the same checks. ``rechazado`` raises
@@ -7081,16 +7116,20 @@ class SupabaseClient:
         ``FlowEngineRunTerminated`` (the base already closed the attempt).
         """
         operation = "mark_flow_engine_request_started_v1"
+        body: dict[str, object] = {
+            "p_action_id": action_id,
+            "p_attempt_id": attempt_id,
+            "p_worker_id": worker_id,
+            "p_lease_generation": lease_generation,
+            "p_now": now,
+        }
+        if person_cap is not None:
+            operation = "mark_flow_engine_request_started_v2"
+            body["p_person_cap"] = person_cap.as_json()
         response = await self._request(
             "POST",
             f"/rest/v1/rpc/{operation}",
-            content=json.dumps({
-                "p_action_id": action_id,
-                "p_attempt_id": attempt_id,
-                "p_worker_id": worker_id,
-                "p_lease_generation": lease_generation,
-                "p_now": now,
-            }, ensure_ascii=False),
+            content=json.dumps(body, ensure_ascii=False),
         )
         if response.status_code != 200:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
@@ -7548,7 +7587,13 @@ class SupabaseClient:
         })
 
     async def admit_flow_engine_event(
-        self, instance: Mapping[str, object], flow_event: Mapping[str, object]
+        self,
+        instance: Mapping[str, object],
+        flow_event: Mapping[str, object],
+        *,
+        priority_wins: bool = False,
+        payment_failure_by_phone_offers: Sequence[str] | None = None,
+        audience: bool = False,
     ) -> tuple[FlowEngineNativeAdmissionRow, ...]:
         """The native admission of one normalized event (flow-engine-v2, 4).
 
@@ -7556,10 +7601,35 @@ class SupabaseClient:
         (the purchase stays in the queue). A 22023 or a P0002 is a permanent
         ``SupabasePermanentError`` with its reason: the same event never
         passes. An answer outside the contract is a committed response.
+
+        ``priority_wins`` (E-483, C7, migration 20261112210200) adds
+        ``native_priority_wins: true`` to ``p_instance``: a run that starts
+        closes the open runs of the flows in its ``prioridad.le_gana_a``.
+        Without it the body is exactly the one of before.
+
+        ``payment_failure_by_phone_offers`` (E-483, piece PF, migration
+        20261112210400) adds ``native_payment_failure_by_phone_offers`` (the
+        list) to ``p_instance``: a payment failure without a form of one of
+        those offers enters with the phone of the Hotmart event. ``None`` (the
+        flag off) leaves the body exactly the one of before.
+
+        ``audience`` (E-483, for E-484, migration 20261112210600) adds
+        ``native_audience: true`` to ``p_instance``: an event with ``fuente:
+        audiencia`` (a person of the frozen list of an audience occurrence,
+        tied to ``flujo_id`` and ``version``) goes to the native admission of
+        that flow. Without it such an event is ``invalid_flow_engine_event``
+        (22023), as before, and any other event is admitted exactly the same.
         """
         operation = "admit_flow_engine_event_v1"
+        p_instance = dict(instance)
+        if priority_wins:
+            p_instance["native_priority_wins"] = True
+        if audience:
+            p_instance["native_audience"] = True
+        if payment_failure_by_phone_offers is not None:
+            p_instance["native_payment_failure_by_phone_offers"] = list(payment_failure_by_phone_offers)
         body = json.dumps(
-            {"p_instance": dict(instance), "p_flow_event": dict(flow_event)},
+            {"p_instance": p_instance, "p_flow_event": dict(flow_event)},
             ensure_ascii=False,
         )
         try:
@@ -7950,6 +8020,74 @@ class SupabaseClient:
         response = await self._request(
             "POST",
             "/rest/v1/rpc/get_portable_payment_slip_send_context",
+            content=json.dumps({
+                "p_action_id": action_id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": lease_generation,
+                "p_now": now,
+            }),
+        )
+        if response.status_code != 200:
+            rejection = _pilot_plan_rejection(response)
+            if rejection is not None:
+                raise SupabasePermanentError(
+                    f"{operation}_rejected: {rejection}", reason=rejection
+                )
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        if set(row) != {
+            "webhook_event_id",
+            "payment_type",
+            "checkout_country_iso",
+            "billet_url",
+            "billet_barcode",
+            "generated_at",
+        }:
+            raise _invalid_row_error(operation)
+        return PaymentSlipSendContext(
+            webhook_event_id=_required_uuid(
+                row, "webhook_event_id", operation=operation
+            ),
+            payment_type=_optional_string(row, "payment_type", operation=operation),
+            checkout_country_iso=_optional_string(
+                row, "checkout_country_iso", operation=operation
+            ),
+            billet_url=_optional_string(row, "billet_url", operation=operation),
+            billet_barcode=_optional_string(
+                row, "billet_barcode", operation=operation
+            ),
+            generated_at=(
+                None
+                if row.get("generated_at") is None
+                else _required_aware_timestamp(
+                    row, "generated_at", operation=operation
+                )
+            ),
+        )
+
+    async def get_flow_engine_native_payment_slip_context_v1(
+        self,
+        *,
+        action_id: str,
+        worker_id: str,
+        lease_generation: int,
+        now: str,
+    ) -> PaymentSlipSendContext:
+        """The latest slip of a native slip case, under the current lease (E-528, C4, 20261113200000).
+
+        The same row and fence as ``get_portable_payment_slip_send_context``, for a case with a native slip run.
+
+        A 55000 (no lease, an action that is not ``payment_slip``, a case
+        without a resolved slip) is a ``SupabasePermanentError`` with its
+        reason: it does not change by retrying.
+        """
+        operation = "flow_engine_native_payment_slip_context"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_flow_engine_native_payment_slip_context_v1",
             content=json.dumps({
                 "p_action_id": action_id,
                 "p_worker_id": worker_id,
@@ -10407,6 +10545,52 @@ class SupabaseClient:
                 row, "expires_at", operation=operation
             ),
             verified_at=verified_at,
+        )
+
+    async def get_flow_engine_native_step_coupon(
+        self, *, action_id: str
+    ) -> FlowEngineNativeStepCoupon | None:
+        """El cupon propio de un paso nativo (E-483, C2), o None si el paso no lo lleva."""
+        operation = "flow_engine_native_step_coupon"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_flow_engine_native_step_coupon_v1",
+            content=json.dumps({"p_action_id": action_id}),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) > 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        if not rows:
+            return None
+        row = rows[0]
+        ordinal = row.get("ordinal")
+        if not isinstance(ordinal, int) or isinstance(ordinal, bool) or ordinal not in (1, 2):
+            raise _invalid_row_error(operation)
+        if row.get("coupon_id") is None:
+            if any(row.get(key) is not None for key in ("code", "status", "expires_at", "verified_at")):
+                raise _invalid_row_error(operation)
+            return FlowEngineNativeStepCoupon(ordinal=ordinal, coupon=None)
+        code = _required_string(row, "code", operation=operation)
+        if _RECOVERY_COUPON_CODE_RE.fullmatch(code) is None:
+            raise _invalid_row_error(operation)
+        verified_at = (
+            None
+            if row.get("verified_at") is None
+            else _required_aware_timestamp(row, "verified_at", operation=operation)
+        )
+        return FlowEngineNativeStepCoupon(
+            ordinal=ordinal,
+            coupon=RecoveryCouponForCase(
+                coupon_id=_required_uuid(row, "coupon_id", operation=operation),
+                code=code,
+                status=_required_enum(
+                    row, "status", set(RECOVERY_COUPON_STATUSES), operation=operation
+                ),
+                expires_at=_required_aware_timestamp(row, "expires_at", operation=operation),
+                verified_at=verified_at,
+            ),
         )
 
     async def reserve_recovery_checkout_issuance(

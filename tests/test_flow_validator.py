@@ -297,12 +297,35 @@ def _routed(executor: str | None) -> WorldFlow:
     return replace(live("carrito"), route_executor=executor)
 
 
-def _running(*, engine: bool = True, intent: bool = True, sweeper: bool = True, main: str = "att1") -> InstanceView:
+def _running(*, engine: bool = True, intent: bool = True, sweeper: bool = True, main: str = "att1",
+             multitouch: bool = True, personal: bool = True) -> InstanceView:
     return InstanceView("lancemos", "att1", frozenset({"att1", "att9"}) if main != "att1" else frozenset({"att1"}),
                         "America/Mexico_City",
-                        runtime=InstanceRuntime(engine_enabled=engine, native_intent_enabled=intent,
-                                                native_silence_sweeper=sweeper, cart_touches=True,
-                                                main_product=main))
+                        runtime=fv.NativeRuntime(engine_enabled=engine, native_intent_enabled=intent,
+                                                 native_silence_sweeper=sweeper, cart_touches=True,
+                                                 main_product=main, native_multitouch=multitouch,
+                                                 native_personal_coupon=personal))
+
+
+def _cart_personal() -> dict[str, Any]:
+    """Un carrito nativo de un mensaje con el boton del cupon propio (E-483, C2): lo que la base abre.
+
+    La plantilla es la del seguimiento con cupon de ATT1 (bandeja 11, 2026-10-10), con el boton del checkout.
+    """
+    return welcome(nombre="Carrito con cupon propio", dispara={"evento": "carrito"}, entra={"permiso": "formulario"},
+                   horario=copy.deepcopy(CDMX),
+                   pasos=[{"plantilla": "att1_seguimiento_descuento_01", "idioma": "es_MX",
+                           "variables": ["nombre", "producto"], "boton": {"link": "checkout", "cupon": "personal"}}])
+
+
+def _three_touch_form() -> dict[str, Any]:
+    """El primer contacto con tres mensajes y contesta (E-483): lo que el motor nativo abre."""
+    definition = _form()
+    send = copy.deepcopy(CONFIRMED_STEP)
+    definition["pasos"] = [copy.deepcopy(send), {"esperar": "24h"}, copy.deepcopy(send), {"esperar": "24h"},
+                           copy.deepcopy(send)]
+    definition["termina"] = {**definition.get("termina", {}), "si": ["compra", "contesta"], "vence": "4d"}
+    return definition
 
 
 def _form() -> dict[str, Any]:
@@ -335,7 +358,14 @@ def native_flow(definition: dict[str, Any], *, key: str = "nativo", state: str =
                      generation=1, versions={1: published({**definition, "flujo": key})}, native=True)
 
 
-def _native_change(definition: dict[str, Any], change: Callable[[dict[str, Any]], None] | None = None) -> list[Finding]:
+def _native_cart() -> dict[str, Any]:
+    """Un carrito nativo de un mensaje: uno de los que cortan a otro flujo con le_gana_a (E-483, C7)."""
+    return welcome(nombre="Carrito", dispara={"evento": "carrito"}, entra={"permiso": "formulario"},
+                   pasos=[copy.deepcopy(CONFIRMED_STEP)], termina={"si": ["compra"], "vence": "1d"})
+
+
+def _native_change(definition: dict[str, Any], change: Callable[[dict[str, Any]], None] | None = None,
+                   instance: InstanceView = INSTANCE) -> list[Finding]:
     """Lo que devuelve el validador a una version de un nativo que propone el AE, sin mirar la plantilla."""
     base = native_flow(definition)
     draft = fd.as_draft(base.versions[1])
@@ -343,7 +373,19 @@ def _native_change(definition: dict[str, Any], change: Callable[[dict[str, Any]]
         change(draft)
     others = world(base, _native_welcome("bienvenida", WELCOME_ID, "prendido"), _routed("legado"))
     result = check([version_item(draft, "nativo", flow_id=NATIVE_ID)], actor="automation_expert",
-                   in_world=others, catalog=None, phase="draft")
+                   in_world=others, catalog=None, phase="draft", instance=instance)
+    return [*result.blocks, *result.warnings]
+
+
+def _native_cancel(*, actor: str, multitouch: bool) -> list[Finding]:
+    """Un volver con ``en_curso: cancelar`` de un nativo con dos versiones (E-483, C8)."""
+    base = native_flow(_form())
+    two = replace(base, versions={**base.versions, 2: {**base.versions[1], "version": 2}}, active_version=2,
+                  generation=2)
+    item = ProposalItem(producto="att1", flujo="nativo", flow_id=NATIVE_ID, tipo="volver", version=1,
+                        en_curso="cancelar")
+    result = check([item], actor=actor, in_world=world(two, _native_welcome("bienvenida", WELCOME_ID, "prendido")),
+                   catalog=native_catalog(), phase="publish", instance=_running(multitouch=multitouch))
     return [*result.blocks, *result.warnings]
 
 
@@ -407,6 +449,18 @@ def legacy(key: str = "carrito") -> FlowWorld:
 
 def _legacy_run(pasos: list[dict[str, Any]], key: str = "carrito") -> list[Finding]:
     return run(with_(flow_def(key), lambda d: d.update(pasos=pasos)), key, in_world=legacy(key))
+
+
+def _difusion(**changes: Any) -> dict[str, Any]:
+    """E-484 (H6): un envio por fecha a prospectas con permiso, lo minimo que escribe el agente."""
+    definition: dict[str, Any] = {
+        "nombre": "Recordatorio de Black",
+        "dispara": {"fecha": {"el": "2026-12-01T10:00", "zona": "America/Mexico_City"}},
+        "para": {"es": "prospecta"}, "entra": {"permiso": "formulario"},
+        "pasos": [copy.deepcopy(CONFIRMED_STEP)], "horario": "siempre",
+    }
+    definition.update(changes)
+    return definition
 
 
 CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]] = {
@@ -487,6 +541,18 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
         )
         for datum, value in (("tipo_de_rechazo", "sin_saldo"), ("rechazos", "varios"), ("descuento_previo", "si"))
     },
+    # E-528 (C4): el vencimiento de la ficha y la espera anclada, solo con ficha_impresa.
+    "vencimiento_requires_ficha_trigger": (
+        lambda: run(with_(flow_def("carrito"), lambda d: d["pasos"][0].update(variables=["nombre", "vencimiento"]))),
+        lambda: run(with_(flow_def("ficha"), lambda d: d["pasos"][1]["entonces"][0].update(
+            variables=["nombre", "producto", "medio_de_pago", "vencimiento"])), "ficha", phase="draft"),
+    ),
+    "due_anchor_requires_ficha_trigger": (
+        lambda: run(with_(flow_def("carrito"), lambda d: d["pasos"].insert(
+            1, {"esperar": {"vencimiento": {"dias_antes": 0, "a_las": "09:00"}}})), phase="draft"),
+        lambda: run(with_(flow_def("ficha"), lambda d: d["pasos"].append(
+            {"esperar": {"vencimiento": {"dias_antes": 0, "a_las": "09:00"}}})), "ficha", phase="draft"),
+    ),
     "ficha_link_requires_ficha_trigger": (
         lambda: run(with_(flow_def("carrito"), lambda d: d["pasos"][0].update(boton={"link": "ficha"}))),
         lambda: run(flow_def("ficha"), "ficha", phase="draft"),
@@ -697,8 +763,9 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
     ),
     # E-357 (P28): lo que el AE no cambia de la estructura de un nativo, cada uno con su vecino que si.
     "native_change_exits": (
+        # E-483: sumar contesta a un nativo de varios toques ya se publica; al seguimiento no se le cambian.
+        lambda: _native_change(_silence(), lambda d: d["termina"]["si"].remove("contesta")),
         lambda: _native_change(_form(), lambda d: d["termina"]["si"].append("contesta")),
-        lambda: _native_change(_form(), lambda d: d["termina"].update(vence="2d")),
     ),
     "native_change_repeat_silence": (
         lambda: _native_change(_silence(), lambda d: d["topes"]["repeticion"].update(otra_despues_de="24h")),
@@ -711,6 +778,13 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
     "native_change_priority_wins": (
         lambda: _native_change(_form(), lambda d: d["prioridad"]["le_gana_a"].append("bienvenida")),
         lambda: _native_change(_form(), lambda d: d["prioridad"]["no_arranca_mientras"].append("bienvenida")),
+    ),
+    # E-483 (C7): con los toques siguientes prendidos, le_gana_a nombra solo flujos del sistema nuevo.
+    "native_change_priority_wins_ref": (
+        lambda: _native_change(_native_cart(), lambda d: d["prioridad"]["le_gana_a"].append("carrito"),
+                               instance=_running()),
+        lambda: _native_change(_native_cart(), lambda d: d["prioridad"]["le_gana_a"].append("bienvenida"),
+                               instance=_running()),
     ),
     "native_change_priority_ref": (
         lambda: _native_change(_form(), lambda d: d["prioridad"]["no_arranca_mientras"].append("carrito")),
@@ -748,6 +822,27 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
     "native_trigger_other_product": (
         lambda: run_new(_follow_up(), "seguimiento", instance=_running(main="att9")),
         lambda: run_new(_follow_up(), "seguimiento", instance=_running(main="att1")),
+    ),
+    # E-483: varios mensajes con los toques siguientes apagados en el bridge.
+    "native_multitouch_not_running": (
+        lambda: run_new(_three_touch_form(), "primer_contacto", instance=_running(multitouch=False)),
+        lambda: run_new(_three_touch_form(), "primer_contacto", instance=_running()),
+    ),
+
+    # E-483 (C2): el cupon propio con ese toque apagado en el bridge.
+    "native_personal_coupon_not_running": (
+        lambda: run_new(_cart_personal(), "carrito_cupon", instance=_running(personal=False)),
+        lambda: run_new(_cart_personal(), "carrito_cupon", instance=_running()),
+    ),
+
+    # E-483 (C8): cancelar lo que espera con los toques siguientes apagados en el bridge.
+    "native_cancel_in_flight_not_running": (
+        lambda: _native_cancel(actor="automation_expert", multitouch=False),
+        lambda: _native_cancel(actor="automation_expert", multitouch=True),
+    ),
+    "native_cancel_in_flight_not_running_warning": (
+        lambda: _native_cancel(actor="operador", multitouch=False),
+        lambda: _native_cancel(actor="operador", multitouch=True),
     ),
     "trigger_change_is_another_flow": (
         lambda: run(draft_of("carrito", lambda d: d["dispara"].update(evento="pago_fallido")),
@@ -868,6 +963,19 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
         lambda: _legacy_purchase([copy.deepcopy(HELLO_WORLD_STEP), {"etiquetar": "cliente"}]),
         lambda: _legacy_purchase([copy.deepcopy(HELLO_WORLD_STEP)]),
     ),
+    # E-484 (H6): el disparo por audiencia.
+    "audience_requires_para": (
+        lambda: run_new({key: value for key, value in _difusion().items() if key != "para"}, "difusion"),
+        lambda: run_new(_difusion(), "difusion"),
+    ),
+    "para_requires_audience_trigger": (
+        lambda: run(with_(flow_def("carrito"), lambda d: d.update(para={"es": "prospecta"}))),
+        lambda: run(flow_def("carrito")),
+    ),
+    "audience_permission_mismatch": (
+        lambda: run_new(_difusion(entra={"permiso": "conversacion"}), "difusion"),
+        lambda: run_new(_difusion(), "difusion"),
+    ),
     "empty_branch_with_le_gana_a": (
         lambda: run(with_(flow_def("carrito"), lambda d: d.update(pasos=[{
             "condicion": {"dato": "ventana", "es": ["abierta"]}, "entonces": [TEMPLATE_STEP], "si_no": []}]))),
@@ -896,7 +1004,8 @@ def test_each_code_has_a_positive_neighbour_that_does_not_produce_it(code: str) 
 def test_every_code_of_the_closed_catalog_has_its_cases() -> None:
     assert set(CASES) == fv.BLOCK_CODES | fv.WARNING_CODES
     assert not fv.BLOCK_CODES & fv.WARNING_CODES
-    assert len(fv.WARNING_CODES) == 7
+    assert len(fv.WARNING_CODES) == 8  # E-483: native_cancel_in_flight_not_running_warning (las de varios toques y
+    # el cupon propio son bloqueos tambien para el operador desde la correccion del 2026-11-13)
 
 
 def test_every_code_of_the_closed_catalog_is_produced_by_some_case() -> None:
@@ -919,12 +1028,27 @@ def test_the_texts_of_every_code_are_clean_single_lines() -> None:
             assert spec.limit and spec.alternative, spec.code
 
 
+@pytest.mark.parametrize("dispara", [
+    {"fecha": {"el": "2026-12-01T10:00", "zona": "America/Mexico_City"}},
+    {"manual": {}},
+], ids=["fecha", "manual"])
+def test_an_audience_flow_is_clean_only_with_the_native_multitouch_flag(dispara: dict[str, Any]) -> None:
+    """E-484 sobre E-483 (AUD): con FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED el envio a una audiencia no tiene
+    hallazgos (las reglas 2 y 3 de la audiencia y la 14 del nativo); sin el, motor_nativo:disparador."""
+    definition = _difusion(dispara=dispara)
+    assert found(run_new(definition, "difusion", instance=_running(multitouch=True))) == set()
+    off = found(run_new(definition, "difusion", instance=_running(multitouch=False)))
+    assert "motor_nativo:disparador" in off
+    assert found(run_new(definition, "difusion")) >= {"motor_nativo:disparador"}
+
+
 def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
     rules = {code: {rule for rule, _ in pairs} for code, pairs in fv.CODE_RULES.items()}
     expected_rules = {
         1: {"unknown_key", "invalid_value", "duplicate_key", "version_set_by_cycle", "default_pool_invalid"},
-        2: {"trigger_not_exactly_one", "silence_window_invalid"},
-        3: {"permission_trigger_mismatch", "contesto_a_requires_conversation"},
+        2: {"trigger_not_exactly_one", "silence_window_invalid", "audience_requires_para",
+            "para_requires_audience_trigger"},
+        3: {"permission_trigger_mismatch", "contesto_a_requires_conversation", "audience_permission_mismatch"},
         4: {"purchase_exit_missing", "purchase_exit_with_purchase_trigger"},
         5: {"ficha_vencida_requires_ficha_trigger", "medio_de_pago_requires_ficha_trigger",
             "tipo_de_rechazo_requires_payment_failure_trigger", "rechazos_requires_payment_failure_trigger",
@@ -981,10 +1105,11 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         "flow_already_registered", "new_flow_must_start_in_cohort", "prender_a_cohorte_needs_paused_native",
         "same_event_native_flows", "flow_key_reserved_for_legacy", "change_without_effect_legacy_route",
         "native_engine_not_running", "native_first_contact_not_running", "native_silence_not_running",
-        "native_trigger_other_product",
+        "native_trigger_other_product", "native_multitouch_not_running", "native_personal_coupon_not_running",
+        "native_cancel_in_flight_not_running",
         "native_change_exits", "native_change_repeat_silence", "native_change_priority_silence",
-        "native_change_priority_wins", "native_change_priority_ref", "native_change_entry", "native_change_pool",
-        "native_change_other",
+        "native_change_priority_wins", "native_change_priority_wins_ref", "native_change_priority_ref",
+        "native_change_entry", "native_change_pool", "native_change_other",
     }
     assert all(pairs == {(None, "advertencia")} for code, pairs in fv.CODE_RULES.items()
                if code in fv.WARNING_CODES)
@@ -1640,6 +1765,8 @@ def test_always_does_not_warn_with_a_utility_template() -> None:
 WARNING_PATHS = {
     "always_with_marketing": "/0/definicion/horario",
     "empty_branch_with_le_gana_a": "/0/definicion/pasos/0",
+    # E-483 (C8): el en_curso del item.
+    "native_cancel_in_flight_not_running_warning": "/0/en_curso",
     "recovery_without_cap": "/0/definicion/topes",
     "same_trigger_unrelated": "/0/definicion/dispara",
     "silence_window_shorter_than_closed_gap": "/0/definicion/dispara/silencio",
@@ -1816,7 +1943,7 @@ def items_are_valid(items: object) -> bool:
             if not (isinstance(definition, dict) and definition.get("esquema") == "setter-flujo/v1"
                     and definition.get("estado") == "borrador" and "version" not in definition
                     and definition.get("flujo") == item["flujo"] and definition.get("producto") == item["producto"]
-                    and (fd.json_size(definition) or 10**9) <= 32768 and item["en_curso"] == "seguir"):
+                    and (fd.json_size(definition) or 10**9) <= 32768 and item["en_curso"] in ("seguir", "cancelar")):
                 return False
             if "ok_del_cliente" in item:
                 ok = item["ok_del_cliente"]
@@ -1831,7 +1958,7 @@ def items_are_valid(items: object) -> bool:
             if keys != {"en_curso", "flow_id", "flujo", "producto", "tipo", "version"}:
                 return False
             if not (type(item["version"]) is int and 1 <= item["version"] <= 999_999_999
-                    and item["en_curso"] == "seguir"):
+                    and item["en_curso"] in ("seguir", "cancelar")):
                 return False
             kind = "contenido"
         elif item.get("tipo") in ("prender", "apagar"):

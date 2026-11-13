@@ -478,7 +478,15 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261109000100 (el sondeo de Meta y los avisos, E-361) suma sus tres.
     # 20261110000500 (la oferta de la campana en el link, E-410) suma su reserva.
     # 20261112200000 (los numeros del tablero, E-507) suma su lectura.
-    assert len(allowlisted) == 209
+    # 20261112210500 (el cupon propio en el nativo, E-483, C2) suma la lectura del bridge.
+    # 20261112220000 (el disparo por audiencia, E-484) suma sus siete.
+    # 20261112230000 (el tope por persona del nativo, E-483, C6) suma su arranque.
+    # 20261113200000 (la ficha nativa, E-528, C4) suma la lectura de la ficha.
+    assert len(allowlisted) == 219
+    assert "get_flow_engine_native_payment_slip_context_v1(uuid, text, bigint, timestamp with time zone)" in allowlisted
+    assert "mark_flow_engine_request_started_v2(uuid, uuid, text, bigint, timestamp with time zone, jsonb)" in allowlisted
+    assert "release_flow_audience_members_v1(uuid, timestamp with time zone, integer)" in allowlisted
+    assert "get_flow_engine_native_step_coupon_v1(uuid)" in allowlisted
     assert "mark_meta_account_hold_enabled_v1(bigint, timestamp with time zone, timestamp with time zone, integer)" in allowlisted
     assert "requeue_meta_account_hold_v1(bigint, bigint, bigint, timestamp with time zone)" in allowlisted
     assert "close_recovery_case_segment_coupon_v1(uuid, uuid, text, bigint, timestamp with time zone)" in allowlisted
@@ -2070,16 +2078,143 @@ def test_campaign_offer_checkout_issuance_fingerprint() -> None:
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
 
 
-def test_read_results_fingerprint_is_last() -> None:
+def test_read_results_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261112200000 (E-507): los numeros del tablero, solo service_role.
-    fingerprint = sql.split("'20261112200000'", 1)[1].split("select\n    version,", 1)[0]
+    fingerprint = sql.split("'20261112200000'", 1)[1].split("'20261112210000'", 1)[0].rsplit("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261112200000_read_results_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",1,'read_results')")
+    assert compact_fingerprint.endswith(",1,'read_results'")
     assert "read_results_v1(timestamptz,timestamptz,text,text[],integer,integer)" in compact_fingerprint
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
+
+
+def test_flow_audience_triggers_fingerprint() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261112220000 (E-484): las tablas cerradas y las siete funciones de service_role.
+    fingerprint = sql.split("'20261112220000'", 1)[1].split("'20261112230000'", 1)[0].rsplit("union all", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261112220000_flow_audience_triggers_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'flow_audience_triggers'")
+    assert "release_flow_audience_members_v1(uuid,timestamptz,integer)" in compact_fingerprint
+
+
+def test_e528_native_payment_slip_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261113200000 (E-528, C4): el disparador, la secuencia de una ficha, la espera anclada y la
+    # lectura de la ficha, solo de service_role.
+    fingerprint = sql.split("'20261113200000'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261113200000_e528_native_payment_slip_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",4,'e528_native_payment_slip')")
+    assert "get_flow_engine_native_payment_slip_context_v1(uuid,text,bigint,timestamptz)" in compact_fingerprint
+
+
+def test_e483_native_person_cap_fingerprint() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261112230000 (E-483, C6): el bloque en la autorizacion nativa, el cierre con el motivo y la v2.
+    fingerprint = sql.split("'20261112230000'", 1)[1].split("'20261113200000'", 1)[0].rsplit("union all", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261112230000_e483_native_person_cap_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",3,'e483_native_person_cap'")
+    assert "mark_flow_engine_request_started_v2(uuid,uuid,text,bigint,timestamptz,jsonb)" in compact_fingerprint
+    assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
+
+
+def test_e483_native_audience_source_fingerprint() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261112210600 (E-483, para E-484): el evento de un disparo por audiencia en el nativo.
+    fingerprint = sql.split("'20261112210600'", 1)[1].split("'20261112220000'", 1)[0].rsplit("union all", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261112210600_e483_native_audience_source_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",7,'e483_native_audience_source'")
+    assert "_flow_engine_admit_native_audience_v1(jsonb,jsonb)" in compact_fingerprint
+    assert "nothas_function_privilege('service_role',oid,'EXECUTE')" in compact_fingerprint
+    assert "admit_flow_engine_event_v1(jsonb,jsonb)" in compact_fingerprint
+    assert "_portable_case_purchase_stop_reason(uuid)" in compact_fingerprint
+
+
+def test_e483_native_personal_coupon_fingerprint() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261112210500 (E-483, C2): el cupon propio por persona en el nativo.
+    fingerprint = sql.split("'20261112210500'", 1)[1].split("'20261112210600'", 1)[0].rsplit("union all", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261112210500_e483_native_personal_coupon_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",7,'e483_native_personal_coupon'")
+    assert "_flow_engine_native_first_coupon_ordinal(uuid)" in compact_fingerprint
+    assert "get_flow_engine_native_step_coupon_v1(uuid)" in compact_fingerprint
+    assert "has_function_privilege('service_role',oid,'EXECUTE')" in compact_fingerprint
+    assert "claim_due_recovery_coupons_v1(" in compact_fingerprint
+    assert "reserve_recovery_checkout_issuance_v1(" in compact_fingerprint
+
+
+def test_e483_payment_failure_by_phone_fingerprint() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261112210400 (E-483, pieza PF): el pago rechazado sin formulario de una oferta de campana.
+    fingerprint = sql.split("'20261112210400'", 1)[1].split("'20261112210500'", 1)[0].rsplit("union all", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261112210400_e483_payment_failure_by_phone_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",4,'e483_payment_failure_by_phone'")
+    assert "_flow_engine_native_payment_failure_phone_audience(uuid,uuid,text,text,text)" in compact_fingerprint
+    assert "admit_flow_engine_event_v1(jsonb,jsonb)" in compact_fingerprint
+    assert "_flow_engine_authorize_native_tail(" in compact_fingerprint
+
+
+def test_e483_native_condition_after_send_fingerprint() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261112210300 (E-483, C3): el pago rechazado completo en el nativo.
+    fingerprint = sql.split("'20261112210300'", 1)[1].split("'20261112210400'", 1)[0].rsplit("union all", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261112210300_e483_native_condition_after_send_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",5,'e483_native_condition_after_send'")
+    assert "_flow_engine_native_payment_failure_path_shape(jsonb)" in compact_fingerprint
+    assert "_flow_engine_native_payment_failure_paths(jsonb)" in compact_fingerprint
+    assert "flow_engine_execution_context_v1(uuid)" in compact_fingerprint
+
+
+def test_e483_native_priority_wins_fingerprint() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261112210200 (E-483, C7): le_gana_a en el nativo.
+    fingerprint = sql.split("'20261112210200'", 1)[1].split("'20261112210300'", 1)[0].rsplit("union all", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261112210200_e483_native_priority_wins_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'e483_native_priority_wins'")
+    assert "_flow_engine_native_priority_wins_v1(uuid,uuid,timestamptz)" in compact_fingerprint
+    assert "admit_flow_engine_event_v1(jsonb,jsonb)" in compact_fingerprint
+
+
+def test_e483_native_cancel_in_flight_fingerprint() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261112210100 (E-483, C8): cancelar lo que espera en un nativo.
+    fingerprint = sql.split("'20261112210100'", 1)[1].split("'20261112210200'", 1)[0].rsplit("union all", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261112210100_e483_native_cancel_in_flight_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",3,'e483_native_cancel_in_flight'")
+    assert "_flow_change_cancel_in_flight_v1(uuid,integer,uuid,timestamptz)" in compact_fingerprint
+    assert "_flow_change_items_are_valid(jsonb)" in compact_fingerprint
+    assert "_flow_change_publish(text,text,uuid,text,jsonb)" in compact_fingerprint
+
+
+def test_e483_native_multitouch_fingerprint() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261112210000 (E-483): la forma nativa de tres toques y lo que abre la base.
+    fingerprint = sql.split("'20261112210000'", 1)[1].split("'20261112210100'", 1)[0].rsplit("union all", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261112210000_e483_native_multitouch_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'e483_native_multitouch'")
+    assert "_flow_engine_native_steps(text)" in compact_fingerprint
+    assert "_flow_engine_native_unsupported(jsonb)" in compact_fingerprint
 
 
 def test_pending_cancel_keeps_first_contact_fingerprint() -> None:

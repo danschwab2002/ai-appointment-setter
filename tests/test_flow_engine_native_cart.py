@@ -48,7 +48,12 @@ from test_flow_engine_native_quick_replies import maribel_catalog  # noqa: F401 
 from test_flow_engine_resolution import NATIVE_ROWS, PLAN_ROW, _Base, _resolve, _routes, _runtime
 from test_resolution_pilot_plan_rejection import CONFIG, CONTACT_ID, EVENT_ID
 
-from bridge.flow_engine import ENGINE_CAPABILITIES_NATIVE, NATIVE_PERMISSION_BY_TRIGGER, native_not_supported
+from bridge.flow_engine import (
+    ENGINE_CAPABILITIES_NATIVE,
+    NATIVE_CAPABILITIES_BY_TRIGGER,
+    NATIVE_PERMISSION_BY_TRIGGER,
+    native_not_supported,
+)
 from bridge.flow_engine_runtime import FORCE_LEGACY_AFTER_FAILURES
 from bridge.native_flows import (
     NATIVE_CART_TRIGGER,
@@ -94,10 +99,14 @@ def test_the_fixture_is_the_real_chain_with_the_maribel_template() -> None:
 def test_the_native_engine_runs_the_one_touch_cart() -> None:
     assert native_not_supported(CART) == ()
     assert "carrito" in ENGINE_CAPABILITIES_NATIVE.triggers and ENGINE_CAPABILITIES_NATIVE.exits == {"compra"}
+    # E-483: el carrito usa las de varios toques, con contesta.
+    assert NATIVE_CAPABILITIES_BY_TRIGGER["carrito"].exits == {"compra", "contesta"}
     # El silencio del agente (P22-1 de M16) entra con conversacion: test_flow_engine_native_silence.py.
     # El formulario (intencion, E-252) entra con formulario: test_flow_engine_native_intent.py.
     assert dict(NATIVE_PERMISSION_BY_TRIGGER) == {"compra": "compra", "carrito": "formulario", "pago_fallido": "formulario",
-                                                  "intencion": "formulario", "silencio:agente": "conversacion"}
+                                                  "intencion": "formulario", "silencio:agente": "conversacion",
+                                                  # E-528 (C4, 20261113200000): la ficha, con su intencion.
+                                                  "ficha_impresa": "formulario"}
 
 
 @pytest.mark.parametrize(("change", "code"), [
@@ -106,8 +115,12 @@ def test_the_native_engine_runs_the_one_touch_cart() -> None:
     # El pago rechazado es nativo desde E-207 (20261030000200): la ficha todavia no.
     ({"dispara": {"evento": "ficha_impresa"}}, "motor_nativo:disparador"),
     ({"dispara": {"evento": "carrito", "otra": 1}}, "motor_nativo:disparador"),
-    ({"pasos": [{"plantilla": NAME}, {"esperar": "1h"}, {"plantilla": NAME}]}, "engine_not_supported:demasiados_envios"),
-    ({"termina": {"si": ["compra", "contesta"], "vence": "1d"}}, "engine_not_supported:salida_contesta"),
+    # E-483 (20261112210000): hasta tres envios, con la salida contesta escrita; cuatro, no.
+    ({"pasos": [{"plantilla": NAME}, {"esperar": "1h"}, {"plantilla": NAME}]}, "engine_not_supported:varios_envios_sin_contesta"),
+    ({"pasos": [{"plantilla": NAME}, {"esperar": "1h"}, {"plantilla": NAME}, {"esperar": "1h"}, {"plantilla": NAME},
+                {"esperar": "1h"}, {"plantilla": NAME}]}, "engine_not_supported:demasiados_envios"),
+    # E-483: contesta ya es una salida del nativo (corta el toque siguiente, prospect_replied).
+    ({"termina": {"si": ["compra", "pide_algo"], "vence": "1d"}}, "engine_not_supported:salida_pide_algo"),
 ])
 def test_what_the_native_engine_does_not_run(change: dict, code: str) -> None:
     assert code in native_not_supported({**copy.deepcopy(CART), **change})

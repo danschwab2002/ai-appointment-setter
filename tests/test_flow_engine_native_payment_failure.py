@@ -111,9 +111,13 @@ def test_the_native_engine_runs_the_maribel_payment_failure() -> None:
 
 @pytest.mark.parametrize(("change", "code"), [
     ({"entra": {"permiso": "compra"}}, "motor_nativo:permiso"),
-    ({"pasos": [{"plantilla": NAME}, {"esperar": "1h"}, {"plantilla": NAME}]}, "engine_not_supported:demasiados_envios"),
+    # E-483 (20261112210000): hasta tres envios, con la salida contesta escrita; cuatro, no.
+    ({"pasos": [{"plantilla": NAME}, {"esperar": "1h"}, {"plantilla": NAME}]}, "engine_not_supported:varios_envios_sin_contesta"),
+    ({"pasos": [{"plantilla": NAME}, {"esperar": "1h"}, {"plantilla": NAME}, {"esperar": "1h"}, {"plantilla": NAME},
+                {"esperar": "1h"}, {"plantilla": NAME}]}, "engine_not_supported:demasiados_envios"),
     ({"dispara": {"evento": "ficha_impresa"}}, "motor_nativo:disparador"),
-    ({"termina": {"si": ["compra", "contesta"], "vence": "1d"}}, "engine_not_supported:salida_contesta"),
+    # E-483: contesta ya es una salida del nativo (corta el toque siguiente, prospect_replied).
+    ({"termina": {"si": ["compra", "pide_algo"], "vence": "1d"}}, "engine_not_supported:salida_pide_algo"),
 ])
 def test_what_the_native_engine_does_not_run_with_the_payment_failure(change: dict, code: str) -> None:
     assert code in native_not_supported({**copy.deepcopy(PAYMENT), **change})

@@ -1,0 +1,69 @@
+{
+  "_capture": {
+    "origen": "validate_e483_native_personal_coupon.mjs: la cadena entera de migraciones (PGlite), el formulario y el carrito capturados de ATT1 por las admisiones portables; un carrito nativo con A1 y Z de ATT1 con cupon propio",
+    "encargo": "E-483 C2",
+    "regenerar": "cd tests/sql/followup_engine && node validate_e483_native_personal_coupon.mjs --emit"
+  },
+  "a1_context": {
+    "flow_id": "<flow_id>",
+    "version": 1,
+    "product_ref": "att1",
+    "flow_key": "carrito_cupon",
+    "step_key": "first_contact",
+    "send_ordinal": 1,
+    "template_name": "att1_carrito_descuento_01",
+    "template_language": "es_MX",
+    "template_variables": [
+      "nombre",
+      "producto",
+      "cuando",
+      "precio",
+      "vence"
+    ],
+    "template_button": {
+      "link": "checkout",
+      "cupon": "personal"
+    },
+    "legacy_dispatch_ok": false,
+    "entry_permission": "formulario",
+    "template_branches": null
+  },
+  "a1_coupon": {
+    "ordinal": 1,
+    "coupon_id": "<coupon_id>",
+    "code": "<code>",
+    "status": "reserved",
+    "expires_at": "<expires_at>",
+    "verified_at": null
+  },
+  "z_context": {
+    "flow_id": "<flow_id>",
+    "version": 1,
+    "product_ref": "att1",
+    "flow_key": "carrito_cupon",
+    "step_key": "native_touch_3",
+    "send_ordinal": 3,
+    "template_name": "att1_ultima_renovacion_01",
+    "template_language": "es_MX",
+    "template_variables": [
+      "nombre",
+      "producto",
+      "vence"
+    ],
+    "template_button": {
+      "link": "checkout",
+      "cupon": "personal"
+    },
+    "legacy_dispatch_ok": false,
+    "entry_permission": "formulario",
+    "template_branches": null
+  },
+  "z_coupon": {
+    "ordinal": 2,
+    "coupon_id": "<coupon_id>",
+    "code": "<code>",
+    "status": "reserved",
+    "expires_at": "<expires_at>",
+    "verified_at": null
+  }
+}

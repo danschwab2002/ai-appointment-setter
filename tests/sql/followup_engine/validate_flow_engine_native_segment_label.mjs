@@ -32,7 +32,19 @@ const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Lo que venga despues no puede redefinir la forma nativa sin mirar esta prueba.
 // La guarda de publicar (20261108004100, E-357) llama a _flow_engine_native_unsupported y no la cambia.
-const ONLY_CALLS = new Set(['20261108004100_flow_change_publish_native_version_guard_v1.sql']);
+// El nativo de varios toques (20261112210000, E-483) cambia la forma solo con mas de un envio o con una
+// condicion despues de un envio: revisada, la etiqueta de un toque y la cadena del pago rechazado dan lo mismo.
+// El pago rechazado completo (20261112210300, E-483, C3) cambia solo la rama de la cadena del pago
+// rechazado (varios envios por rama, con contesta): revisada, la etiqueta no pasa por ahi.
+// El cupon propio en el nativo (20261112210500, E-483, C2) cambia solo lo que mira el boton con
+// cupon: personal: revisada, la etiqueta no pasa por ahi.
+// El disparo por audiencia (20261112210600, E-483, para E-484) suma el permiso y los toques solo para el
+// disparador audiencia: revisada, la etiqueta de los eventos no pasa por ahi.
+const ONLY_CALLS = new Set(['20261108004100_flow_change_publish_native_version_guard_v1.sql',
+  '20261112210000_e483_native_multitouch_v1.sql', '20261112210300_e483_native_condition_after_send_v1.sql',
+  '20261112210500_e483_native_personal_coupon_v1.sql', '20261112210600_e483_native_audience_source_v1.sql', '20261112220000_flow_audience_triggers_v1.sql', '20261112230000_e483_native_person_cap_v1.sql',
+  // La ficha de OXXO nativa (20261113200000, E-528, C4).
+  '20261113200000_e528_native_payment_slip_v1.sql']);
 for (const name of names.slice(position + 1).filter((candidate) => !ONLY_CALLS.has(candidate))) {
   if (readFileSync(join(root, 'supabase/migrations', name), 'utf8').includes('_flow_engine_native_unsupported')) {
     fail(`${name} toca _flow_engine_native_unsupported: revisar esta prueba`);

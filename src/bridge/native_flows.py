@@ -60,7 +60,10 @@ NATIVE_PURCHASE_TRIGGER = "compra"
 NATIVE_CART_TRIGGER = "carrito"
 # El pago rechazado (E-207, flow-engine-v2 2.11.0): entra con permiso formulario, como el carrito.
 NATIVE_PAYMENT_FAILURE_TRIGGER = "pago_fallido"
-NATIVE_EVENT_TRIGGERS = frozenset({NATIVE_CART_TRIGGER, NATIVE_PAYMENT_FAILURE_TRIGGER})
+# La ficha impresa (E-528, C4, 20261113200000): entra con permiso formulario, como el carrito, y solo con
+# FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED (ResolutionWorker.native_payment_slip_enabled).
+NATIVE_PAYMENT_SLIP_TRIGGER = "ficha_impresa"
+NATIVE_EVENT_TRIGGERS = frozenset({NATIVE_CART_TRIGGER, NATIVE_PAYMENT_FAILURE_TRIGGER, NATIVE_PAYMENT_SLIP_TRIGGER})
 # El formulario (flow-engine-v2 §25, E-247 la base y E-252 el bridge): entra con permiso formulario. No va
 # por ``admit_native_cart`` (que fija ``fuente: hotmart``): lo admite y lo rutea la base en una sola RPC,
 # ``admit_and_route_portable_lead_precheckout_v1``, y ``native_intent_admission`` lee lo que contesto.
@@ -199,6 +202,9 @@ NATIVE_PAYMENT_FAILURE_ABSORBED = "sumado"
 # ya_en_curso (a run in course) and ya_disparado (a run that ended within otra_despues_de: in Maribel, the
 # 72 h of the legacy): the base records the refusal in that case, without a message.
 NATIVE_PAYMENT_FAILURE_ABSORBED_REASONS = frozenset({"ya_en_curso", "ya_disparado"})
+# E-528 (C4): una segunda ficha con el recorrido en curso se suma al caso (la base la deja como evento de la
+# ficha, sin mover el envio): el evento termina processed, como el rechazo sumado.
+NATIVE_PAYMENT_SLIP_ABSORBED_REASONS = frozenset({"ya_en_curso"})
 # Not taking the person: outside the cohort, or the flow went off or paused after the read.
 # caso_del_legado_en_curso (E-204, 20261030000100): the person has an open legacy case of the
 # product (any offer); the cart is the legacy's, which does exactly what it does today. The same
@@ -305,8 +311,24 @@ async def admit_native_cart(
         "chatwoot": {"account_id": chatwoot_account_id, "inbox_id": chatwoot_inbox_id},
         "destino": destination,
     }
+    # E-483 (pieza PF, 20261112210400): con FLOW_ENGINE_NATIVE_PAYMENT_FAILURE_BY_PHONE_ENABLED, el pago
+    # rechazado manda la lista de ofertas de las campanas vigentes (las del plan de etiquetas de
+    # campaign-entry-v1 §4b): sin formulario, una de esas ofertas entra con el telefono del evento. Sin el
+    # flag, o con el carrito, la llamada de antes.
+    extra: dict[str, object] = {}
+    if trigger == NATIVE_PAYMENT_FAILURE_TRIGGER and runtime.payment_failure_by_phone_offers is not None:
+        try:
+            extra["payment_failure_by_phone_offers"] = sorted(runtime.payment_failure_by_phone_offers())
+        except Exception as exc:  # noqa: BLE001 - falla blanda: sin la lista, el permiso de siempre
+            logger.warning(
+                "flow_engine_native_payment_failure_by_phone_offers_unavailable event_id=%s error=%s",
+                webhook_event_id,
+                type(exc).__name__,
+            )
     try:
-        rows = await supabase.admit_flow_engine_event(runtime.instance, flow_event)
+        rows = await supabase.admit_flow_engine_event(
+            runtime.instance, flow_event, priority_wins=runtime.native_priority_wins, **extra
+        )
     except SupabasePermanentError as exc:
         logger.warning(
             "flow_engine_native_cart_rejected event_id=%s reason=%s",
@@ -339,9 +361,11 @@ async def admit_native_cart(
     for row in rows:
         if row.outcome == "motor_arranco" and row.recovery_case_id is not None:
             return NativeCartAdmission(NATIVE_CART_STARTED, recovery_case_id=row.recovery_case_id)
-    if trigger == NATIVE_PAYMENT_FAILURE_TRIGGER:
+    if trigger in (NATIVE_PAYMENT_FAILURE_TRIGGER, NATIVE_PAYMENT_SLIP_TRIGGER):
+        absorbed = NATIVE_PAYMENT_FAILURE_ABSORBED_REASONS if trigger == NATIVE_PAYMENT_FAILURE_TRIGGER \
+            else NATIVE_PAYMENT_SLIP_ABSORBED_REASONS
         for row in rows:
-            if row.outcome == "motor_no_arranca" and row.reason in NATIVE_PAYMENT_FAILURE_ABSORBED_REASONS:
+            if row.outcome == "motor_no_arranca" and row.reason in absorbed:
                 return NativeCartAdmission(NATIVE_PAYMENT_FAILURE_ABSORBED, reason=row.reason)
     for row in rows:
         if row.outcome == "motor_no_arranca" and row.reason not in NATIVE_CART_UNCLAIMED_REASONS:
@@ -470,7 +494,9 @@ async def admit_native_purchase(
             },
             "destino": destination,
         }
-        rows = await supabase.admit_flow_engine_event(runtime.instance, flow_event)
+        rows = await supabase.admit_flow_engine_event(
+            runtime.instance, flow_event, priority_wins=runtime.native_priority_wins
+        )
     except NativePurchaseSkipped as exc:
         outcome = f"descartada:{exc.reason}"
         done = True

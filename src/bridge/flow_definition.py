@@ -31,6 +31,20 @@ from typing import Any
 from zoneinfo import available_timezones
 
 from .automation_expert_read import looks_like_identifier
+from .flow_audience import (
+    AUDIENCE_FORMS,
+    DEFAULT_FORM_WINDOW,
+    DEFAULT_PER_HOUR,
+    DEFAULT_PER_OCCURRENCE,
+    PROBLEM_INVALID,
+    PROBLEM_MISSING,
+    PROBLEM_UNKNOWN,
+    Problem,
+    audience_form,
+    check_audience_trigger,
+    check_para,
+    check_ritmo,
+)
 
 SCHEMA = "setter-flujo/v1"
 
@@ -86,11 +100,23 @@ EXITS = ("compra", "contesta", "ficha_vencida")
 # personal (cart_discount.cart_discount_values). Las dos horas se escriben en la zona del pais
 # que sale del prefijo del telefono (country_for_phone y timezone_for_country,
 # cart_discount.py:69-82), con la de CDMX si el prefijo no se reconoce.
-VARIABLES = ("nombre", "producto", "medio_de_pago", "cuando", "precio", "vence")
+VARIABLES = ("nombre", "producto", "medio_de_pago", "cuando", "precio", "vence", "vencimiento")
 # Las que solo valen en un paso con cupon: hablan del cupon personal (regla 5).
 COUPON_VARIABLES = ("precio", "vence")
 # La que solo vale con un disparador de evento: es la hora del evento (regla 5).
 EVENT_VARIABLES = ("cuando",)
+# E-528 (C4, P25-1): el vencimiento de la ficha (el dia de impresion en CDMX mas 3, bridge.payment_slip),
+# escrito en la zona del pais como el legado (payment_slip_first_touch). Vale solo con ficha_impresa (regla
+# 5). No es vence, que es el vencimiento del cupon personal.
+FICHA_VARIABLES = ("vencimiento",)
+# E-528 (C4, P25-1, D-P25-1): la espera anclada al vencimiento de la ficha,
+# ``esperar: {vencimiento: {dias_antes: 0|1, a_las: "HH:MM"}}``. El momento real lo decide el bridge
+# (payment_slip_reminders.payment_slip_step_wait): el dia del vencimiento menos dias_antes, a la hora a_las
+# de la persona. Una ficha vence el dia de impresion mas FICHA_DUE_DAYS (payment_slip.py:9-13).
+DUE_ANCHOR = "vencimiento"
+DUE_ANCHOR_KEYS = ("a_las", "dias_antes")
+DUE_ANCHOR_DAYS_BEFORE = (0, 1)
+FICHA_DUE_DAYS = 3
 LINKS = ("checkout", "ficha")
 CONDITION_DATA = ("ventana", "medio_de_pago", "tipo_de_rechazo", "rechazos", "descuento_previo")
 WINDOW_VALUES = ("abierta", "cerrada")
@@ -155,9 +181,12 @@ MAX_PATH_CHARS = 512
 MAX_TEXT_CHARS = 300
 
 _TOP_KEYS = (
-    "esquema", "flujo", "producto", "nombre", "version", "estado", "dispara", "entra",
-    "pasos", "termina", "horario", "topes", "prioridad",
+    "esquema", "flujo", "producto", "nombre", "version", "estado", "dispara", "para", "entra",
+    "pasos", "termina", "horario", "topes", "prioridad", "ritmo",
 )
+# Los disparadores (E-484): un evento, un silencio, o una de las tres formas del
+# disparo por audiencia (flow_audience), que van con ``para`` y, opcional, ``ritmo``.
+TRIGGER_KEYS = ("evento", "silencio") + AUDIENCE_FORMS
 _STEP_KEYS: Mapping[str, tuple[str, ...]] = {
     "esperar": ("esperar",),
     "plantilla": ("plantilla", "idioma", "variables", "boton"),
@@ -336,6 +365,36 @@ def parse_duration(value: object) -> int | None:
     if match is None:
         return None
     return int(match.group(1)) * _UNIT_MINUTES[match.group(2)]
+
+
+def parse_due_anchor(value: object) -> tuple[int, int] | None:
+    """``(dias_antes, minutos de a_las)`` de una espera anclada al vencimiento, o None (E-528, P25-1).
+
+    La forma es exacta: ``{vencimiento: {dias_antes: 0|1, a_las: "HH:MM"}}``, sin otras claves.
+    """
+    if not isinstance(value, Mapping) or set(value) != {DUE_ANCHOR}:
+        return None
+    anchor = value[DUE_ANCHOR]
+    if not isinstance(anchor, Mapping) or set(anchor) != set(DUE_ANCHOR_KEYS):
+        return None
+    days = anchor.get("dias_antes")
+    if not _is_int(days) or days not in DUE_ANCHOR_DAYS_BEFORE:
+        return None
+    hour = parse_hour(anchor.get("a_las"))
+    return None if hour is None else (days, hour)
+
+
+def due_anchor_max_minutes(value: object) -> int | None:
+    """Lo mas que puede esperar una espera anclada, contado desde la impresion; None si no lo es.
+
+    Desde la medianoche del dia de impresion hasta el dia del vencimiento menos ``dias_antes`` a ``a_las``:
+    cota de arriba para la regla 12 (``termina.vence`` despues de las esperas).
+    """
+    anchor = parse_due_anchor(value)
+    if anchor is None:
+        return None
+    days, hour = anchor
+    return (FICHA_DUE_DAYS - days) * DAY_MINUTES + hour
 
 
 def parse_hour(value: object) -> int | None:
@@ -1246,6 +1305,10 @@ def touch_times(definition: Mapping[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(step, Mapping):
             return out
         if "esperar" in step:
+            if started and parse_due_anchor(step.get("esperar")) is not None:
+                # E-528 (P25-1): lo que sigue sale el dia del vencimiento de la ficha, no a una hora fija.
+                out.append({"paso": index + 1, "sigue": "depende_del_vencimiento"})
+                return out
             wait = parse_duration(step.get("esperar"))
             if wait is None:
                 return out
@@ -1394,6 +1457,17 @@ def check_definition(definition: object, *, published: bool = False,
 
     if "dispara" in definition:
         _check_trigger(out, definition["dispara"])
+    if "para" in definition:
+        _add_problems(out, check_para(definition["para"]))
+        para = definition["para"]
+        # E-483 (correccion de la revision, 2026-11-13): «compro» se mira en el producto del flujo en la lista,
+        # el armado y la admision de la base; un para.producto distinto diria otra cosa.
+        if isinstance(para, Mapping) and isinstance(para.get("producto"), str) \
+                and isinstance(definition.get("producto"), str) and para["producto"] != definition["producto"]:
+            out.add(INVALID_VALUE, ("para", "producto"),
+                    reason="para.producto es el producto del flujo: la compra se mira en ese producto.")
+    if "ritmo" in definition:
+        _add_problems(out, check_ritmo(definition["ritmo"]))
     if "entra" in definition:
         _check_entry(out, definition["entra"])
     if "pasos" in definition:
@@ -1418,11 +1492,21 @@ def check_definition(definition: object, *, published: bool = False,
     return tuple(out.findings)
 
 
+def _add_problems(out: _Collector, problems: Iterable[Problem]) -> None:
+    """Los problemas de forma de ``flow_audience`` como hallazgos de la regla 1."""
+    specs = {PROBLEM_UNKNOWN: UNKNOWN_KEY, PROBLEM_INVALID: INVALID_VALUE, PROBLEM_MISSING: REQUIRED_KEY_MISSING}
+    for problem in problems:
+        out.add(specs[problem.kind], problem.path, reason=problem.reason)
+
+
 def _check_trigger(out: _Collector, trigger: object) -> None:
     if not isinstance(trigger, Mapping):
         out.add(INVALID_VALUE, ("dispara",), reason="dispara es un objeto con evento o con silencio.")
         return
-    _check_keys(out, trigger, ("dispara",), ("evento", "silencio"))
+    _check_keys(out, trigger, ("dispara",), TRIGGER_KEYS)
+    for form in AUDIENCE_FORMS:
+        if form in trigger:
+            _add_problems(out, check_audience_trigger(form, trigger[form]))
     if "evento" in trigger:
         _check_enum(out, trigger["evento"], ("dispara", "evento"), EVENTS)
     if "silencio" in trigger:
@@ -1490,7 +1574,14 @@ def _check_step(out: _Collector, step: object, segments: tuple[Segment, ...]) ->
     _check_keys(out, step, segments, _STEP_KEYS[kind])
     value = step[kind]
     if kind == "esperar":
-        _check_duration(out, value, segments + ("esperar",))
+        if isinstance(value, Mapping):
+            # E-528 (P25-1): la espera anclada al vencimiento de la ficha (la regla 5 la deja solo con
+            # ficha_impresa).
+            if parse_due_anchor(value) is None:
+                out.add(INVALID_VALUE, segments + ("esperar",),
+                        reason="Una espera anclada se escribe {vencimiento: {dias_antes: 0 o 1, a_las: \"HH:MM\"}}.")
+        else:
+            _check_duration(out, value, segments + ("esperar",))
     elif kind == "plantilla":
         _check_template_step(out, step, segments)
     elif kind == "conversar":
@@ -1711,7 +1802,10 @@ def _is_date(value: object) -> bool:
 
 @dataclass(frozen=True)
 class Trigger:
-    """El disparador de una definicion: ``evento`` (con su valor si se sabe) o ``silencio``."""
+    """El disparador de una definicion: ``evento`` (con su valor si se sabe), ``silencio`` o ``audiencia``.
+
+    Con ``audiencia`` (E-484), ``event`` es la forma: ``fecha``, ``cada`` o ``manual``.
+    """
 
     kind: str
     event: str | None = None
@@ -1728,17 +1822,23 @@ class Trigger:
     def event_known(self) -> bool:
         return self.kind == "silencio" or self.event is not None
 
+    @property
+    def is_audience(self) -> bool:
+        return self.kind == "audiencia"
+
 
 def trigger_of(definition: Mapping[str, Any]) -> Trigger | None:
     """El disparador, si hay exactamente uno. Un evento sin valor conocido va con ``event`` en None."""
     trigger = definition.get("dispara")
     if not isinstance(trigger, Mapping):
         return None
-    present = [key for key in ("evento", "silencio") if key in trigger]
+    present = [key for key in TRIGGER_KEYS if key in trigger]
     if len(present) != 1:
         return None
     if present[0] == "silencio":
         return Trigger("silencio")
+    if present[0] in AUDIENCE_FORMS:
+        return Trigger("audiencia", audience_form(trigger))
     event = trigger["evento"]
     return Trigger("evento", event if isinstance(event, str) and event in EVENTS else None)
 
@@ -1845,12 +1945,26 @@ class _Defaults:
                 if repeat is not None:
                     if trigger.kind == "silencio":
                         pair = ("conversacion", NEVER)
+                    elif trigger.is_audience:
+                        # DEFAULT_REVISAR_DAN (mapa §2.3): la misma persona, otra vez a los 7 dias.
+                        pair = ("persona", "7d")
                     elif trigger.is_purchase:
                         pair = ("persona", NEVER)
                     else:
                         pair = ("persona_y_oferta", "0m")
                     self._key(repeat, ("topes", "repeticion"), "una_por", lambda: pair[0])
                     self._key(repeat, ("topes", "repeticion"), "otra_despues_de", lambda: pair[1])
+
+        if trigger is not None and trigger.is_audience:
+            # E-484: el ritmo y la ventana del formulario, escritos, para que la vista previa los muestre.
+            # DEFAULT_REVISAR_DAN (D10): 200 por hora y 1.000 por ocurrencia; 30 dias de formulario.
+            para = definition.get("para")
+            if isinstance(para, dict) and para.get("es") == "prospecta":
+                self._key(para, ("para",), "formulario_en", lambda: DEFAULT_FORM_WINDOW)
+            ritmo = self._container(definition, (), "ritmo")
+            if ritmo is not None:
+                self._key(ritmo, ("ritmo",), "por_hora", lambda: DEFAULT_PER_HOUR)
+                self._key(ritmo, ("ritmo",), "por_ocurrencia", lambda: DEFAULT_PER_OCCURRENCE)
 
         priority = self._container(definition, (), "prioridad")
         if priority is not None:
@@ -1953,7 +2067,9 @@ _SKIP = object()
 
 
 _SUB_ORDER: Mapping[str, tuple[str, ...]] = {
-    "dispara": ("evento", "silencio"),
+    "dispara": TRIGGER_KEYS,
+    "para": ("es", "etiquetas", "producto", "formulario_en", "excluye"),
+    "ritmo": ("por_hora", "por_ocurrencia"),
     "entra": ("permiso", "contesto_a"),
     "termina": ("si", "vence"),
     "horario": ("zona", "desde", "hasta"),

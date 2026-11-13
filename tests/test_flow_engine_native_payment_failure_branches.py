@@ -53,6 +53,7 @@ from bridge.supabase import (
     SupabaseError,
     SupabasePermanentError,
 )
+from bridge.native_personal_coupon import NATIVE_PERSONAL_COUPON_DISABLED
 from bridge.worker import (
     FLOW_ENGINE_STEP_UNSUPPORTED,
     NATIVE_BRANCH_DATA_UNAVAILABLE,
@@ -382,7 +383,10 @@ def test_a_button_the_bridge_cannot_build_closes_for_good(tmp_path: Path, button
 
     assert _templates(chatwoot) == []
     [closed] = authority.finalizations
-    assert closed["reason_code"] == FLOW_ENGINE_STEP_UNSUPPORTED
+    # E-483 (C2): el del cupon propio, sin FLOW_ENGINE_NATIVE_PERSONAL_COUPON_ENABLED, cierra con su motivo.
+    assert closed["reason_code"] == (
+        NATIVE_PERSONAL_COUPON_DISABLED if button.get("cupon") == "personal" and button.get("link") == "checkout"
+        and len(button) == 2 else FLOW_ENGINE_STEP_UNSUPPORTED)
     assert "reserve_link" not in authority.events
 
 

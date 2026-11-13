@@ -84,13 +84,31 @@ const MIGRATIONS = readdirSync(join(root, 'supabase/migrations'))
 // flow_engine_native_silence_sweep_missing. 20261103000900 (las ramas del
 // pago rechazado nativo, E-306) suma by_branch a read_flow_sales_v1 sobre la
 // definicion con el link del silencio de 20261101000200: sin ella aborta con
-// 55000 unexpected_flow_sales_definition.
+// 55000 unexpected_flow_sales_definition. 20261112210000 (el nativo de varios
+// toques, E-483) reemplaza la forma del pago rechazado con el cupon fijo y la
+// cadena de 20261103000900: sin ella aborta con 55000
+// unexpected_flow_engine_native_steps_definition. 20261112210300 (el pago
+// rechazado completo, E-483 C3) exige las ramas de 20261103000900: sin ella
+// aborta con 55000 e483_native_condition_after_send_missing. 20261112210500
+// (el cupon propio en el nativo, E-483 C2) reemplaza las ranuras de varios
+// toques de 20261112210000: sin ella aborta con 55000
+// unexpected_flow_engine_native_steps_definition. 20261112210600 (el evento
+// de un disparo por audiencia, E-483 para E-484) parcha lo que abre la base
+// sobre la de 20261112210500: sin ella aborta con 55000
+// unexpected_e483_native_audience_definition. 20261113200000 (la ficha
+// nativa, E-528 C4) parcha la admision sobre la de 20261112210600: sin ella
+// aborta con 55000 e528_native_payment_slip_missing.
 const DERIVED_FROM_MIGRATION = [
   '20261010000100_portable_conversation_followup_claim.sql',
   '20261101000200_flow_engine_native_silence_v1.sql',
   '20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql',
   '20261102000300_flow_engine_native_silence_sweep_v1.sql',
   '20261103000900_flow_engine_native_payment_failure_branches_v1.sql',
+  '20261112210000_e483_native_multitouch_v1.sql',
+  '20261112210300_e483_native_condition_after_send_v1.sql',
+  '20261112210500_e483_native_personal_coupon_v1.sql',
+  '20261112210600_e483_native_audience_source_v1.sql',
+  '20261113200000_e528_native_payment_slip_v1.sql',
 ];
 for (const name of DERIVED_FROM_MIGRATION) {
   if (!MIGRATIONS.includes(name) || name <= MIGRATION) {

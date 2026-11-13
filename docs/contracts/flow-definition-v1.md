@@ -913,6 +913,13 @@ pasos:                            # [existe: followup_policy_versions.steps] [NU
     #                             #   no se cambia conversando.
   # - esperar: 60m                # duración. Desde el paso anterior; la primera, desde el disparo.
   #                               #   [existe: grace_period y el plazo de cada paso]
+  # - esperar: {vencimiento: {dias_antes: 0, a_las: "09:00"}}
+  #                               # [1.7] la espera anclada al vencimiento de la ficha: el día en que
+  #                               #   vence (impresión en CDMX + 3) menos dias_antes (0 o 1), a la hora
+  #                               #   a_las de la persona. Solo con ficha_impresa, después del primer
+  #                               #   envío y con a_las dentro del horario (regla 5,
+  #                               #   due_anchor_requires_ficha_trigger). El motor nativo ejecuta solo
+  #                               #   la de C3 (0, 09:00).
   # - conversar: "objetivo"       # hasta 300 caracteres. Escribe el agente comercial. Solo en la
   #                               #   rama entonces de una condición con la ventana abierta.
   #                               #   [NUEVO; todavía no se publica]
@@ -1203,3 +1210,8 @@ La migración los actualiza. Qué cambia en la base no se aprueba con este esque
   - la de un segmento va con cualquier disparador (la regla 5 de la compra queda para `cliente`), arriba de todo, antes de la plantilla y una por camino (regla 7, `etiquetar_segment_not_before_template`), y no con un segmento vencido (regla 5, `segment_label_outside_window`);
   - la base la abre desde `20261103001300`: con otro disparador que la compra, `etiquetar` es `motor_nativo:forma` solo con `cliente`, `automation_*` o un valor que no es texto.
 - **1.6, 2026-11-09 (E-370, el encabezado de imagen en un paso nativo).** Sin cambiar `setter-flujo/v1` ni ninguna definición escrita antes: el paso no lleva la imagen, se resuelve por el nombre de la plantilla. La regla 13 mira las plantillas declaradas en `InstanceView.template_images`. Mismo código, `template_variable_count_mismatch`, con motivo y alternativa propios. Sin base nueva.
+- **1.7, 2026-11-13 (E-528, C4 del mapa «el AE maneja todos los flujos»; P25 de M16, con los defaults D-P25-1 a D-P25-7 salvo D-P25-7, ver abajo).** Propuesta, sin E2E. Sin cambiar `setter-flujo/v1` ni ninguna definición escrita antes:
+  - `esperar` acepta, además de una duración, la espera anclada al vencimiento de la ficha, `{vencimiento: {dias_antes: 0|1, a_las: "HH:MM"}}`. `touch_times` corta ahí con `sigue: "depende_del_vencimiento"`, y la regla 12 la cuenta por lo más que puede esperar (impresión + 3 días a `a_las`);
+  - la variable `vencimiento`: el día en que vence la ficha, escrito como el legado (`format_due_date_es`). No es `vence` (el cupón). La regla 5 suma `vencimiento_requires_ficha_trigger` y `due_anchor_requires_ficha_trigger`;
+  - la regla 14 nativa ejecuta `ficha_impresa` (permiso `formulario`) solo con `FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED` del bridge (sin el, `motor_nativo:disparador`): C1 y, opcional, C3 con la espera anclada `(0, 09:00)` entre los dos, el botón `{link: ficha}` sin cupón, las variables de `nombre`, `producto`, `medio_de_pago` y `vencimiento`, y las salidas `compra` y `ficha_vencida`. `contesta` no: contestar no corta C3; un «no» claro sí (F-150, en el bridge). `ficha_vencida` es el corte del código (hoy después del vencimiento), no `PURCHASE_EXPIRED`;
+  - la base (`20261113200000`) abre el caso nativo con la secuencia de una ficha (`reason = 'payment_slip'`): así la reevaluación, la adopción y el motor del carrito lo tratan como la ficha del legado sin tocar sus funciones. Esa es la diferencia con D-P25-7: las cuatro funciones del legado no cambian; el caso nativo lee su ficha con una lectura propia (`get_flow_engine_native_payment_slip_context_v1`) y el bridge compone C1 y C3 con la composición del legado y la plantilla de la versión fijada.

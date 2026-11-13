@@ -166,7 +166,23 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026102500010
   '20261111000100_close_recovery_case_without_pending_touch_v1.sql',
   '20261111000200_pending_cancel_keeps_first_contact_v1.sql',
   // Los numeros del tablero (20261112200000, E-507): una lectura nueva.
-  '20261112200000_read_results_v1.sql'])) {
+  '20261112200000_read_results_v1.sql',
+  // El motor nativo de varios toques (20261112210000, E-483).
+  '20261112210000_e483_native_multitouch_v1.sql',
+  // en_curso: cancelar en el nativo (20261112210100, E-483).
+  '20261112210100_e483_native_cancel_in_flight_v1.sql',
+  // prioridad.le_gana_a en el nativo (20261112210200, E-483, C7).
+  '20261112210200_e483_native_priority_wins_v1.sql',
+  // El pago rechazado completo en el nativo (20261112210300, E-483, C3).
+  '20261112210300_e483_native_condition_after_send_v1.sql',
+  // El pago rechazado sin formulario de una oferta de campana (20261112210400, E-483, pieza PF).
+  '20261112210400_e483_payment_failure_by_phone_v1.sql',
+  // El cupon propio por persona en el nativo (20261112210500, E-483, C2).
+  '20261112210500_e483_native_personal_coupon_v1.sql',
+  // El evento de un disparo por audiencia en el nativo (20261112210600, E-483, para E-484).
+  '20261112210600_e483_native_audience_source_v1.sql', '20261112220000_flow_audience_triggers_v1.sql', '20261112230000_e483_native_person_cap_v1.sql',
+  // La ficha de OXXO nativa (20261113200000, E-528, C4).
+  '20261113200000_e528_native_payment_slip_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de las lecturas nativas del AE`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(
@@ -558,10 +574,10 @@ const outcomeFor = (rows) => one(rows.filter((row) => row.flow_id === WELCOME.fl
          !== JSON.stringify(['contract', 'events', 'people', 'product_ref', 'since', 'trigger', 'until'])) {
     fail('el conteo de la simulacion', counts);
   }
-  // El carrito cuenta desde 20261028000200 (E-161) y el pago rechazado desde 20261030000200 (E-207); la ficha
-  // sigue sin disparador nativo.
+  // El carrito cuenta desde 20261028000200 (E-161), el pago rechazado desde 20261030000200 (E-207) y la ficha
+  // impresa desde 20261113200000 (E-531); ficha_vencida es una salida, no un disparador.
   const otherTrigger = await errorOf(() => sql(`select public.read_flow_engine_native_trigger_counts_v1($1::jsonb, $2,
-    'ficha_impresa', now() - interval '1 day')`, [JSON.stringify(INSTANCE), A.funnel]));
+    'ficha_vencida', now() - interval '1 day')`, [JSON.stringify(INSTANCE), A.funnel]));
   const tooWide = await errorOf(() => sql(`select public.read_flow_engine_native_trigger_counts_v1($1::jsonb, $2,
     'compra', now() - interval '9 days')`, [JSON.stringify(INSTANCE), A.funnel]));
   if (otherTrigger?.message !== 'flow_engine_native_trigger_invalid' || tooWide?.message !== 'flow_engine_history_window_too_wide') {

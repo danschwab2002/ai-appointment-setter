@@ -210,7 +210,7 @@ def test_the_preview_says_it_goes_back_to_the_cohort() -> None:
 READ_PLUGIN = Path(__file__).resolve().parents[1] / "profiles" / "automation-expert" / "plugins" / "automation-expert-read"
 SKILLS = READ_PLUGIN.parents[1] / "skills"
 SKILL_NAMES = ("armar-una-campana", "cambiar-un-flujo", "chatwoot-whatsapp", "crear-un-flujo", "ghl-formularios", "hotmart",
-               "pasar-flujo-al-sistema-nuevo", "pedir-plantilla-a-meta")
+               "pasar-flujo-al-sistema-nuevo", "pedir-plantilla-a-meta", "programar-un-envio")
 
 
 def _tools():  # el modulo del plugin, sin Hermes

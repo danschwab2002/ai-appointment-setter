@@ -6953,6 +6953,361 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         1,
         'read_results'
+    union all
+    select
+        '20261112210000',
+        '20261112210000_e483_native_multitouch_v1.sql',
+        -- El motor nativo manda hasta tres toques (E-483): la forma del carrito
+        -- con sus tres ranuras ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_steps(text)')
+              and position('native_touch_3' in definition) > 0
+        )::int
+        -- ... y lo que abre la base, con la marca.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_unsupported(jsonb)')
+              and position('e483_native_multitouch: end' in definition) > 0
+        )::int,
+        2,
+        'e483_native_multitouch'
+    union all
+    select
+        '20261112210100',
+        '20261112210100_e483_native_cancel_in_flight_v1.sql',
+        -- en_curso: cancelar en un flujo nativo (E-483, C8): la funcion que
+        -- cancela lo que espera ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_change_cancel_in_flight_v1(uuid,integer,uuid,timestamptz)')
+              and position('cambio_de_version' in definition) > 0
+        )::int
+        -- ... la forma que acepta cancelar ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_change_items_are_valid(jsonb)')
+              and position('e483_native_cancel_in_flight' in definition) > 0
+        )::int
+        -- ... y la publicacion que la llama solo en un nativo.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_change_publish(text,text,uuid,text,jsonb)')
+              and position('e483_native_cancel_in_flight: end (los chequeos)' in definition) > 0
+        )::int,
+        3,
+        'e483_native_cancel_in_flight'
+    union all
+    select
+        '20261112210200',
+        '20261112210200_e483_native_priority_wins_v1.sql',
+        -- prioridad.le_gana_a en un flujo nativo (E-483, C7): la funcion que
+        -- corta los recorridos a los que el que arranca le gana ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_priority_wins_v1(uuid,uuid,timestamptz)')
+              and position('le_gana_otro_flujo' in definition) > 0
+        )::int
+        -- ... y la admision que la llama solo si el bridge lo pide.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_flow_engine_event_v1(jsonb,jsonb)')
+              and position('e483_native_priority_wins: end' in definition) > 0
+        )::int,
+        2,
+        'e483_native_priority_wins'
+    union all
+    select
+        '20261112210300',
+        '20261112210300_e483_native_condition_after_send_v1.sql',
+        -- el pago rechazado completo en el nativo (E-483, C3): el camino de
+        -- cada rama y sus caminos ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_payment_failure_path_shape(jsonb)')
+              and position('e483_native_condition_after_send' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_payment_failure_paths(jsonb)')
+        )::int
+        -- ... las ramas, el compilador ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_payment_failure_branches(jsonb)')
+              and position('e483_native_condition_after_send' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_compile_policy_core(jsonb,text,integer,text,text)')
+              and position('e483_native_condition_after_send' in definition) > 0
+        )::int
+        -- ... y el contexto del toque siguiente, de la rama elegida.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.flow_engine_execution_context_v1(uuid)')
+              and position('e483_native_condition_after_send: end' in definition) > 0
+        )::int,
+        5,
+        'e483_native_condition_after_send'
+    union all
+    select
+        '20261112210400',
+        '20261112210400_e483_payment_failure_by_phone_v1.sql',
+        -- el pago rechazado sin formulario de una oferta de campana (E-483,
+        -- pieza PF): el permiso del telefono de Hotmart ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_payment_failure_phone_audience(uuid,uuid,text,text,text)')
+              and position('e483_payment_failure_by_phone' in definition) > 0
+        )::int
+        -- ... la lista de ofertas que manda el bridge ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_flow_engine_event_v1(jsonb,jsonb)')
+              and position('e483_payment_failure_by_phone_offers_reset' in definition) > 0
+        )::int
+        -- ... la admision que la usa ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_admit_native_flow(public.flow_controls,public.webhook_events,uuid,text,timestamptz,bigint,bigint,text)')
+              and position('e483_payment_failure_by_phone_permission: end' in definition) > 0
+        )::int
+        -- ... y la puerta que mira la baja antes de cada envio.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_authorize_native_tail(uuid,uuid,public.flow_engine_runs,public.recovery_cases,public.flow_controls,timestamptz)')
+              and position('e483_payment_failure_by_phone_recheck: end' in definition) > 0
+        )::int,
+        4,
+        'e483_payment_failure_by_phone'
+    union all
+    select
+        '20261112210500',
+        '20261112210500_e483_native_personal_coupon_v1.sql',
+        -- el cupon propio por persona en el nativo (E-483, C2): el ordinal del
+        -- primer envio nativo y la lectura del bridge ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_first_coupon_ordinal(uuid)')
+              and position('e483_native_personal_coupon' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_flow_engine_native_step_coupon_v1(uuid)')
+              and position('e483_native_personal_coupon' in definition) > 0
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+        )::int
+        -- ... las ranuras con cupon y el compilador ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_steps(text)')
+              and position('e483_native_personal_coupon' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_compile_policy_core(jsonb,text,integer,text,text)')
+              and position('e483_native_personal_coupon: end' in definition) > 0
+        )::int
+        -- ... lo que abre la base, la siembra del cupon y el link.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_unsupported(jsonb)')
+              and position('e483_native_personal_coupon: end' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.claim_due_recovery_coupons_v1(timestamptz,text,integer,text,interval,interval,numeric,integer)')
+              and position('e483_native_personal_coupon: end' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.reserve_recovery_checkout_issuance_v1(uuid,text,bigint,uuid,text,timestamptz)')
+              and position('e483_native_personal_coupon' in definition) > 0
+        )::int,
+        7,
+        'e483_native_personal_coupon'
+    union all
+    select
+        '20261112210600',
+        '20261112210600_e483_native_audience_source_v1.sql',
+        -- el evento de un disparo por audiencia en el nativo (E-483, para
+        -- E-484): la admision de una persona de la lista, atada a su flujo ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_admit_native_audience_v1(jsonb,jsonb)')
+              and position('e483_native_audience_admission' in definition) > 0
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+        )::int
+        -- ... la entrada que la llama solo con la clave del bridge ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_flow_engine_event_v1(jsonb,jsonb)')
+              and position('e483_native_audience_admit: end' in definition) > 0
+        )::int
+        -- ... el disparador, la forma y lo que abre la base ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_trigger(jsonb)')
+              and position('e483_native_audience_trigger' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_steps(text)')
+              and position('e483_native_audience_steps' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_unsupported(jsonb)')
+              and position('e483_native_audience_multitouch' in definition) > 0
+        )::int
+        -- ... el permiso de la audiencia en la admision ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_admit_native_flow(public.flow_controls,public.webhook_events,uuid,text,timestamptz,bigint,bigint,text)')
+              and position('e483_native_audience_permission: end' in definition) > 0
+        )::int
+        -- ... y la compra como salida en la reevaluacion.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._portable_case_purchase_stop_reason(uuid)')
+              and position('e483_native_audience_case' in definition) > 0
+        )::int,
+        7,
+        'e483_native_audience_source'
+    union all
+    select
+        '20261112220000',
+        '20261112220000_flow_audience_triggers_v1.sql',
+        -- El disparo por audiencia y su lista congelada (E-484): las dos tablas
+        -- cerradas, con RLS ...
+        (
+            select count(*) = 2
+            from pg_catalog.pg_class c
+            where c.oid in (to_regclass('public.flow_audience_occurrences'), to_regclass('public.flow_audience_members'))
+              and c.relrowsecurity
+              and not has_table_privilege('anon', c.oid, 'SELECT')
+        )::int
+        -- ... y las siete del bridge, solo de service_role y security definer.
+        + (
+            select count(*) = 7
+            from functions
+            where oid in (
+                to_regprocedure('public.read_flow_audience_flows_v1(jsonb)'),
+                to_regprocedure('public.read_flow_audience_candidates_v1(jsonb,uuid,integer,integer)'),
+                to_regprocedure('public.materialize_flow_audience_occurrence_v1(jsonb,uuid,integer,jsonb,jsonb)'),
+                to_regprocedure('public.brake_flow_audience_occurrence_v1(uuid,text)'),
+                to_regprocedure('public.release_flow_audience_members_v1(uuid,timestamptz,integer)'),
+                to_regprocedure('public.settle_flow_audience_member_v1(uuid,uuid,text)'),
+                to_regprocedure('public.read_flow_audience_occurrences_v1(jsonb,integer)')
+            )
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        2,
+        'flow_audience_triggers'
+    union all
+    select
+        '20261112230000',
+        '20261112230000_e483_native_person_cap_v1.sql',
+        -- El tope por persona del nativo (E-483, C6): el bloque en la autorizacion
+        -- nativa ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_authorize_native_tail(uuid,uuid,public.flow_engine_runs,public.recovery_cases,public.flow_controls,timestamptz)')
+              and position('e483_native_person_cap: end' in definition) > 0
+        )::int
+        -- ... el cierre de terminado con el motivo de la autorizacion ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.mark_flow_engine_request_started_v1(uuid,uuid,text,bigint,timestamptz)')
+              and position('e483_native_person_cap' in definition) > 0
+        )::int
+        -- ... y la v2 del arranque, solo de service_role y security definer.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.mark_flow_engine_request_started_v2(uuid,uuid,text,bigint,timestamptz,jsonb)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        3,
+        'e483_native_person_cap'
+    union all
+    select
+        '20261113200000',
+        '20261113200000_e528_native_payment_slip_v1.sql',
+        -- La ficha de OXXO nativa (E-528, C4): el disparador ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_trigger(jsonb)')
+              and position('e528_native_payment_slip_trigger' in definition) > 0
+        )::int
+        -- ... la secuencia de una ficha en la admision ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_admit_native_flow(public.flow_controls,public.webhook_events,uuid,text,timestamptz,bigint,bigint,text)')
+              and position('e528_native_payment_slip_sequence' in definition) > 0
+        )::int
+        -- ... la espera anclada en el compilador ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_compile_policy_core(jsonb,text,integer,text,text)')
+              and position('e528_native_payment_slip_wait' in definition) > 0
+        )::int
+        -- ... y la lectura de la ficha, solo de service_role y security definer.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_flow_engine_native_payment_slip_context_v1(uuid,text,bigint,timestamptz)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        4,
+        'e528_native_payment_slip'
 )
 select
     version,

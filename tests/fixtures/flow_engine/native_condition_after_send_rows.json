@@ -1,0 +1,137 @@
+{
+  "_capture": {
+    "origen": "validate_e483_native_condition_after_send.mjs: la cadena entera de migraciones (PGlite), el formulario y los rechazos capturados de Maribel por las admisiones portables; B1 con las plantillas de Maribel y B2 y Z con los nombres del seguimiento de ATT1",
+    "encargo": "E-483 C3",
+    "regenerar": "cd tests/sql/followup_engine && node validate_e483_native_condition_after_send.mjs --emit"
+  },
+  "touch1_context_banco": {
+    "flow_id": "<flow_id>",
+    "version": 1,
+    "product_ref": "att1",
+    "flow_key": "pago_rechazado_completo",
+    "step_key": "first_contact",
+    "send_ordinal": 1,
+    "template_name": "maribel_pago_rechazado_banco_01",
+    "template_language": "es_MX",
+    "template_variables": [
+      "nombre",
+      "producto"
+    ],
+    "template_button": {
+      "link": "checkout"
+    },
+    "legacy_dispatch_ok": false,
+    "entry_permission": "formulario",
+    "template_branches": [
+      {
+        "paso": {
+          "boton": {
+            "link": "checkout",
+            "cupon": "PROTOCOLO10"
+          },
+          "idioma": "es_MX",
+          "plantilla": "maribel_pago_rechazado_cupon_01",
+          "variables": [
+            "nombre",
+            "producto"
+          ]
+        },
+        "cuando": {
+          "es": [
+            "si"
+          ],
+          "dato": "descuento_previo"
+        }
+      },
+      {
+        "paso": {
+          "boton": {
+            "link": "checkout"
+          },
+          "idioma": "es_MX",
+          "plantilla": "maribel_pago_rechazado_dos_veces_01",
+          "variables": [
+            "nombre",
+            "producto"
+          ]
+        },
+        "cuando": {
+          "es": [
+            "varios"
+          ],
+          "dato": "rechazos"
+        }
+      },
+      {
+        "paso": {
+          "boton": {
+            "link": "checkout",
+            "cupon": "PROTOCOLO10"
+          },
+          "idioma": "es_MX",
+          "plantilla": "maribel_pago_rechazado_saldo_01",
+          "variables": [
+            "nombre",
+            "producto"
+          ]
+        },
+        "cuando": {
+          "es": [
+            "sin_saldo"
+          ],
+          "dato": "tipo_de_rechazo"
+        }
+      },
+      {
+        "paso": {
+          "boton": {
+            "link": "checkout"
+          },
+          "idioma": "es_MX",
+          "plantilla": "maribel_pago_rechazado_banco_01",
+          "variables": [
+            "nombre",
+            "producto"
+          ]
+        },
+        "cuando": null
+      }
+    ]
+  },
+  "touch2_context_banco": {
+    "flow_id": "<flow_id>",
+    "version": 1,
+    "product_ref": "att1",
+    "flow_key": "pago_rechazado_completo",
+    "step_key": "native_touch_2",
+    "send_ordinal": 2,
+    "template_name": "att1_pago_rechazado_descuento_01",
+    "template_language": "es_MX",
+    "template_variables": [
+      "nombre",
+      "producto"
+    ],
+    "template_button": null,
+    "legacy_dispatch_ok": false,
+    "entry_permission": "formulario",
+    "template_branches": null
+  },
+  "touch2_context_saldo": {
+    "flow_id": "<flow_id>",
+    "version": 1,
+    "product_ref": "att1",
+    "flow_key": "pago_rechazado_completo",
+    "step_key": "native_touch_2",
+    "send_ordinal": 2,
+    "template_name": "att1_ultima_renovacion_01",
+    "template_language": "es_MX",
+    "template_variables": [
+      "nombre",
+      "producto"
+    ],
+    "template_button": null,
+    "legacy_dispatch_ok": false,
+    "entry_permission": "formulario",
+    "template_branches": null
+  }
+}

@@ -100,7 +100,7 @@ from bridge.payment_failure_variant import (
     PaymentFailureVariantsConfig,
     compose_payment_failure_first_touch,
 )
-from bridge.payment_slip import payment_slip_facts
+from bridge.payment_slip import PaymentSlipMethod, payment_slip_facts
 from bridge.payment_slip_first_touch import (
     PaymentSlipDefer,
     PaymentSlipFirstTouchConfig,
@@ -110,11 +110,23 @@ from bridge.payment_slip_first_touch import (
     payment_slip_ingestion_reason,
 )
 from bridge.flow_engine_runtime import READ_OK, FlowEngineRuntime
+from bridge.flow_engine import (
+    NATIVE_PAYMENT_SLIP_VARIABLES,
+    NATIVE_TOUCH_STEP_PREFIX,
+    is_native_personal_coupon_button,
+)
+from bridge.native_personal_coupon import (
+    NATIVE_COUPON_VARIABLES,
+    NATIVE_PERSONAL_COUPON_DISABLED,
+    NativeCouponReady,
+    NativePersonalCouponConfig,
+    resolve_native_personal_coupon,
+)
 from bridge.native_flows import (
     NATIVE_ANCHOR,
     NATIVE_NEEDS_DIRECT_TEMPLATE,
     NATIVE_NEEDS_ENGINE,
-    NATIVE_CART_TRIGGER, NATIVE_PAYMENT_FAILURE_TRIGGER,
+    NATIVE_CART_TRIGGER, NATIVE_PAYMENT_FAILURE_TRIGGER, NATIVE_PAYMENT_SLIP_TRIGGER,
     NATIVE_PURCHASE_PERMISSION,
     NATIVE_PURCHASE_RETRY, NATIVE_PURCHASE_STARTED, NATIVE_PURCHASE_TRIGGER,
     NATIVE_QUEUE_PAGE,
@@ -138,7 +150,7 @@ from bridge.lead_decline import (
     LEAD_DECLARED_PAYMENT,
     LEAD_DECLINED,
 )
-from bridge.payment_slip_reminders import PAYMENT_SLIP_STEPS
+from bridge.payment_slip_reminders import PAYMENT_SLIP_DUE_DAY_STEP, PAYMENT_SLIP_STEPS
 from bridge.phones import equivalent_whatsapp_phones, whatsapp_phone_region
 from bridge.product_routes import HotmartUnrouted, ProductRoute, ProductRoutes
 from bridge.recovery_agent import (
@@ -154,6 +166,7 @@ from bridge.supabase import (
     DeliveryAttempt,
     FlowEngineNativeBranch,
     FlowEngineRunTerminated,
+    NativePersonCap,
     FlowEngineStepContext,
     FollowupExecutionContext,
     PilotBoundaryConfig,
@@ -199,6 +212,21 @@ NATIVE_BRANCH_DATA_UNAVAILABLE = "flow_engine_native_branch_data_unavailable"
 NATIVE_BRANCH_RECORD_UNAVAILABLE = "flow_engine_native_branch_record_unavailable"
 NATIVE_BRANCH_STALE = "flow_engine_native_branch_stale"
 NATIVE_CHECKOUT_UNAVAILABLE = "flow_engine_native_checkout_unavailable"
+# E-483: el toque siguiente de un flujo nativo con FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED apagado.
+NATIVE_MULTITOUCH_DISABLED = "flow_engine_native_multitouch_disabled"
+# El link de la ficha: el boton de C1 y C3 de la ficha nativa (el esquema, LINKS).
+NATIVE_PAYMENT_SLIP_BUTTON = {"link": "ficha"}
+
+
+def _is_native_payment_slip_step(step_template: object) -> bool:
+    """Si el paso nativo es de la ficha (E-528, C4): el link a la ficha, o el medio o el vencimiento en sus
+    variables. Solo el disparador ficha_impresa los admite (la base, 20261113200000, y la regla 5)."""
+    if step_template is None:
+        return False
+    button = getattr(step_template, "template_button", None)
+    variables = getattr(step_template, "template_variables", ()) or ()
+    return (isinstance(button, dict) and button.get("link") == "ficha") or bool(
+        {"medio_de_pago", "vencimiento"} & set(variables))
 NATIVE_QUEUE_REFRESH_SECONDS = 60.0
 # E-339: no se pudo leer si la persona viene por una campana con cupon, o no se
 # pudo cerrar su caso. A2 y Z no salen a ciegas: se reintenta.
@@ -949,6 +977,10 @@ class DurableDispatcher:
         payment_failure_variants: PaymentFailureVariantsConfig | None = None,
         payment_failure_followup: PaymentFailureFollowupConfig | None = None,
         flow_engine_enabled: bool = False,
+        native_multitouch_enabled: bool = False,
+        native_person_cap: NativePersonCap | None = None,
+        native_personal_coupon: NativePersonalCouponConfig | None = None,
+        native_payment_slip: PaymentSlipFirstTouchConfig | None = None,
         native_client_labeler: ProductLabeler | None = None,
         purchase_pause_after_native_welcome: PurchaseAgentPause | None = None,
         native_segment_labels: NativeSegmentLabels | None = None,
@@ -1081,6 +1113,17 @@ class DurableDispatcher:
         # por mark_flow_engine_request_started_v1. Sin el flag, o con otra
         # politica, ninguna llamada nueva.
         self._flow_engine_enabled = flow_engine_enabled
+        # E-483: los toques siguientes de un flujo nativo (native_touch_2 y 3, 20261112210000).
+        self._native_multitouch_enabled = native_multitouch_enabled
+        # E-483 (C6, 20261112230000): el tope por persona del nativo. None (el flag
+        # apagado): el arranque del motor es la v1, como hoy.
+        self._native_person_cap = native_person_cap
+        # E-483 (C2, 20261112210500): el toque nativo con el cupon propio. None (el flag apagado): cierra sin salir.
+        self._native_personal_coupon = native_personal_coupon
+        # E-528 (C4, 20261113200000): las filas de [[ficha.medios]] para C1 y C3 de la ficha nativa, con
+        # FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED. None (el flag apagado): esos pasos cierran sin salir. Es aparte
+        # de ``payment_slip`` (la ficha del legado): no pide la plantilla del manifiesto.
+        self._native_payment_slip = native_payment_slip
         # flow-engine-v2 (E-065): la etiqueta cliente del paso etiquetar, por
         # un macro que solo la suma. Sin macro configurado, solo la nota.
         self._native_client_labeler = native_client_labeler
@@ -1501,7 +1544,11 @@ class DurableDispatcher:
         category stay those of today.
         """
         trigger_kind = _flow_trigger(action)
-        if action.anchor_type == NATIVE_ANCHOR:
+        if action.anchor_type == NATIVE_ANCHOR or (
+            step_template is not None and action.step_key.startswith(NATIVE_TOUCH_STEP_PREFIX)
+        ):
+            # E-483: un toque siguiente de un flujo nativo (native_touch_2 y 3) esta anclado al
+            # mensaje aceptado del toque anterior, no al evento: se reconoce por su step_key.
             # flow-engine-v2: el paso de un flujo nativo sale solo con la
             # plantilla de su version fijada; nunca con la del manifiesto.
             return await self._compose_native_step_proposal(
@@ -1999,6 +2046,9 @@ class DurableDispatcher:
         checkout button (``{link: checkout}``, with or without a fixed coupon),
         the link is OUR issued one (``offDiscount=<code>`` with the coupon), as
         B1 of the legacy: the template opens with the checkout URL button.
+        The following touch of a branch (B2 or Z, E-483 C3) is never picked
+        here: the base resolves it from the branch recorded for the accepted
+        first send and gives its template without ``template_branches``.
         """
         if not self._flow_engine_enabled:
             return _ApprovedTemplateComposition(
@@ -2008,7 +2058,40 @@ class DurableDispatcher:
             return _ApprovedTemplateComposition(
                 failure_reason=NATIVE_STEP_CONTEXT_UNAVAILABLE
             )
-        if action.action_type != "first_contact_review" or step_template.step_key != action.step_key:
+        following = action.step_key.startswith(NATIVE_TOUCH_STEP_PREFIX)
+        if self._native_payment_slip is not None and _is_native_payment_slip_step(step_template):
+            # E-528 (C4): C1 y C3 de la ficha nativa, con su propio flag (C3 no es un toque siguiente cualquiera).
+            # Sin el flag, el camino de antes byte a byte: el link a la ficha o sus variables no los arma el paso
+            # nativo generico y cierran sin salir (flow_engine_step_unsupported).
+            return await self._compose_native_payment_slip_proposal(
+                action=action,
+                execution_context=execution_context,
+                step_template=step_template,
+                following=following,
+            )
+        if following and not self._native_multitouch_enabled:
+            # E-483: sin FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED el toque siguiente cierra sin salir.
+            logger.warning(
+                "flow_engine_native_multitouch_disabled action_id=%s step=%s",
+                action.action_id,
+                action.step_key,
+            )
+            return _ApprovedTemplateComposition(
+                failure_reason=NATIVE_MULTITOUCH_DISABLED, retryable=False
+            )
+        expected_type = "no_reply_review" if following else "first_contact_review"
+        if action.action_type != expected_type or step_template.step_key != action.step_key:
+            return self._native_step_unsupported(action, step_template)
+        if following and (
+            step_template.template_branches is not None
+            or (step_template.template_button is not None
+                and not is_native_personal_coupon_button(step_template.template_button))
+        ):
+            # Un toque siguiente no elige rama ni lleva boton (la base no lo abre, 20261112210000). En el pago
+            # rechazado con ramas (E-483 C3, 20261112210300) la rama la eligio el primer envio aceptado: la
+            # base da la plantilla del toque siguiente de esa rama, sin template_branches, y el bridge la manda
+            # como cualquier toque siguiente. Volver a elegir aca podria cambiar de rama (un rechazo nuevo
+            # entre B1 y B2) y mandar el seguimiento de otra variante.
             return self._native_step_unsupported(action, step_template)
         template_name = step_template.template_name
         template_language = step_template.template_language
@@ -2028,7 +2111,8 @@ class DurableDispatcher:
             variables = picked.template_variables
             button = picked.template_button
         coupon_code: str | None = None
-        if button is not None:
+        personal = button is not None and is_native_personal_coupon_button(button)
+        if button is not None and not personal:
             coupon_code = button.get("cupon")
             if (
                 set(button) - {"link", "cupon"}
@@ -2040,9 +2124,53 @@ class DurableDispatcher:
         if (
             not variables
             or len(set(variables)) != len(variables)
-            or not set(variables) <= NATIVE_STEP_VARIABLES
+            or not set(variables) <= (
+                NATIVE_STEP_VARIABLES | NATIVE_COUPON_VARIABLES if personal else NATIVE_STEP_VARIABLES)
         ):
             return self._native_step_unsupported(action, step_template)
+        coupon_values: dict[str, str] = {}
+        if personal:
+            # E-483 (C2, 20261112210500): el cupon propio del paso, el que sembro la base y creo el trabajador
+            # del cupon (recovery_coupons.py); sin el flag, el toque cierra sin salir.
+            if self._native_personal_coupon is None:
+                logger.warning(
+                    "flow_engine_native_personal_coupon_disabled action_id=%s step=%s",
+                    action.action_id,
+                    action.step_key,
+                )
+                return _ApprovedTemplateComposition(
+                    failure_reason=NATIVE_PERSONAL_COUPON_DISABLED, retryable=False
+                )
+            resolved = await resolve_native_personal_coupon(
+                config=self._native_personal_coupon,
+                supabase=self._supabase,
+                action=action,
+                attempt=attempt,
+                variables=tuple(variables),
+                buyer_phone=execution_context.buyer_phone,
+                following=following,
+                now=self._clock(),
+            )
+            if isinstance(resolved, CartDiscountDefer):
+                logger.info(
+                    "flow_engine_native_coupon_deferred action_id=%s retry_after_s=%s",
+                    action.action_id,
+                    int(resolved.retry_after.total_seconds()),
+                )
+                return _ApprovedTemplateComposition(
+                    failure_reason=resolved.reason, retry_after=resolved.retry_after
+                )
+            if not isinstance(resolved, NativeCouponReady):
+                logger.warning(
+                    "flow_engine_native_coupon_stopped action_id=%s reason=%s",
+                    action.action_id,
+                    resolved.reason,
+                )
+                return _ApprovedTemplateComposition(
+                    failure_reason=resolved.reason, retryable=resolved.retryable
+                )
+            coupon_code = resolved.code
+            coupon_values = resolved.values
         buyer_name = execution_context.buyer_name
         product_name = execution_context.product_name
         greeting_name: str | None = None
@@ -2056,9 +2184,9 @@ class DurableDispatcher:
             greeting = await resolve_greeting_name(buyer_name, store=self._supabase)
             greeting_name = greeting.name.strip()
             name_value = greeting_name
-        source = {"nombre": name_value, "producto": product_name}
+        source: dict[str, str | None] = {"nombre": name_value, "producto": product_name, **coupon_values}
         if any(
-            not isinstance(source[item], str) or not source[item].strip()  # type: ignore[union-attr]
+            not isinstance(source.get(item), str) or not source[item].strip()  # type: ignore[union-attr]
             for item in variables
         ) or ("nombre" in variables and not template_greeting_name_is_safe(name_value)):
             # The values of the case (the name from Hotmart, unverified input,
@@ -2608,6 +2736,121 @@ class DurableDispatcher:
         return _ApprovedTemplateComposition(
             failure_reason=outcome.reason,
             retryable=outcome.retryable,
+        )
+
+    async def _compose_native_payment_slip_proposal(
+        self,
+        *,
+        action: ScheduledAction,
+        execution_context: FollowupExecutionContext,
+        step_template: FlowEngineStepContext,
+        following: bool,
+    ) -> _ApprovedTemplateComposition:
+        """C1 or C3 of a native slip run (E-528, C4): its pinned template with the slip of the case.
+
+        The composition of the legacy (``compose_payment_slip_first_touch``) with the slip that
+        ``get_flow_engine_native_payment_slip_context_v1`` reads (the most recent of the case), the template
+        and language of the pinned version (never the manifest's), the categories its permission accepts and
+        ``medio_de_pago`` as the store. C3 (``native_touch_2``) is anchored to the due date as C3 of the
+        legacy (``PAYMENT_SLIP_STEPS[payment_slip_due_day]``): before 09:00 of that day it waits, on a later
+        day it does not go out (the exit ``ficha_vencida``, today after the due date). A «no» written after C1
+        stops it (F-150), as in the legacy; any other reply does not (the sequence is a slip's).
+        """
+        assert self._native_payment_slip is not None
+        expected_type = "no_reply_review" if following else "first_contact_review"
+        variables = step_template.template_variables
+        if (
+            action.action_type != expected_type
+            or step_template.step_key != action.step_key
+            or action.step_key not in ("first_contact", f"{NATIVE_TOUCH_STEP_PREFIX}2")
+            or step_template.template_branches is not None
+            or (step_template.template_button is not None
+                and dict(step_template.template_button) != NATIVE_PAYMENT_SLIP_BUTTON)
+            or not variables
+            or len(set(variables)) != len(variables)
+            or not set(variables) <= set(NATIVE_PAYMENT_SLIP_VARIABLES)
+        ):
+            return self._native_step_unsupported(action, step_template)
+        if following and action.action_id in self._declined_after_anchor:
+            # F-150: un «no» claro despues de C1; C3 no sale y no se reintenta, como en el legado.
+            return _ApprovedTemplateComposition(
+                failure_reason=LEAD_DECLINED, retryable=False
+            )
+        buyer_name = execution_context.buyer_name
+        product_name = execution_context.product_name
+        greeting_name: str | None = None
+        name_value = buyer_name
+        if (
+            "nombre" in variables
+            and self._lead_first_name_greeting_enabled
+            and isinstance(buyer_name, str)
+            and buyer_name.strip()
+        ):
+            greeting = await resolve_greeting_name(buyer_name, store=self._supabase)
+            greeting_name = greeting.name.strip()
+            name_value = greeting_name
+        if (
+            ("nombre" in variables
+             and (not isinstance(name_value, str) or not template_greeting_name_is_safe(name_value)))
+            or ("producto" in variables and (not isinstance(product_name, str) or not product_name.strip()))
+        ):
+            return _ApprovedTemplateComposition(
+                failure_reason=APPROVED_TEMPLATE_PARAMETERS_MISSING, retryable=False
+            )
+        assert self._chatwoot is not None
+        assert self._chatwoot_inbox_id is not None
+        try:
+            inbox = await self._chatwoot.get_inbox(inbox_id=self._chatwoot_inbox_id)
+        except (httpx.HTTPError, ChatwootProtocolError) as exc:
+            logger.warning(
+                "approved_template_catalog_unavailable action_id=%s error=%s",
+                action.action_id,
+                type(exc).__name__,
+            )
+            return _ApprovedTemplateComposition(failure_reason=APPROVED_TEMPLATE_UNAVAILABLE)
+        slip = await compose_payment_slip_first_touch(
+            config=self._native_payment_slip,
+            supabase=self._supabase,
+            inbox=inbox,
+            action=action,
+            template_name=step_template.template_name,
+            language=step_template.template_language,
+            category="",
+            parameters=tuple("tienda" if item == "medio_de_pago" else item for item in variables),
+            buyer_name=name_value or "",
+            product_name=product_name or "",
+            worker_id=self._worker_id,
+            now=self._clock(),
+            step=PAYMENT_SLIP_STEPS[PAYMENT_SLIP_DUE_DAY_STEP] if following else None,
+            native=True,
+            categories=native_step_categories(step_template.entry_permission),
+        )
+        if isinstance(slip, PaymentSlipDefer):
+            logger.info(
+                "flow_engine_native_payment_slip_deferred action_id=%s step=%s retry_after_s=%s",
+                action.action_id,
+                action.step_key,
+                int(slip.retry_after.total_seconds()),
+            )
+            return _ApprovedTemplateComposition(failure_reason=slip.reason, retry_after=slip.retry_after)
+        if not isinstance(slip, PaymentSlipReady):
+            # Solo el codigo: nunca el link, la referencia ni la persona.
+            logger.warning(
+                "flow_engine_native_payment_slip_not_sent action_id=%s step=%s reason=%s retryable=%s",
+                action.action_id,
+                action.step_key,
+                slip.reason,
+                slip.retryable,
+            )
+            return _ApprovedTemplateComposition(failure_reason=slip.reason, retryable=slip.retryable)
+        return _ApprovedTemplateComposition(
+            proposal=FollowupMessageProposal(
+                strategy=f"approved_template:{slip.template_name}",
+                message=slip.message,
+            ),
+            greeting_name=greeting_name,
+            template_name=slip.template_name,
+            template_params=slip.template_params,
         )
 
     async def _compose_payment_slip_proposal(
@@ -3216,6 +3459,13 @@ class DurableDispatcher:
                                             worker_id=self._worker_id,
                                             lease_generation=action.lease_generation,
                                             now=final_now,
+                                            # E-483 (C6): solo con el flag; sin el,
+                                            # la llamada de hoy.
+                                            **(
+                                                {"person_cap": self._native_person_cap}
+                                                if self._native_person_cap is not None
+                                                else {}
+                                            ),
                                         )
                                         if engine_step is not None
                                         else self._supabase.mark_followup_request_started(
@@ -4183,6 +4433,8 @@ class ResolutionWorker:
         payment_failure_planning: PaymentFailurePlanningConfig | None = None,
         flow_engine: FlowEngineRuntime | None = None,
         purchase_agent_pause: PurchaseAgentPause | None = None,
+        native_payment_slip_enabled: bool = False,
+        native_payment_slip_methods: tuple[PaymentSlipMethod, ...] | None = None,
     ) -> None:
         self._supabase = supabase
         self._poll_interval = poll_interval_seconds
@@ -4210,6 +4462,15 @@ class ResolutionWorker:
         # La ficha de pago (C1): sin esto, una ficha queda failed con
         # unsupported_persisted_event_type, como hasta la 1.10.
         self._payment_slip = payment_slip
+        # E-528 (C4): FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED. Con el y un flujo nativo de la ficha prendido o
+        # en cohorte, la ficha va primero a la admision nativa; sin el, la ficha va como hoy.
+        self._native_payment_slip_enabled = native_payment_slip_enabled
+        # E-528 (C4, D-P25-6): con PORTABLE_HOTMART_PAYMENT_SLIP_LEGACY_ENABLED=false no hay planificacion del
+        # legado (``payment_slip`` es None) y la ficha va solo a la admision nativa, con el filtro de las filas
+        # de [[ficha.medios]]: lo que ningun flujo nativo toma queda ignored, sin caso ni contacto.
+        self._native_payment_slip_methods = (
+            native_payment_slip_methods if native_payment_slip_enabled else None
+        )
         # El pago rechazado (B1) con su propio scope y su politica (15 minutos
         # de gracia). Sin esto se planifica como hasta la 1.11, con los del
         # carrito.
@@ -4347,6 +4608,29 @@ class ResolutionWorker:
         )
         if product_ref is None or not self._flow_engine.native_flows.wants(
             product_ref, NATIVE_CART_TRIGGER
+        ):
+            return None
+        return product_ref
+
+    def _native_payment_slip_product(self, payload: dict[str, Any]) -> str | None:
+        """The product of a slip with a native slip flow on or in its cohort (E-528, C4), or None.
+
+        None without FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED, without the engine, without the portable
+        runtime or without such a flow: the slip goes exactly as today (ATT1, by the legacy).
+        """
+        if not self._native_payment_slip_enabled:
+            return None
+        if self._flow_engine is None or self._commercial_ally_config is None:
+            return None
+        if not self._flow_engine.native_flows.any_on():
+            return None
+        product_ref = payment_failure_product_ref(
+            payload,
+            commercial_ally_config=self._commercial_ally_config,
+            product_routes=self._product_routes,
+        )
+        if product_ref is None or not self._flow_engine.native_flows.wants(
+            product_ref, NATIVE_PAYMENT_SLIP_TRIGGER
         ):
             return None
         return product_ref
@@ -4582,10 +4866,12 @@ class ResolutionWorker:
                     event_id, payload, purchase, native_outcome=native_outcome
                 )
             return
-        slip_event = (
+        slip_event = event_type == EVENT_PURCHASE_BILLET_PRINTED and (
             self._payment_slip is not None
-            and event_type == EVENT_PURCHASE_BILLET_PRINTED
+            or self._native_payment_slip_methods is not None
         )
+        # E-528 (C4): la ficha sin el legado (PORTABLE_HOTMART_PAYMENT_SLIP_LEGACY_ENABLED=false) es solo nativa.
+        native_only_slip = slip_event and self._payment_slip is None
         if event_type != EVENT_CART_ABANDONMENT and not (
             self._payment_failure_enabled
             and event_type == EVENT_PURCHASE_CANCELED
@@ -4642,12 +4928,17 @@ class ResolutionWorker:
         policy_version = self._policy_version
         pilot_boundary = self._pilot_boundary
         if slip_event:
-            assert self._payment_slip is not None
+            methods = (
+                self._payment_slip.methods
+                if self._payment_slip is not None
+                else self._native_payment_slip_methods
+            )
+            assert methods is not None
             # The filter by method and country: what the table of the manifest
             # does not enable stays in the base (admitted and correlated) and
             # nobody is written to.
             slip_reason = payment_slip_ingestion_reason(
-                payment_slip_facts(payload), self._payment_slip.methods
+                payment_slip_facts(payload), methods
             )
             if slip_reason is not None:
                 await self._supabase.update_event_status(
@@ -4660,10 +4951,12 @@ class ResolutionWorker:
                 )
                 return
             # Its own policy (one hour of grace, one day of life) and its own
-            # scope (source event PURCHASE_BILLET_PRINTED).
-            policy_key = self._payment_slip.policy_key
-            policy_version = self._payment_slip.policy_version
-            pilot_boundary = self._payment_slip.pilot_boundary
+            # scope (source event PURCHASE_BILLET_PRINTED). Without the legacy
+            # (E-528), only the native flows of the slip can take it.
+            if self._payment_slip is not None:
+                policy_key = self._payment_slip.policy_key
+                policy_version = self._payment_slip.policy_version
+                pilot_boundary = self._payment_slip.pilot_boundary
         elif (
             self._payment_failure_planning is not None
             and event_type == EVENT_PURCHASE_CANCELED
@@ -4678,6 +4971,9 @@ class ResolutionWorker:
                 resolver_kwargs["native_only"] = True
             elif self._commercial_ally_config is not None:
                 resolver_kwargs["commercial_ally_config"] = self._commercial_ally_config
+                if native_only_slip:
+                    # E-528 (C4): la ficha sin el legado, como el producto que no es el principal (E-350).
+                    resolver_kwargs["native_only"] = True
             if self._flow_engine is not None and event_type == EVENT_CART_ABANDONMENT:
                 # El carrito: el motor v1 y, con su flujo nativo, la admision
                 # nativa. La ficha nunca pasa por la admision del motor.
@@ -4695,6 +4991,13 @@ class ResolutionWorker:
                 if native_failure_product is not None:
                     resolver_kwargs["flow_engine"] = self._flow_engine
                     resolver_kwargs["native_payment_failure_product_ref"] = native_failure_product
+            elif self._flow_engine is not None and event_type == EVENT_PURCHASE_BILLET_PRINTED:
+                # E-528 (C4): con un flujo nativo de la ficha de ese producto y el flag, la ficha va primero
+                # a la admision nativa (la precedencia nativa, D-P25-6); sin el, la llamada de hoy.
+                native_slip_product = self._native_payment_slip_product(payload)
+                if native_slip_product is not None:
+                    resolver_kwargs["flow_engine"] = self._flow_engine
+                    resolver_kwargs["native_payment_slip_product_ref"] = native_slip_product
             report = await resolve_event(
                 webhook_event_id=event_id,
                 payload=payload,

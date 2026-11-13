@@ -1,0 +1,328 @@
+{
+  "_capture": {
+    "encargo": "E-483, C10",
+    "origen": "validate_e483_native_legacy_double_case_touches.mjs: la cadena entera de migraciones (PGlite), el mundo de ATT1 con el carrito nativo de tres toques y el pago rechazado nativo completo",
+    "regenerar": "cd tests/sql/followup_engine && node validate_e483_native_legacy_double_case_touches.mjs --emit"
+  },
+  "carrito_toque_2_context": {
+    "entry_permission": "formulario",
+    "flow_id": "<flow_id>",
+    "flow_key": "carrito_nativo",
+    "legacy_dispatch_ok": false,
+    "product_ref": "att1",
+    "send_ordinal": 2,
+    "step_key": "native_touch_2",
+    "template_branches": null,
+    "template_button": null,
+    "template_language": "es_MX",
+    "template_name": "att1_carrito_dudas_01",
+    "template_variables": [
+      "nombre",
+      "producto"
+    ],
+    "version": 1
+  },
+  "legado_en_curso": {
+    "a2_del_legado": "execute:eligible_for_execution",
+    "legado": "pilot_case_binding_conflict",
+    "nativo": "caso_del_legado_en_curso",
+    "status": "active"
+  },
+  "nativo_en_curso": {
+    "legado": "pilot_scope_rejected:flujo_nativo_en_curso",
+    "otra_vez": "ya_en_curso",
+    "status": "active",
+    "toque_2": "execute:eligible_for_execution"
+  },
+  "pago_toque_2_context": {
+    "entry_permission": "formulario",
+    "flow_id": "<flow_id>",
+    "flow_key": "pago_rechazado_nativo",
+    "legacy_dispatch_ok": false,
+    "product_ref": "att1",
+    "rama": 3,
+    "send_ordinal": 2,
+    "step_key": "native_touch_2",
+    "template_branches": null,
+    "template_button": null,
+    "template_language": "es_MX",
+    "template_name": "maribel_retomar_proceso_01",
+    "template_variables": [
+      "nombre",
+      "producto"
+    ],
+    "version": 1
+  },
+  "paridad": {
+    "definicion_motor": {
+      "dispara": {
+        "evento": "carrito"
+      },
+      "entra": {
+        "permiso": "formulario"
+      },
+      "flujo": "carrito",
+      "horario": {
+        "desde": "09:00",
+        "hasta": "21:00",
+        "zona": "America/Mexico_City"
+      },
+      "nombre": "Carrito abandonado",
+      "pasos": [
+        {
+          "boton": {
+            "cupon": "personal",
+            "link": "checkout"
+          },
+          "idioma": "es_MX",
+          "plantilla": "att1_carrito_descuento_01",
+          "variables": [
+            "nombre",
+            "producto",
+            "cuando",
+            "precio",
+            "vence"
+          ]
+        },
+        {
+          "esperar": "24h"
+        },
+        {
+          "idioma": "es_MX",
+          "plantilla": "att1_carrito_dudas_01",
+          "variables": [
+            "nombre",
+            "producto"
+          ]
+        },
+        {
+          "esperar": "48h"
+        },
+        {
+          "boton": {
+            "cupon": "personal",
+            "link": "checkout"
+          },
+          "idioma": "es_MX",
+          "plantilla": "att1_ultima_renovacion_01",
+          "variables": [
+            "nombre",
+            "producto",
+            "vence"
+          ]
+        }
+      ],
+      "prioridad": {
+        "le_gana_a": [
+          "precheckout"
+        ],
+        "no_arranca_mientras": [
+          "pago_fallido"
+        ]
+      },
+      "termina": {
+        "si": [
+          "compra"
+        ],
+        "vence": "5d"
+      },
+      "topes": {
+        "bolsa": "att1-recuperacion",
+        "por_dia": 240,
+        "repeticion": {
+          "otra_despues_de": "0m",
+          "una_por": "persona_y_oferta"
+        },
+        "total": 5000
+      }
+    },
+    "definicion_nativa": {
+      "dispara": {
+        "evento": "carrito"
+      },
+      "entra": {
+        "permiso": "formulario"
+      },
+      "flujo": "carrito_nativo",
+      "horario": {
+        "desde": "09:00",
+        "hasta": "21:00",
+        "zona": "America/Mexico_City"
+      },
+      "nombre": "Carrito abandonado",
+      "pasos": [
+        {
+          "boton": {
+            "cupon": "personal",
+            "link": "checkout"
+          },
+          "idioma": "es_MX",
+          "plantilla": "att1_carrito_descuento_01",
+          "variables": [
+            "nombre",
+            "producto",
+            "cuando",
+            "precio",
+            "vence"
+          ]
+        },
+        {
+          "esperar": "24h"
+        },
+        {
+          "idioma": "es_MX",
+          "plantilla": "att1_carrito_dudas_01",
+          "variables": [
+            "nombre",
+            "producto"
+          ]
+        },
+        {
+          "esperar": "48h"
+        },
+        {
+          "boton": {
+            "cupon": "personal",
+            "link": "checkout"
+          },
+          "idioma": "es_MX",
+          "plantilla": "att1_ultima_renovacion_01",
+          "variables": [
+            "nombre",
+            "producto",
+            "vence"
+          ]
+        }
+      ],
+      "prioridad": {
+        "le_gana_a": [
+          "precheckout"
+        ],
+        "no_arranca_mientras": [
+          "pago_fallido"
+        ]
+      },
+      "termina": {
+        "si": [
+          "compra",
+          "contesta"
+        ],
+        "vence": "5d"
+      },
+      "topes": {
+        "bolsa": "att1-carrito-nativo",
+        "por_dia": 240,
+        "repeticion": {
+          "otra_despues_de": "0m",
+          "una_por": "persona_y_oferta"
+        },
+        "total": 5000
+      }
+    },
+    "motor": {
+      "business_windows": [
+        {
+          "days": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ],
+          "end": "21:00",
+          "start": "09:00"
+        }
+      ],
+      "expires_after": "120:00:00",
+      "grace_period": "00:00:00",
+      "max_automatic_messages": 3,
+      "purpose": "cart_recovery",
+      "steps": [
+        {
+          "mode": "freeform",
+          "step_key": "first_contact"
+        },
+        {
+          "approved_template": true,
+          "delay": "24 hours",
+          "mode": "freeform",
+          "step_key": "cart_second_touch"
+        },
+        {
+          "approved_template": true,
+          "coupon_ordinal": 2,
+          "delay": "72 hours",
+          "mode": "freeform",
+          "step_key": "cart_last_touch"
+        }
+      ],
+      "timezone": "America/Mexico_City"
+    },
+    "nativo": {
+      "business_windows": [
+        {
+          "days": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ],
+          "end": "21:00",
+          "start": "09:00"
+        }
+      ],
+      "expires_after": "120:00:00",
+      "grace_period": "00:00:00",
+      "max_automatic_messages": 3,
+      "purpose": "cart_recovery",
+      "steps": [
+        {
+          "coupon_ordinal": 1,
+          "mode": "freeform",
+          "step_key": "first_contact"
+        },
+        {
+          "approved_template": true,
+          "delay": "24 hours",
+          "mode": "freeform",
+          "step_key": "native_touch_2"
+        },
+        {
+          "approved_template": true,
+          "coupon_ordinal": 2,
+          "delay": "72 hours",
+          "mode": "freeform",
+          "step_key": "native_touch_3"
+        }
+      ],
+      "timezone": "America/Mexico_City"
+    }
+  },
+  "ruta_motor": {
+    "fuera_de_cohorte": "ya_en_curso",
+    "motor_otra_vez": "ya_en_curso",
+    "motor_sobre_nativo": "legado_rechazo:pilot_scope_rejected:flujo_nativo_en_curso",
+    "nativo_sobre_motor": "caso_del_legado_en_curso"
+  },
+  "scope_compartido": {
+    "carrito_en_curso_y_pago": {
+      "legado_pago": true,
+      "nativo_pago": true
+    },
+    "pago_legado_en_curso": {
+      "carrito_nativo": "caso_del_legado_en_curso",
+      "pago_nativo": "caso_del_legado_en_curso"
+    },
+    "pago_nativo_en_curso": {
+      "legado_del_carrito": "pilot_scope_rejected:flujo_nativo_en_curso",
+      "legado_del_pago": "pilot_scope_rejected:flujo_nativo_en_curso",
+      "otro_rechazo": "ya_en_curso",
+      "pausado": "flujo_pausado"
+    }
+  }
+}
