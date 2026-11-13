@@ -1413,6 +1413,13 @@ def check_definition(definition: object, *, published: bool = False,
         _check_trigger(out, definition["dispara"])
     if "para" in definition:
         _add_problems(out, check_para(definition["para"]))
+        para = definition["para"]
+        # E-483 (correccion de la revision, 2026-11-13): «compro» se mira en el producto del flujo en la lista,
+        # el armado y la admision de la base; un para.producto distinto diria otra cosa.
+        if isinstance(para, Mapping) and isinstance(para.get("producto"), str) \
+                and isinstance(definition.get("producto"), str) and para["producto"] != definition["producto"]:
+            out.add(INVALID_VALUE, ("para", "producto"),
+                    reason="para.producto es el producto del flujo: la compra se mira en ese producto.")
     if "ritmo" in definition:
         _add_problems(out, check_ritmo(definition["ritmo"]))
     if "entra" in definition:

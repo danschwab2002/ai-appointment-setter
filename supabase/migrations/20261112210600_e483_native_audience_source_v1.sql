@@ -212,6 +212,18 @@ as $function$
                 where purchase.tenant_ref = p_tenant_ref
                   and purchase.funnel_ref = p_funnel_ref
                   and (p_since is null or purchase.observed_at > p_since)
+                  -- Sin reembolso ni contracargo posterior de la misma transaccion (el criterio de
+                  -- _flow_audience_purchases de 20261112220000 y de get_customer_status_v1).
+                  and not exists (
+                      select 1
+                        from public.webhook_events approved
+                        join public.webhook_events reversal
+                          on reversal.source = 'hotmart'
+                         and reversal.event_type in ('PURCHASE_REFUNDED', 'PURCHASE_CHARGEBACK', 'PURCHASE_PROTEST')
+                         and reversal.payload #>> '{data,purchase,transaction}'
+                             = approved.payload #>> '{data,purchase,transaction}'
+                       where approved.id = purchase.webhook_event_id
+                         and nullif(approved.payload #>> '{data,purchase,transaction}', '') is not null)
                   and ((buyer.normalized_phone is not null
                         and buyer.normalized_phone = any(public._whatsapp_phone_variants(p_destination)))
                        or exists (
@@ -238,15 +250,19 @@ set search_path = pg_catalog, public, pg_temp
 as $function$
 declare
     v_permission text := p_definition #>> '{entra,permiso}';
-    v_days integer := 30;
+    v_days integer;
 begin
     -- e483_native_audience_reason (20261112210600)
     -- El permiso. Formulario: el formulario del producto con permiso de WhatsApp
     -- en la ventana para.formulario_en (30 dias por defecto), el criterio de la
     -- lista de E-484. Compra: una compra aprobada del producto de la persona.
     if v_permission = 'formulario' then
-        if coalesce(p_definition #>> '{para,formulario_en}', '') ~ '^[1-9][0-9]{0,2}d$' then
-            v_days := left(p_definition #>> '{para,formulario_en}', -1)::integer;
+        -- La regla de la lista (20261112220000) y del validador: de 1d a 365d, 30d sin la clave.
+        if coalesce(p_definition #>> '{para,formulario_en}', '30d') ~ '^[1-9][0-9]{0,2}d$' then
+            v_days := left(coalesce(p_definition #>> '{para,formulario_en}', '30d'), -1)::integer;
+        end if;
+        if v_days is null or v_days > 365 then
+            return 'no_entra:permiso';
         end if;
         if not exists (
             select 1 from public.purchase_intents intent

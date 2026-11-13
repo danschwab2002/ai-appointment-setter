@@ -216,3 +216,34 @@ def test_the_module_is_pure() -> None:
     for forbidden in ("import httpx", "import asyncio", "supabase", "datetime.now", "time.time"):
         assert forbidden not in source, forbidden
     assert copy.deepcopy(fa.AUDIENCE_FORMS) == ("fecha", "cada", "manual")
+
+
+# -- «Compro» del producto del flujo (correccion de la revision, 2026-11-13) --
+
+def test_para_producto_is_the_product_of_the_flow() -> None:
+    # La lista, el armado y la admision de la base miran la compra en el producto del flujo: un para.producto
+    # distinto diria otra cosa. Antes pasaba.
+    found = codes(difusion(producto="el-protocolo", entra={"permiso": "compra"},
+                           para={"es": "clienta", "producto": "otro"}))
+    assert (fd.INVALID_VALUE.code, "/para/producto") in found
+    same = codes(difusion(producto="el-protocolo", entra={"permiso": "compra"},
+                          para={"es": "clienta", "producto": "el-protocolo"}))
+    assert (fd.INVALID_VALUE.code, "/para/producto") not in same
+
+
+def test_without_para_producto_the_purchase_is_of_the_product_of_the_flow() -> None:
+    clientas = fa.audience_spec(difusion(producto="el-protocolo", dispara={"manual": {}}, entra={"permiso": "compra"},
+                                         para={"es": "clienta"}))
+    assert clientas.product == "el-protocolo"
+    members, omitted = fa.select_members(clientas, [
+        person(1, customer_products=frozenset({"el-protocolo"}), form_at=None),
+        person(2, customer_products=frozenset({"otro"}), form_at=None),
+    ], now=NOW)
+    assert [member.contact_id[-1] for member in members] == ["1"] and omitted == {"estado": 1}
+    # Una prospecta que compro otro producto sigue siendo prospecta de este.
+    prospectas = fa.audience_spec(difusion(producto="el-protocolo"))
+    members, omitted = fa.select_members(prospectas, [
+        person(1, customer_products=frozenset({"otro"})),
+        person(2, customer_products=frozenset({"el-protocolo"})),
+    ], now=NOW)
+    assert [member.contact_id[-1] for member in members] == ["1"] and omitted == {"estado": 1}

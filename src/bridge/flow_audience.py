@@ -324,7 +324,10 @@ def audience_spec(definition: Mapping[str, Any]) -> AudienceSpec:
     return AudienceSpec(
         form=form, zone=zone, at_local=at_local, weekdays=weekdays, hour=hour, since=since, until=until,
         status=status, permission=permission, labels=tuple(para.get("etiquetas", ())),
-        excluded=tuple(para.get("excluye", ())), product=para.get("producto"),
+        excluded=tuple(para.get("excluye", ())),
+        # «Compro» es del producto del flujo, como en la lista y la admision de la base (el validador exige
+        # para.producto igual al producto del flujo).
+        product=para.get("producto", definition.get("producto")),
         form_window_days=window, per_hour=per_hour, per_occurrence=per_occurrence,
         fingerprint=audience_fingerprint(definition),
     )

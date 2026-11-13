@@ -261,8 +261,13 @@ begin
     if v_status not in ('prospecta', 'clienta') then
         raise exception using errcode = '22023', message = 'flow_audience_status_invalid';
     end if;
-    v_window := coalesce(nullif(regexp_replace(coalesce(v_definition #>> '{para,formulario_en}', '30d'), 'd$', ''),
-                                '')::integer, 30);
+    -- para.formulario_en: la misma regla que el validador (flow_audience.form_window_days) y la admision
+    -- (20261112210600): de 1d a 365d, 30d sin la clave; otra cosa no es una ventana.
+    v_window := case when coalesce(v_definition #>> '{para,formulario_en}', '30d') ~ '^[1-9][0-9]{0,2}d$'
+                     then left(coalesce(v_definition #>> '{para,formulario_en}', '30d'), -1)::integer end;
+    if v_window is null or v_window > 365 then
+        raise exception using errcode = '22023', message = 'flow_audience_form_window_invalid';
+    end if;
 
     with purchases as (
         select p.funnel_ref, p.phone from public._flow_audience_purchases(v_tenant) p
@@ -277,11 +282,12 @@ begin
            and intent.submitted_at >= clock_timestamp() - make_interval(days => v_window)
          group by intent.normalized_phone
         union all
-        -- clienta: quien compro (del producto de para.producto, o de cualquiera de la instancia).
+        -- clienta: quien compro el producto del flujo (sin reembolso ni contracargo). El validador exige
+        -- para.producto igual al producto del flujo: «compro» es lo mismo en la lista, el armado y la admision.
         select purchase.phone, null::timestamptz
           from purchases purchase
          where v_status = 'clienta'
-           and (v_definition #>> '{para,producto}' is null or purchase.funnel_ref = v_definition #>> '{para,producto}')
+           and purchase.funnel_ref = v_product
          group by purchase.phone
     ),
     people as (
@@ -382,7 +388,13 @@ begin
     if v_permission not in ('formulario', 'compra') then
         raise exception using errcode = '22023', message = 'flow_audience_permission_invalid';
     end if;
-    v_window := coalesce(nullif(regexp_replace(coalesce(v_definition #>> '{para,formulario_en}', '30d'), 'd$', ''), '')::integer, 30);
+    -- para.formulario_en: la misma regla que el validador (flow_audience.form_window_days) y la admision
+    -- (20261112210600): de 1d a 365d, 30d sin la clave; otra cosa no es una ventana.
+    v_window := case when coalesce(v_definition #>> '{para,formulario_en}', '30d') ~ '^[1-9][0-9]{0,2}d$'
+                     then left(coalesce(v_definition #>> '{para,formulario_en}', '30d'), -1)::integer end;
+    if v_window is null or v_window > 365 then
+        raise exception using errcode = '22023', message = 'flow_audience_form_window_invalid';
+    end if;
     v_per_hour := coalesce((v_definition #>> '{ritmo,por_hora}')::integer, 200);
     v_per_occurrence := coalesce((v_definition #>> '{ritmo,por_ocurrencia}')::integer, 1000);
     -- La repeticion (topes.repeticion.otra_despues_de; DEFAULT_REVISAR_DAN 7d): nunca, o una duracion.
@@ -446,7 +458,8 @@ begin
             v_reason := 'sin_permiso';
         elsif v_permission = 'compra' and not exists (
             select 1 from public._flow_audience_purchases(v_tenant) p
-             where p.phone = any(public._whatsapp_phone_variants(v_phone))
+             where p.funnel_ref = v_product
+               and p.phone = any(public._whatsapp_phone_variants(v_phone))
         ) then
             v_reason := 'sin_permiso';
         elsif exists (

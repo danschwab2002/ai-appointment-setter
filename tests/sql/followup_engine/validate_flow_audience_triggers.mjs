@@ -13,6 +13,9 @@
 //      cambia ninguna otra ni su ACL, y correrla dos veces aborta;
 //   1. las lecturas del bridge: el flujo que corre y su audiencia posible (con el
 //      formulario en la ventana, la baja marcada, sin quien no dejo formulario);
+//   1b. una sola definicion de «compro» y del formulario en la lista y el armado:
+//      afuera el formulario sin permiso, viejo o de otro producto, la compra de
+//      otro producto y la reembolsada; formulario_en fuera de 1d a 365d no se lee;
 //   2. fecha: la lista nace confirmada, deja afuera la baja y a quien no dejo el
 //      formulario con permiso, y la misma ocurrencia no se arma dos veces;
 //   3. el ritmo: suelta a lo sumo por_hora en una hora, la hora siguiente el resto;
@@ -136,7 +139,7 @@ const snapshot = async (db) => new Map((await db.query(`
 // El mundo: ATT1 con personas reales de la cadena.
 // ---------------------------------------------------------------------------
 const world = await buildWorld();
-const { db, A, INSTANCE, register, cycle, versionItem, stateItem, cartFor, pauseFlow } = world;
+const { db, A, B, INSTANCE, register, cycle, versionItem, stateItem, cartFor, pauseFlow } = world;
 const sql = async (text, params = []) => (await db.query(text, params)).rows;
 const call = async (text, params) => JSON.parse(one(await sql(`select ${text}::text as r`, params), text).r);
 const rolledBack = async (run) => {
@@ -213,6 +216,93 @@ const asCustomer = await rolledBack(async () => {
 });
 if (JSON.stringify(asCustomer) !== JSON.stringify([A.funnel])) fail('la compra la vuelve clienta', asCustomer);
 results.lecturas.clienta = asCustomer;
+
+// ---------------------------------------------------------------------------
+// 1b. «Compro» y el formulario con una sola definicion (correccion de la
+//     revision, 2026-11-13): del producto del flujo, sin reembolso, y el
+//     formulario con permiso, en la ventana y del producto del flujo, en la
+//     lista y en el armado.
+// ---------------------------------------------------------------------------
+let reversalSerial = 0;
+const purchaseOf = async (lead, P, transaction) => {
+  const payload = { id: `audiencia-compra-${transaction}`, creation_date: Date.now(), event: 'PURCHASE_APPROVED',
+    version: '2.0.0', data: { buyer: { name: lead.name, email: lead.email, checkout_phone: `+${lead.phone}` },
+      product: { id: P.productId, name: P.productName },
+      purchase: { transaction, status: 'APPROVED', approved_date: Date.now(), offer: { code: P.offers[0].offer_code } } } };
+  const admitted = one(await sql('select * from public.admit_portable_hotmart_purchase_approved($1,$2,$3,$4,$5::jsonb,$6,$7)',
+    [P.tenant, P.funnel, P.bindingVersion, payload.id, JSON.stringify(payload), lead.email, lead.phone]), `compra ${transaction}`);
+  if (admitted.outcome !== 'inserted') fail(`la compra ${transaction}`, admitted);
+};
+// El reembolso como lo deja validate_customer_status.mjs: el evento de Hotmart con la misma transaccion.
+const reverse = async (transaction, eventType) => {
+  reversalSerial += 1;
+  await sql(`insert into public.webhook_events (source, external_event_id, event_type, payload, processing_status)
+    values ('hotmart', $1, $2, $3::jsonb, 'processed')`, [`audiencia-reversal-${reversalSerial}`, eventType,
+    JSON.stringify({ id: `audiencia-reversal-${reversalSerial}`, event: eventType, version: '2.0.0',
+      data: { product: { id: A.productId }, purchase: { transaction, status: eventType.slice(9) } } })]);
+};
+const listed = async () => Object.fromEntries((await call(
+  'public.read_flow_audience_candidates_v1($1::jsonb, $2::uuid, 1, 100)', [JSON.stringify(INSTANCE), flowId]))
+  .candidates.map((c) => [c.contact_id, c]));
+const reasonsOf = async (occurrence) => Object.fromEntries((await sql(`select m.contact_id::text, m.omit_reason, m.state
+    from public.flow_audience_members m where m.occurrence_id = $1`, [occurrence])).map((r) => [r.contact_id, r.omit_reason ?? r.state]));
+results.una_definicion = await rolledBack(async () => {
+  // prospecta: lo que queda afuera del formulario.
+  const sinPermiso = await cartFor('audiencia-sin-permiso-wa');
+  await sql(`update public.purchase_intents set whatsapp_contact_authorized = false
+    where tenant_ref = $1 and normalized_phone = any(public._whatsapp_phone_variants($2))`, [A.tenant, sinPermiso.phone]);
+  const vieja = await cartFor('audiencia-formulario-viejo');
+  await sql(`update public.purchase_intents set submitted_at = now() - interval '31 days'
+    where tenant_ref = $1 and normalized_phone = any(public._whatsapp_phone_variants($2))`, [A.tenant, vieja.phone]);
+  const otroProducto = await cartFor('audiencia-formulario-otro', { P: B });
+  const prospects = await listed();
+  const prospecta = {
+    sin_permiso: Boolean(prospects[sinPermiso.contact]), vieja: Boolean(prospects[vieja.contact]),
+    otro_producto: Boolean(prospects[otroProducto.contact]), ana: Boolean(prospects[ana.contact]),
+  };
+  const built = await materialize('fecha:2026-12-02T16:00Z', [member(sinPermiso), member(vieja), member(otroProducto), member(ana)]);
+  const builtReasons = await reasonsOf(built.occurrence_id);
+  prospecta.armado = [builtReasons[sinPermiso.contact], builtReasons[vieja.contact], builtReasons[otroProducto.contact],
+    builtReasons[ana.contact]];
+  if (JSON.stringify(prospecta) !== JSON.stringify({ sin_permiso: false, vieja: false, otro_producto: false, ana: true,
+    armado: ['sin_permiso', 'sin_permiso', 'sin_permiso', 'pendiente'] })) fail('el formulario, una sola definicion', prospecta);
+
+  // clienta: la misma version del flujo, leida como una difusion a clientas.
+  // flow_definitions es inmutable (reject_flow_store_mutation): el cambio vive solo en esta transaccion.
+  await db.exec('alter table public.flow_definitions disable trigger user');
+  await sql(`update public.flow_definitions set definition = jsonb_set(jsonb_set(definition, '{para}',
+    '{"es": "clienta"}'::jsonb), '{entra,permiso}', '"compra"'::jsonb) where flow_id = $1 and version = 1`, [flowId]);
+  const otra = await cartFor('audiencia-compro-otro');
+  await purchaseOf(otra, B, 'HPAUDOTRO01');
+  const reembolsada = await cartFor('audiencia-reembolsada');
+  await purchaseOf(reembolsada, A, 'HPAUDREEMB1');
+  await reverse('HPAUDREEMB1', 'PURCHASE_REFUNDED');
+  const clienta = await cartFor('audiencia-clienta');
+  await purchaseOf(clienta, A, 'HPAUDCLIEN1');
+  const customers = await listed();
+  const out = { otro_producto: Boolean(customers[otra.contact]), reembolsada: Boolean(customers[reembolsada.contact]),
+    clienta: Boolean(customers[clienta.contact]) };
+  const customerBuilt = await materialize('fecha:2026-12-03T16:00Z', [member(otra), member(reembolsada), member(clienta)]);
+  const customerReasons = await reasonsOf(customerBuilt.occurrence_id);
+  out.armado = [customerReasons[otra.contact], customerReasons[reembolsada.contact], customerReasons[clienta.contact]];
+  if (JSON.stringify(out) !== JSON.stringify({ otro_producto: false, reembolsada: false, clienta: true,
+    armado: ['sin_permiso', 'sin_permiso', 'pendiente'] })) fail('compro, una sola definicion', out);
+
+  // formulario_en fuera de la regla del validador (366d): ni la lista ni el armado la leen.
+  await sql(`update public.flow_definitions set definition = jsonb_set(jsonb_set(definition, '{para}',
+    '{"es": "prospecta", "formulario_en": "366d"}'::jsonb), '{entra,permiso}', '"formulario"'::jsonb)
+    where flow_id = $1 and version = 1`, [flowId]);
+  const windowError = async (run) => { try { await run(); return null; } catch (error) { return error.message; } };
+  await db.exec('savepoint ventana');
+  const listError = await windowError(() => listed());
+  await db.exec('rollback to savepoint ventana');
+  const buildError = await windowError(() => materialize('fecha:2026-12-04T16:00Z', [member(ana)]));
+  await db.exec('rollback to savepoint ventana');
+  if (listError !== 'flow_audience_form_window_invalid' || buildError !== 'flow_audience_form_window_invalid') {
+    fail('formulario_en con la regla del validador', { listError, buildError });
+  }
+  return { prospecta, clienta: out, ventana_366d: listError };
+});
 
 // ---------------------------------------------------------------------------
 // 2. fecha: la lista congelada.

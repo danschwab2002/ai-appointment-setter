@@ -33,7 +33,9 @@
 //   5. no se mezcla: otro flujo de audiencia del mismo producto no recibe nada;
 //      un evento con otra version, otro tipo u otro flujo es sin_flujo;
 //   6. clientas (permiso compra): quien compro entra y su compra de antes no la
-//      corta; quien no compro, no_entra:permiso.
+//      corta; quien no compro, no_entra:permiso;
+//   7. una sola definicion: reembolsada, compra de otro producto, formulario sin
+//      permiso, viejo o de otro producto y formulario_en 366d no entran.
 import { PGlite } from '@electric-sql/pglite';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -131,7 +133,7 @@ const previousDefinitions = {};
 // El mundo.
 // ---------------------------------------------------------------------------
 const world = await buildWorld();
-const { db, A, A2, INSTANCE, person, admitForm, register, cycle, versionItem, reserve, startNew, accept, dbNow,
+const { db, A, A2, B, INSTANCE, person, admitForm, register, cycle, versionItem, reserve, startNew, accept, dbNow,
   cartFor } = world;
 const sql = async (text, params = []) => (await db.query(text, params)).rows;
 await db.exec('alter role service_role bypassrls');
@@ -425,6 +427,71 @@ const bea = await lead('audiencia-bea');
   const mark = await startNew(reserved);
   if (mark.outcome !== 'request_started') fail('el envio de Julia', mark);
   results.clientas = { compro: started.outcome, no_compro: refused.reason, envio: mark.outcome };
+}
+
+// ---------------------------------------------------------------------------
+// 7. «Compro» y el formulario con la definicion de la lista (correccion de la
+//    revision, 2026-11-13): una compra reembolsada o de otro producto no es
+//    permiso compra; formulario_en fuera de 1d a 365d no es una ventana; el
+//    formulario sin permiso de WhatsApp, viejo o de otro producto no entra.
+// ---------------------------------------------------------------------------
+{
+  const reversed = async (transaction) => sql(`insert into public.webhook_events
+      (source, external_event_id, event_type, payload, processing_status) values ('hotmart', $1, 'PURCHASE_REFUNDED', $2::jsonb, 'processed')`,
+  [`audiencia-reembolso-${transaction}`, JSON.stringify({ id: `audiencia-reembolso-${transaction}`, event: 'PURCHASE_REFUNDED',
+    version: '2.0.0', data: { product: { id: A.productId }, purchase: { transaction, status: 'REFUNDED' } } })]);
+  const lia = await lead('audiencia-lia', { form: false });
+  await buys(lia);
+  await reversed(`HPAUDIENCIA${lia.contact.replace(/-/g, '').slice(0, 8).toUpperCase()}`);
+  const refunded = await admitOne(await eventOf(lia, clientFlow, OCCURRENCE, { tipo: 'cada' }), 'Lia');
+  if (refunded.outcome !== 'motor_no_arranca' || refunded.reason !== 'no_entra:permiso') fail('Lia, reembolsada', refunded);
+
+  // Otro producto: la compra de B (att9, el otro producto de la instancia) no es una compra de A.
+  const mora = await lead('audiencia-mora', { form: false });
+  const payload = structuredClone(PURCHASE);
+  payload.id = `audiencia-compra-b-${mora.email}`;
+  payload.data.buyer = { ...payload.data.buyer, name: mora.name, email: mora.email, checkout_phone: mora.phone };
+  payload.data.product = { ...payload.data.product, id: B.productId, name: B.productName };
+  payload.data.purchase.offer.code = B.offers[0].offer_code;
+  payload.data.purchase.transaction = 'HPAUDIENCIAB0001';
+  const admittedB = one(await sql('select * from public.admit_portable_hotmart_purchase_approved($1,$2,$3,$4,$5::jsonb,$6,$7)',
+    [B.tenant, B.funnel, B.bindingVersion, payload.id, JSON.stringify(payload), mora.email, mora.phone]), 'Mora compra B');
+  if (admittedB.outcome !== 'inserted') fail('Mora: la compra de B', admittedB);
+  const other = await admitOne(await eventOf(mora, clientFlow, OCCURRENCE, { tipo: 'cada' }), 'Mora');
+  if (other.outcome !== 'motor_no_arranca' || other.reason !== 'no_entra:permiso') fail('Mora compro otro producto', other);
+
+  // El formulario: sin permiso de WhatsApp, de hace mas de 30 dias, de otro producto.
+  const variantsUpdate = async (p, set) => sql(`update public.purchase_intents set ${set}
+    where tenant_ref = $1 and normalized_phone = any(public._whatsapp_phone_variants($2))`, [A.tenant, p.phone]);
+  const noWa = await lead('audiencia-sin-wa');
+  await variantsUpdate(noWa, 'whatsapp_contact_authorized = false');
+  const old = await lead('audiencia-vieja');
+  await variantsUpdate(old, "submitted_at = now() - interval '31 days'");
+  const otherForm = await lead('audiencia-otro-form');
+  await variantsUpdate(otherForm, `funnel_ref = '${B.funnel}'`);
+  const forms = {};
+  for (const p of [noWa, old, otherForm]) {
+    const row = await admitOne(await eventOf(p, audFlow, randomUUID()), p.label);
+    forms[p.label] = row.reason;
+  }
+  if (Object.values(forms).some((reason) => reason !== 'no_entra:permiso')) fail('el formulario que no entra', forms);
+
+  // formulario_en: 366d no es una ventana (antes entraba con 366 dias).
+  const nora = await lead('audiencia-nora');
+  await db.exec('begin');
+  let window366;
+  try {
+    // flow_definitions es inmutable (reject_flow_store_mutation): el cambio vive solo en esta transaccion.
+    await db.exec('alter table public.flow_definitions disable trigger user');
+    await sql(`update public.flow_definitions set definition = jsonb_set(definition, '{para,formulario_en}', '"366d"'::jsonb)
+      where flow_id = $1 and version = 1`, [audFlow]);
+    window366 = await admitOne(await eventOf(nora, audFlow, randomUUID()), 'Nora');
+  } finally {
+    await db.exec('rollback');
+  }
+  if (window366.outcome !== 'motor_no_arranca' || window366.reason !== 'no_entra:permiso') fail('formulario_en 366d', window366);
+  results.una_definicion = { reembolsada: refunded.reason, otro_producto: other.reason, formularios: Object.values(forms),
+    formulario_en_366d: window366.reason };
 }
 
 console.log(JSON.stringify(results, null, 2));
