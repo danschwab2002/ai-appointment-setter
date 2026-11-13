@@ -12,7 +12,7 @@ Cargala cuando no sabés si un aviso de Hotmart existe, cómo llega o qué dispa
 - `compra` (Hotmart `PURCHASE_APPROVED`): dispara un flujo del sistema nuevo, después de cortar lo que la persona tenía abierto.
 - `carrito` (Hotmart `PURCHASE_OUT_OF_SHOPPING_CART`): el carrito abandonado.
 - `pago_fallido` (Hotmart `PURCHASE_CANCELED` con un método de la tabla de configuración de la instancia): el pago rechazado.
-- `ficha_impresa` (Hotmart `PURCHASE_BILLET_PRINTED`) y `ficha_vencida` (Hotmart `PURCHASE_EXPIRED`): la ficha de pago (OXXO y parecidos), se guarda para su seguimiento.
+- `ficha_impresa` (Hotmart `PURCHASE_BILLET_PRINTED`) y `ficha_vencida` (Hotmart `PURCHASE_EXPIRED`): la ficha de pago (OXXO y parecidos), se guarda para su seguimiento. `ficha_impresa` dispara la ficha del sistema nuevo si la cuenta la tiene prendida (guía `crear-un-flujo`); ahí `ficha_vencida` corta el recorrido cuando pasa el día en que vence la ficha.
 - `intencion` (el formulario de GHL o de la landing): el primer contacto.
 
 **Cómo llega.** Hotmart manda un webhook por evento a `POST /webhooks/hotmart` del bridge, en la versión 2.0.0 del formato (`src/bridge/hotmart.py`, `EVENT_VERSION`). El bridge lo guarda en la base y el worker lo procesa después.

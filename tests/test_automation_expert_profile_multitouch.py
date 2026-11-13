@@ -76,3 +76,19 @@ def test_moving_a_legacy_flow_of_several_messages_has_no_double_messages() -> No
     positions = [block.index(step) for step in steps]
     assert positions == sorted(positions)
     assert "el que ya empezó sigue" in block and "no sale un mensaje doble" in block
+
+
+def test_the_native_payment_slip_is_written_in_the_guides() -> None:
+    """E-531 (E-528, C4): la ficha nativa, con su flag, su forma exacta y lo que no corta."""
+    text = _skill("crear-un-flujo")
+    how = text.split("## Qué hace hoy y cómo se escribe", 1)[1]
+    line = next(x for x in how.splitlines() if "{evento: ficha_impresa}" in x)
+    for needed in ("`FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED`", "termina: {si: [compra, ficha_vencida], vence: 4d}",
+                   '{esperar: {vencimiento: {dias_antes: 0, a_las: "09:00"}}}', "`boton: {link: ficha}`",
+                   "`medio_de_pago`", "`vencimiento`", "sin `contesta`", "nunca `ficha`"):
+        assert needed in line, needed
+    # Ya no se dice que la ficha sigue solo en el sistema anterior.
+    assert "(la ficha de pago, la reactivación;" not in text
+    assert "**Todavía no hace** la ficha de pago ni la reactivación" not in text
+    assert "**La ficha de pago**" in _skill("pasar-flujo-al-sistema-nuevo")
+    assert "`vencimiento`" in _skill("pedir-plantilla-a-meta")
