@@ -1,0 +1,65 @@
+{
+  "_capture": {
+    "source": "tests/sql/followup_engine/validate_automation_expert_native_reads.mjs --emit-fixture",
+    "migration": "20261025000100_automation_expert_native_reads_v1.sql",
+    "note": "la salida real de la funcion sobre la cadena de migraciones en PGlite, datos sinteticos"
+  },
+  "value": {
+    "dias": [
+      {
+        "dia": "2026-11-12",
+        "flujo": "bienvenida",
+        "ventas": 1,
+        "ejecutor": "motor",
+        "aceptados": 1
+      }
+    ],
+    "flujos": [
+      {
+        "flujo": "bienvenida",
+        "envios": 1,
+        "ventas": 1,
+        "ejecutor": "motor",
+        "por_caso": 0,
+        "por_link": 0,
+        "aceptados": 1,
+        "por_identidad": 1
+      }
+    ],
+    "ventas": [
+      {
+        "via": "identidad",
+        "pago": "CASHPAYMENT",
+        "pais": "MX",
+        "fecha": "2026-11-12",
+        "flujo": "bienvenida",
+        "venta": "61a197",
+        "moneda": "MXN",
+        "precio": 893.25,
+        "momento": "2026-11-12T23:27:08Z",
+        "ejecutor": "motor",
+        "neto_usd": 39.08,
+        "horas_desde_toque": 1
+      }
+    ],
+    "compras": [
+      {
+        "n": 1,
+        "via": "fuera_de_ventana"
+      },
+      {
+        "n": 1,
+        "via": "identidad"
+      }
+    ],
+    "ventana": {
+      "tz": "America/Mexico_City",
+      "desde": "2026-11-10T23:27:08Z",
+      "hasta": "2026-11-13T23:27:08Z",
+      "regla": "venta_recuperada_v1",
+      "piso_min": 15,
+      "ventana_dias": 7
+    },
+    "campanas": []
+  }
+}

@@ -155,6 +155,8 @@ def test_it_is_one_transaction_and_comes_before_the_motor() -> None:
         "20261110000500_campaign_offer_checkout_issuance_v1.sql",
         "20261111000100_close_recovery_case_without_pending_touch_v1.sql",
         "20261111000200_pending_cancel_keeps_first_contact_v1.sql",
+        # Los numeros del tablero (20261112200000, E-507): una lectura nueva.
+        "20261112200000_read_results_v1.sql",
     ]
     for later in names[position + 1:]:
         if later != reads:

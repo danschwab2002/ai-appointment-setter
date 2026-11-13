@@ -149,7 +149,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026102500020
   // La oferta de la campana en el link del agente (20261110000500, E-410).
   '20261110000500_campaign_offer_checkout_issuance_v1.sql',
   '20261111000100_close_recovery_case_without_pending_touch_v1.sql',
-  '20261111000200_pending_cancel_keeps_first_contact_v1.sql'])) {
+  '20261111000200_pending_cancel_keeps_first_contact_v1.sql',
+  // Los numeros del tablero (20261112200000, E-507): una lectura nueva.
+  '20261112200000_read_results_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la del btrim del nombre del producto`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(
@@ -445,6 +447,80 @@ const buyer = person('lecturas-cohorte');
   const everyone = await control(WELCOME.flow);
   if (everyone.state !== 'prendido') fail('prender sin a sigue llevando a prendido', everyone);
   results.prender_a_cohorte = { pausado: 'cohorte', sin_a: everyone.state, a_otro: wrong.message };
+}
+
+// ---------------------------------------------------------------------------
+// 6. read_results_v1 (20261112200000, E-507): los numeros del tablero.
+// La misma persona de 1: un envio aceptado de la bienvenida y otra compra
+// despues. Es de la cohorte, asi que es una prueba y no cuenta (rojo a
+// proposito); sin la cohorte y con el envio una hora antes, cuenta por
+// identidad, con la comision PRODUCER en USD del payload capturado (39.08).
+// ---------------------------------------------------------------------------
+{
+  const RESULTS_MIGRATION = '20261112200000_read_results_v1.sql';
+  if (!names.includes(RESULTS_MIGRATION)) fail(`${RESULTS_MIGRATION} no esta en la cadena`);
+  const window = async (extra = {}) => {
+    const p = { desde: new Date(Date.now() - 2 * 86_400_000).toISOString(),
+      hasta: new Date(Date.now() + 86_400_000).toISOString(), tz: 'America/Mexico_City', pruebas: [],
+      dias: 7, piso: 15, ...extra };
+    return asRole('service_role', async () => one((await db.query(
+      'select public.read_results_v1($1::timestamptz, $2::timestamptz, $3, $4::text[], $5, $6) as r',
+      [p.desde, p.hasta, p.tz, p.pruebas, p.dias, p.piso])).rows, 'read_results_v1').r);
+  };
+  // Con la cohorte: la persona es prueba, ninguna venta.
+  const cohort = await window();
+  const viaPrueba = cohort.compras.find((row) => row.via === 'prueba');
+  if (cohort.ventas.length !== 0 || !viaPrueba || viaPrueba.n !== 2) fail('la cohorte cuenta como prueba', cohort);
+  // Sin la cohorte y con el envio una hora antes de la compra: venta por identidad.
+  const counted = await rolledBack(async () => {
+    await sql('delete from public.flow_cohort_members');
+    await sql("update public.followup_delivery_attempts set accepted_at = accepted_at - interval '1 hour', "
+      + "request_started_at = request_started_at - interval '1 hour' where action_id = $1", [WELCOME.action]);
+    // La compra que arranco el recorrido queda antes del envio (no se vendio por el).
+    await sql("update public.webhook_events set received_at = received_at - interval '2 hours' where id = $1",
+      [WELCOME.trigger]);
+    return window();
+  });
+  emitted.rpc_read_results = counted;
+  const sale = one(counted.ventas, 'la venta');
+  const flow = one(counted.flujos.filter((row) => row.flujo === 'bienvenida'), 'el flujo');
+  if (sale.via !== 'identidad' || sale.flujo !== 'bienvenida' || sale.ejecutor !== 'motor'
+      || Number(sale.neto_usd) !== 39.08 || sale.moneda !== 'MXN' || sale.pais !== 'MX'
+      || sale.venta.length !== 6 || flow.ventas !== 1 || flow.por_identidad !== 1 || flow.aceptados !== 1) {
+    fail('la venta por identidad', counted);
+  }
+  // El mismo envio con el prefijo del contacto en p_pruebas: vuelve a ser prueba.
+  const byPrefix = await rolledBack(async () => {
+    await sql('delete from public.flow_cohort_members');
+    await sql("update public.followup_delivery_attempts set accepted_at = accepted_at - interval '1 hour' "
+      + 'where action_id = $1', [WELCOME.action]);
+    return window({ pruebas: [buyer.contact.slice(0, 8)] });
+  });
+  if (byPrefix.ventas.length !== 0) fail('el prefijo de prueba no excluyo la venta', byPrefix);
+  // Bajo el piso: la compra a menos de 15 minutos del envio no cuenta.
+  const underFloor = await rolledBack(async () => {
+    await sql('delete from public.flow_cohort_members');
+    return window();
+  });
+  if (underFloor.ventas.length !== 0 || !underFloor.compras.some((row) => row.via === 'bajo_piso')) {
+    fail('la compra bajo el piso conto', underFloor);
+  }
+  const text = JSON.stringify(counted);
+  if (text.includes(buyer.contact) || text.includes(buyer.email) || text.includes(buyer.phone)
+      || text.includes(buyer.name)) {
+    fail('read_results_v1 trae datos de una persona');
+  }
+  // Los parametros fuera de rango dan 22023; solo service_role la ejecuta.
+  const empty = await expectError(db, 'ventana vacia', () => window({ hasta: new Date(Date.now() - 3 * 86_400_000).toISOString() }),
+    { code: '22023' });
+  const zone = await expectError(db, 'zona desconocida', () => window({ tz: 'Marte/Olympus' }), { code: '22023' });
+  const prefix = await expectError(db, 'prefijo malo', () => window({ pruebas: ["x' or 1=1"] }), { code: '22023' });
+  const grants = one(await sql(`select has_function_privilege('service_role', p.oid, 'execute') s,
+      has_function_privilege('anon', p.oid, 'execute') a, has_function_privilege('authenticated', p.oid, 'execute') u
+    from pg_proc p where p.oid = to_regprocedure('public.read_results_v1(timestamptz,timestamptz,text,text[],integer,integer)')`), 'permisos');
+  if (!grants.s || grants.a || grants.u) fail('read_results_v1 es solo de service_role', grants);
+  results.resultados = { cohorte: viaPrueba.n, identidad: sale.via, neto_usd: sale.neto_usd,
+    errores: [empty.code, zone.code, prefix.code] };
 }
 
 if (EMIT) {

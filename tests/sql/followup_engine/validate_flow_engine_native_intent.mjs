@@ -146,7 +146,9 @@ if (JSON.stringify(names.slice(names.indexOf(MIGRATION) + 1)) !== JSON.stringify
   // La oferta de la campana en el link del agente (20261110000500, E-410).
   '20261110000500_campaign_offer_checkout_issuance_v1.sql',
   '20261111000100_close_recovery_case_without_pending_touch_v1.sql',
-  '20261111000200_pending_cancel_keeps_first_contact_v1.sql'])) {
+  '20261111000200_pending_cancel_keeps_first_contact_v1.sql',
+  // Los numeros del tablero (20261112200000, E-507): una lectura nueva.
+  '20261112200000_read_results_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la del seguimiento a 24 h nativo`, names.slice(-3));
 }
 if (maribel.name !== 'maribel_retomar_proceso_01') fail('el fixture no es la plantilla de Maribel');

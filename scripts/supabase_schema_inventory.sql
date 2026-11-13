@@ -6936,6 +6936,23 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         1,
         'pending_cancel_keeps_first_contact'
+    union all
+    select
+        '20261112200000',
+        '20261112200000_read_results_v1.sql',
+        -- Los numeros del tablero (E-507): una lectura de solo service_role.
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.read_results_v1(timestamptz,timestamptz,text,text[],integer,integer)')
+              and prosecdef
+              and position('venta_recuperada_v1' in definition) > 0
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        1,
+        'read_results'
 )
 select
     version,
