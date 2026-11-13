@@ -44,8 +44,10 @@
 //      misma fila salvo las diferencias con nombre (las fija
 //      tests/test_e483_native_legacy_double_case_touches.py contra la captura).
 //
-// Con --emit escribe tests/fixtures/flow_engine/native_legacy_double_case_touches_rows.json;
-// con --check (el de npm test) lo compara y falla si difiere.
+// Con --emit escribe tests/fixtures/flow_engine/native_legacy_double_case_touches_rows.json (lo que
+// contesta la base, y el contexto del toque 2 del carrito y del de la rama del banco del pago rechazado,
+// como los lee el bridge, para el despacho entero de tests/test_e483_native_dispatch_due.py); con --check
+// (el de npm test) lo compara y falla si difiere.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildWorld, errorOf, fail, one, root } from './validate_flow_engine_motor_v1.mjs';
@@ -120,8 +122,11 @@ const COUPON = { link: 'checkout', cupon: 'PROTOCOLO10' };
 const b1 = (branch, coupon) => ({ plantilla: `maribel_pago_rechazado_${branch}_01`, idioma: 'es_MX',
   variables: ['nombre', 'producto'], boton: coupon ? { ...COUPON } : { link: 'checkout' } });
 const follow = (template) => ({ plantilla: template, idioma: 'es_MX', variables: ['nombre', 'producto'] });
+// El seguimiento de cada rama con una plantilla que entra en un toque siguiente nativo (nombre y producto, sin
+// boton): B2 y Z de ATT1 tal como estan aprobadas no entran todavia (test_e483_native_condition_after_send.py).
+// Sin cupon, la de Maribel; con cupon, A2 de ATT1: dos plantillas distintas para ver que sale la de la rama.
 const payPath = (branch, coupon) => [b1(branch, coupon), { esperar: '24h' },
-  follow(coupon ? 'att1_ultima_renovacion_01' : 'att1_pago_rechazado_descuento_01')];
+  follow(coupon ? 'att1_carrito_dudas_01' : 'maribel_retomar_proceso_01')];
 const PAY = {
   esquema: 'setter-flujo/v1', flujo: 'pago_rechazado_nativo', producto: A.funnel, estado: 'borrador',
   nombre: 'Pago rechazado nativo', dispara: { evento: 'pago_fallido' }, entra: { permiso: 'formulario', contesto_a: [] },
@@ -151,6 +156,9 @@ const admitCart = async (lead) => admitEvent(cartFlow, {
   contacto_id: lead.contact, momento: lead.cartArgs[6], chatwoot: { account_id: A.accountId, inbox_id: A.inboxId },
   destino: lead.phone,
 });
+// El contexto de un paso como lo lee el bridge (flow_engine_execution_context_v1), con el flow_id tapado.
+const contextOf = async (actionId) => ({ ...one((await asService(async () => (await db.query(
+  'select * from public.flow_engine_execution_context_v1($1)', [actionId])).rows)), 'contexto'), flow_id: '<flow_id>' });
 const casesOf = async (lead) => sql(`select id, status, policy_key, context ->> 'flow_engine_trigger' as trigger
   from public.recovery_cases where contact_id = $1 order by created_at`, [lead.contact]);
 const pendingOf = async (caseId, stepKey) => one(await sql(`select * from public.scheduled_actions
@@ -219,6 +227,9 @@ let nativeRunner = null;
   const touch2 = await pendingOf(start.recovery_case_id, 'native_touch_2');
   const status = one(await sql('select status from public.recovery_cases where id = $1', [start.recovery_case_id]), 'caso').status;
   if (status !== 'active') fail('con el toque 2 esperando el caso nativo esta active', status);
+  // El toque 2 del carrito (A2) como lo lee el bridge: para el despacho entero de tests/test_e483_native_dispatch_due.py.
+  emitted.carrito_toque_2_context = await contextOf(touch2.id);
+  if (emitted.carrito_toque_2_context.template_name !== A2.plantilla) fail('el contexto de A2', emitted.carrito_toque_2_context);
   await cartFor(bea);
   const again = await admitCart(bea);
   if (again.reason !== 'ya_en_curso') fail('el nativo en curso contesta ya_en_curso', again);
@@ -372,7 +383,12 @@ let nativeRunner = null;
     if (recorded.outcome !== 'recorded') fail('la rama de B1', recorded);
     if ((await startNew(reserved)).outcome !== 'request_started') fail('el arranque de B1 nativo');
     await accept(eva, reserved);
-    await pendingOf(start.recovery_case_id, 'native_touch_2');
+    const payTouch2 = await pendingOf(start.recovery_case_id, 'native_touch_2');
+    // El toque 2 de la rama elegida (banco: B1 sin cupon y su seguimiento), para el despacho entero.
+    emitted.pago_toque_2_context = { rama: branch, ...(await contextOf(payTouch2.id)) };
+    if (branch !== 3 || emitted.pago_toque_2_context.template_name !== 'maribel_retomar_proceso_01') {
+      fail('el toque 2 de la rama del banco', emitted.pago_toque_2_context);
+    }
     // Otro rechazo de la persona: el nativo lo suma (ya_en_curso; el bridge deja el evento processed, sin el legado).
     await refusal(eva, 2);
     const payAgain = await admitPay(eva);
