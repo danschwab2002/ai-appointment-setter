@@ -664,6 +664,15 @@ Para prender: depende del número verificado (guía §4.1 a §4.3) y de la ruta 
 - Un mensaje cualquiera desde un teléfono de prueba entra al inbox y deja en el log del bridge `chatwoot_webhook_ignored reason=sender_not_allowed` (y no `invalid_signature`): con el entrante apagado no pasa nada más. En ATT1, el 2026-10-04 a las 23:05Z.
 - La asignación automática del inbox figura apagada y el team de derivaciones tiene un solo miembro.
 
+### El correlador que decide solo (día 0, desde E-536)
+
+Es parte del alta por defecto de toda instancia, junto con los flujos de base (decisión de Dan del 13/11): cuando una persona compra con otro mail o teléfono que el del formulario, el carrito en conflicto se ata solo a su formulario con permiso y sigue su flujo, o se le pregunta con la plantilla `[plantillas].identidad` ([identity-link-decider-v1.md](contracts/identity-link-decider-v1.md)). El código lo trae apagado; el alta lo prende **directo en `vivo`** (sin semana de sombra, D6):
+
+1. En `instancia.toml`, `[plantillas].identidad` con el nombre de la plantilla aprobada en Meta (`<aliada>_compra_iniciada_01`; la definición está en [referencia-manifiesto.md](referencia-manifiesto.md)). Mientras Meta no la apruebe, se prende solo el bloque A (sin `IDENTITY_LINK_ASK_ENABLED`).
+2. En `bridge.env`: `IDENTITY_LINK_MODE=vivo`, `IDENTITY_LINK_COUNTRY_CODE_FIX_ENABLED=true` (D3) y, con la plantilla aprobada, `IDENTITY_LINK_ASK_ENABLED=true`. Usa la conexión del modelo del pre-resolutor (`HERMES_API_BASE_URL`, su clave y `CORRELATION_PRERESOLUTION_MODEL_NAME`, que por defecto es el modelo del agente). Los avisos van al canal de alertas de la aliada por el conector de Slack (paso 14).
+3. La segunda llave, en la base: `select public.enable_identity_link_v1('<tenant_ref>', '<funnel_ref>', '<quien>', '<motivo>');` (el corte: no se reabren los conflictos anteriores).
+4. Verificación por presencia: `/ready` con `identity_link: vivo`, y el primer conflicto de carrito con su fila en `identity_link_decisions` y su aviso `IDL-001` en el canal.
+
 ## 17. Prender los flujos de a uno
 
 **El orden:** primero `inbound`, siempre, antes que cualquier plantilla. **El primer flujo de salida es el que reemplaza lo que ya le escribe a los leads**, elegido por su disparador real y no por su nombre (en ATT1, `carrito`; en Maribel, `precheckout`, porque su «carrito» de GHL dispara con el formulario); si no corre nada y hay formularios de GHL, `carrito`. Después, el resto, de a uno. Sin formularios de GHL, solo se prende `inbound`. El porqué y lo que se copia del flujo que ya corre están en la guía, §8.3. Las secciones de abajo van por flujo, no en el orden en que se prenden. Cada flujo: `true` en el manifiesto (PR en el repo de la instancia), sus flags en `bridge.env`, el redeploy, una prueba controlada y la medición del efecto antes de pasar al siguiente. Desde acá `chequear.sh` deja de terminar en `INSTALADA`: lo que antes era `SALIDA` es lo que se prendió a propósito. El paso a paso con los comandos de la instancia está en `despliegue/camino-a-produccion.md`.

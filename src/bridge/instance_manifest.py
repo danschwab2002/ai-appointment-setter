@@ -96,6 +96,11 @@ _FIXED_TEMPLATE_URL = re.compile(r"https://[^\s{}#\"'<>]+")
 TEMPLATE_SLOTS = (
     "precheckout", "carrito", "pago_fallido", "reactivacion", "descuento", "ficha",
     "ficha_vence_manana", "ficha_vence_hoy",
+    # E-536 (identity-link-decider-v1, bloque B): la pregunta del correlador que
+    # decide solo («compra iniciada»), con dos respuestas rapidas, «Sí, fui yo» y
+    # «No más mensajes». Parte del alta por defecto de una instancia (decision de
+    # Dan del 13/11); la usa solo IDENTITY_LINK_ASK_ENABLED.
+    "identidad",
 )
 # Los recordatorios del vencimiento de la ficha (C2 y C3,
 # docs/contracts/portable-payment-slip-reminders-v1.md): siguen a C1, asi que
@@ -109,7 +114,7 @@ PAYMENT_SLIP_REMINDER_SLOTS = ("ficha_vence_manana", "ficha_vence_hoy")
 TEMPLATE_PARAMETERS = ("nombre", "producto")
 DEFAULT_TEMPLATE_PARAMETERS = ("nombre", "producto")
 PARAMETERIZED_TEMPLATE_SLOTS = (
-    "precheckout", "carrito", "pago_fallido", "ficha", *PAYMENT_SLIP_REMINDER_SLOTS,
+    "precheckout", "carrito", "pago_fallido", "ficha", *PAYMENT_SLIP_REMINDER_SLOTS, "identidad",
 )
 # La plantilla de la ficha tiene su propio vocabulario: el nombre y el producto,
 # como las otras, y la tienda y el vencimiento que salen de [[ficha.medios]]
@@ -117,12 +122,18 @@ PARAMETERIZED_TEMPLATE_SLOTS = (
 # cuatro en el orden de la plantilla aprobada de ATT1. Los recordatorios usan el
 # mismo vocabulario, y por defecto el orden de sus plantillas aprobadas en ATT1
 # (att1_ficha_vence_manana_01 y att1_ficha_vence_hoy_01).
+# La pregunta del correlador (identidad, E-536) suma "marca": instancia.marca, el
+# nombre con que se presenta la aliada.
+IDENTITY_TEMPLATE_PARAMETERS = ("nombre", "producto", "marca")
 SLOT_TEMPLATE_PARAMETERS: Mapping[str, tuple[str, ...]] = MappingProxyType({
+    "identidad": IDENTITY_TEMPLATE_PARAMETERS,
     "ficha": PAYMENT_SLIP_TEMPLATE_PARAMETERS,
     "ficha_vence_manana": PAYMENT_SLIP_TEMPLATE_PARAMETERS,
     "ficha_vence_hoy": PAYMENT_SLIP_TEMPLATE_PARAMETERS,
 })
 SLOT_DEFAULT_TEMPLATE_PARAMETERS: Mapping[str, tuple[str, ...]] = MappingProxyType({
+    # «Hola {{1}}, te escribe el equipo de {{3}}. Vimos que empezaste tu compra de {{2}}. …» (Dan, 13/11).
+    "identidad": IDENTITY_TEMPLATE_PARAMETERS,
     "ficha": PAYMENT_SLIP_TEMPLATE_PARAMETERS,
     "ficha_vence_manana": ("nombre", "tienda", "producto", "vencimiento"),
     "ficha_vence_hoy": ("nombre", "tienda", "producto"),

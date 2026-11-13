@@ -162,6 +162,12 @@ EVENT_TEMPLATES: dict[str, EventTemplate] = {
     # flow-engine-v2, seccion 8: el motor no pudo arrancar un flujo (una
     # falla suya: error_interno, la bolsa o la politica compilada).
     "MOT-002": EventTemplate("p2", "El motor no pudo arrancar un flujo"),
+    # identity-link-decider-v1 (E-536): el correlador que decide solo ató un
+    # carrito en conflicto o mandó la pregunta (IDL-001), y un envío de un
+    # carrito atado o de la pregunta salió o falló (IDL-002). Sin teléfonos ni
+    # mails: la rama y la regla en el motivo, la conversación en el componente.
+    "IDL-001": EventTemplate("p4", "El correlador ató o preguntó"),
+    "IDL-002": EventTemplate("p3", "Envío de un carrito atado por el correlador"),
 }
 
 

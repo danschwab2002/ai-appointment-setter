@@ -312,7 +312,22 @@ const rows = await db.query(`
       -- 20261112230000: el arranque nativo con el tope por persona (E-483, C6).
       ('mark_flow_engine_request_started_v2(uuid,uuid,text,bigint,timestamp with time zone,jsonb)'),
       -- 20261113200000: la lectura de la ficha nativa (E-528, C4).
-      ('get_flow_engine_native_payment_slip_context_v1(uuid,text,bigint,timestamp with time zone)')
+      ('get_flow_engine_native_payment_slip_context_v1(uuid,text,bigint,timestamp with time zone)'),
+      -- 20261114000100: el correlador que decide solo (E-536, bloque A).
+      ('claim_identity_link_cases_v1(text,text,text,integer)'),
+      ('release_identity_link_case_v1(uuid,uuid,bigint,text)'),
+      ('complete_identity_link_decision_v1(uuid,uuid,bigint,text,text,text,text,text,text,text[],text,text)'),
+      ('requeue_identity_linked_events_v1(text,text)'),
+      ('get_identity_link_destination_v1(uuid)'),
+      ('bind_identity_link_contact_v1(uuid,uuid)'),
+      ('read_identity_link_notices_v1(text,text,integer)'),
+      ('mark_identity_link_notice_v1(text,text,text)'),
+      -- 20261114000150: la pregunta del correlador (E-536, bloque B).
+      ('expire_identity_link_questions_v1(text,text)'),
+      ('claim_identity_link_question_v1(text,text,text,integer)'),
+      ('start_identity_link_question_v1(uuid,uuid,bigint)'),
+      ('finish_identity_link_question_v1(uuid,uuid,bigint,text,bigint,bigint,text)'),
+      ('record_identity_link_answer_v1(text,text,bigint,text,bigint)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -347,6 +362,7 @@ const result = rows.rows[0];
 // 20261112220000 (el disparo por audiencia, E-484) suma sus siete de service_role: 217.
 // 20261112230000 (el tope por persona del nativo, E-483 C6) suma su arranque: 218.
 // 20261113200000 (la ficha nativa, E-528 C4) suma la lectura de la ficha: 219.
+// 20261114000100 y 20261114000150 (el correlador que decide solo y su pregunta, E-536) suman trece: 232.
 // Historical baseline guard was `result.expected_count !== 63`; the current
 // baseline is 68 RPCs, daily feedback adds fourteen, payment links add three,
 // the one-shot operator disposition adds one, and correlation event context
@@ -398,7 +414,7 @@ const result = rows.rows[0];
 // claim, settle and block the retry, and mark the 131026 notice.
 // The personal coupon of a native step (20261112210500, E-483, C2) adds the read of the bridge.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 219) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 232) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

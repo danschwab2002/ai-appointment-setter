@@ -57,7 +57,9 @@ if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // nativo:audiencia y el permiso de la audiencia, sin tocar las del carrito ni las del pago rechazado.
 if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261112210600_e483_native_audience_source_v1.sql', '20261112220000_flow_audience_triggers_v1.sql', '20261112230000_e483_native_person_cap_v1.sql',
   // La ficha de OXXO nativa (20261113200000, E-528, C4).
-  '20261113200000_e528_native_payment_slip_v1.sql'])) {
+  '20261113200000_e528_native_payment_slip_v1.sql',
+    // El correlador que decide solo y su pregunta (20261114000100 y 20261114000150, E-536).
+    '20261114000100_identity_link_decider_v1.sql', '20261114000150_identity_link_question_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de la audiencia`, names.slice(position + 1));
 }
 

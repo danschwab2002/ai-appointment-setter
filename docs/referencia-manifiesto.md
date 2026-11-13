@@ -82,7 +82,7 @@ ok_del_cliente = { quien = "los clientes de Maribel al llenar el formulario de l
 
 ## `[plantillas]`
 
-Una entrada por cada plantilla de Meta, con `{ nombre = "...", idioma = "es_MX" }`. Los lugares posibles son `precheckout`, `carrito`, `pago_fallido`, `reactivacion`, `descuento`, `ficha`, `ficha_vence_manana` y `ficha_vence_hoy`. El nombre y el idioma tienen que ser **exactamente** los aprobados en Meta: una plantilla aprobada en otro idioma es otra plantilla. Una plantilla que todavía no existe se omite, y el flujo que la usa no se puede prender.
+Una entrada por cada plantilla de Meta, con `{ nombre = "...", idioma = "es_MX" }`. Los lugares posibles son `precheckout`, `carrito`, `pago_fallido`, `reactivacion`, `descuento`, `ficha`, `ficha_vence_manana`, `ficha_vence_hoy` e `identidad`. El nombre y el idioma tienen que ser **exactamente** los aprobados en Meta: una plantilla aprobada en otro idioma es otra plantilla. Una plantilla que todavía no existe se omite, y el flujo que la usa no se puede prender.
 
 Las plantillas de primer contacto (`precheckout`, `carrito` y `pago_fallido`) aceptan una clave opcional, `parametros`: las variables del cuerpo aprobado, en el orden en que la plantilla las numera.
 
@@ -109,6 +109,12 @@ Con `carrito` o `pago_fallido` en `true` y la salida por WABA, el bridge no arra
 **`ficha_vence_manana` y `ficha_vence_hoy` son los recordatorios del vencimiento** (C2, el día anterior, y C3, el día del vencimiento; desde la 1.13.0). Opcionales, y solo con `ficha`: uno sin `[plantillas].ficha` no carga. Usan el vocabulario de `ficha` y el mismo botón; sin `parametros` valen el orden de las plantillas aprobadas de ATT1: `["nombre", "tienda", "producto", "vencimiento"]` para `ficha_vence_manana` y `["nombre", "tienda", "producto"]` para `ficha_vence_hoy`. Declarado uno, el bridge exige su nombre en `WABA_PAYMENT_SLIP_DUE_EVE_TEMPLATE_NAME` (o `_DUE_DAY_`) y su categoría en `..._CATEGORY`, con el mismo `idioma` que `ficha`. Cuándo sale cada uno lo decide el bridge con el vencimiento de la ficha; que salga, la política del scope de la ficha, que tiene que tener los pasos `payment_slip_due_eve` y `payment_slip_due_day` después de `payment_slip_first_contact` ([portable-payment-slip-reminders-v1.md](contracts/portable-payment-slip-reminders-v1.md)).
 
 **`urls_fijas`** (opcional) **ya no tiene efecto**: se sigue aceptando con su forma de siempre (hasta 20 URLs con `https://`, sin espacios ni datos y sin repetir) para no romper manifiestos. Desde E-362, el link del botón fijo de una plantilla pedida por el Automation Expert lo define el dueño en la conversación y lo ve completo quien aprueba ([template-request-v1](contracts/template-request-v1.md)). No es una plantilla: no lleva nombre ni idioma.
+
+**`identidad` es la pregunta del correlador que decide solo** (E-536, bloque B; [identity-link-decider-v1.md](contracts/identity-link-decider-v1.md) §7). Es parte del alta por defecto de una instancia (decisión de Dan del 13/11), aunque solo la usa `IDENTITY_LINK_ASK_ENABLED=true`. Acepta `parametros` de su vocabulario: `"nombre"` (el saludo del formulario), `"producto"` y `"marca"` (`instancia.marca`, el nombre con que se presenta la aliada); sin `parametros` vale `["nombre", "producto", "marca"]`, la numeración del texto aprobado. La plantilla se pide en Meta por instancia (nombre sugerido `<aliada>_compra_iniciada_01`, MARKETING, es_MX) con el cuerpo «Hola {{1}}, te escribe el equipo de {{3}}. Vimos que empezaste tu compra de {{2}}. Si fuiste tú y quieres ayuda para terminarla, aquí estamos.» y dos respuestas rápidas: «Sí, fui yo» y «No más mensajes» (la segunda es la baja de siempre). Con el flag prendido y sin `identidad`, el bridge no arranca.
+
+```toml
+identidad = { nombre = "maribel_compra_iniciada_01", idioma = "es_MX" }
+```
 
 **`[plantillas.imagenes]`** (opcional, E-370): la imagen fija del encabezado de una plantilla, una por plantilla y la misma para todos. La clave es el nombre de la plantilla en Meta y el valor, la URL pública:
 
