@@ -44,7 +44,9 @@ if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Despues va solo prioridad.le_gana_a en el nativo (20261112210200, E-483, C7): no toca la publicacion.
 if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261112210200_e483_native_priority_wins_v1.sql',
   // El pago rechazado completo en el nativo (20261112210300, E-483, C3).
-  '20261112210300_e483_native_condition_after_send_v1.sql'])) {
+  '20261112210300_e483_native_condition_after_send_v1.sql',
+  // El pago rechazado sin formulario de una oferta de campana (20261112210400, E-483, pieza PF).
+  '20261112210400_e483_payment_failure_by_phone_v1.sql'])) {
   fail(`despues de ${MIGRATION} van solo las de C7 y C3`, names.slice(position + 1));
 }
 

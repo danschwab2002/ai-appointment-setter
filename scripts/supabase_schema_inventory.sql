@@ -7062,6 +7062,41 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         5,
         'e483_native_condition_after_send'
+    union all
+    select
+        '20261112210400',
+        '20261112210400_e483_payment_failure_by_phone_v1.sql',
+        -- el pago rechazado sin formulario de una oferta de campana (E-483,
+        -- pieza PF): el permiso del telefono de Hotmart ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_payment_failure_phone_audience(uuid,uuid,text,text,text)')
+              and position('e483_payment_failure_by_phone' in definition) > 0
+        )::int
+        -- ... la lista de ofertas que manda el bridge ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_flow_engine_event_v1(jsonb,jsonb)')
+              and position('e483_payment_failure_by_phone_offers_reset' in definition) > 0
+        )::int
+        -- ... la admision que la usa ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_admit_native_flow(public.flow_controls,public.webhook_events,uuid,text,timestamptz,bigint,bigint,text)')
+              and position('e483_payment_failure_by_phone_permission: end' in definition) > 0
+        )::int
+        -- ... y la puerta que mira la baja antes de cada envio.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_authorize_native_tail(uuid,uuid,public.flow_engine_runs,public.recovery_cases,public.flow_controls,timestamptz)')
+              and position('e483_payment_failure_by_phone_recheck: end' in definition) > 0
+        )::int,
+        4,
+        'e483_payment_failure_by_phone'
 )
 select
     version,

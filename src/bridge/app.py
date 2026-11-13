@@ -290,6 +290,7 @@ from bridge.segment_labels import (
     automation_expert_segments,
     segment_labels_setup as _segment_labels_setup,
 )
+from bridge.campaign_entry import CampaignEntryLabels as _CampaignEntryLabels
 from bridge.campaign_entry import campaign_entry_labels as _campaign_entry_labels
 from bridge.customer_status import (
     CUSTOMER_LINK_REQUEST_REASON,
@@ -511,6 +512,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # E-483: los toques siguientes de un flujo nativo de varios toques
     # (20261112210000). Lo especifico (que flujos) es de la base.
     "flow_engine_native_multitouch_enabled",
+    # E-483 (pieza PF, 20261112210400): el pago rechazado sin formulario de una
+    # oferta de campana entra con el telefono de Hotmart. Lo especifico (que
+    # ofertas) sale de las campanas vigentes; por instancia, solo prenderlo.
+    "flow_engine_native_payment_failure_by_phone_enabled",
     # E-316 (segment-labels-v1): la etiqueta de un segmento antes del primer
     # turno del agente, la que pone el motor nativo antes del primer envio y la
     # que se hereda de otra conversacion del contacto. Lo especifico (que
@@ -1200,6 +1205,12 @@ class Settings:
     # toques. Apagado, el toque siguiente cierra sin salir
     # (flow_engine_native_multitouch_disabled) y lo de hoy no cambia.
     flow_engine_native_multitouch_enabled: bool = False
+    # E-483 (pieza PF, 20261112210400): el pago rechazado de una oferta de una
+    # campana vigente (las de FLOW_ENGINE_CAMPAIGN_ENTRY_ENABLED: [[campanas]] y,
+    # con AGENT_CAMPAIGN_LABEL_PATHS_ENABLED, las del AE con codigo_oferta) abre
+    # el recorrido nativo aunque la persona no haya llenado el formulario, con el
+    # telefono del evento de Hotmart. Apagado, el permiso es el formulario, como hoy.
+    flow_engine_native_payment_failure_by_phone_enabled: bool = False
     # E-316 (segment-labels-v1, PR-C de los segmentos): el paso etiquetar de un
     # flujo nativo acepta la etiqueta de cada [[agente.segmentos]] con macro, con
     # cualquier disparador, y el motor la pone antes del primer envio. Apagado, el
@@ -2745,6 +2756,12 @@ class Settings:
             ),
             flow_engine_native_multitouch_enabled=(
                 os.getenv("FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED", "false").lower()
+                == "true"
+            ),
+            flow_engine_native_payment_failure_by_phone_enabled=(
+                os.getenv("FLOW_ENGINE_NATIVE_PAYMENT_FAILURE_BY_PHONE_ENABLED", "false")
+                .strip()
+                .lower()
                 == "true"
             ),
             flow_engine_segment_labels_enabled=(
@@ -5611,6 +5628,19 @@ def create_app(
         )
     )
     segment_label_inheritance = segment_labels_setup.inheritance
+    # E-483 (pieza PF): las ofertas de las campanas vigentes salen del mismo plan
+    # de etiquetas (campaign-entry-v1 §4b) que despues etiqueta el recorrido.
+    # Falla cerrado: sin la entrada por campana no hay lista ni etiqueta.
+    payment_failure_by_phone_offers: Callable[[], Iterable[str]] | None = None
+    if settings.flow_engine_native_payment_failure_by_phone_enabled:
+        if not settings.flow_engine_enabled or not isinstance(
+            native_segment_labels, _CampaignEntryLabels
+        ):
+            raise ValueError(
+                "FLOW_ENGINE_NATIVE_PAYMENT_FAILURE_BY_PHONE_ENABLED requires "
+                "FLOW_ENGINE_ENABLED and FLOW_ENGINE_CAMPAIGN_ENTRY_ENABLED"
+            )
+        payment_failure_by_phone_offers = native_segment_labels.campaign_offers
 
     async def label_products(
         conversation_id: int, keys: Iterable[str | None], *, source: str
@@ -6222,6 +6252,7 @@ def create_app(
             native_intent_enabled=settings.flow_engine_native_intent_enabled,
             # E-483 (C7): le_gana_a en el nativo va con los toques siguientes.
             native_priority_wins=settings.flow_engine_native_multitouch_enabled,
+            payment_failure_by_phone_offers=payment_failure_by_phone_offers,
         )
     # MOT-001 (flow-engine-v1, seccion 8): comparte el productor del conector
     # de Slack; sin conector, no avisa y /ready dice sin_slack.

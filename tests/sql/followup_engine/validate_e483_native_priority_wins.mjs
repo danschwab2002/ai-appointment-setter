@@ -48,8 +48,11 @@ const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.end
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Despues va el pago rechazado completo en el nativo (20261112210300, E-483, C3): no toca la admision.
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261112210300_e483_native_condition_after_send_v1.sql'])) {
-  fail(`despues de ${MIGRATION} va solo la de C3`, names.slice(position + 1));
+// Y el pago rechazado sin formulario (20261112210400, E-483, pieza PF): toca admit_flow_engine_event_v1 en
+// otro lugar (antes y despues del bucle de flujos), sin tocar el bloque de esta.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261112210300_e483_native_condition_after_send_v1.sql',
+  '20261112210400_e483_payment_failure_by_phone_v1.sql'])) {
+  fail(`despues de ${MIGRATION} van solo la de C3 y la de PF`, names.slice(position + 1));
 }
 
 // ---------------------------------------------------------------------------

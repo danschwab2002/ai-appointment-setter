@@ -76,7 +76,10 @@ const canonical = (value) => JSON.stringify(value, (key, item) => (item && typeo
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-if (names.slice(position + 1).length !== 0) fail(`despues de ${MIGRATION} no va ninguna`, names.slice(position + 1));
+// Despues va el pago rechazado sin formulario (20261112210400, E-483, pieza PF): no toca nada de esta.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261112210400_e483_payment_failure_by_phone_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de PF`, names.slice(position + 1));
+}
 
 // La cadena de ATT1 (el orden de choose_variant). B1 con cupon fijo (la variante
 // del cupon y la del saldo) sigue con Z; sin cupon (dos rechazos y el banco), con B2.

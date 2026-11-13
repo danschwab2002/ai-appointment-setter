@@ -42,7 +42,7 @@ import logging
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 
 from bridge.slack_notifications import NotificationProducer
@@ -235,8 +235,14 @@ class FlowEngineRuntime:
         cart_touches_enabled: bool = True,
         native_intent_enabled: bool = False,
         native_priority_wins: bool = False,
+        payment_failure_by_phone_offers: Callable[[], Iterable[str]] | None = None,
     ) -> None:
         self.instance: dict[str, object] = dict(instance)
+        # E-483 (pieza PF, 20261112210400): las ofertas de las campanas vigentes cuyo pago
+        # rechazado sin formulario entra con el telefono de Hotmart
+        # (FLOW_ENGINE_NATIVE_PAYMENT_FAILURE_BY_PHONE_ENABLED). None con el flag apagado: la
+        # admision de antes.
+        self.payment_failure_by_phone_offers = payment_failure_by_phone_offers
         # E-483 (C7): si la admision nativa corta los recorridos de le_gana_a
         # (FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED). Apagado, la admision de antes.
         self.native_priority_wins = native_priority_wins

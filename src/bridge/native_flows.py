@@ -305,9 +305,23 @@ async def admit_native_cart(
         "chatwoot": {"account_id": chatwoot_account_id, "inbox_id": chatwoot_inbox_id},
         "destino": destination,
     }
+    # E-483 (pieza PF, 20261112210400): con FLOW_ENGINE_NATIVE_PAYMENT_FAILURE_BY_PHONE_ENABLED, el pago
+    # rechazado manda la lista de ofertas de las campanas vigentes (las del plan de etiquetas de
+    # campaign-entry-v1 §4b): sin formulario, una de esas ofertas entra con el telefono del evento. Sin el
+    # flag, o con el carrito, la llamada de antes.
+    extra: dict[str, object] = {}
+    if trigger == NATIVE_PAYMENT_FAILURE_TRIGGER and runtime.payment_failure_by_phone_offers is not None:
+        try:
+            extra["payment_failure_by_phone_offers"] = sorted(runtime.payment_failure_by_phone_offers())
+        except Exception as exc:  # noqa: BLE001 - falla blanda: sin la lista, el permiso de siempre
+            logger.warning(
+                "flow_engine_native_payment_failure_by_phone_offers_unavailable event_id=%s error=%s",
+                webhook_event_id,
+                type(exc).__name__,
+            )
     try:
         rows = await supabase.admit_flow_engine_event(
-            runtime.instance, flow_event, priority_wins=runtime.native_priority_wins
+            runtime.instance, flow_event, priority_wins=runtime.native_priority_wins, **extra
         )
     except SupabasePermanentError as exc:
         logger.warning(

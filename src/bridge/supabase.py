@@ -7553,6 +7553,7 @@ class SupabaseClient:
         flow_event: Mapping[str, object],
         *,
         priority_wins: bool = False,
+        payment_failure_by_phone_offers: Sequence[str] | None = None,
     ) -> tuple[FlowEngineNativeAdmissionRow, ...]:
         """The native admission of one normalized event (flow-engine-v2, 4).
 
@@ -7565,11 +7566,19 @@ class SupabaseClient:
         ``native_priority_wins: true`` to ``p_instance``: a run that starts
         closes the open runs of the flows in its ``prioridad.le_gana_a``.
         Without it the body is exactly the one of before.
+
+        ``payment_failure_by_phone_offers`` (E-483, piece PF, migration
+        20261112210400) adds ``native_payment_failure_by_phone_offers`` (the
+        list) to ``p_instance``: a payment failure without a form of one of
+        those offers enters with the phone of the Hotmart event. ``None`` (the
+        flag off) leaves the body exactly the one of before.
         """
         operation = "admit_flow_engine_event_v1"
         p_instance = dict(instance)
         if priority_wins:
             p_instance["native_priority_wins"] = True
+        if payment_failure_by_phone_offers is not None:
+            p_instance["native_payment_failure_by_phone_offers"] = list(payment_failure_by_phone_offers)
         body = json.dumps(
             {"p_instance": p_instance, "p_flow_event": dict(flow_event)},
             ensure_ascii=False,
