@@ -176,3 +176,9 @@ def test_the_shared_scope_of_maribel() -> None:
     assert paying["legado_del_pago"] == paying["legado_del_carrito"] == "pilot_scope_rejected:flujo_nativo_en_curso"
     # Un carrito en curso y un pago rechazado nuevo: lo mismo con el legado que con el nativo.
     assert shared["carrito_en_curso_y_pago"] == {"legado_pago": True, "nativo_pago": True}
+
+
+def test_the_new_test_runs_last_with_npm_test() -> None:
+    package = json.loads((ROOT / "tests" / "sql" / "followup_engine" / "package.json").read_text(encoding="utf-8"))
+    assert package["scripts"]["test"].endswith(
+        " && node validate_flow_audience_native_e2e.mjs && node validate_e483_native_legacy_double_case_touches.mjs --check")
