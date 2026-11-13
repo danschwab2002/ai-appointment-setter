@@ -181,6 +181,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261112210500",
         # El evento de un disparo por audiencia en el nativo (20261112210600, E-483, para E-484).
         "20261112210600",
+        # El disparo por audiencia y su lista congelada (20261112220000, E-484).
+        "20261112220000",
     ]
 
     sql = _sql()
