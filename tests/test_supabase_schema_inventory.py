@@ -2082,14 +2082,27 @@ def test_read_results_fingerprint() -> None:
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
 
 
-def test_e483_native_priority_wins_fingerprint_is_last() -> None:
+def test_e483_native_condition_after_send_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261112210300 (E-483, C3): el pago rechazado completo en el nativo.
+    fingerprint = sql.split("'20261112210300'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261112210300_e483_native_condition_after_send_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",5,'e483_native_condition_after_send')")
+    assert "_flow_engine_native_payment_failure_path_shape(jsonb)" in compact_fingerprint
+    assert "_flow_engine_native_payment_failure_paths(jsonb)" in compact_fingerprint
+    assert "flow_engine_execution_context_v1(uuid)" in compact_fingerprint
+
+
+def test_e483_native_priority_wins_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261112210200 (E-483, C7): le_gana_a en el nativo.
-    fingerprint = sql.split("'20261112210200'", 1)[1].split("select\n    version,", 1)[0]
+    fingerprint = sql.split("'20261112210200'", 1)[1].split("'20261112210300'", 1)[0].rsplit("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261112210200_e483_native_priority_wins_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",2,'e483_native_priority_wins')")
+    assert compact_fingerprint.endswith(",2,'e483_native_priority_wins'")
     assert "_flow_engine_native_priority_wins_v1(uuid,uuid,timestamptz)" in compact_fingerprint
     assert "admit_flow_engine_event_v1(jsonb,jsonb)" in compact_fingerprint
 

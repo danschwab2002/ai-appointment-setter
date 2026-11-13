@@ -41,7 +41,9 @@ if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Despues van en_curso: cancelar en el nativo (20261112210100, E-483, C8) y prioridad.le_gana_a en el nativo
 // (20261112210200, E-483, C7): ninguna toca la forma nativa.
 if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261112210100_e483_native_cancel_in_flight_v1.sql',
-  '20261112210200_e483_native_priority_wins_v1.sql'])) {
+  '20261112210200_e483_native_priority_wins_v1.sql',
+  // El pago rechazado completo en el nativo (20261112210300, E-483, C3).
+  '20261112210300_e483_native_condition_after_send_v1.sql'])) {
   fail(`despues de ${MIGRATION} van solo las de C8 y C7`, names.slice(position + 1));
 }
 

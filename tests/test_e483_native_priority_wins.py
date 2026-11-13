@@ -55,7 +55,9 @@ def test_the_migration_is_one_transaction_with_its_guard_and_a_private_function(
 
 def test_the_new_test_runs_with_npm_test() -> None:
     package = json.loads((ROOT / "tests/sql/followup_engine/package.json").read_text(encoding="utf-8"))
-    assert package["scripts"]["test"].endswith("node validate_e483_native_priority_wins.mjs")
+    # Despues va el de C3 (20261112210300).
+    assert package["scripts"]["test"].endswith(
+        "node validate_e483_native_priority_wins.mjs && node validate_e483_native_condition_after_send.mjs --check")
 
 
 # -- El bridge -------------------------------------------------------------------

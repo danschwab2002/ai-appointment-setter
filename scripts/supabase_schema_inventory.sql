@@ -7023,6 +7023,45 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'e483_native_priority_wins'
+    union all
+    select
+        '20261112210300',
+        '20261112210300_e483_native_condition_after_send_v1.sql',
+        -- el pago rechazado completo en el nativo (E-483, C3): el camino de
+        -- cada rama y sus caminos ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_payment_failure_path_shape(jsonb)')
+              and position('e483_native_condition_after_send' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_payment_failure_paths(jsonb)')
+        )::int
+        -- ... las ramas, el compilador ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_payment_failure_branches(jsonb)')
+              and position('e483_native_condition_after_send' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_compile_policy_core(jsonb,text,integer,text,text)')
+              and position('e483_native_condition_after_send' in definition) > 0
+        )::int
+        -- ... y el contexto del toque siguiente, de la rama elegida.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.flow_engine_execution_context_v1(uuid)')
+              and position('e483_native_condition_after_send: end' in definition) > 0
+        )::int,
+        5,
+        'e483_native_condition_after_send'
 )
 select
     version,

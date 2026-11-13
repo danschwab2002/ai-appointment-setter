@@ -29,7 +29,7 @@ A la persona le hablás en lenguaje de negocio: los campos y las claves de esta 
   | Cada cuánto se le vuelve a mandar a la misma persona (`topes.repeticion`) | Sí: una vez por persona o por persona y oferta, y cada cuánto, o nunca | No: es uno por conversación |
   | Que no arranque mientras la persona está en otro flujo (`prioridad.no_arranca_mientras`, con la clave de otro flujo del mismo producto que corra en el sistema nuevo; el seguimiento con cupón no se puede esperar) | Sí | No |
   | Que corte a otro flujo cuando arranca (`prioridad.le_gana_a`, con la clave de otro flujo del mismo producto que corra en el sistema nuevo): a la misma persona se le cancela lo que el otro flujo tenía esperando, salvo un mensaje que ya está saliendo. Solo si la cuenta ya manda más de un mensaje por flujo; si no, vuelve con su motivo | Carrito, pago rechazado y bienvenida; el primer contacto no | No |
-  | Las variantes del pago rechazado (`pasos`, la cadena de condiciones al final; una plantilla por rama) | Solo el pago rechazado | No |
+  | Las variantes del pago rechazado (`pasos`, la cadena de condiciones al final; cada variante empieza con su mensaje y puede seguir con hasta dos más sin botón, con la misma espera en todas y la salida de que conteste. La variante se elige una sola vez, antes del primer mensaje; más de un mensaje, solo si la cuenta ya los manda) | Solo el pago rechazado | No |
   | Marcar a quien compró, o poner la etiqueta del segmento (`etiquetar`) | Con la compra, `cliente`; con cualquier evento, la de un segmento | No |
   | El nombre del flujo | Sí | Sí |
 

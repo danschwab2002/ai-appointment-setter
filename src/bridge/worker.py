@@ -2009,6 +2009,9 @@ class DurableDispatcher:
         checkout button (``{link: checkout}``, with or without a fixed coupon),
         the link is OUR issued one (``offDiscount=<code>`` with the coupon), as
         B1 of the legacy: the template opens with the checkout URL button.
+        The following touch of a branch (B2 or Z, E-483 C3) is never picked
+        here: the base resolves it from the branch recorded for the accepted
+        first send and gives its template without ``template_branches``.
         """
         if not self._flow_engine_enabled:
             return _ApprovedTemplateComposition(
@@ -2036,7 +2039,11 @@ class DurableDispatcher:
             step_template.template_branches is not None
             or step_template.template_button is not None
         ):
-            # Un toque siguiente no elige rama ni lleva boton (la base no lo abre, 20261112210000).
+            # Un toque siguiente no elige rama ni lleva boton (la base no lo abre, 20261112210000). En el pago
+            # rechazado con ramas (E-483 C3, 20261112210300) la rama la eligio el primer envio aceptado: la
+            # base da la plantilla del toque siguiente de esa rama, sin template_branches, y el bridge la manda
+            # como cualquier toque siguiente. Volver a elegir aca podria cambiar de rama (un rechazo nuevo
+            # entre B1 y B2) y mandar el seguimiento de otra variante.
             return self._native_step_unsupported(action, step_template)
         template_name = step_template.template_name
         template_language = step_template.template_language

@@ -631,8 +631,12 @@ def _native_shape_for_the_owner(what: str) -> tuple[str, str]:
     if what == "boton_despues_del_primer_envio":
         return ("Solo el primer mensaje puede llevar el botón de pago; los siguientes, todavía no.", fix)
     if what == "condicion_despues_de_un_envio":
-        return ("Elegir el mensaje según el caso después de haber mandado otro todavía no se puede: las variantes "
-                "van en el primer mensaje del pago rechazado.", drop)
+        # E-483 (C3, 20261112210300): la variante se elige una sola vez, antes del primer mensaje; cada una
+        # puede seguir con sus mensajes.
+        return ("El mensaje se elige según el caso una sola vez, antes del primero: después de mandar uno no se "
+                "puede volver a elegir. Lo que sí se puede es que cada variante del pago rechazado siga con sus "
+                "propios mensajes.",
+                "Poné la elección al principio y, adentro de cada variante, su mensaje y los que siguen. " + fix)
     if what == "espera_entre_envios":
         return ("Entre un mensaje y el siguiente tiene que haber una espera de al menos un minuto.",
                 "Poné una espera entre los dos mensajes. " + fix)
@@ -645,7 +649,11 @@ def _native_shape_for_the_owner(what: str) -> tuple[str, str]:
         return ("Las variantes del pago rechazado solo pueden mirar el tipo de rechazo, cuántas veces se rechazó o "
                 "si tuvo descuento antes.", fix)
     if what in ("condicion_no_al_final", "rama_de_un_envio"):
-        return ("Las variantes van al final del flujo y cada una manda un solo mensaje, sin esperas adentro.", fix)
+        return ("Las variantes van al final del flujo: cada una empieza con su mensaje y puede seguir con hasta dos "
+                "más, con una espera antes de cada uno.", fix)
+    if what == "ramas_con_otras_esperas":
+        return ("Todas las variantes del pago rechazado tienen que esperar lo mismo entre un mensaje y el "
+                "siguiente (por ejemplo, 24 horas en todas).", "Igualá las esperas de las variantes. " + fix)
     if what == "etiquetar":
         return ("El seguimiento solo manda su mensaje: no pone etiquetas.", drop)
     if what == "boton_sin_cupon":

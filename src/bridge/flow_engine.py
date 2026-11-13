@@ -77,7 +77,7 @@ __all__ = [
     "ENGINE_CAPABILITIES_NATIVE", "ENGINE_CAPABILITIES_NATIVE_MULTITOUCH", "ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE", "NATIVE_MULTITOUCH_TRIGGERS", "NATIVE_TOUCH_STEP_PREFIX", "ENGINE_CAPABILITIES_NATIVE_SILENCE", "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_PARAMETERS", "NATIVE_CAPABILITIES_BY_TRIGGER", "NATIVE_SILENCE_TRIGGER", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
     "BolsaLedger", "ControlLine", "Eligible", "EngineCapabilities", "EngineFlow", "Firing", "FlowRef",
     "GateDecision", "GateFacts", "PersonView", "Plan", "PlanInvalid", "PlanNotSupported", "PlannedStep",
-    "RunView", "StartDecision", "evaluate_gate", "first_eligible", "legacy_motivo", "native_not_supported", "native_payment_failure_branches", "native_trigger_key", "native_variables_fit", "not_supported", "plan_start",
+    "RunView", "StartDecision", "evaluate_gate", "first_eligible", "legacy_motivo", "native_not_supported", "native_payment_failure_branches", "native_payment_failure_paths", "native_trigger_key", "native_variables_fit", "not_supported", "plan_start",
     "plan_steps", "pool_zone", "step_start", "wins",
 ]
 
@@ -314,7 +314,9 @@ ENGINE_CAPABILITIES_NATIVE_SILENCE = EngineCapabilities(
 # condicion (solo con los datos del pago rechazado, en una cadena al final, cada rama con una sola
 # plantilla) y el boton del checkout, sin cupon o con un cupon fijo (el link nuestro con
 # ``offDiscount=<codigo>``, como el seguimiento con cupon). El cupon personal es la fase B. Un envio por
-# camino: la condicion elige uno. Lo ejecutan la base (20261103000900) y el envio del bridge (A5).
+# camino: la condicion elige uno. Lo ejecutan la base (20261103000900) y el envio del bridge (A5). Desde
+# E-483 (C3, 20261112210300), con las capacidades de varios toques de abajo, cada rama puede seguir con sus
+# toques (B1, esperar, B2 o Z, como el legado de ATT1).
 ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE = dataclasses.replace(
     ENGINE_CAPABILITIES_NATIVE,
     step_types=ENGINE_CAPABILITIES_NATIVE.step_types | {"condicion"},
@@ -324,7 +326,8 @@ NATIVE_PAYMENT_FAILURE_TRIGGER = "pago_fallido"
 # E-483 (C1 y C5 del mapa del 12/11, 20261112210000): el carrito, el formulario y el pago rechazado nativos
 # mandan hasta tres toques, con la espera entre uno y otro (la forma de la base suma native_touch_2 y
 # native_touch_3). Con mas de un envio: la salida contesta escrita (la reevaluacion corta el toque siguiente
-# con la respuesta), el boton solo en el primero y sin condicion (C3, todavia no). La compra (la bienvenida)
+# con la respuesta), el boton solo en el primero y sin condicion despues de un envio; el pago rechazado elige
+# su rama antes del primer envio y cada rama lleva su seguimiento (C3, 20261112210300). La compra (la bienvenida)
 # sigue de un envio. El bridge manda los toques siguientes solo con FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED.
 NATIVE_MULTITOUCH_TRIGGERS = frozenset({"carrito", "intencion", NATIVE_PAYMENT_FAILURE_TRIGGER})
 NATIVE_MAX_SENDS = 3
@@ -467,13 +470,62 @@ def _native_silence_not_supported(definition: Mapping[str, Any], add: Callable[[
             add(f"{NOT_SUPPORTED}:cupon_personal")
 
 
-def native_payment_failure_branches(definition: Mapping[str, Any]
-                                    ) -> tuple[tuple[Mapping[str, Any] | None, Mapping[str, Any]], ...] | None:
-    """Las ramas de un pago rechazado nativo con condicion: ``(condicion, plantilla)`` en orden; None sin condicion.
+def _payment_failure_path_problem(steps: object) -> str | None:
+    """Lo que la base no ejecuta de una rama de la cadena del pago rechazado; None si la ejecuta.
+
+    El espejo de ``_flow_engine_native_payment_failure_path_shape`` (20261112210300, E-483, C3): la rama
+    empieza con su plantilla y despues, hasta ``NATIVE_MAX_SENDS`` envios en total, una o mas esperas que
+    suman al menos un minuto y una plantilla sin boton; termina en una plantilla. Una condicion adentro de
+    una rama, despues de su primer envio, elegiria despues de mandar (``condicion_despues_de_un_envio``).
+    """
+    if not isinstance(steps, list) or not steps or step_type(steps[0]) != "plantilla":
+        return "rama_de_un_envio"
+    sends, waited, waiting = 1, 0, False
+    for step in steps[1:]:
+        kind = step_type(step)
+        if kind == "esperar":
+            minutes = parse_duration(step.get("esperar")) if isinstance(step, Mapping) else None
+            if minutes is None:
+                return "rama_de_un_envio"
+            waited, waiting = waited + minutes, True
+            continue
+        if kind == "condicion":
+            return "condicion_despues_de_un_envio"
+        if kind != "plantilla":
+            return "rama_de_un_envio"
+        if not waiting or waited < 1:
+            return "espera_entre_envios"
+        if sends >= NATIVE_MAX_SENDS:
+            return TOO_MANY_SENDS
+        if isinstance(step, Mapping) and "boton" in step:
+            return "boton_despues_del_primer_envio"
+        sends, waited, waiting = sends + 1, 0, False
+    return "espera_despues_del_envio" if waiting else None
+
+
+def _payment_failure_path_waits(steps: list[Any]) -> tuple[int, ...]:
+    """Las esperas entre los envios de una rama valida, en minutos (``()`` con un solo envio)."""
+    waits: list[int] = []
+    waited = 0
+    for step in steps[1:]:
+        if step_type(step) == "esperar":
+            waited += parse_duration(step.get("esperar")) or 0
+        else:
+            waits.append(waited)
+            waited = 0
+    return tuple(waits)
+
+
+def native_payment_failure_paths(definition: Mapping[str, Any]
+                                 ) -> tuple[tuple[Mapping[str, Any] | None, tuple[Any, ...]], ...] | None:
+    """Las ramas de un pago rechazado nativo con condicion: ``(condicion, camino)`` en orden; None sin condicion.
 
     La primera rama cuya condicion se cumple gana; la ultima (``None``) es el ``si_no`` final. Es la forma
-    que ejecutan la base y el bridge (flow-engine-v2 §27): la cadena es el ultimo paso, y cada rama es un
-    solo paso ``plantilla``. Con otra forma, ``None`` tambien: la mira ``native_not_supported``.
+    que ejecutan la base y el bridge (flow-engine-v2 §27 y, desde E-483 C3, 20261112210300): la cadena es el
+    ultimo paso, y cada rama es su primer envio y, opcional, sus toques siguientes con espera (B1, esperar,
+    B2 o Z), todas con las mismas esperas: la condicion se elige una sola vez, antes del primer envio, y el
+    toque siguiente sale de la rama que se eligio. Con otra forma, ``None`` tambien: la mira
+    ``native_not_supported``.
     """
     steps = definition.get("pasos")
     if not isinstance(steps, list) or not steps or step_type(steps[-1]) != "condicion":
@@ -481,12 +533,28 @@ def native_payment_failure_branches(definition: Mapping[str, Any]
     chain = condition_chain(steps[-1])
     if chain is None:
         return None
-    branches: list[tuple[Mapping[str, Any] | None, Mapping[str, Any]]] = []
+    paths: list[tuple[Mapping[str, Any] | None, tuple[Any, ...]]] = []
     for condition, branch in chain:
-        if not isinstance(branch, list) or len(branch) != 1 or step_type(branch[0]) != "plantilla":
+        if _payment_failure_path_problem(branch) is not None:
             return None
-        branches.append((condition, branch[0]))
-    return tuple(branches)
+        assert isinstance(branch, list)
+        paths.append((condition, tuple(branch)))
+    if len({_payment_failure_path_waits(list(path)) for _, path in paths}) != 1:
+        return None
+    return tuple(paths)
+
+
+def native_payment_failure_branches(definition: Mapping[str, Any]
+                                    ) -> tuple[tuple[Mapping[str, Any] | None, Mapping[str, Any]], ...] | None:
+    """Las ramas de un pago rechazado nativo con condicion: ``(condicion, plantilla)`` en orden; None sin condicion.
+
+    ``plantilla`` es el primer envio de cada rama: el que elige el bridge y registra la base (lo que da
+    ``template_branches``). El camino entero de cada una lo da ``native_payment_failure_paths``.
+    """
+    paths = native_payment_failure_paths(definition)
+    if paths is None:
+        return None
+    return tuple((condition, path[0]) for condition, path in paths)
 
 
 def _native_payment_failure_not_supported(definition: Mapping[str, Any], add: Callable[[str], None]) -> None:
@@ -494,7 +562,8 @@ def _native_payment_failure_not_supported(definition: Mapping[str, Any], add: Ca
 
     La condicion, solo con los datos del pago rechazado, en una cadena que es el ultimo paso, con una sola
     plantilla por rama (sin esperas adentro: la gracia es una sola, antes de elegir). El boton, sin cupon o
-    con un codigo fijo: ``cupon: personal`` todavia no (la fase B).
+    con un codigo fijo: ``cupon: personal`` todavia no (la fase B). Desde E-483 (C3, 20261112210300) cada
+    rama puede seguir con sus toques siguientes (B1, esperar, B2 o Z), con las mismas esperas en todas.
     """
     steps = definition.get("pasos")
     walked = _walk_steps(steps)
@@ -516,8 +585,17 @@ def _native_payment_failure_not_supported(definition: Mapping[str, Any], add: Ca
         return
     if conditions != [len(steps) - 1]:
         add(f"{NOT_SUPPORTED}:condicion_no_al_final")
-    elif native_payment_failure_branches(definition) is None:
-        add(f"{NOT_SUPPORTED}:rama_de_un_envio")
+        return
+    chain = condition_chain(steps[-1]) or ()
+    # E-483 (C3, 20261112210300): cada rama, un camino de hasta tres envios; lo que no, con su motivo.
+    for _, branch in chain:
+        problem = _payment_failure_path_problem(branch)
+        if problem is not None:
+            add(f"{NOT_SUPPORTED}:{problem}")
+    if native_payment_failure_paths(definition) is None and not any(
+            _payment_failure_path_problem(branch) for _, branch in chain):
+        # Todas las ramas son caminos que la base ejecuta, pero con esperas distintas: la politica es una sola.
+        add(f"{NOT_SUPPORTED}:ramas_con_otras_esperas")
 
 
 def _native_multitouch_not_supported(definition: Mapping[str, Any], key: str | None,
@@ -525,8 +603,10 @@ def _native_multitouch_not_supported(definition: Mapping[str, Any], key: str | N
     """Lo que un nativo de varios toques exige ademas de sus capacidades (E-483, 20261112210000).
 
     Lo mismo que mira la base: con mas de un envio, la salida contesta escrita, el boton solo en el primer
-    envio y ninguna condicion (una condicion despues de un envio es C3). Y el pago rechazado con una
-    plantilla antes de su cadena, tampoco: elegiria la rama despues de un envio.
+    envio y ninguna condicion despues de un envio. El pago rechazado con una plantilla antes de su cadena,
+    tampoco: elegiria la rama despues de un envio. Sus ramas si pueden seguir con toques (C3,
+    20261112210300): la condicion va antes del primer envio y cada rama lleva su seguimiento; con mas de un
+    envio por rama, tambien la salida contesta.
     """
     steps = definition.get("pasos")
     if not isinstance(steps, list):
@@ -535,6 +615,17 @@ def _native_multitouch_not_supported(definition: Mapping[str, Any], key: str | N
     has_condition = any(step_type(step) == "condicion" for step in steps)
     if key == NATIVE_PAYMENT_FAILURE_TRIGGER and sends and has_condition:
         add(f"{NOT_SUPPORTED}:condicion_despues_de_un_envio")
+    # E-483 (C3, 20261112210300): las ramas de la cadena con mas de un envio cortan con la respuesta, como
+    # cualquier nativo de varios toques: la salida contesta escrita.
+    if key == NATIVE_PAYMENT_FAILURE_TRIGGER and not sends and has_condition:
+        chain = condition_chain(steps[-1]) if step_type(steps[-1]) == "condicion" else None
+        multi = any(isinstance(branch, list)
+                    and sum(1 for step in branch if step_type(step) in ("plantilla", "conversar")) > 1
+                    for _, branch in chain or ())
+        ends = definition.get("termina")
+        exits = ends.get("si") if isinstance(ends, Mapping) else None
+        if multi and (not isinstance(exits, list) or "contesta" not in exits):
+            add(f"{NOT_SUPPORTED}:varios_envios_sin_contesta")
     if len(sends) <= 1 or key not in NATIVE_MULTITOUCH_TRIGGERS:
         return
     ends = definition.get("termina")
