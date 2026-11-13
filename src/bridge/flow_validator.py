@@ -758,11 +758,19 @@ FLOW_HAS_NO_VERSION = _spec(
     "Un flujo sin versión no se prende.",
     alternative="Publicar su primera versión en la misma propuesta.",
 )
+# E-483 (C8): cancelar lo que espera se aplica solo en un flujo nativo (la base lo hace al publicar,
+# 20261112210100). En el legado (con o sin la ruta motor) lo que esta en curso sigue con su version, y migrar
+# no existe en ninguno: los dos siguen con este codigo.
 EN_CURSO_NOT_SUPPORTED = _spec(
     "en_curso_not_supported", None, KIND_CYCLE,
-    "Hasta el motor, lo que está en curso sigue con la versión que lo empezó.",
-    alternative="Usar en_curso: seguir.",
+    "Cortar a la gente que está a mitad de los mensajes solo se puede en un flujo del sistema nuevo de mensajes. "
+    "En este flujo, lo que ya empezó sigue con la versión que lo empezó; pasarlo a la versión nueva todavía no "
+    "existe en ningún flujo.",
+    alternative="Usar en_curso: seguir. Si el dueño necesita cortar a quienes esperan en este flujo, el equipo "
+                "técnico tiene que pasarlo antes al sistema nuevo de mensajes.",
 )
+# Lo que esta en curso: seguir en cualquier flujo, cancelar solo en uno nativo (E-483, C8).
+IN_FLIGHT_CANCEL = "cancelar"
 CLIENT_PURCHASE_OK_MISSING = _spec(
     "client_purchase_ok_missing", None, KIND_CYCLE,
     "Pasar a permiso: compra pide el OK del cliente: quién lo dio, por qué medio y la fecha.",
@@ -1280,7 +1288,8 @@ class _Run:
         self._normalize()
         self._stale_base()
         for index, (item, flow) in enumerate(zip(self.items, self.flows)):
-            if item.tipo in ("version", "volver") and item.en_curso != "seguir":
+            if item.tipo in ("version", "volver") and not (
+                    item.en_curso == "seguir" or (item.en_curso == IN_FLIGHT_CANCEL and flow.is_native)):
                 self.blocks.append(EN_CURSO_NOT_SUPPORTED.at(finding_path((index, "en_curso"))))
             if item.is_new_flow:
                 if item.prender != COHORT:

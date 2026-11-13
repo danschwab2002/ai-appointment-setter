@@ -24,7 +24,10 @@ const MIGRATION = '20261108004100_flow_change_publish_native_version_guard_v1.sq
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-for (const name of names.slice(position + 1)) {
+// en_curso: cancelar en el nativo (20261112210100, E-483, C8) suma un chequeo propio despues de esta guarda y la
+// llamada que cancela al escribir: la guarda queda igual (lo prueba esta misma corrida, que aplica la cadena entera).
+const REVIEWED = new Set(['20261112210100_e483_native_cancel_in_flight_v1.sql']);
+for (const name of names.slice(position + 1).filter((candidate) => !REVIEWED.has(candidate))) {
   if (readFileSync(join(root, 'supabase/migrations', name), 'utf8').includes('_flow_change_publish')) {
     fail(`${name} toca _flow_change_publish: revisar esta prueba`);
   }

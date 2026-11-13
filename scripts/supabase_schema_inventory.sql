@@ -6974,6 +6974,34 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'e483_native_multitouch'
+    union all
+    select
+        '20261112210100',
+        '20261112210100_e483_native_cancel_in_flight_v1.sql',
+        -- en_curso: cancelar en un flujo nativo (E-483, C8): la funcion que
+        -- cancela lo que espera ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_change_cancel_in_flight_v1(uuid,integer,uuid,timestamptz)')
+              and position('cambio_de_version' in definition) > 0
+        )::int
+        -- ... la forma que acepta cancelar ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_change_items_are_valid(jsonb)')
+              and position('e483_native_cancel_in_flight' in definition) > 0
+        )::int
+        -- ... y la publicacion que la llama solo en un nativo.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_change_publish(text,text,uuid,text,jsonb)')
+              and position('e483_native_cancel_in_flight: end (los chequeos)' in definition) > 0
+        )::int,
+        3,
+        'e483_native_cancel_in_flight'
 )
 select
     version,

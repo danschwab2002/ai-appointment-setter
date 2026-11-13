@@ -1840,7 +1840,7 @@ def items_are_valid(items: object) -> bool:
             if not (isinstance(definition, dict) and definition.get("esquema") == "setter-flujo/v1"
                     and definition.get("estado") == "borrador" and "version" not in definition
                     and definition.get("flujo") == item["flujo"] and definition.get("producto") == item["producto"]
-                    and (fd.json_size(definition) or 10**9) <= 32768 and item["en_curso"] == "seguir"):
+                    and (fd.json_size(definition) or 10**9) <= 32768 and item["en_curso"] in ("seguir", "cancelar")):
                 return False
             if "ok_del_cliente" in item:
                 ok = item["ok_del_cliente"]
@@ -1855,7 +1855,7 @@ def items_are_valid(items: object) -> bool:
             if keys != {"en_curso", "flow_id", "flujo", "producto", "tipo", "version"}:
                 return False
             if not (type(item["version"]) is int and 1 <= item["version"] <= 999_999_999
-                    and item["en_curso"] == "seguir"):
+                    and item["en_curso"] in ("seguir", "cancelar")):
                 return False
             kind = "contenido"
         elif item.get("tipo") in ("prender", "apagar"):

@@ -1056,7 +1056,6 @@ check(await countRows('flow_change_proposals') === proposalsBefore, '4g: no se g
 // 4h. Los items, con su forma minima.
 const carritoItem = versionItem(carrito, 'att1', 'carrito');
 for (const [label, items] of [
-  ['en_curso cancelar', [{ ...carritoItem, en_curso: 'cancelar' }]],
   ['en_curso migrar', [{ ...carritoItem, en_curso: 'migrar' }]],
   ['dos de contenido sobre el mismo flujo', [carritoItem, backItem(carrito, 'att1', 'carrito', 1)]],
   ['dos de estado sobre el mismo flujo', [stateItem(carrito, 'att1', 'carrito', 'prender'), stateItem(carrito, 'att1', 'carrito', 'apagar')]],
@@ -1088,6 +1087,10 @@ for (const [label, items] of [
   error = await attempt(SAVE_SQL, [json(ATT1), null, null, json(items), json(await draftBase([carrito])), PURPOSE]);
   check(error?.code === '22023' && error.message === 'flow_change_items_invalid', `4h: ${label}: flow_change_items_invalid`, error);
 }
+// en_curso: cancelar tiene la forma minima desde 20261112210100 (E-483, C8); la publicacion lo acepta solo en un
+// nativo (validate_e483_native_cancel_in_flight.mjs).
+const cancelSaved = await saveDraft(ATT1, [{ ...carritoItem, en_curso: 'cancelar' }], await draftBase([carrito]));
+check(cancelSaved.ok, '4h: una version con en_curso: cancelar se guarda', cancelSaved);
 saved = await saveDraft(ATT1, [{ ...carritoItem, ok_del_cliente: { quien: 'Juan', medio: 'WhatsApp', fecha: '2026-10-15' } },
   stateItem(carrito, 'att1', 'carrito', 'apagar')], await draftBase([carrito]));
 check(saved.ok, '4h: una version con el OK del cliente y un apagar del mismo flujo se guardan', saved);

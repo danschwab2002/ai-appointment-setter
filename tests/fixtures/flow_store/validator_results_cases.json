@@ -767,8 +767,8 @@
       "code": "en_curso_not_supported",
       "kind": "ciclo",
       "path": "/0/en_curso",
-      "reason": "Hasta el motor, lo que está en curso sigue con la versión que lo empezó.",
-      "alternative": "Usar en_curso: seguir."
+      "reason": "Cortar a la gente que está a mitad de los mensajes solo se puede en un flujo del sistema nuevo de mensajes. En este flujo, lo que ya empezó sigue con la versión que lo empezó; pasarlo a la versión nueva todavía no existe en ningún flujo.",
+      "alternative": "Usar en_curso: seguir. Si el dueño necesita cortar a quienes esperan en este flujo, el equipo técnico tiene que pasarlo antes al sistema nuevo de mensajes."
      }
     ],
     "warnings": []

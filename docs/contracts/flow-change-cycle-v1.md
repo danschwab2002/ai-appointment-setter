@@ -154,6 +154,8 @@ Es el punto más delicado. Hoy el ADR y el código dicen cosas opuestas:
 La regla del contrato (decisión 3): **lo que está en curso sigue con su versión**. La propuesta puede pedir otra cosa, a la vista del aprobador. Por flujo hay tres opciones:
 - **seguir**, la opción por defecto. Los recorridos que ya empezaron terminan con la versión que los empezó, con sus esperas y su plantilla. Los nuevos arrancan con la versión nueva. En la puerta, el chequeo 7, «El flujo en marcha» (esquema, «La puerta, chequeo por chequeo»), deja pasar el recorrido que sigue con su versión;
 - **cancelar los que esperan:** los que todavía no mandaron nada terminan con el motivo `cambio_de_version`. Sirve si la versión vieja tenía un error;
+  - **En un flujo nativo, desde E-483 (C8, migración `20261112210100`; escrito al construirlo, antes del merge, no afirma nada desplegado):** se va a poder pedir en una `version` o un `volver`. Al publicar, la base cancela los toques que esperan (`pending`, `deferred`, `retryable_failed`) de cada recorrido nativo del flujo atado a otra versión que la que queda activa, también si ya salió el primero (A1 mandado, A2 esperando); cierra su secuencia y su caso (`cancelled`) con `cambio_de_version` y deja la marca `closed_by_version_change` en el caso y el evento `recovery_case_closed_by_version_change`. Un recorrido con un toque que ya se está mandando (con lease, con un intento sin terminar o en `delivery_unknown`) no se toca. El resumen de `flow_change_published` lleva `cancelados` (`cerrados` y `mandandose`). No pide `FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED`.
+  - **En el legado, con o sin la ruta `motor`, sigue sin existir:** el validador da `en_curso_not_supported` (el texto le dice al dueño que solo se puede en el sistema nuevo de mensajes) y la base no publica, con ese mismo motivo y su evento `flow_change_publish_rejected`.
 - **migrar:** los que esperan pasan a la versión nueva y se vuelven a planificar. Queda para más adelante, porque es la operación más compleja y hoy ningún caso la pide.
 
 La vista previa dice cuántos recorridos hay en curso y cuál de las opciones se va a aplicar.
@@ -401,7 +403,7 @@ El almacén es la primera pieza de la 1b: `supabase/migrations/20261016000100_fl
 - tiene un tope de 200 hallazgos y de 60 KiB, y si se pasa, se cortan primero las advertencias;
 - con la vista previa, tiene que entrar en la columna de 192 KiB.
 
-**Lo que está en curso.** Hasta el motor, una propuesta acepta solo `en_curso: seguir`. `cancelar` da `en_curso_not_supported`.
+**Lo que está en curso.** Hasta el motor, una propuesta acepta solo `en_curso: seguir`. `cancelar` da `en_curso_not_supported`. Desde E-483 (C8, `20261112210100`, escrito al construirlo, antes del merge): `_flow_change_items_are_valid` va a aceptar `seguir` o `cancelar`, y `cancelar` publica solo en un flujo nativo («Lo que está en curso cuando cambia la versión»). `migrar` sigue sin existir.
 
 **Aprobar** registra `simulation: not_built` mientras no exista la simulación.
 
@@ -653,7 +655,7 @@ Decisión 2 del 2026-10-27. Lo que solo toca a la cohorte de prueba, o frena alg
   - cambia un flujo que ya llega a todos (una `version` o un `volver` de un flujo `prendido`);
   - apaga un flujo (`apagar`);
   - cambia la estructura de un flujo nativo (`cambia_estructura:<campo>`, desde la 1.12.0, también en `cohorte`);
-  - cancela lo que espera (`en_curso: cancelar`, cuando el motor lo acepte).
+  - cancela lo que espera (`en_curso: cancelar`; en un flujo nativo desde E-483, C8).
 - **El segundo paso** es una pantalla aparte, después del primer clic, que dice en una línea qué hace: «llega a todos» o «corta lo que está en curso», con el flujo y la cuenta de lo que está en curso de la vista previa. Recién su botón aprueba y publica.
 - **Lo decide el bridge, no la página:** el bridge clasifica la propuesta con la vista previa guardada y el estado del control que relee (`a_quien`, `estado` y `en_curso` de cada ítem). Un POST de una propuesta de dos pasos sin el campo del segundo paso no aprueba ni publica, y vuelve a la pantalla del segundo paso. El campo va atado a la sesión, a la propuesta y a su `fingerprint`, con el mismo HMAC que el token de CSRF.
 - **Ante la duda, dos pasos:** un ítem que el bridge no sabe clasificar (por ejemplo, una `version` de un flujo `pausado`, que no llega a nadie hasta un `prender`) pide el segundo paso. Así un ítem nuevo del ciclo nace con dos pasos hasta que una versión de este contrato diga otra cosa.

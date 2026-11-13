@@ -38,7 +38,10 @@ const results = {};
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-if (names.slice(position + 1).length !== 0) fail(`despues de ${MIGRATION} no va ninguna`, names.slice(position + 1));
+// Despues va solo en_curso: cancelar en el nativo (20261112210100, E-483, C8): no toca la forma nativa.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261112210100_e483_native_cancel_in_flight_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de C8`, names.slice(position + 1));
+}
 
 // ---------------------------------------------------------------------------
 // 0. La forma de la migracion.
