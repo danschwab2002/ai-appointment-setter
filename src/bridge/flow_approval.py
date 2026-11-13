@@ -1061,6 +1061,37 @@ def _native_version_reach(summary: Mapping[str, Any], times: str, persons: str) 
     return head + " El número no compara mensajes: lo que cambia paso por paso está en el detalle de la propuesta.</p>"
 
 
+_TOUCH_NO_BASIS = {
+    "depende_de_quien_compra_contesta_o_vence_antes": "sin base para estimarlo: depende de quién compra, contesta o "
+                                                     "se le vence antes",
+    "la_lectura_no_separa_las_ramas": "sin base para estimarlo: el conteo no separa a quién le toca cada camino",
+}
+
+
+def _native_touches_lines(touches: object) -> str:
+    """Cuántos llegan a cada toque de un nativo de varios toques (E-483, C9), o que no hay base, por toque."""
+    if not isinstance(touches, list) or not touches:
+        return ""
+    rows = ""
+    for touch in touches:
+        if not isinstance(touch, Mapping) or type(touch.get("toque")) is not int:
+            continue
+        label = f"Mensaje {_esc(touch['toque'])}"
+        if type(touch.get("camino")) is int:
+            label = f"Camino {_esc(touch['camino'])}, mensaje {_esc(touch['toque'])}"
+        if isinstance(touch.get("espera"), str):
+            label += f" ({_duration(touch['espera'])} después)"
+        if touch.get("cota") == "como_maximo" and type(touch.get("llegan")) is int:
+            people = touch["llegan"]
+            said = f"como máximo <strong>{_esc(people)}</strong> {'persona' if people == 1 else 'personas'}"
+        else:
+            said = _esc(_TOUCH_NO_BASIS.get(str(touch.get("por_que")), "sin base para estimarlo"))
+        rows += f"<li>{label}: {said}</li>"
+    if not rows:
+        return ""
+    return f"<p>Cuántos llegan a cada mensaje:</p><ul>{rows}</ul>"
+
+
 def _simulation_summary(simulation: object, *, turns_off: bool = False) -> str:
     gate = ("Apagar solo saca envíos: la página lo publica igual." if turns_off else
             "La página no publica sin simulación: la publica el operador con <code>--sin-simulacion</code>.")
@@ -1089,6 +1120,7 @@ def _simulation_summary(simulation: object, *, turns_off: bool = False) -> str:
                     f"para {persons}.</p>")
         else:
             line = f"<p>En los últimos 7 días se habría disparado {times}, para {persons}.</p>"
+    line += _native_touches_lines(summary.get("toques"))
     return (line + "<p class=\"meta\">Estimación con los eventos reales de los últimos 7 días: no sabe qué habría "
             "contestado alguien a un mensaje que no salió.</p>")
 

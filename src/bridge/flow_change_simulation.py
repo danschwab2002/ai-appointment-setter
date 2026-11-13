@@ -38,7 +38,13 @@ from types import MappingProxyType
 from typing import Any
 
 from .flow_definition import FlowWorld, ProposalItem
-from .flow_engine import ENGINE_CAPABILITIES_V1, EngineFlow, PlanNotSupported, not_supported
+from .flow_engine import (
+    ENGINE_CAPABILITIES_V1,
+    EngineFlow,
+    PlanNotSupported,
+    native_payment_failure_paths,
+    not_supported,
+)
 from .flow_validator import structural_changes
 from .flow_parity import CaptureV3
 from .flow_replay import (
@@ -59,6 +65,7 @@ __all__ = [
     "build_simulation",
     "engine_flows_from_read",
     "native_flow_counts_request",
+    "native_touches",
     "summary_sha256",
 ]
 
@@ -288,6 +295,9 @@ def build_new_flow_simulation(counts: Any, items: Sequence[ProposalItem], *,
             "disparos": events, "personas": people, "mensajes_si_fuera_para_todos": people,
             "nace_en": "cohorte",
         }
+        touches = native_touches(item.definicion, people)
+        if touches is not None:
+            summary["toques"] = touches
         sharing = _sharing_the_event(world, item.producto, trigger)
         if sharing:
             summary["comparte_el_evento_con"] = sharing
@@ -326,6 +336,64 @@ def _event_of(definition: object) -> object:
 
 
 SILENCE_COUNTS_TRIGGER = "silencio"
+
+# E-483 (C9): cuantos llegan a cada toque de un nativo de varios toques. La lectura de conteos cuenta
+# disparos y personas del evento, no recorridos: del primer toque de un camino solo dice un maximo, y de
+# un toque siguiente o de una rama no tiene base. Se dice por toque, con el motivo, y no se inventa.
+TOUCH_AT_MOST = "como_maximo"
+TOUCH_NO_BASIS = "sin_base"
+TOUCH_NEXT = "depende_de_quien_compra_contesta_o_vence_antes"
+TOUCH_BRANCH = "la_lectura_no_separa_las_ramas"
+
+
+def _path_touches(steps: Sequence[Any]) -> list[tuple[str | None, Mapping[str, Any]]]:
+    """Los envios de un camino con la espera que los precede (desde el evento o desde el envio anterior)."""
+    touches: list[tuple[str | None, Mapping[str, Any]]] = []
+    waits: list[str] = []
+    for step in steps:
+        if not isinstance(step, Mapping):
+            continue
+        if isinstance(step.get("esperar"), str):
+            waits.append(step["esperar"])
+        elif "plantilla" in step:
+            touches.append((" + ".join(waits) or None, step))
+            waits = []
+    return touches
+
+
+def native_touches(definition: object, people: int) -> list[dict[str, Any]] | None:
+    """Por toque de un nativo de varios toques: su camino, la espera y cuantos llegan, o que no hay base.
+
+    ``None`` si ningun camino tiene mas de un envio (un toque): el resumen queda como antes. ``people`` es
+    lo que conto la lectura (personas con el evento en la ventana): es el maximo del primer toque de un
+    flujo sin ramas. Un toque siguiente depende de quien compra, contesta o vence antes, y las ramas del
+    pago rechazado (C3) se eligen por un dato que la lectura no separa: los dos van ``sin_base``.
+    """
+    if not isinstance(definition, Mapping) or not isinstance(definition.get("pasos"), list):
+        return None
+    steps = definition["pasos"]
+    branches = native_payment_failure_paths(definition)
+    if branches is None:
+        paths: list[tuple[Mapping[str, Any] | None, list[Any]]] = [(None, list(steps))]
+    else:
+        lead = list(steps[:-1])
+        paths = [(condition, lead + list(path)) for condition, path in branches]
+    touched = [(index, condition, _path_touches(path)) for index, (condition, path) in enumerate(paths, start=1)]
+    if all(len(touches) <= 1 for _, _, touches in touched):
+        return None
+    out: list[dict[str, Any]] = []
+    for path_index, condition, touches in touched:
+        for ordinal, (wait, step) in enumerate(touches, start=1):
+            row: dict[str, Any] = {"toque": ordinal, "espera": wait, "plantilla": step.get("plantilla")}
+            if branches is not None:
+                row["camino"] = path_index
+                row["condicion"] = dict(condition) if isinstance(condition, Mapping) else None
+            if ordinal == 1 and branches is None:
+                row.update(llegan=people, cota=TOUCH_AT_MOST)
+            else:
+                row.update(llegan=None, cota=TOUCH_NO_BASIS, por_que=TOUCH_NEXT if ordinal > 1 else TOUCH_BRANCH)
+            out.append(row)
+    return out
 
 
 def simulation_trigger(definition: object) -> str | None:
@@ -451,6 +519,10 @@ def build_native_flow_simulation(counts: Any, items: Sequence[ProposalItem], *,
                     summary["cambia_estructura"] = list(changes)
         else:
             summary["mensajes_si_fuera_para_todos"] = people
+        if item.tipo != "apagar":
+            touches = native_touches(definition, people)
+            if touches is not None:
+                summary["toques"] = touches
         own = f"{flow.product_ref}/{flow.flow_key}"
         sharing = [entry for entry in _sharing_the_event(world, item.producto, trigger) if entry["flujo"] != own]
         if sharing:
