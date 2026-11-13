@@ -348,10 +348,28 @@ const bea = await lead('audiencia-bea');
     values ($1, $2) returning id`, [flor.contact, await identityOf(flor)]), 'conversacion').id;
   await sql(`insert into public.messages (conversation_id, direction, actor_type, content, occurred_at)
     values ($1, 'inbound', 'prospect', 'Hola, una duda', now() - interval '2 hours')`, [florConversation]);
+  // E-531: la tabla messages del setter guarda solo salientes (Maribel, 13/11: 264 salientes y 0 entrantes) y
+  // conversations.last_inbound_at no se llena nunca. Lo que el setter registra de un entrante es el turno del
+  // agente (agent_turn_provenance, por el numero de Chatwoot) y la adopcion (conversation_events inbound_*),
+  // la senal de recuperador_estado.py (E-511). Hugo: un turno de hace 2 h en su conversacion de Chatwoot;
+  // Ines: la adopcion de su conversacion de una plantilla hace 3 h. Ninguno tiene un entrante en messages.
+  const hugo = await lead('audiencia-hugo');
+  await sql(`insert into public.conversations (contact_id, channel_identity_id, commercial_context)
+    values ($1, $2, '{"chatwoot_conversation_id": "483611"}'::jsonb)`, [hugo.contact, await identityOf(hugo)]);
+  await sql(`insert into public.agent_turn_provenance (tenant_ref, scope_ref, external_conversation_id, turn_digest,
+      occurred_at, outcome, model_requested, bridge_release, context_builder_version, context_digest, context_added)
+    values ($1, 'audiencia', 483611, $2, now() - interval '2 hours', 'completed', 'modelo', 'v1.37.0', 'v1', $2, '{}'::jsonb)`,
+  [A.tenant, 'a'.repeat(63) + '1']);
+  const ines = await lead('audiencia-ines');
+  const inesConversation = one(await sql(`insert into public.conversations (contact_id, channel_identity_id)
+    values ($1, $2) returning id`, [ines.contact, await identityOf(ines)]), 'conversacion de Ines').id;
+  await sql(`insert into public.conversation_events (conversation_id, event_type, actor_type, data, created_at)
+    values ($1, 'inbound_adopted_template_conversation', 'integration', '{"chatwoot_conversation_id": "483612"}'::jsonb,
+            now() - interval '3 hours')`, [inesConversation]);
   const expected = { [carla.label]: 'baja', [dora.label]: 'no_entra:permiso', [elsa.label]: 'conversacion_derivada',
-    [flor.label]: 'conversacion_viva' };
+    [flor.label]: 'conversacion_viva', [hugo.label]: 'conversacion_viva', [ines.label]: 'conversacion_viva' };
   const seen = {};
-  for (const p of [carla, dora, elsa, flor]) {
+  for (const p of [carla, dora, elsa, flor, hugo, ines]) {
     const row = await admitOne(await eventOf(p, audFlow, OCCURRENCE), p.label);
     if (row.outcome !== 'motor_no_arranca' || row.reason !== expected[p.label]) fail(`${p.label} no entra`, row);
     seen[p.label.replace('audiencia-', '')] = row.reason;

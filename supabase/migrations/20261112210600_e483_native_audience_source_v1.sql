@@ -292,8 +292,37 @@ begin
                 or conversation.automation_status in ('paused', 'disabled', 'restricted', 'error'))) then
         return 'conversacion_derivada';
     end if;
-    -- La conversacion viva: la persona nos escribio en las ultimas 24 h.
+    -- La conversacion viva: la persona nos escribio en las ultimas 24 h. La tabla
+    -- messages del setter guarda solo salientes (Maribel, 13/11: 264 y 0
+    -- entrantes) y conversations.last_inbound_at no se llena nunca: lo que el
+    -- setter registra de un entrante es el turno del agente (agent_turn_provenance,
+    -- por el numero de la conversacion de Chatwoot) y la adopcion de la
+    -- conversacion (conversation_events inbound_*), la senal de
+    -- recuperador_estado.py (E-511). Los numeros de Chatwoot de la persona salen de
+    -- sus conversaciones, de sus adopciones y de sus casos por entrante. El
+    -- entrante en messages queda por si algun camino lo guarda (E-531).
     if exists (
+        select 1 from public.conversation_events event
+          join public.conversations conversation on conversation.id = event.conversation_id
+         where conversation.contact_id = p_contact_id and event.event_type like 'inbound%'
+           and event.created_at > clock_timestamp() - interval '24 hours')
+       or exists (
+        select 1 from public.agent_turn_provenance turn
+         where turn.occurred_at > clock_timestamp() - interval '24 hours'
+           and turn.external_conversation_id::text in (
+               select conversation.commercial_context ->> 'chatwoot_conversation_id'
+                 from public.conversations conversation
+                where conversation.contact_id = p_contact_id
+               union
+               select event.data ->> 'chatwoot_conversation_id'
+                 from public.conversation_events event
+                 join public.conversations conversation on conversation.id = event.conversation_id
+                where conversation.contact_id = p_contact_id
+               union
+               select admission.external_conversation_id::text
+                 from public.inbound_commercial_case_admissions admission
+                where admission.contact_id = p_contact_id))
+       or exists (
         select 1 from public.messages message
           join public.conversations conversation on conversation.id = message.conversation_id
          where conversation.contact_id = p_contact_id and message.direction = 'inbound'
