@@ -183,6 +183,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261112210600",
         # El disparo por audiencia y su lista congelada (20261112220000, E-484).
         "20261112220000",
+        # El tope por persona del nativo (20261112230000, E-483, C6).
+        "20261112230000",
     ]
 
     sql = _sql()

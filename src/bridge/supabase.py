@@ -183,8 +183,26 @@ class PilotRequestStartRejectedError(SupabaseError):
         super().__init__(f"pilot_request_start_rejected:{reason}")
 
 
+@dataclass(frozen=True)
+class NativePersonCap:
+    """The per-person cap of the native engine (E-483, C6; 20261112230000).
+
+    ``max_sends`` proactive native sends per person in the last
+    ``window_hours`` hours (1-20 and 1-720, the ranges of the base). With it,
+    an engine step starts through ``mark_flow_engine_request_started_v2``; a
+    native step over the cap ends ``terminado`` with ``tope_por_persona``.
+    """
+
+    max_sends: int
+    window_hours: int
+
+    def as_json(self) -> dict[str, int]:
+        return {"max_sends": self.max_sends, "window_hours": self.window_hours}
+
+
 class FlowEngineRunTerminated(SupabaseError):
-    """The engine closed the attempt itself: its flow was turned off.
+    """The engine closed the attempt itself: its flow was turned off, or the
+    native step was over the per-person cap (``tope_por_persona``, E-483 C6).
 
     ``mark_flow_engine_request_started_v1`` answered ``terminado``: the base
     already completed the attempt (``failed_before_request``), cancelled the
@@ -7083,8 +7101,13 @@ class SupabaseClient:
         worker_id: str,
         lease_generation: int,
         now: str,
+        person_cap: NativePersonCap | None = None,
     ) -> DeliveryAttempt:
         """Start one attempt of an engine run (contract flow-engine-v1, 7.2).
+
+        With ``person_cap`` (FLOW_ENGINE_NATIVE_PERSON_CAP_ENABLED, E-483 C6)
+        the start goes through ``mark_flow_engine_request_started_v2`` with the
+        cap of the instance; without it, through the v1, as before.
 
         ``request_started`` is the attempt of ``mark_followup_request_started``,
         with the same checks. ``rechazado`` raises
@@ -7093,16 +7116,20 @@ class SupabaseClient:
         ``FlowEngineRunTerminated`` (the base already closed the attempt).
         """
         operation = "mark_flow_engine_request_started_v1"
+        body: dict[str, object] = {
+            "p_action_id": action_id,
+            "p_attempt_id": attempt_id,
+            "p_worker_id": worker_id,
+            "p_lease_generation": lease_generation,
+            "p_now": now,
+        }
+        if person_cap is not None:
+            operation = "mark_flow_engine_request_started_v2"
+            body["p_person_cap"] = person_cap.as_json()
         response = await self._request(
             "POST",
             f"/rest/v1/rpc/{operation}",
-            content=json.dumps({
-                "p_action_id": action_id,
-                "p_attempt_id": attempt_id,
-                "p_worker_id": worker_id,
-                "p_lease_generation": lease_generation,
-                "p_now": now,
-            }, ensure_ascii=False),
+            content=json.dumps(body, ensure_ascii=False),
         )
         if response.status_code != 200:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")

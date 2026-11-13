@@ -163,6 +163,7 @@ def test_it_is_one_transaction_and_comes_before_the_flow_engine_routes() -> None
         # El evento de un disparo por audiencia en el nativo (20261112210600, E-483, para E-484).
         "20261112210600_e483_native_audience_source_v1.sql",
         "20261112220000_flow_audience_triggers_v1.sql",
+        "20261112230000_e483_native_person_cap_v1.sql",
     ]
 
 

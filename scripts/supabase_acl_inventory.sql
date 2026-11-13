@@ -244,7 +244,9 @@ expected_service_role(signature) as (
         ('public.brake_flow_audience_occurrence_v1(uuid, text)'),
         ('public.release_flow_audience_members_v1(uuid, timestamp with time zone, integer)'),
         ('public.settle_flow_audience_member_v1(uuid, uuid, text)'),
-        ('public.read_flow_audience_occurrences_v1(jsonb, integer)')
+        ('public.read_flow_audience_occurrences_v1(jsonb, integer)'),
+        -- 20261112230000: el arranque nativo con el tope por persona (E-483, C6).
+        ('public.mark_flow_engine_request_started_v2(uuid, uuid, text, bigint, timestamp with time zone, jsonb)')
 ),
 functions as (
     select

@@ -162,6 +162,7 @@ from bridge.supabase import (
     DeliveryAttempt,
     FlowEngineNativeBranch,
     FlowEngineRunTerminated,
+    NativePersonCap,
     FlowEngineStepContext,
     FollowupExecutionContext,
     PilotBoundaryConfig,
@@ -960,6 +961,7 @@ class DurableDispatcher:
         payment_failure_followup: PaymentFailureFollowupConfig | None = None,
         flow_engine_enabled: bool = False,
         native_multitouch_enabled: bool = False,
+        native_person_cap: NativePersonCap | None = None,
         native_personal_coupon: NativePersonalCouponConfig | None = None,
         native_client_labeler: ProductLabeler | None = None,
         purchase_pause_after_native_welcome: PurchaseAgentPause | None = None,
@@ -1095,6 +1097,9 @@ class DurableDispatcher:
         self._flow_engine_enabled = flow_engine_enabled
         # E-483: los toques siguientes de un flujo nativo (native_touch_2 y 3, 20261112210000).
         self._native_multitouch_enabled = native_multitouch_enabled
+        # E-483 (C6, 20261112230000): el tope por persona del nativo. None (el flag
+        # apagado): el arranque del motor es la v1, como hoy.
+        self._native_person_cap = native_person_cap
         # E-483 (C2, 20261112210500): el toque nativo con el cupon propio. None (el flag apagado): cierra sin salir.
         self._native_personal_coupon = native_personal_coupon
         # flow-engine-v2 (E-065): la etiqueta cliente del paso etiquetar, por
@@ -3307,6 +3312,13 @@ class DurableDispatcher:
                                             worker_id=self._worker_id,
                                             lease_generation=action.lease_generation,
                                             now=final_now,
+                                            # E-483 (C6): solo con el flag; sin el,
+                                            # la llamada de hoy.
+                                            **(
+                                                {"person_cap": self._native_person_cap}
+                                                if self._native_person_cap is not None
+                                                else {}
+                                            ),
                                         )
                                         if engine_step is not None
                                         else self._supabase.mark_followup_request_started(

@@ -181,4 +181,4 @@ def test_the_shared_scope_of_maribel() -> None:
 def test_the_new_test_runs_last_with_npm_test() -> None:
     package = json.loads((ROOT / "tests" / "sql" / "followup_engine" / "package.json").read_text(encoding="utf-8"))
     assert package["scripts"]["test"].endswith(
-        " && node validate_flow_audience_native_e2e.mjs && node validate_e483_native_legacy_double_case_touches.mjs --check")
+        " && node validate_flow_audience_native_e2e.mjs && node validate_e483_native_legacy_double_case_touches.mjs --check && node validate_e483_native_person_cap.mjs")

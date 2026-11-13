@@ -480,7 +480,9 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261112200000 (los numeros del tablero, E-507) suma su lectura.
     # 20261112210500 (el cupon propio en el nativo, E-483, C2) suma la lectura del bridge.
     # 20261112220000 (el disparo por audiencia, E-484) suma sus siete.
-    assert len(allowlisted) == 217
+    # 20261112230000 (el tope por persona del nativo, E-483, C6) suma su arranque.
+    assert len(allowlisted) == 218
+    assert "mark_flow_engine_request_started_v2(uuid, uuid, text, bigint, timestamp with time zone, jsonb)" in allowlisted
     assert "release_flow_audience_members_v1(uuid, timestamp with time zone, integer)" in allowlisted
     assert "get_flow_engine_native_step_coupon_v1(uuid)" in allowlisted
     assert "mark_meta_account_hold_enabled_v1(bigint, timestamp with time zone, timestamp with time zone, integer)" in allowlisted
@@ -2086,15 +2088,27 @@ def test_read_results_fingerprint() -> None:
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
 
 
-def test_flow_audience_triggers_fingerprint_is_last() -> None:
+def test_flow_audience_triggers_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261112220000 (E-484): las tablas cerradas y las siete funciones de service_role.
-    fingerprint = sql.split("'20261112220000'", 1)[1].split("select\n    version,", 1)[0]
+    fingerprint = sql.split("'20261112220000'", 1)[1].split("'20261112230000'", 1)[0].rsplit("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261112220000_flow_audience_triggers_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",2,'flow_audience_triggers')")
+    assert compact_fingerprint.endswith(",2,'flow_audience_triggers'")
     assert "release_flow_audience_members_v1(uuid,timestamptz,integer)" in compact_fingerprint
+
+
+def test_e483_native_person_cap_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261112230000 (E-483, C6): el bloque en la autorizacion nativa, el cierre con el motivo y la v2.
+    fingerprint = sql.split("'20261112230000'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261112230000_e483_native_person_cap_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",3,'e483_native_person_cap')")
+    assert "mark_flow_engine_request_started_v2(uuid,uuid,text,bigint,timestamptz,jsonb)" in compact_fingerprint
+    assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
 
 
 def test_e483_native_audience_source_fingerprint() -> None:

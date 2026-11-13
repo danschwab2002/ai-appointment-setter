@@ -7240,6 +7240,37 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'flow_audience_triggers'
+    union all
+    select
+        '20261112230000',
+        '20261112230000_e483_native_person_cap_v1.sql',
+        -- El tope por persona del nativo (E-483, C6): el bloque en la autorizacion
+        -- nativa ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_authorize_native_tail(uuid,uuid,public.flow_engine_runs,public.recovery_cases,public.flow_controls,timestamptz)')
+              and position('e483_native_person_cap: end' in definition) > 0
+        )::int
+        -- ... el cierre de terminado con el motivo de la autorizacion ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.mark_flow_engine_request_started_v1(uuid,uuid,text,bigint,timestamptz)')
+              and position('e483_native_person_cap' in definition) > 0
+        )::int
+        -- ... y la v2 del arranque, solo de service_role y security definer.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.mark_flow_engine_request_started_v2(uuid,uuid,text,bigint,timestamptz,jsonb)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        3,
+        'e483_native_person_cap'
 )
 select
     version,

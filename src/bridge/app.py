@@ -288,6 +288,7 @@ from bridge.recovery_coupon_reply import (
 )
 from bridge.recovery_coupons import RecoveryCouponWorker
 from bridge.native_personal_coupon import NativePersonalCouponConfig
+from bridge.supabase import NativePersonCap
 from bridge.campaign_inbound_entry import campaign_inbound_entry_setup as _campaign_inbound_entry_setup
 from bridge.segment_labels import (
     automation_expert_segments,
@@ -522,6 +523,9 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # E-483 (C2, 20261112210500): el toque nativo con el cupon propio. Lo
     # especifico (que toques) es de la base; por instancia, solo prenderlo.
     "flow_engine_native_personal_coupon_enabled",
+    # E-483 (C6, 20261112230000): el tope por persona del nativo. Los numeros
+    # (FLOW_ENGINE_NATIVE_PERSON_CAP_MAX_SENDS y _WINDOW_HOURS) son de la instancia.
+    "flow_engine_native_person_cap_enabled",
     # E-316 (segment-labels-v1): la etiqueta de un segmento antes del primer
     # turno del agente, la que pone el motor nativo antes del primer envio y la
     # que se hereda de otra conversacion del contacto. Lo especifico (que
@@ -1223,6 +1227,15 @@ class Settings:
     # cierra sin salir (flow_engine_native_personal_coupon_disabled) y lo de hoy
     # no cambia: ningun flujo publicado lo lleva.
     flow_engine_native_personal_coupon_enabled: bool = False
+    # E-483 (C6, 20261112230000; D5: 4 cada 5 dias): el tope de mensajes
+    # proactivos por persona del motor nativo. Prendido, cada toque del motor
+    # arranca por mark_flow_engine_request_started_v2 con estos numeros, y el
+    # toque nativo que pasaria el tope cierra sin salir (tope_por_persona).
+    # Apagado, el arranque es el de hoy (la v1) y el tope no existe. No toca el
+    # legado.
+    flow_engine_native_person_cap_enabled: bool = False
+    flow_engine_native_person_cap_max_sends: int = 4
+    flow_engine_native_person_cap_window_hours: int = 120
     # E-316 (segment-labels-v1, PR-C de los segmentos): el paso etiquetar de un
     # flujo nativo acepta la etiqueta de cada [[agente.segmentos]] con macro, con
     # cualquier disparador, y el motor la pone antes del primer envio. Apagado, el
@@ -2782,6 +2795,18 @@ class Settings:
                 .lower()
                 == "true"
             ),
+            flow_engine_native_person_cap_enabled=(
+                os.getenv("FLOW_ENGINE_NATIVE_PERSON_CAP_ENABLED", "false")
+                .strip()
+                .lower()
+                == "true"
+            ),
+            flow_engine_native_person_cap_max_sends=_parse_positive_int_env(
+                "FLOW_ENGINE_NATIVE_PERSON_CAP_MAX_SENDS", 4
+            ),
+            flow_engine_native_person_cap_window_hours=_parse_positive_int_env(
+                "FLOW_ENGINE_NATIVE_PERSON_CAP_WINDOW_HOURS", 120
+            ),
             flow_engine_segment_labels_enabled=(
                 os.getenv("FLOW_ENGINE_SEGMENT_LABELS_ENABLED", "false").strip().lower()
                 == "true"
@@ -4190,6 +4215,34 @@ def _parse_positive_int_env(name: str, default: int) -> int:
     return int(raw)
 
 
+def native_person_cap(settings: Settings) -> NativePersonCap | None:
+    """El tope por persona del nativo para el despachador, o None sin el flag (E-483, C6)."""
+    if not settings.flow_engine_native_person_cap_enabled:
+        return None
+    return NativePersonCap(
+        max_sends=settings.flow_engine_native_person_cap_max_sends,
+        window_hours=settings.flow_engine_native_person_cap_window_hours,
+    )
+
+
+def _validate_native_person_cap(settings: Settings) -> None:
+    """Los rangos del tope por persona del nativo (los de la base: 1-20 y 1-720).
+
+    Se miran con el flag prendido o apagado, para que un valor imposible no
+    espere a que alguien lo prenda.
+    """
+    if not (
+        isinstance(settings.flow_engine_native_person_cap_max_sends, int)
+        and 1 <= settings.flow_engine_native_person_cap_max_sends <= 20
+    ):
+        raise ValueError("FLOW_ENGINE_NATIVE_PERSON_CAP_MAX_SENDS must be 1-20")
+    if not (
+        isinstance(settings.flow_engine_native_person_cap_window_hours, int)
+        and 1 <= settings.flow_engine_native_person_cap_window_hours <= 720
+    ):
+        raise ValueError("FLOW_ENGINE_NATIVE_PERSON_CAP_WINDOW_HOURS must be 1-720")
+
+
 def _validate_handoff_wait_alerts(settings: Settings) -> None:
     """Las guardas de arranque del aviso de derivaciones sin atender (E-309).
 
@@ -5465,6 +5518,7 @@ def create_app(
     )
     _validate_meta_delivery(settings)
     _validate_handoff_wait_alerts(settings)
+    _validate_native_person_cap(settings)
     # Mandar un cupon es un efecto externo irreversible: sin plantilla, sin
     # cupon, sin producto, sin el AgentBot que la emite y sin la admision de
     # Corte B (el link sale del caso comercial que abre esa admision), el
@@ -6649,6 +6703,7 @@ def create_app(
         durable_dispatcher = DurableDispatcher(
             flow_engine_enabled=settings.flow_engine_enabled,
             native_multitouch_enabled=settings.flow_engine_native_multitouch_enabled,
+            native_person_cap=native_person_cap(settings),
             native_personal_coupon=(
                 NativePersonalCouponConfig(
                     price=settings.recovery_discount_price,
