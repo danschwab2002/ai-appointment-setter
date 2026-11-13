@@ -67,6 +67,13 @@
 --      recorrido nativo de la ficha.
 --  11. flow_engine_native_runs: trigger_event admite ficha_impresa, y la ficha
 --      lleva su intencion (audience_by_trigger, como el carrito).
+--  12. Las lecturas (E-531): la simulacion de un flujo de la ficha cuenta las
+--      fichas impresas del producto (read_flow_engine_native_trigger_counts_v1
+--      con ficha_impresa: PURCHASE_BILLET_PRINTED, las personas por mail o por
+--      checkout_phone); la historia del AE dice el evento que arranco el
+--      recorrido (read_automation_expert_native_history_v1); y los resultados
+--      (read_results_v1) cuentan el recorrido nativo de la ficha como el flujo
+--      ficha_oxxo, el mismo nombre que la ficha del legado, con ejecutor motor.
 --
 -- Lo que NO cambia. Ningun flujo publicado tiene ficha_impresa en el motor nativo
 -- (la base y el validador lo rechazaban), asi que nada de lo que corre en ATT1 o
@@ -522,6 +529,37 @@ select pg_temp.e528_native_payment_slip_patch(
     E'    -- e528_native_payment_slip_recheck: y la ficha (20261113200000).\n'
     || E'    if v_native.trigger_event in (''carrito'', ''pago_fallido'', ''ficha_impresa'') and not v_native.audience_hotmart_phone then\n',
     'e528_native_payment_slip_recheck');
+
+-- ===========================================================================
+-- 12. Las lecturas: la simulacion, la historia del AE y los resultados (E-531).
+-- ===========================================================================
+select pg_temp.e528_native_payment_slip_patch(
+    'public.read_flow_engine_native_trigger_counts_v1(jsonb,text,text,timestamptz)',
+    E'    if p_trigger is null or p_trigger not in (''compra'', ''carrito'', ''pago_fallido'', ''intencion'') then\n',
+    E'    -- e528_native_payment_slip_counts_trigger: y la ficha impresa (20261113200000).\n'
+    || E'    if p_trigger is null or p_trigger not in (''compra'', ''carrito'', ''pago_fallido'', ''intencion'', ''ficha_impresa'') then\n',
+    'e528_native_payment_slip_counts_trigger');
+select pg_temp.e528_native_payment_slip_patch(
+    'public.read_flow_engine_native_trigger_counts_v1(jsonb,text,text,timestamptz)',
+    E'                                         when ''pago_fallido'' then ''PURCHASE_CANCELED''\n',
+    E'                                         when ''pago_fallido'' then ''PURCHASE_CANCELED''\n'
+    || E'                                         -- e528_native_payment_slip_counts_kind: la ficha trae checkout_phone.\n'
+    || E'                                         when ''ficha_impresa'' then ''PURCHASE_BILLET_PRINTED''\n',
+    'e528_native_payment_slip_counts_kind');
+select pg_temp.e528_native_payment_slip_patch(
+    'public.read_automation_expert_native_history_v1(jsonb,uuid)',
+    E'                                    when ''intencion'' then ''PRECHECKOUT_FORM_SUBMITTED'' end)\n',
+    E'                                    when ''intencion'' then ''PRECHECKOUT_FORM_SUBMITTED''\n'
+    || E'                                    -- e528_native_payment_slip_history (20261113200000)\n'
+    || E'                                    when ''ficha_impresa'' then ''PURCHASE_BILLET_PRINTED'' end)\n',
+    'e528_native_payment_slip_history');
+select pg_temp.e528_native_payment_slip_patch(
+    'public.read_results_v1(timestamptz,timestamptz,text,text[],integer,integer)',
+    E'                        case c.trigger_event when ''compra'' then ''bienvenida'' when ''carrito'' then ''carrito''\n',
+    E'                        -- e528_native_payment_slip_results: la ficha nativa es ficha_oxxo, como la del legado.\n'
+    || E'                        case c.trigger_event when ''compra'' then ''bienvenida'' when ''carrito'' then ''carrito''\n'
+    || E'                             when ''ficha_impresa'' then ''ficha_oxxo''\n',
+    'e528_native_payment_slip_results');
 
 -- ===========================================================================
 -- Los permisos: los helpers no son de la API; la lectura, solo service_role.

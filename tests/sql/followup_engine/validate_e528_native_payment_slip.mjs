@@ -39,6 +39,11 @@
 //      ejecuta igual (contestar no corta C3, 20261019000800); rojo: con la
 //      secuencia de un nativo cualquiera (reason recovery), lo cancela con
 //      prospect_replied.
+//   7. las lecturas (E-531): la simulacion cuenta las fichas impresas del
+//      producto y sus personas; la historia del AE dice PURCHASE_BILLET_PRINTED
+//      al arrancar el recorrido; los resultados cuentan el envio de C1 como el
+//      flujo ficha_oxxo con ejecutor motor; cada uno con su rojo con la
+//      definicion de antes.
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
@@ -50,12 +55,17 @@ const ADMIT_EVENT = 'admit_flow_engine_event_v1(jsonb,jsonb)';
 const ADMIT_NATIVE = `_flow_engine_admit_native_flow(flow_controls,webhook_events,uuid,text,${TZ},bigint,bigint,text)`;
 const TAIL = `_flow_engine_authorize_native_tail(uuid,uuid,flow_engine_runs,recovery_cases,flow_controls,${TZ})`;
 const CONTEXT = `get_flow_engine_native_payment_slip_context_v1(uuid,text,bigint,${TZ})`;
+// E-531 (12): las lecturas de la simulacion, la historia del AE y los resultados.
+const COUNTS = `read_flow_engine_native_trigger_counts_v1(jsonb,text,text,${TZ})`;
+const HISTORY = 'read_automation_expert_native_history_v1(jsonb,uuid)';
+const RESULTS = `read_results_v1(${TZ},${TZ},text,text[],integer,integer)`;
 const CHANGED = [
   ADMIT_EVENT, ADMIT_NATIVE, TAIL,
   '_flow_engine_native_trigger(jsonb)',
   '_flow_engine_native_steps(text)',
   '_flow_engine_native_unsupported(jsonb)',
   '_flow_engine_compile_policy_core(jsonb,text,integer,text,text)',
+  COUNTS, HISTORY, RESULTS,
 ];
 const ADDED = [
   '_flow_engine_native_payment_slip_due_day(jsonb)',
@@ -458,6 +468,65 @@ if (started.outcome !== 'motor_arranco' || started.created !== true) fail('la fi
   });
   if (red.decision !== 'cancel' || red.reason_code !== 'prospect_replied') fail('con otra secuencia, la respuesta lo cortaba', red);
   results.c3 = { plantilla: c3Step.template_name, con_respuesta: survives.decision, rojo: red.reason_code };
+}
+
+// ---------------------------------------------------------------------------
+// 7. Las lecturas: la simulacion, la historia del AE y los resultados (E-531).
+// ---------------------------------------------------------------------------
+{
+  const since = new Date((await dbNow()).getTime() - 7 * 24 * 60 * 60_000).toISOString();
+  const countsOf = async () => JSON.parse(one(await asService(async () => (await db.query(
+    'select public.read_flow_engine_native_trigger_counts_v1($1::jsonb, $2, $3, $4)::text as r',
+    [JSON.stringify(INSTANCE), A.funnel, 'ficha_impresa', since])).rows), 'conteos').r);
+  // Lo que tiene que dar, contado aparte: las fichas del producto en la ventana y sus personas por mail.
+  const expected = one(await sql(`select count(distinct e.payload #>> '{data,purchase,transaction}')::integer as events,
+      count(distinct lower(e.payload #>> '{data,buyer,email}'))::integer as people
+    from public.webhook_events e where e.source = 'hotmart' and e.event_type = 'PURCHASE_BILLET_PRINTED'
+      and e.received_at >= $1 and e.payload #>> '{data,product,id}' = $2`, [since, String(A.productId)]), 'esperado');
+  const counts = await countsOf();
+  if (counts.trigger !== 'ficha_impresa' || counts.events !== expected.events || counts.people !== expected.people
+      || counts.events < 5 || counts.people !== 3) {
+    fail('la simulacion cuenta las fichas impresas', { counts, expected });
+  }
+  // El rojo sin cambiar de rol: un error adentro de set role aborta la transaccion antes del reset.
+  const redCounts = await withPrevious([COUNTS], () => errorOf(db, () => db.query(
+    'select public.read_flow_engine_native_trigger_counts_v1($1::jsonb, $2, $3, $4)',
+    [JSON.stringify(INSTANCE), A.funnel, 'ficha_impresa', since])));
+  if (redCounts?.message !== 'flow_engine_native_trigger_invalid') fail('sin la migracion, la ficha no se contaba', redCounts?.message);
+
+  const historyOf = async () => one(await sql('select public.read_automation_expert_native_history_v1($1::jsonb, $2)::text as r',
+    [JSON.stringify({ ...INSTANCE, chatwoot_inbox_id: String(A.inboxId) }), ana.contact]), 'historia').r;
+  const history = await historyOf();
+  if (!history.includes('"event_type": "PURCHASE_BILLET_PRINTED"')) fail('la historia del AE dice la ficha', history);
+  const redHistory = await withPrevious([HISTORY], historyOf);
+  if (redHistory.includes('PURCHASE_BILLET_PRINTED')) fail('sin la migracion, la historia no decia la ficha', redHistory);
+
+  // Los resultados: la persona del caso esta en la cohorte (prueba); se la saca para leer, y la clave del flujo
+  // se cambia para que el rojo (coalesce(flow_key, motor)) no coincida con el nombre de la ficha.
+  const resultsOf = async () => rolledBack(async () => {
+    await db.query('delete from public.flow_cohort_members');
+    await db.query('delete from public.pilot_cohort_memberships');
+    // flow_engine_runs es de solo agregar (reject_flow_engine_mutation): el cambio va sin triggers y se deshace.
+    await db.exec('set local session_replication_role = replica');
+    await db.query("update public.flow_engine_runs set flow_key = 'ficha_nativa' where recovery_case_id = $1",
+      [started.recovery_case_id]);
+    await db.exec('set local session_replication_role = origin');
+    const now = await dbNow();
+    return JSON.parse(one(await sql(`select public.read_results_v1($1::timestamptz, $2::timestamptz, 'America/Mexico_City',
+        '{}'::text[], 7, 0)::text as r`,
+    [new Date(now.getTime() - 2 * 24 * 60 * 60_000).toISOString(), new Date(now.getTime() + 60 * 60_000).toISOString()]),
+    'resultados').r);
+  });
+  const read = await resultsOf();
+  const slipRow = (read.flujos ?? []).find((row) => row.flujo === 'ficha_oxxo' && row.ejecutor === 'motor');
+  if (!slipRow || slipRow.aceptados < 1) fail('los resultados cuentan la ficha nativa como ficha_oxxo', read.flujos);
+  const redRead = await withPrevious([RESULTS], resultsOf);
+  if ((redRead.flujos ?? []).some((row) => row.flujo === 'ficha_oxxo' && row.ejecutor === 'motor')) {
+    fail('sin la migracion, la ficha nativa salia con la clave del flujo', redRead.flujos);
+  }
+  results.lecturas = { conteos: { disparos: counts.events, personas: counts.people }, rojo_conteos: redCounts.message,
+    historia: 'PURCHASE_BILLET_PRINTED', resultados: { flujo: slipRow.flujo, ejecutor: slipRow.ejecutor, aceptados: slipRow.aceptados },
+    rojo_resultados: (redRead.flujos ?? []).filter((row) => row.ejecutor === 'motor').map((row) => row.flujo) };
 }
 
 console.log(JSON.stringify(results, null, 2));
