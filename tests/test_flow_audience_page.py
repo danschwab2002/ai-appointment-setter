@@ -229,3 +229,14 @@ def test_with_the_flag_on_the_page_exists(monkeypatch: pytest.MonkeyPatch, tmp_p
     client = TestClient(app, base_url=ORIGIN)
     assert "Entrar con Slack" in client.get(PATH).text
     assert app.state.flow_audience.readiness()["flow_audience"] == fs.STATE_NO_ENGINE
+
+
+def test_a_brake_by_a_low_limit_reads_in_plain_words_e547() -> None:
+    row = {"occurrence_id": OCCURRENCE, "flow_key": "black_manual", "form": "manual", "state": "frenada",
+           "member_count": 137, "per_hour": 200, "omitted_by_reason": {}, "materialized_at": "2026-12-01T15:00:00Z",
+           "brake_reason": fs.BRAKE_LOW_LIMIT}
+    html = flow_audience_page._occurrence_html(row, csrf="x", time_zone=None)
+    assert "límite de mensajes del número es bajo" in html and "meta_salud:" not in html
+    # Las frenadas viejas por LIMITED (antes de E-547) siguen leyéndose igual.
+    old = flow_audience_page._occurrence_html({**row, "brake_reason": "meta_salud:limited"}, csrf="x", time_zone=None)
+    assert "Meta limitó los envíos del número" in old

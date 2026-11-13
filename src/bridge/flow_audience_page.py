@@ -67,7 +67,9 @@ _BRAKE = {"meta_salud:red": "la salud del número está en rojo", "meta_salud:ye
           "la salud del número está en amarillo", "meta_salud:sin_lectura": "no se pudo leer la salud del número",
           "meta_salud:vieja": "la lectura de la salud del número tiene más de 26 horas",
           "meta_salud:blocked": "Meta dice que el número no puede enviar",
-          "meta_salud:limited": "Meta limitó los envíos del número", "a_mano": "lo frenó una persona"}
+          "meta_salud:limited": "Meta limitó los envíos del número",
+          "meta_salud:limite_bajo": "el límite de mensajes del número es bajo (2.000 por día o menos)",
+          "a_mano": "lo frenó una persona"}
 _DONE = {
     "armada": "Lista armada. Revisá cuántas personas van a salir y confirmá abajo.",
     "confirmada": "Confirmado. Sale al ritmo por hora del flujo, y se frena solo si baja la salud del número.",
