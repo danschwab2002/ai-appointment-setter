@@ -44,7 +44,9 @@ const ONLY_CALLS = new Set(['20261108004100_flow_change_publish_native_version_g
   '20261112210000_e483_native_multitouch_v1.sql', '20261112210300_e483_native_condition_after_send_v1.sql',
   '20261112210500_e483_native_personal_coupon_v1.sql', '20261112210600_e483_native_audience_source_v1.sql', '20261112220000_flow_audience_triggers_v1.sql', '20261112230000_e483_native_person_cap_v1.sql',
   // La ficha de OXXO nativa (20261113200000, E-528, C4).
-  '20261113200000_e528_native_payment_slip_v1.sql']);
+  '20261113200000_e528_native_payment_slip_v1.sql',
+    // El correlador que decide solo y su pregunta (20261114000100 y 20261114000150, E-536).
+    '20261114000100_identity_link_decider_v1.sql', '20261114000150_identity_link_question_v1.sql']);
 for (const name of names.slice(position + 1).filter((candidate) => !ONLY_CALLS.has(candidate))) {
   if (readFileSync(join(root, 'supabase/migrations', name), 'utf8').includes('_flow_engine_native_unsupported')) {
     fail(`${name} toca _flow_engine_native_unsupported: revisar esta prueba`);

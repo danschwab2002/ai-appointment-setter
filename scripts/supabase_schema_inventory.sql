@@ -7308,6 +7308,66 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         4,
         'e528_native_payment_slip'
+    union all
+    select
+        '20261114000100',
+        '20261114000100_identity_link_decider_v1.sql',
+        -- El correlador que decide solo (E-536, bloque A): la decision append-only ...
+        (
+            select count(*) = 1
+            from pg_class
+            where oid = to_regclass('public.identity_link_decisions')
+              and relrowsecurity
+        )::int
+        -- ... la intencion del carrito en el planificador del legado ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.plan_lancemos_pilot_cart_recovery(uuid,uuid,text,text,text,text,integer,timestamptz,bigint,bigint,text,text,integer)')
+              and position('identity_link_decider' in definition) > 0
+        )::int
+        -- ... el permiso con la atadura vigente ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._portable_consented_intent_reason(uuid,uuid,text)')
+              and position('identity_link_decider' in definition) > 0
+        )::int
+        -- ... y la decision, solo de service_role y security definer.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.complete_identity_link_decision_v1(uuid,uuid,bigint,text,text,text,text,text,text,text[],text,text)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        4,
+        'identity_link_decider'
+    union all
+    select
+        '20261114000150',
+        '20261114000150_identity_link_question_v1.sql',
+        -- La pregunta del correlador (E-536, bloque B): la cola de la pregunta ...
+        (
+            select count(*) = 1
+            from pg_class
+            where oid = to_regclass('public.identity_link_questions')
+              and relrowsecurity
+        )::int
+        -- ... y la respuesta, solo de service_role y security definer.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.record_identity_link_answer_v1(text,text,bigint,text,bigint)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        2,
+        'identity_link_question'
 )
 select
     version,

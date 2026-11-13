@@ -248,7 +248,22 @@ expected_service_role(signature) as (
         -- 20261112230000: el arranque nativo con el tope por persona (E-483, C6).
         ('public.mark_flow_engine_request_started_v2(uuid, uuid, text, bigint, timestamp with time zone, jsonb)'),
         -- 20261113200000: la lectura de la ficha nativa (E-528, C4).
-        ('public.get_flow_engine_native_payment_slip_context_v1(uuid, text, bigint, timestamp with time zone)')
+        ('public.get_flow_engine_native_payment_slip_context_v1(uuid, text, bigint, timestamp with time zone)'),
+        -- 20261114000100: el correlador que decide solo (E-536, bloque A).
+        ('public.claim_identity_link_cases_v1(text, text, text, integer)'),
+        ('public.release_identity_link_case_v1(uuid, uuid, bigint, text)'),
+        ('public.complete_identity_link_decision_v1(uuid, uuid, bigint, text, text, text, text, text, text, text[], text, text)'),
+        ('public.requeue_identity_linked_events_v1(text, text)'),
+        ('public.get_identity_link_destination_v1(uuid)'),
+        ('public.bind_identity_link_contact_v1(uuid, uuid)'),
+        ('public.read_identity_link_notices_v1(text, text, integer)'),
+        ('public.mark_identity_link_notice_v1(text, text, text)'),
+        -- 20261114000150: la pregunta del correlador (E-536, bloque B).
+        ('public.expire_identity_link_questions_v1(text, text)'),
+        ('public.claim_identity_link_question_v1(text, text, text, integer)'),
+        ('public.start_identity_link_question_v1(uuid, uuid, bigint)'),
+        ('public.finish_identity_link_question_v1(uuid, uuid, bigint, text, bigint, bigint, text)'),
+        ('public.record_identity_link_answer_v1(text, text, bigint, text, bigint)')
 ),
 functions as (
     select

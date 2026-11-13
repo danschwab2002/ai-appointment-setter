@@ -89,8 +89,10 @@ const results = {};
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify([])) {
-  fail(`despues de ${MIGRATION} no va ninguna`, names.slice(position + 1));
+// Despues va el correlador que decide solo y su pregunta (20261114000100 y 20261114000150, E-536).
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261114000100_identity_link_decider_v1.sql',
+  '20261114000150_identity_link_question_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de E-536`, names.slice(position + 1));
 }
 
 // ---------------------------------------------------------------------------
