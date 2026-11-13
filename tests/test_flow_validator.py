@@ -377,6 +377,18 @@ def _native_change(definition: dict[str, Any], change: Callable[[dict[str, Any]]
     return [*result.blocks, *result.warnings]
 
 
+def _native_cancel(*, actor: str, multitouch: bool) -> list[Finding]:
+    """Un volver con ``en_curso: cancelar`` de un nativo con dos versiones (E-483, C8)."""
+    base = native_flow(_form())
+    two = replace(base, versions={**base.versions, 2: {**base.versions[1], "version": 2}}, active_version=2,
+                  generation=2)
+    item = ProposalItem(producto="att1", flujo="nativo", flow_id=NATIVE_ID, tipo="volver", version=1,
+                        en_curso="cancelar")
+    result = check([item], actor=actor, in_world=world(two, _native_welcome("bienvenida", WELCOME_ID, "prendido")),
+                   catalog=native_catalog(), phase="publish", instance=_running(multitouch=multitouch))
+    return [*result.blocks, *result.warnings]
+
+
 def _rollback(version: int) -> list[Finding]:
     two = flow("carrito", versions={1: published(flow_def("carrito")), 2: published(flow_def("carrito"), 2)})
     result = check([state_item("volver", version=version)], in_world=world(two))
@@ -818,6 +830,15 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
         lambda: run_new(_cart_personal(), "carrito_cupon", actor="operador", instance=_running(personal=False)),
         lambda: run_new(_cart_personal(), "carrito_cupon", actor="operador", instance=_running()),
     ),
+    # E-483 (C8): cancelar lo que espera con los toques siguientes apagados en el bridge.
+    "native_cancel_in_flight_not_running": (
+        lambda: _native_cancel(actor="automation_expert", multitouch=False),
+        lambda: _native_cancel(actor="automation_expert", multitouch=True),
+    ),
+    "native_cancel_in_flight_not_running_warning": (
+        lambda: _native_cancel(actor="operador", multitouch=False),
+        lambda: _native_cancel(actor="operador", multitouch=True),
+    ),
     "trigger_change_is_another_flow": (
         lambda: run(draft_of("carrito", lambda d: d["dispara"].update(evento="pago_fallido")),
                     in_world=world(live("carrito"))),
@@ -978,7 +999,7 @@ def test_each_code_has_a_positive_neighbour_that_does_not_produce_it(code: str) 
 def test_every_code_of_the_closed_catalog_has_its_cases() -> None:
     assert set(CASES) == fv.BLOCK_CODES | fv.WARNING_CODES
     assert not fv.BLOCK_CODES & fv.WARNING_CODES
-    assert len(fv.WARNING_CODES) == 9  # E-483: native_multitouch_ y native_personal_coupon_not_running_warning
+    assert len(fv.WARNING_CODES) == 10  # E-483: native_multitouch_, native_personal_coupon_ y native_cancel_in_flight_not_running_warning
 
 
 def test_every_code_of_the_closed_catalog_is_produced_by_some_case() -> None:
@@ -1079,6 +1100,7 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         "same_event_native_flows", "flow_key_reserved_for_legacy", "change_without_effect_legacy_route",
         "native_engine_not_running", "native_first_contact_not_running", "native_silence_not_running",
         "native_trigger_other_product", "native_multitouch_not_running", "native_personal_coupon_not_running",
+        "native_cancel_in_flight_not_running",
         "native_change_exits", "native_change_repeat_silence", "native_change_priority_silence",
         "native_change_priority_wins", "native_change_priority_wins_ref", "native_change_priority_ref",
         "native_change_entry", "native_change_pool", "native_change_other",
@@ -1740,6 +1762,8 @@ WARNING_PATHS = {
     # E-483: el item entero, como los bloqueos de lo que se publicaria sin efecto.
     "native_multitouch_not_running_warning": "/0",
     "native_personal_coupon_not_running_warning": "/0",
+    # E-483 (C8): el en_curso del item.
+    "native_cancel_in_flight_not_running_warning": "/0/en_curso",
     "recovery_without_cap": "/0/definicion/topes",
     "same_trigger_unrelated": "/0/definicion/dispara",
     "silence_window_shorter_than_closed_gap": "/0/definicion/dispara/silencio",

@@ -27,6 +27,10 @@
 //   5. un recorrido nuevo arranca con la version activa (la v3);
 //   6. el legado: cancelar en el carrito del legado no publica
 //      (en_curso_not_supported) y migrar no se guarda.
+//   7. los bordes: un caso pausado y un lease vencido se cancelan; un lease
+//      vigente, delivery_unknown y un intento sin terminar sin lease no se
+//      tocan; un volver cancela solo los recorridos de otra version que la
+//      que vuelve a quedar activa.
 import { PGlite } from '@electric-sql/pglite';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -335,6 +339,88 @@ if (await activeVersion() !== 2) fail('el rojo se deshizo', await activeVersion(
   }
   if (migrate.ok) fail('migrar no se guarda', migrate);
   results.legado = { cancelar: steps.published.reason_code, migrar: migrate.error ?? migrate.reason_code ?? 'rechazado' };
+}
+
+// ---------------------------------------------------------------------------
+// 7. Los bordes (correccion de la revision, 2026-11-13): un caso pausado y un
+//    lease vencido se cancelan; delivery_unknown y un intento sin terminar sin
+//    lease no se tocan; un volver cancela solo lo que no es de la version a la
+//    que vuelve.
+// ---------------------------------------------------------------------------
+{
+  const caseStatus = async (caseId) => (await caseRow(caseId)).status;
+  const a2Of = async (run) => (await actionsOf(run.caseId)).find((row) => row.step_key === 'native_touch_2');
+  const pausa = await startRun('cancel-pausa', '613');
+  await sendFirst(pausa);
+  await sql("update public.recovery_cases set status = 'paused' where id = $1", [pausa.caseId]);
+  const vencido = await startRun('cancel-lease-vencido', '614');
+  const vencidoA2 = await sendFirst(vencido);
+  await sql(`update public.scheduled_actions set lease_owner = 'trabajador-caido', lease_generation = lease_generation + 1,
+    lease_expires_at = now() - interval '5 minutes' where id = $1`, [vencidoA2.id]);
+  const vigente = await startRun('cancel-lease-vigente', '618');
+  const vigenteA2 = await sendFirst(vigente);
+  await sql(`update public.scheduled_actions set lease_owner = 'trabajador-vivo', lease_generation = lease_generation + 1,
+    lease_expires_at = now() + interval '1 hour' where id = $1`, [vigenteA2.id]);
+  const incierto = await startRun('cancel-incierto', '615');
+  const inciertoA2 = await sendFirst(incierto);
+  await sql("update public.scheduled_actions set status = 'delivery_unknown' where id = $1", [inciertoA2.id]);
+  const huerfano = await startRun('cancel-intento-sin-lease', '616');
+  const huerfanoA2 = await sendFirst(huerfano);
+  await sql("update public.scheduled_actions set due_at = now() - interval '1 second' where id = $1", [huerfanoA2.id]);
+  await reserve(huerfano, huerfanoA2.id);
+  await sql('update public.scheduled_actions set lease_owner = null, lease_expires_at = null where id = $1', [huerfanoA2.id]);
+  const dora = await startRun('cancel-dora', '617');
+  await sendFirst(dora);
+  if (await runVersion(dora.caseId) !== 3) fail('Dora arranca con la v3');
+
+  // La v4 con seguir y Bea en la v4.
+  await cycle([versionItem(flowId, A.funnel, 'carrito_tres', withWait('5m'))], 'v4 con seguir');
+  if (await activeVersion() !== 4) fail('la v4 activa', await activeVersion());
+  const bea = await startRun('cancel-bea', '619');
+  await sendFirst(bea);
+  if (await runVersion(bea.caseId) !== 4) fail('Bea arranca con la v4');
+
+  // volver a la v3 con cancelar: se corta Bea (v4); lo de la v3 no se toca.
+  const back = await publishSteps([{ producto: A.funnel, flujo: 'carrito_tres', flow_id: flowId, tipo: 'volver',
+    version: 3, en_curso: 'cancelar' }], 'volver a la v3 con cancelar');
+  if (!back.published?.ok || await activeVersion() !== 3) fail('el volver a la v3 publica', back);
+  const volver = {
+    bea: await caseStatus(bea.caseId),
+    dora: await caseStatus(dora.caseId),
+    pausa: await caseStatus(pausa.caseId),
+    vencido: await caseStatus(vencido.caseId),
+  };
+  if (volver.bea !== 'cancelled' || volver.dora !== 'active' || volver.pausa !== 'paused' || volver.vencido !== 'active') {
+    fail('el volver filtra por la version a la que vuelve', volver);
+  }
+
+  // La v5 con cancelar.
+  const steps = await publishSteps([cancelItem(flowId, A.funnel, 'carrito_tres', withWait('6m'))], 'v5 con cancelar');
+  if (!steps.published?.ok || await activeVersion() !== 5) fail('la v5 con cancelar publica', steps);
+  const pausaCase = await caseRow(pausa.caseId);
+  const after = {
+    pausa: `${pausaCase.status}:${pausaCase.context?.closed_by_version_change?.from_status}`,
+    pausa_a2: (await a2Of(pausa)).status,
+    lease_vencido: await caseStatus(vencido.caseId),
+    lease_vencido_a2: (await a2Of(vencido)).status,
+    lease_vigente: await caseStatus(vigente.caseId),
+    lease_vigente_a2: (await a2Of(vigente)).status,
+    delivery_unknown: await caseStatus(incierto.caseId),
+    delivery_unknown_a2: (await a2Of(incierto)).status,
+    intento_sin_lease: await caseStatus(huerfano.caseId),
+    intento_sin_lease_a2: (await a2Of(huerfano)).status,
+    dora: await caseStatus(dora.caseId),
+  };
+  const expected = {
+    pausa: 'cancelled:paused', pausa_a2: 'cancelled',
+    lease_vencido: 'cancelled', lease_vencido_a2: 'cancelled',
+    lease_vigente: 'active', lease_vigente_a2: 'pending',
+    delivery_unknown: 'active', delivery_unknown_a2: 'delivery_unknown',
+    intento_sin_lease: 'active', intento_sin_lease_a2: 'pending',
+    dora: 'cancelled',
+  };
+  if (JSON.stringify(after) !== JSON.stringify(expected)) fail('los bordes de cancelar', { after, expected });
+  results.bordes = { volver, v5: after };
 }
 
 console.log(JSON.stringify(results, null, 2));

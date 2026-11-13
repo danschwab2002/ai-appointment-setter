@@ -57,12 +57,45 @@ def test_cancel_passes_on_a_native_rollback() -> None:
     assert "en_curso_not_supported" not in _native_rollback("cancelar")
 
 
-def test_cancel_does_not_need_the_multitouch_flag() -> None:
+def _with_runtime(en_curso: str, multitouch: bool, *, actor: str = "automation_expert",
+                  rollback: bool = False) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     flows, native = _native_world()
-    item = tfv.version_item(fd.as_draft(native.versions[2]), "nativo", flow_id=tfv.NATIVE_ID, en_curso="cancelar")
-    result = tfv.check([item], actor="automation_expert", in_world=flows, catalog=None, phase="draft",
-                       instance=tfv._running(multitouch=False))
-    assert "en_curso_not_supported" not in [finding.code for finding in result.blocks]
+    if rollback:
+        item = ProposalItem(producto="att1", flujo="nativo", flow_id=tfv.NATIVE_ID, tipo="volver", version=1,
+                            en_curso=en_curso)
+    else:
+        item = tfv.version_item(fd.as_draft(native.versions[2]), "nativo", flow_id=tfv.NATIVE_ID, en_curso=en_curso)
+    # En publish: las advertencias salen solo al publicar.
+    result = tfv.check([item], actor=actor, in_world=flows, catalog=tfv.native_catalog(), phase="publish",
+                       instance=tfv._running(multitouch=multitouch))
+    return ([(f.code, f.path) for f in result.blocks], [(f.code, f.path) for f in result.warnings])
+
+
+@pytest.mark.parametrize("rollback", [False, True])
+def test_cancel_without_the_multitouch_flag_blocks_the_agent(rollback: bool) -> None:
+    # La base cancela al publicar sin mirar el flag: con el flag apagado, cancelar es lo unico de C8 que
+    # correria. Antes de la correccion pasaba sin nada.
+    blocks, _ = _with_runtime("cancelar", False, rollback=rollback)
+    assert ("native_cancel_in_flight_not_running", "/0/en_curso") in blocks
+    assert "en_curso_not_supported" not in [code for code, _ in blocks]
+    on_blocks, _ = _with_runtime("cancelar", True, rollback=rollback)
+    assert "native_cancel_in_flight_not_running" not in [code for code, _ in on_blocks]
+    seguir, _ = _with_runtime("seguir", False, rollback=rollback)
+    assert "native_cancel_in_flight_not_running" not in [code for code, _ in seguir]
+
+
+@pytest.mark.parametrize("rollback", [False, True])
+def test_cancel_without_the_multitouch_flag_warns_the_operator(rollback: bool) -> None:
+    blocks, warnings = _with_runtime("cancelar", False, actor="operador", rollback=rollback)
+    assert "native_cancel_in_flight_not_running" not in [code for code, _ in blocks]
+    assert warnings.count(("native_cancel_in_flight_not_running_warning", "/0/en_curso")) == 1
+    _, on = _with_runtime("cancelar", True, actor="operador", rollback=rollback)
+    assert "native_cancel_in_flight_not_running_warning" not in [code for code, _ in on]
+
+
+def test_cancel_without_an_instance_runtime_says_nothing() -> None:
+    # El molde de los otros: sin saber lo que corre la instancia, el validador no inventa el flag.
+    assert "native_cancel_in_flight_not_running" not in _native_version("cancelar")
 
 
 def test_migrate_still_blocks_on_a_native() -> None:

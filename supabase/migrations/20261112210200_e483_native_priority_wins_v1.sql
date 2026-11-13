@@ -16,8 +16,9 @@
 --      (grace_period, active o paused) de la misma persona y el mismo producto
 --      de un flujo de su le_gana_a (por su clave, como no_arranca_mientras), en
 --      otro caso:
---        - si alguna accion viva del caso ya esta mandandose (con lease, con un
---          intento sin terminar o en delivery_unknown), el caso no se toca;
+--        - si alguna accion viva del caso ya esta mandandose (con un lease que
+--          no vencio, con un intento sin terminar o en delivery_unknown), el
+--          caso no se toca (un lease vencido no cuenta);
 --        - si no, sus acciones vivas (pending, deferred, retryable_failed)
 --          quedan cancelled con terminal_reason le_gana_otro_flujo, sus
 --          secuencias cancelled con ese cancel_reason, y el caso cancelled con
@@ -151,7 +152,8 @@ begin
              where action_row.recovery_case_id = v_case.id
                and action_row.status in ('pending', 'deferred', 'retryable_failed', 'delivery_unknown')
                and (action_row.status = 'delivery_unknown'
-                    or action_row.lease_owner is not null
+                    or (action_row.lease_owner is not null
+                        and action_row.lease_expires_at > p_now)
                     or exists (select 1 from public.followup_delivery_attempts attempt
                                 where attempt.action_id = action_row.id
                                   and attempt.phase <> 'completed'))

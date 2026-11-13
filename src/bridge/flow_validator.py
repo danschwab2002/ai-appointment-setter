@@ -819,6 +819,21 @@ NATIVE_PERSONAL_COUPON_NOT_RUNNING_WARNING = _spec(
     "Esta cuenta todavía no manda el cupón propio de cada persona en el sistema nuevo: publicado así, los mensajes "
     "con ese cupón no salen hasta que se prenda FLOW_ENGINE_NATIVE_PERSONAL_COUPON_ENABLED.",
 )
+# E-483 (C8, 20261112210100): en_curso: cancelar en un nativo con FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED apagado.
+# La base cancela al publicar sin mirar el flag (los toques que esperan, tambien el primero de quien todavia no lo
+# recibio): es lo unico de C8 que correria con el flag apagado. Bloqueo para el AE; al operador se le avisa.
+NATIVE_CANCEL_IN_FLIGHT_NOT_RUNNING = _spec(
+    "native_cancel_in_flight_not_running", None, KIND_CYCLE,
+    "Esta cuenta todavía no tiene prendidos los mensajes siguientes del sistema nuevo: cortar a la gente que está a "
+    "mitad de los mensajes todavía no se puede pedir.",
+    alternative="Usar en_curso: seguir. Si el dueño necesita cortar a quienes esperan, el equipo técnico tiene que "
+                "prender los mensajes siguientes en su cuenta antes.",
+)
+NATIVE_CANCEL_IN_FLIGHT_NOT_RUNNING_WARNING = _spec(
+    "native_cancel_in_flight_not_running_warning", None, KIND_WARNING,
+    "Esta cuenta todavía no tiene prendido FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED: publicado con en_curso: cancelar, "
+    "la base igual cancela al publicar los mensajes que esperan de quienes empezaron con otra versión.",
+)
 TRIGGER_CHANGE_IS_ANOTHER_FLOW = _spec(
     "trigger_change_is_another_flow", None, KIND_CYCLE,
     "Un disparador distinto es otro flujo: otro evento, o un silencio con otro lo_ultimo.",
@@ -942,6 +957,7 @@ _VALIDATOR_CODES: tuple[CodeSpec, ...] = (
     NATIVE_SILENCE_NOT_RUNNING, NATIVE_TRIGGER_OTHER_PRODUCT, NATIVE_MULTITOUCH_NOT_RUNNING,
     NATIVE_MULTITOUCH_NOT_RUNNING_WARNING, NATIVE_PERSONAL_COUPON_NOT_RUNNING,
     NATIVE_PERSONAL_COUPON_NOT_RUNNING_WARNING,
+    NATIVE_CANCEL_IN_FLIGHT_NOT_RUNNING, NATIVE_CANCEL_IN_FLIGHT_NOT_RUNNING_WARNING,
     ROLLBACK_TARGET_NOT_FOUND, ROLLBACK_TARGET_IS_ACTIVE, STATE_TRANSITION_INVALID,
     FLOW_HAS_NO_VERSION, EN_CURSO_NOT_SUPPORTED, CLIENT_PURCHASE_OK_MISSING,
     ALWAYS_WITH_MARKETING, RECOVERY_WITHOUT_CAP, SILENCE_WITHOUT_PURCHASE_EXIT,
@@ -1535,6 +1551,7 @@ class _Run:
         """
         self._multitouch_without_effect()
         self._personal_coupon_without_effect()
+        self._cancel_without_multitouch()
         if self.actor != "automation_expert":
             return
         runtime = self.instance.runtime
@@ -1586,6 +1603,25 @@ class _Run:
                 self.blocks.append(NATIVE_MULTITOUCH_NOT_RUNNING.at(at))
             else:
                 self.warnings.append(NATIVE_MULTITOUCH_NOT_RUNNING_WARNING.at(at))
+
+    def _cancel_without_multitouch(self) -> None:
+        """``en_curso: cancelar`` en un nativo con los toques siguientes apagados en el bridge (E-483, C8).
+
+        La base lo aplica al publicar sin mirar el flag (20261112210100). Mira la ``version`` y el ``volver`` de
+        un nativo y solo si la instancia dice lo que corre (el molde de ``_multitouch_without_effect``): el AE no
+        lo publica; al operador se le avisa. No pide el motor prendido: la base cancela igual.
+        """
+        runtime = self.instance.runtime
+        if runtime is None or runtime_runs_multitouch(runtime):
+            return
+        for index, (item, flow) in enumerate(zip(self.items, self.flows)):
+            if item.tipo not in ("version", "volver") or item.en_curso != IN_FLIGHT_CANCEL or not flow.is_native:
+                continue
+            at = finding_path((index, "en_curso"))
+            if self.actor == "automation_expert":
+                self.blocks.append(NATIVE_CANCEL_IN_FLIGHT_NOT_RUNNING.at(at))
+            else:
+                self.warnings.append(NATIVE_CANCEL_IN_FLIGHT_NOT_RUNNING_WARNING.at(at))
 
     def _personal_coupon_without_effect(self) -> None:
         """Un nativo con el cupon propio con ese toque apagado en el bridge (E-483, C2).

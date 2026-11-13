@@ -2205,6 +2205,79 @@
    }
   },
   {
+   "code": "native_cancel_in_flight_not_running",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "native_cancel_in_flight_not_running",
+      "kind": "ciclo",
+      "path": "/0/en_curso",
+      "reason": "Esta cuenta todavía no tiene prendidos los mensajes siguientes del sistema nuevo: cortar a la gente que está a mitad de los mensajes todavía no se puede pedir.",
+      "alternative": "Usar en_curso: seguir. Si el dueño necesita cortar a quienes esperan, el equipo técnico tiene que prender los mensajes siguientes en su cuenta antes."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_cancel_in_flight_not_running",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_cancel_in_flight_not_running_warning",
+   "case": "negativo",
+   "result": {
+    "blocks": [],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "native_cancel_in_flight_not_running_warning",
+      "kind": "advertencia",
+      "path": "/0/en_curso",
+      "reason": "Esta cuenta todavía no tiene prendido FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED: publicado con en_curso: cancelar, la base igual cancela al publicar los mensajes que esperan de quienes empezaron con otra versión."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "native_cancel_in_flight_not_running_warning",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
    "code": "native_change_entry",
    "case": "negativo",
    "result": {

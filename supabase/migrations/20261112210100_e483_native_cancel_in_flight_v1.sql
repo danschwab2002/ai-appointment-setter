@@ -14,9 +14,10 @@
 --   1. _flow_change_cancel_in_flight_v1(flujo, version nueva, propuesta, ahora),
 --      privada (ningun rol de la API la ejecuta). Para cada recorrido nativo
 --      del flujo (flow_engine_runs sin legacy_kind) atado a otra version que la
---      que queda activa, con el caso abierto (grace_period o active):
---        - si alguna accion viva del caso ya esta mandandose (con lease, con un
---          intento sin terminar o en delivery_unknown), el caso no se toca;
+--      que queda activa, con el caso abierto (grace_period, active o paused):
+--        - si alguna accion viva del caso ya esta mandandose (con un lease que
+--          no vencio, con un intento sin terminar o en delivery_unknown), el
+--          caso no se toca y sigue con su version (un lease vencido no cuenta);
 --        - si no, sus acciones vivas (pending, deferred, retryable_failed)
 --          quedan cancelled con terminal_reason cambio_de_version, sus
 --          secuencias cancelled con cancel_reason cambio_de_version, y el caso
@@ -101,7 +102,7 @@ begin
          where run.flow_id = p_flow_id
            and run.legacy_kind is null
            and run.version <> p_new_version
-           and case_row.status in ('grace_period', 'active')
+           and case_row.status in ('grace_period', 'active', 'paused')
          order by run.recovery_case_id
     loop
         -- El orden global de candados (claim_due_followup_actions): contacto,
@@ -111,7 +112,7 @@ begin
           from public.recovery_cases case_row
          where case_row.id = v_run.recovery_case_id
          for update;
-        if v_case.status not in ('grace_period', 'active') then
+        if v_case.status not in ('grace_period', 'active', 'paused') then
             continue;
         end if;
         perform 1 from public.followup_sequences sequence_row
@@ -137,7 +138,8 @@ begin
              where action_row.recovery_case_id = v_case.id
                and action_row.status in ('pending', 'deferred', 'retryable_failed', 'delivery_unknown')
                and (action_row.status = 'delivery_unknown'
-                    or action_row.lease_owner is not null
+                    or (action_row.lease_owner is not null
+                        and action_row.lease_expires_at > p_now)
                     or exists (select 1 from public.followup_delivery_attempts attempt
                                 where attempt.action_id = action_row.id
                                   and attempt.phase <> 'completed'))

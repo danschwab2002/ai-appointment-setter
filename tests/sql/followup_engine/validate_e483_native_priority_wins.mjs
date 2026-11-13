@@ -26,6 +26,8 @@
 //      la repeticion del evento no corta de nuevo;
 //   4. un toque mandandose (Juana, A2 reservado) no se cancela: el caso sigue y
 //      el del pago lo anota (mandandose: 1);
+//   4b. un lease vencido no cuenta como envio en curso: el carrito se corta; un
+//      caso pausado tambien;
 //   5. el legado: Elena con el carrito del legado por la ruta motor (un
 //      recorrido con legacy_kind) y le_gana_a: [carrito] no se toca;
 //   6. sin le_gana_a (la v2 del pago): Sofia con el carrito y el pago, los dos
@@ -316,6 +318,29 @@ try {
     where recovery_case_id = $1 and event_type = 'flow_engine_native_priority_won'`, [started.recovery_case_id]), 'anotado').data;
   if (won.cerrados !== 0 || won.mandandose !== 1) fail('el pago anota el envio en curso', won);
   results.mandandose = { a2: a2.status, caso: kase.status, anotado: { cerrados: won.cerrados, mandandose: won.mandandose } };
+}
+
+// ---------------------------------------------------------------------------
+// 4b. Un lease vencido no es un envio en curso (correccion de la revision,
+//     2026-11-13): el carrito se corta igual; un caso pausado tambien.
+// ---------------------------------------------------------------------------
+{
+  const cut = async (lead, label) => {
+    const started = await pay(lead, WITH_KEY);
+    if (started.outcome !== 'motor_arranco') fail(`${label}: el pago arranca`, started);
+    const a2 = await a2Of(lead);
+    const kase = await caseRow(lead.cartCase);
+    if (a2.status !== 'cancelled' || a2.terminal_reason !== 'le_gana_otro_flujo' || kase.status !== 'cancelled'
+        || !kase.context?.closed_by_priority) fail(`${label}: el carrito se corta`, { a2, kase });
+    return { a2: `${a2.status}:${a2.terminal_reason}`, caso: kase.status, desde: kase.context.closed_by_priority.from_status };
+  };
+  const carla = await refusalOf(await withCart('prioridad-carla'));
+  await sql(`update public.scheduled_actions set lease_owner = 'trabajador-caido', lease_generation = lease_generation + 1,
+    lease_expires_at = now() - interval '5 minutes' where id = $1`, [carla.a2]);
+  const paula = await refusalOf(await withCart('prioridad-paula'));
+  await sql("update public.recovery_cases set status = 'paused' where id = $1", [paula.cartCase]);
+  results.bordes = { lease_vencido: await cut(carla, 'Carla con el lease vencido'), pausado: await cut(paula, 'Paula pausada') };
+  if (results.bordes.pausado.desde !== 'paused') fail('Paula estaba pausada', results.bordes);
 }
 
 // ---------------------------------------------------------------------------
