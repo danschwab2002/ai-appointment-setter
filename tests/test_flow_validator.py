@@ -298,12 +298,24 @@ def _routed(executor: str | None) -> WorldFlow:
 
 
 def _running(*, engine: bool = True, intent: bool = True, sweeper: bool = True, main: str = "att1",
-             multitouch: bool = True) -> InstanceView:
+             multitouch: bool = True, personal: bool = True) -> InstanceView:
     return InstanceView("lancemos", "att1", frozenset({"att1", "att9"}) if main != "att1" else frozenset({"att1"}),
                         "America/Mexico_City",
                         runtime=fv.NativeRuntime(engine_enabled=engine, native_intent_enabled=intent,
                                                  native_silence_sweeper=sweeper, cart_touches=True,
-                                                 main_product=main, native_multitouch=multitouch))
+                                                 main_product=main, native_multitouch=multitouch,
+                                                 native_personal_coupon=personal))
+
+
+def _cart_personal() -> dict[str, Any]:
+    """Un carrito nativo de un mensaje con el boton del cupon propio (E-483, C2): lo que la base abre.
+
+    La plantilla es la del seguimiento con cupon de ATT1 (bandeja 11, 2026-10-10), con el boton del checkout.
+    """
+    return welcome(nombre="Carrito con cupon propio", dispara={"evento": "carrito"}, entra={"permiso": "formulario"},
+                   horario=copy.deepcopy(CDMX),
+                   pasos=[{"plantilla": "att1_seguimiento_descuento_01", "idioma": "es_MX",
+                           "variables": ["nombre", "producto"], "boton": {"link": "checkout", "cupon": "personal"}}])
 
 
 def _three_touch_form() -> dict[str, Any]:
@@ -785,6 +797,15 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
                         instance=_running(multitouch=False)),
         lambda: run_new(_three_touch_form(), "primer_contacto", actor="operador", instance=_running()),
     ),
+    # E-483 (C2): el cupon propio con ese toque apagado en el bridge.
+    "native_personal_coupon_not_running": (
+        lambda: run_new(_cart_personal(), "carrito_cupon", instance=_running(personal=False)),
+        lambda: run_new(_cart_personal(), "carrito_cupon", instance=_running()),
+    ),
+    "native_personal_coupon_not_running_warning": (
+        lambda: run_new(_cart_personal(), "carrito_cupon", actor="operador", instance=_running(personal=False)),
+        lambda: run_new(_cart_personal(), "carrito_cupon", actor="operador", instance=_running()),
+    ),
     "trigger_change_is_another_flow": (
         lambda: run(draft_of("carrito", lambda d: d["dispara"].update(evento="pago_fallido")),
                     in_world=world(live("carrito"))),
@@ -932,7 +953,7 @@ def test_each_code_has_a_positive_neighbour_that_does_not_produce_it(code: str) 
 def test_every_code_of_the_closed_catalog_has_its_cases() -> None:
     assert set(CASES) == fv.BLOCK_CODES | fv.WARNING_CODES
     assert not fv.BLOCK_CODES & fv.WARNING_CODES
-    assert len(fv.WARNING_CODES) == 8  # E-483: native_multitouch_not_running_warning
+    assert len(fv.WARNING_CODES) == 9  # E-483: native_multitouch_ y native_personal_coupon_not_running_warning
 
 
 def test_every_code_of_the_closed_catalog_is_produced_by_some_case() -> None:
@@ -1017,7 +1038,7 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         "flow_already_registered", "new_flow_must_start_in_cohort", "prender_a_cohorte_needs_paused_native",
         "same_event_native_flows", "flow_key_reserved_for_legacy", "change_without_effect_legacy_route",
         "native_engine_not_running", "native_first_contact_not_running", "native_silence_not_running",
-        "native_trigger_other_product", "native_multitouch_not_running",
+        "native_trigger_other_product", "native_multitouch_not_running", "native_personal_coupon_not_running",
         "native_change_exits", "native_change_repeat_silence", "native_change_priority_silence",
         "native_change_priority_wins", "native_change_priority_wins_ref", "native_change_priority_ref",
         "native_change_entry", "native_change_pool", "native_change_other",
@@ -1678,6 +1699,7 @@ WARNING_PATHS = {
     "empty_branch_with_le_gana_a": "/0/definicion/pasos/0",
     # E-483: el item entero, como los bloqueos de lo que se publicaria sin efecto.
     "native_multitouch_not_running_warning": "/0",
+    "native_personal_coupon_not_running_warning": "/0",
     "recovery_without_cap": "/0/definicion/topes",
     "same_trigger_unrelated": "/0/definicion/dispara",
     "silence_window_shorter_than_closed_gap": "/0/definicion/dispara/silencio",

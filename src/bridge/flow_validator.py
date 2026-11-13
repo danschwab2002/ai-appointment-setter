@@ -659,14 +659,24 @@ def _native_shape_for_the_owner(what: str) -> tuple[str, str]:
     if what == "boton_sin_cupon":
         return ("El seguimiento siempre lleva el botón de pago con su cupón.", fix)
     if what == "cupon_personal":
-        return ("El cupón distinto para cada persona todavía no está en el sistema nuevo.",
+        # E-483 (C2, 20261112210500): el cupon propio va en el carrito y en el pago rechazado sin variantes.
+        return ("El cupón distinto para cada persona solo va en el carrito y en el pago rechazado sin variantes, "
+                "en el botón de pago: en este flujo, o en las variantes del pago rechazado, todavía no.",
                 drop + " Un mismo cupón para todos sí se puede, si ya estaba en el flujo.")
+    if what == "cupones_personales_de_mas":
+        return ("Cada persona recibe como mucho dos cupones propios en un flujo: el primero y una renovación.",
+                "Dejá el cupón propio en dos mensajes como mucho. " + fix)
+    if what == "boton_sin_cupon_personal":
+        return ("En el carrito, el botón de pago va solo con el cupón propio de cada persona.",
+                "Poné el cupón propio en ese botón o sacá el botón. " + fix)
     if what.startswith("boton_"):
         return ("Este flujo no lleva un botón propio: usa los botones que ya trae la plantilla aprobada.", drop)
     if what == "variables_seguimiento":
         return ("El seguimiento siempre usa el nombre de la persona y el producto, en ese orden.", fix)
     if what.startswith("variable") or what == "variables_differ":
-        return ("Este mensaje solo puede usar el nombre de la persona y el producto.", fix)
+        # E-483 (C2): con el cupon propio, tambien el precio y el vencimiento, y cuando en el primero.
+        return ("Este mensaje solo puede usar el nombre de la persona y el producto; con el cupón propio, también "
+                "el precio y hasta cuándo vale, y en el primer mensaje cuándo dejó la compra.", fix)
     if what == "contesto_a":
         return ("El seguimiento solo le escribe a quien ya contestó alguna plantilla: eso no se cambia.", fix)
     if what == "silencio_ventana":
@@ -720,19 +730,41 @@ class NativeRuntime(InstanceRuntime):
     """
 
     native_multitouch: bool = False
+    # E-483 (C2): FLOW_ENGINE_NATIVE_PERSONAL_COUPON_ENABLED, el toque nativo con el cupon propio.
+    native_personal_coupon: bool = False
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if not isinstance(self.native_multitouch, bool):
+        if not isinstance(self.native_multitouch, bool) or not isinstance(self.native_personal_coupon, bool):
             raise ValueError("instance_runtime_invalid")
 
     def to_json(self) -> dict[str, Any]:
-        return {**super().to_json(), "native_multitouch_enabled": self.native_multitouch}
+        return {**super().to_json(), "native_multitouch_enabled": self.native_multitouch,
+                "native_personal_coupon_enabled": self.native_personal_coupon}
 
 
 def runtime_runs_multitouch(runtime: InstanceRuntime | None) -> bool:
     """Si el bridge manda los toques siguientes de un nativo (E-483); un runtime sin el dato, no."""
     return isinstance(runtime, NativeRuntime) and runtime.native_multitouch
+
+
+def runtime_runs_personal_coupon(runtime: InstanceRuntime | None) -> bool:
+    """Si el bridge arma el toque nativo con el cupon propio (E-483, C2); un runtime sin el dato, no."""
+    return isinstance(runtime, NativeRuntime) and runtime.native_personal_coupon
+
+
+def _personal_coupon_sends(steps: object) -> int:
+    """Los envios con el boton del cupon propio (``{link: checkout, cupon: personal}``), ramas incluidas."""
+    if not isinstance(steps, list):
+        return 0
+    total = 0
+    for step in steps:
+        if step_type(step) == "plantilla" and isinstance(step, Mapping):
+            button = step.get("boton")
+            total += 1 if isinstance(button, Mapping) and is_personal_coupon(button.get("cupon")) else 0
+        elif step_type(step) == "condicion" and isinstance(step, Mapping):
+            total += sum(_personal_coupon_sends(step.get(name)) for name in ("entonces", "si_no"))
+    return total
 
 
 # E-483: un nativo de varios mensajes con FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED apagado. La base lo abre y
@@ -751,6 +783,21 @@ NATIVE_MULTITOUCH_NOT_RUNNING_WARNING = _spec(
     "native_multitouch_not_running_warning", None, KIND_WARNING,
     "Esta cuenta todavía no manda más de un mensaje por flujo en el sistema nuevo: publicado así, sale solo el "
     "primero hasta que se prenda FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED.",
+)
+# E-483 (C2, 20261112210500): un nativo con el cupon propio con FLOW_ENGINE_NATIVE_PERSONAL_COUPON_ENABLED
+# apagado. La base lo publica y el trabajador del cupon crearia el codigo en Hotmart, pero el bridge cierra el
+# toque sin mandarlo (flow_engine_native_personal_coupon_disabled). Bloqueo para el AE; al operador se le avisa.
+NATIVE_PERSONAL_COUPON_NOT_RUNNING = _spec(
+    "native_personal_coupon_not_running", None, KIND_CYCLE,
+    "Esta cuenta todavía no manda el cupón propio de cada persona en el sistema nuevo: si se publica, los mensajes "
+    "con ese cupón no saldrían.",
+    alternative="No se arregla cambiando la propuesta, salvo sacando el cupón propio de los mensajes. Decile al "
+                "dueño que el equipo técnico tiene que prender el cupón propio en su cuenta antes de publicarlo.",
+)
+NATIVE_PERSONAL_COUPON_NOT_RUNNING_WARNING = _spec(
+    "native_personal_coupon_not_running_warning", None, KIND_WARNING,
+    "Esta cuenta todavía no manda el cupón propio de cada persona en el sistema nuevo: publicado así, los mensajes "
+    "con ese cupón no salen hasta que se prenda FLOW_ENGINE_NATIVE_PERSONAL_COUPON_ENABLED.",
 )
 TRIGGER_CHANGE_IS_ANOTHER_FLOW = _spec(
     "trigger_change_is_another_flow", None, KIND_CYCLE,
@@ -872,7 +919,8 @@ _VALIDATOR_CODES: tuple[CodeSpec, ...] = (
     NATIVE_CHANGE_PRIORITY_WINS_REF, NATIVE_CHANGE_PRIORITY_REF, NATIVE_CHANGE_ENTRY, NATIVE_CHANGE_POOL, NATIVE_CHANGE_OTHER,
     CHANGE_WITHOUT_EFFECT_LEGACY_ROUTE, NATIVE_ENGINE_NOT_RUNNING, NATIVE_FIRST_CONTACT_NOT_RUNNING,
     NATIVE_SILENCE_NOT_RUNNING, NATIVE_TRIGGER_OTHER_PRODUCT, NATIVE_MULTITOUCH_NOT_RUNNING,
-    NATIVE_MULTITOUCH_NOT_RUNNING_WARNING,
+    NATIVE_MULTITOUCH_NOT_RUNNING_WARNING, NATIVE_PERSONAL_COUPON_NOT_RUNNING,
+    NATIVE_PERSONAL_COUPON_NOT_RUNNING_WARNING,
     ROLLBACK_TARGET_NOT_FOUND, ROLLBACK_TARGET_IS_ACTIVE, STATE_TRANSITION_INVALID,
     FLOW_HAS_NO_VERSION, EN_CURSO_NOT_SUPPORTED, CLIENT_PURCHASE_OK_MISSING,
     ALWAYS_WITH_MARKETING, RECOVERY_WITHOUT_CAP, SILENCE_WITHOUT_PURCHASE_EXIT,
@@ -1465,6 +1513,7 @@ class _Run:
           conversacion al seguimiento de hoy.
         """
         self._multitouch_without_effect()
+        self._personal_coupon_without_effect()
         if self.actor != "automation_expert":
             return
         runtime = self.instance.runtime
@@ -1516,6 +1565,29 @@ class _Run:
                 self.blocks.append(NATIVE_MULTITOUCH_NOT_RUNNING.at(at))
             else:
                 self.warnings.append(NATIVE_MULTITOUCH_NOT_RUNNING_WARNING.at(at))
+
+    def _personal_coupon_without_effect(self) -> None:
+        """Un nativo con el cupon propio con ese toque apagado en el bridge (E-483, C2).
+
+        La base lo publica (20261112210500) y el bridge arma el toque con el cupon solo con
+        ``FLOW_ENGINE_NATIVE_PERSONAL_COUPON_ENABLED``; apagado, lo cierra sin mandarlo. El mismo molde que
+        ``_multitouch_without_effect``: solo si la instancia dice lo que corre; el AE no lo publica, al operador
+        se le avisa.
+        """
+        runtime = self.instance.runtime
+        if runtime is None or runtime_runs_personal_coupon(runtime) or not runtime.engine_enabled:
+            return
+        for index, (item, flow) in enumerate(zip(self.items, self.flows)):
+            if not flow.is_native or (item.tipo not in ("version", "volver", "prender") and not item.is_new_flow):
+                continue
+            definition = self.effective.get(flow.flow_id)
+            if not isinstance(definition, Mapping) or not _personal_coupon_sends(definition.get("pasos")):
+                continue
+            at = finding_path((index,))
+            if self.actor == "automation_expert":
+                self.blocks.append(NATIVE_PERSONAL_COUPON_NOT_RUNNING.at(at))
+            else:
+                self.warnings.append(NATIVE_PERSONAL_COUPON_NOT_RUNNING_WARNING.at(at))
 
     def _switch_off(self, index: int, item: ProposalItem, flow: WorldFlow) -> None:
         if flow.state == "apagado":

@@ -46,7 +46,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026111221020
   // El pago rechazado completo en el nativo (20261112210300, E-483, C3).
   '20261112210300_e483_native_condition_after_send_v1.sql',
   // El pago rechazado sin formulario de una oferta de campana (20261112210400, E-483, pieza PF).
-  '20261112210400_e483_payment_failure_by_phone_v1.sql'])) {
+  '20261112210400_e483_payment_failure_by_phone_v1.sql',
+  // El cupon propio por persona en el nativo (20261112210500, E-483, C2).
+  '20261112210500_e483_native_personal_coupon_v1.sql'])) {
   fail(`despues de ${MIGRATION} van solo las de C7 y C3`, names.slice(position + 1));
 }
 

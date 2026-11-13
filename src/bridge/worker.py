@@ -110,7 +110,14 @@ from bridge.payment_slip_first_touch import (
     payment_slip_ingestion_reason,
 )
 from bridge.flow_engine_runtime import READ_OK, FlowEngineRuntime
-from bridge.flow_engine import NATIVE_TOUCH_STEP_PREFIX
+from bridge.flow_engine import NATIVE_TOUCH_STEP_PREFIX, is_native_personal_coupon_button
+from bridge.native_personal_coupon import (
+    NATIVE_COUPON_VARIABLES,
+    NATIVE_PERSONAL_COUPON_DISABLED,
+    NativeCouponReady,
+    NativePersonalCouponConfig,
+    resolve_native_personal_coupon,
+)
 from bridge.native_flows import (
     NATIVE_ANCHOR,
     NATIVE_NEEDS_DIRECT_TEMPLATE,
@@ -953,6 +960,7 @@ class DurableDispatcher:
         payment_failure_followup: PaymentFailureFollowupConfig | None = None,
         flow_engine_enabled: bool = False,
         native_multitouch_enabled: bool = False,
+        native_personal_coupon: NativePersonalCouponConfig | None = None,
         native_client_labeler: ProductLabeler | None = None,
         purchase_pause_after_native_welcome: PurchaseAgentPause | None = None,
         native_segment_labels: NativeSegmentLabels | None = None,
@@ -1087,6 +1095,8 @@ class DurableDispatcher:
         self._flow_engine_enabled = flow_engine_enabled
         # E-483: los toques siguientes de un flujo nativo (native_touch_2 y 3, 20261112210000).
         self._native_multitouch_enabled = native_multitouch_enabled
+        # E-483 (C2, 20261112210500): el toque nativo con el cupon propio. None (el flag apagado): cierra sin salir.
+        self._native_personal_coupon = native_personal_coupon
         # flow-engine-v2 (E-065): la etiqueta cliente del paso etiquetar, por
         # un macro que solo la suma. Sin macro configurado, solo la nota.
         self._native_client_labeler = native_client_labeler
@@ -2037,7 +2047,8 @@ class DurableDispatcher:
             return self._native_step_unsupported(action, step_template)
         if following and (
             step_template.template_branches is not None
-            or step_template.template_button is not None
+            or (step_template.template_button is not None
+                and not is_native_personal_coupon_button(step_template.template_button))
         ):
             # Un toque siguiente no elige rama ni lleva boton (la base no lo abre, 20261112210000). En el pago
             # rechazado con ramas (E-483 C3, 20261112210300) la rama la eligio el primer envio aceptado: la
@@ -2063,7 +2074,8 @@ class DurableDispatcher:
             variables = picked.template_variables
             button = picked.template_button
         coupon_code: str | None = None
-        if button is not None:
+        personal = button is not None and is_native_personal_coupon_button(button)
+        if button is not None and not personal:
             coupon_code = button.get("cupon")
             if (
                 set(button) - {"link", "cupon"}
@@ -2075,9 +2087,53 @@ class DurableDispatcher:
         if (
             not variables
             or len(set(variables)) != len(variables)
-            or not set(variables) <= NATIVE_STEP_VARIABLES
+            or not set(variables) <= (
+                NATIVE_STEP_VARIABLES | NATIVE_COUPON_VARIABLES if personal else NATIVE_STEP_VARIABLES)
         ):
             return self._native_step_unsupported(action, step_template)
+        coupon_values: dict[str, str] = {}
+        if personal:
+            # E-483 (C2, 20261112210500): el cupon propio del paso, el que sembro la base y creo el trabajador
+            # del cupon (recovery_coupons.py); sin el flag, el toque cierra sin salir.
+            if self._native_personal_coupon is None:
+                logger.warning(
+                    "flow_engine_native_personal_coupon_disabled action_id=%s step=%s",
+                    action.action_id,
+                    action.step_key,
+                )
+                return _ApprovedTemplateComposition(
+                    failure_reason=NATIVE_PERSONAL_COUPON_DISABLED, retryable=False
+                )
+            resolved = await resolve_native_personal_coupon(
+                config=self._native_personal_coupon,
+                supabase=self._supabase,
+                action=action,
+                attempt=attempt,
+                variables=tuple(variables),
+                buyer_phone=execution_context.buyer_phone,
+                following=following,
+                now=self._clock(),
+            )
+            if isinstance(resolved, CartDiscountDefer):
+                logger.info(
+                    "flow_engine_native_coupon_deferred action_id=%s retry_after_s=%s",
+                    action.action_id,
+                    int(resolved.retry_after.total_seconds()),
+                )
+                return _ApprovedTemplateComposition(
+                    failure_reason=resolved.reason, retry_after=resolved.retry_after
+                )
+            if not isinstance(resolved, NativeCouponReady):
+                logger.warning(
+                    "flow_engine_native_coupon_stopped action_id=%s reason=%s",
+                    action.action_id,
+                    resolved.reason,
+                )
+                return _ApprovedTemplateComposition(
+                    failure_reason=resolved.reason, retryable=resolved.retryable
+                )
+            coupon_code = resolved.code
+            coupon_values = resolved.values
         buyer_name = execution_context.buyer_name
         product_name = execution_context.product_name
         greeting_name: str | None = None
@@ -2091,9 +2147,9 @@ class DurableDispatcher:
             greeting = await resolve_greeting_name(buyer_name, store=self._supabase)
             greeting_name = greeting.name.strip()
             name_value = greeting_name
-        source = {"nombre": name_value, "producto": product_name}
+        source: dict[str, str | None] = {"nombre": name_value, "producto": product_name, **coupon_values}
         if any(
-            not isinstance(source[item], str) or not source[item].strip()  # type: ignore[union-attr]
+            not isinstance(source.get(item), str) or not source[item].strip()  # type: ignore[union-attr]
             for item in variables
         ) or ("nombre" in variables and not template_greeting_name_is_safe(name_value)):
             # The values of the case (the name from Hotmart, unverified input,

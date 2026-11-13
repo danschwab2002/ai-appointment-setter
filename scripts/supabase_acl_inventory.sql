@@ -233,7 +233,9 @@ expected_service_role(signature) as (
         -- 20261110000500: la oferta de la campana en el link del agente (E-410).
         ('public.reserve_portable_checkout_issuance_for_offer_v1(uuid, text, bigint, bigint, bigint, text, text, text, text, text, timestamp with time zone)'),
         -- 20261112200000: los numeros del tablero (E-507).
-        ('public.read_results_v1(timestamp with time zone, timestamp with time zone, text, text[], integer, integer)')
+        ('public.read_results_v1(timestamp with time zone, timestamp with time zone, text, text[], integer, integer)'),
+        -- 20261112210500: el cupon propio de un paso nativo, la lectura del bridge (E-483, C2).
+        ('public.get_flow_engine_native_step_coupon_v1(uuid)')
 ),
 functions as (
     select

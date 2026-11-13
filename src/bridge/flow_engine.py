@@ -63,6 +63,7 @@ from .flow_definition import (
     NEVER,
     NO_CAP,
     PERSONAL_COUPON,
+    PERSONAL_COUPONS_PER_PATH,
     TO_CREATE,
     is_pool,
     parse_duration,
@@ -74,10 +75,10 @@ from .flow_policy import STEPS_BY_LEGACY_KIND
 from .flow_schedule import DEFAULT_ZONE, LAST_MINUTE, Franja, franja_of, is_open, next_open
 
 __all__ = [
-    "ENGINE_CAPABILITIES_NATIVE", "ENGINE_CAPABILITIES_NATIVE_MULTITOUCH", "ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE", "NATIVE_MULTITOUCH_TRIGGERS", "NATIVE_TOUCH_STEP_PREFIX", "ENGINE_CAPABILITIES_NATIVE_SILENCE", "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_PARAMETERS", "NATIVE_CAPABILITIES_BY_TRIGGER", "NATIVE_SILENCE_TRIGGER", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
+    "ENGINE_CAPABILITIES_NATIVE", "ENGINE_CAPABILITIES_NATIVE_MULTITOUCH", "ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE", "ENGINE_CAPABILITIES_NATIVE_CART_MULTITOUCH", "NATIVE_COUPON_FIRST_VARIABLES", "NATIVE_COUPON_NEXT_VARIABLES", "NATIVE_MAX_PERSONAL_COUPONS", "NATIVE_PERSONAL_COUPON_BUTTON", "NATIVE_PERSONAL_COUPON_TRIGGERS", "NATIVE_MULTITOUCH_TRIGGERS", "NATIVE_TOUCH_STEP_PREFIX", "ENGINE_CAPABILITIES_NATIVE_SILENCE", "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_PARAMETERS", "NATIVE_CAPABILITIES_BY_TRIGGER", "NATIVE_SILENCE_TRIGGER", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
     "BolsaLedger", "ControlLine", "Eligible", "EngineCapabilities", "EngineFlow", "Firing", "FlowRef",
     "GateDecision", "GateFacts", "PersonView", "Plan", "PlanInvalid", "PlanNotSupported", "PlannedStep",
-    "RunView", "StartDecision", "evaluate_gate", "first_eligible", "legacy_motivo", "native_not_supported", "native_payment_failure_branches", "native_payment_failure_paths", "native_trigger_key", "native_variables_fit", "not_supported", "plan_start",
+    "RunView", "StartDecision", "evaluate_gate", "first_eligible", "legacy_motivo", "native_not_supported", "native_payment_failure_branches", "native_payment_failure_paths", "native_trigger_key", "native_variables_fit", "is_native_personal_coupon_button", "not_supported", "plan_start",
     "plan_steps", "pool_zone", "step_start", "wins",
 ]
 
@@ -346,6 +347,29 @@ ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE_MULTITOUCH = dataclasses.replace(
     exits=frozenset({"compra", "contesta"}),
     reply_exit_with_events=True,
 )
+# E-483 (C2 del mapa del 12/11, 20261112210500): el cupon propio por persona en el carrito y en el pago
+# rechazado sin cadena, en cualquier toque. El boton es ``{link: checkout, cupon: personal}``: el primer cupon
+# del camino es el ordinal 1 del caso y el segundo el 2 (dos por caso como maximo, ``PERSONAL_COUPONS_PER_PATH``,
+# como la tabla ``recovery_coupons``); vence a las 24 h de la hora del toque y el bridge lo dice en la hora del
+# pais. Con el cupon, el toque puede decir ``precio`` y ``vence`` y, solo el primer envio (su ancla es el
+# evento), ``cuando``. La compra, el formulario y el seguimiento no lo llevan; en la cadena del pago rechazado
+# tampoco (su politica es una sola para todas las ramas). El bridge lo arma solo con
+# FLOW_ENGINE_NATIVE_PERSONAL_COUPON_ENABLED.
+NATIVE_PERSONAL_COUPON_TRIGGERS = frozenset({"carrito", NATIVE_PAYMENT_FAILURE_TRIGGER})
+NATIVE_PERSONAL_COUPON_BUTTON: Mapping[str, str] = MappingProxyType({"link": "checkout", "cupon": PERSONAL_COUPON})
+NATIVE_MAX_PERSONAL_COUPONS = PERSONAL_COUPONS_PER_PATH
+# Las variables de un toque con el cupon propio, en el orden en que las admite la base (coupon_variables_de).
+NATIVE_COUPON_FIRST_VARIABLES = ("nombre", "producto", "cuando", "precio", "vence")
+NATIVE_COUPON_NEXT_VARIABLES = ("nombre", "producto", "precio", "vence")
+ENGINE_CAPABILITIES_NATIVE_CART_MULTITOUCH = dataclasses.replace(
+    ENGINE_CAPABILITIES_NATIVE_MULTITOUCH,
+    variables=frozenset(NATIVE_COUPON_FIRST_VARIABLES),
+    buttons=frozenset({"checkout"}),
+)
+ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE_MULTITOUCH = dataclasses.replace(
+    ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE_MULTITOUCH,
+    variables=frozenset(NATIVE_COUPON_FIRST_VARIABLES),
+)
 # Las variables del seguimiento, en su orden: las que manda el barrido (FollowupTemplate.params).
 FOLLOWUP_VARIABLES = ("nombre", "producto")
 # La ventana del silencio nativo, en minutos (P22-3, E-269): la del barrido del legado, de 24 a 72 h.
@@ -371,6 +395,7 @@ NATIVE_PERMISSION_BY_TRIGGER: Mapping[str, str] = MappingProxyType(
 NATIVE_CAPABILITIES_BY_TRIGGER: Mapping[str, EngineCapabilities] = MappingProxyType({
     **{event: ENGINE_CAPABILITIES_NATIVE for event in sorted(ENGINE_CAPABILITIES_NATIVE.triggers)},
     **{event: ENGINE_CAPABILITIES_NATIVE_MULTITOUCH for event in sorted(NATIVE_MULTITOUCH_TRIGGERS)},
+    "carrito": ENGINE_CAPABILITIES_NATIVE_CART_MULTITOUCH,
     NATIVE_PAYMENT_FAILURE_TRIGGER: ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE_MULTITOUCH,
     NATIVE_SILENCE_TRIGGER: ENGINE_CAPABILITIES_NATIVE_SILENCE,
 })
@@ -388,17 +413,23 @@ NATIVE_REPEAT_BY_TRIGGER: Mapping[str, tuple[str, ...]] = MappingProxyType({
 NATIVE_PURCHASE_VARIABLES = ("nombre", "producto")
 
 
-def native_variables_fit(variables: object) -> bool:
-    """Las variables de un paso nativo: una lista no vacia, sin repetidas, de ``NATIVE_PURCHASE_VARIABLES``.
+def native_variables_fit(variables: object, allowed: tuple[str, ...] = NATIVE_PURCHASE_VARIABLES) -> bool:
+    """Las variables de un paso nativo: una lista no vacia, sin repetidas, de ``allowed``.
 
-    El mismo criterio que el compilador de la base con ``variables_de`` (20261026000100).
+    El mismo criterio que el compilador de la base con ``variables_de`` (20261026000100) y, con el cupon
+    propio, con ``coupon_variables_de`` (20261112210500).
     """
     return (
         isinstance(variables, list)
         and bool(variables)
-        and all(isinstance(item, str) and item in NATIVE_PURCHASE_VARIABLES for item in variables)
+        and all(isinstance(item, str) and item in allowed for item in variables)
         and len(set(variables)) == len(variables)
     )
+
+
+def is_native_personal_coupon_button(button: object) -> bool:
+    """Si el boton es exactamente el del cupon propio: ``{link: checkout, cupon: personal}`` (E-483, C2)."""
+    return isinstance(button, Mapping) and dict(button) == dict(NATIVE_PERSONAL_COUPON_BUTTON)
 # Los motivos con los que la base no abre ni admite un flujo nativo (``_flow_engine_native_unsupported``).
 NATIVE_UNSUPPORTED_TRIGGER = "motor_nativo:disparador"
 NATIVE_UNSUPPORTED_PERMISSION = "motor_nativo:permiso"
@@ -576,7 +607,10 @@ def _native_payment_failure_not_supported(definition: Mapping[str, Any], add: Ca
                 add(f"{NOT_SUPPORTED}:condicion_dato")
         elif kind == "plantilla" and isinstance(step, Mapping):
             button = step.get("boton")
-            if isinstance(button, Mapping) and button.get("cupon") == PERSONAL_COUPON:
+            # E-483 (C2, 20261112210500): sin la cadena, el cupon propio va (lo mira
+            # _native_personal_coupon_not_supported); en la cadena, todavia no.
+            if isinstance(button, Mapping) and button.get("cupon") == PERSONAL_COUPON and any(
+                    step_type(other) == "condicion" for other in walked):
                 add(f"{NOT_SUPPORTED}:cupon_personal")
     if not isinstance(steps, list):
         return
@@ -636,8 +670,45 @@ def _native_multitouch_not_supported(definition: Mapping[str, Any], key: str | N
         add(f"{NOT_SUPPORTED}:condicion_despues_de_un_envio")
     for index in sends[1:]:
         step = steps[index]
-        if isinstance(step, Mapping) and "boton" in step:
+        if isinstance(step, Mapping) and "boton" in step and not (
+                key in NATIVE_PERSONAL_COUPON_TRIGGERS and is_native_personal_coupon_button(step.get("boton"))):
+            # E-483 (C2, 20261112210500): el del cupon propio si puede ir en un toque siguiente.
             add(f"{NOT_SUPPORTED}:boton_despues_del_primer_envio")
+
+
+def _native_personal_coupon_not_supported(definition: Mapping[str, Any], key: str | None,
+                                          add: Callable[[str], None]) -> None:
+    """El cupon propio y las variables de cada paso nativo (E-483, C2, 20261112210500).
+
+    Lo mismo que miran la base (``_flow_engine_native_unsupported``) y el compilador (``coupon_variables_de``):
+    el cupon propio solo como ``{link: checkout, cupon: personal}``, solo en el carrito y en el pago rechazado
+    (``NATIVE_PERSONAL_COUPON_TRIGGERS``) y a lo sumo dos por camino; en el carrito no hay otro boton. Las
+    variables: nombre y producto; con el cupon, tambien precio y vence, y cuando solo en el primer envio.
+    """
+    steps = definition.get("pasos")
+    top = steps if isinstance(steps, list) else []
+    personal_sends = 0
+    sends = 0
+    for step in _walk_steps(steps):
+        if step_type(step) != "plantilla" or not isinstance(step, Mapping):
+            continue
+        button = step.get("boton")
+        personal = isinstance(button, Mapping) and button.get("cupon") == PERSONAL_COUPON
+        in_path = any(step is item for item in top)
+        if personal and (key not in NATIVE_PERSONAL_COUPON_TRIGGERS or not is_native_personal_coupon_button(button)):
+            add(f"{NOT_SUPPORTED}:cupon_personal")
+        elif key == "carrito" and button is not None and not personal:
+            add(f"{NOT_SUPPORTED}:boton_sin_cupon_personal")
+        allowed = NATIVE_PURCHASE_VARIABLES
+        if personal and in_path and key in NATIVE_PERSONAL_COUPON_TRIGGERS:
+            allowed = NATIVE_COUPON_FIRST_VARIABLES if sends == 0 else NATIVE_COUPON_NEXT_VARIABLES
+        if not native_variables_fit(step.get("variables"), allowed):
+            add(f"{NOT_SUPPORTED}:variables_differ")
+        if in_path:
+            sends += 1
+            personal_sends += 1 if personal else 0
+    if personal_sends > NATIVE_MAX_PERSONAL_COUPONS:
+        add(f"{NOT_SUPPORTED}:cupones_personales_de_mas")
 
 
 def native_not_supported(definition: Mapping[str, Any]) -> tuple[str, ...]:
@@ -688,10 +759,7 @@ def native_not_supported(definition: Mapping[str, Any]) -> tuple[str, ...]:
         _native_silence_not_supported(definition, add)
     if key == NATIVE_PAYMENT_FAILURE_TRIGGER:
         _native_payment_failure_not_supported(definition, add)
-    for step in _walk_steps(definition.get("pasos")):
-        if step_type(step) == "plantilla" and isinstance(step, Mapping) \
-                and not native_variables_fit(step.get("variables")):
-            add(f"{NOT_SUPPORTED}:variables_differ")
+    _native_personal_coupon_not_supported(definition, key, add)
     return tuple(found)
 
 

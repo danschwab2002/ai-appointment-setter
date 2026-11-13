@@ -2317,6 +2317,18 @@ class RecoveryCouponForCase:
     verified_at: datetime | None
 
 
+@dataclass(frozen=True)
+class FlowEngineNativeStepCoupon:
+    """El cupon propio que declara un paso nativo (E-483, C2, 20261112210500).
+
+    ``ordinal`` sale de la politica del paso (1 o 2). ``coupon`` es ``None`` mientras el trabajador del
+    cupon no lo sembro.
+    """
+
+    ordinal: int
+    coupon: RecoveryCouponForCase | None
+
+
 # E-267 (20261102000100): el cupon personal que el agente puede nombrar en su
 # turno. ``valid``: uno que la persona ya recibio en un mensaje nuestro y no
 # vencio (code, discount, expires_at y ordinal). ``renewal_in_progress``: pidio
@@ -10428,6 +10440,52 @@ class SupabaseClient:
                 row, "expires_at", operation=operation
             ),
             verified_at=verified_at,
+        )
+
+    async def get_flow_engine_native_step_coupon(
+        self, *, action_id: str
+    ) -> FlowEngineNativeStepCoupon | None:
+        """El cupon propio de un paso nativo (E-483, C2), o None si el paso no lo lleva."""
+        operation = "flow_engine_native_step_coupon"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_flow_engine_native_step_coupon_v1",
+            content=json.dumps({"p_action_id": action_id}),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) > 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        if not rows:
+            return None
+        row = rows[0]
+        ordinal = row.get("ordinal")
+        if not isinstance(ordinal, int) or isinstance(ordinal, bool) or ordinal not in (1, 2):
+            raise _invalid_row_error(operation)
+        if row.get("coupon_id") is None:
+            if any(row.get(key) is not None for key in ("code", "status", "expires_at", "verified_at")):
+                raise _invalid_row_error(operation)
+            return FlowEngineNativeStepCoupon(ordinal=ordinal, coupon=None)
+        code = _required_string(row, "code", operation=operation)
+        if _RECOVERY_COUPON_CODE_RE.fullmatch(code) is None:
+            raise _invalid_row_error(operation)
+        verified_at = (
+            None
+            if row.get("verified_at") is None
+            else _required_aware_timestamp(row, "verified_at", operation=operation)
+        )
+        return FlowEngineNativeStepCoupon(
+            ordinal=ordinal,
+            coupon=RecoveryCouponForCase(
+                coupon_id=_required_uuid(row, "coupon_id", operation=operation),
+                code=code,
+                status=_required_enum(
+                    row, "status", set(RECOVERY_COUPON_STATUSES), operation=operation
+                ),
+                expires_at=_required_aware_timestamp(row, "expires_at", operation=operation),
+                verified_at=verified_at,
+            ),
         )
 
     async def reserve_recovery_checkout_issuance(

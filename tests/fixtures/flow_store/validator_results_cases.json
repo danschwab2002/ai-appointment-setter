@@ -1827,7 +1827,7 @@
       "kind": "todavia_no",
       "path": "/0/definicion/pasos",
       "limit": "Un flujo nativo, hoy: lo dispara la compra, el carrito, el pago rechazado o el formulario, y manda una plantilla sin botón declarado; o lo dispara el silencio con lo último del agente (permiso: conversacion, contesto_a: cualquier_plantilla), y manda una plantilla con el checkout y su cupón",
-      "reason": "Este mensaje solo puede usar el nombre de la persona y el producto.",
+      "reason": "Este mensaje solo puede usar el nombre de la persona y el producto; con el cupón propio, también el precio y hasta cuándo vale, y en el primer mensaje cuándo dejó la compra.",
       "alternative": "Corregilo en la propuesta."
      }
     ],
@@ -2495,6 +2495,79 @@
   },
   {
    "code": "native_multitouch_not_running_warning",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "native_personal_coupon_not_running",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "native_personal_coupon_not_running",
+      "kind": "ciclo",
+      "path": "/0",
+      "reason": "Esta cuenta todavía no manda el cupón propio de cada persona en el sistema nuevo: si se publica, los mensajes con ese cupón no saldrían.",
+      "alternative": "No se arregla cambiando la propuesta, salvo sacando el cupón propio de los mensajes. Decile al dueño que el equipo técnico tiene que prender el cupón propio en su cuenta antes de publicarlo."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_personal_coupon_not_running",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_personal_coupon_not_running_warning",
+   "case": "negativo",
+   "result": {
+    "blocks": [],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "native_personal_coupon_not_running_warning",
+      "kind": "advertencia",
+      "path": "/0",
+      "reason": "Esta cuenta todavía no manda el cupón propio de cada persona en el sistema nuevo: publicado así, los mensajes con ese cupón no salen hasta que se prenda FLOW_ENGINE_NATIVE_PERSONAL_COUPON_ENABLED."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "native_personal_coupon_not_running_warning",
    "case": "positivo",
    "result": {
     "blocks": [],

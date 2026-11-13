@@ -298,7 +298,9 @@ const rows = await db.query(`
       -- 20261110000500: la oferta de la campana en el link del agente (E-410).
       ('reserve_portable_checkout_issuance_for_offer_v1(uuid,text,bigint,bigint,bigint,text,text,text,text,text,timestamp with time zone)'),
       -- 20261112200000: los numeros del tablero (E-507).
-      ('read_results_v1(timestamp with time zone,timestamp with time zone,text,text[],integer,integer)')
+      ('read_results_v1(timestamp with time zone,timestamp with time zone,text,text[],integer,integer)'),
+      -- 20261112210500: el cupon propio de un paso nativo, la lectura del bridge (E-483, C2).
+      ('get_flow_engine_native_step_coupon_v1(uuid)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -378,8 +380,9 @@ const result = rows.rows[0];
 // The recycle of a test phone (20261102000400) adds the purge of its journal.
 // The Meta rejections (20261103000500, E-284) add six: record, list due,
 // claim, settle and block the retry, and mark the 131026 notice.
+// The personal coupon of a native step (20261112210500, E-483, C2) adds the read of the bridge.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 209) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 210) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

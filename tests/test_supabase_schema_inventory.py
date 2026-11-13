@@ -478,7 +478,9 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261109000100 (el sondeo de Meta y los avisos, E-361) suma sus tres.
     # 20261110000500 (la oferta de la campana en el link, E-410) suma su reserva.
     # 20261112200000 (los numeros del tablero, E-507) suma su lectura.
-    assert len(allowlisted) == 209
+    # 20261112210500 (el cupon propio en el nativo, E-483, C2) suma la lectura del bridge.
+    assert len(allowlisted) == 210
+    assert "get_flow_engine_native_step_coupon_v1(uuid)" in allowlisted
     assert "mark_meta_account_hold_enabled_v1(bigint, timestamp with time zone, timestamp with time zone, integer)" in allowlisted
     assert "requeue_meta_account_hold_v1(bigint, bigint, bigint, timestamp with time zone)" in allowlisted
     assert "close_recovery_case_segment_coupon_v1(uuid, uuid, text, bigint, timestamp with time zone)" in allowlisted
@@ -2082,14 +2084,29 @@ def test_read_results_fingerprint() -> None:
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
 
 
-def test_e483_payment_failure_by_phone_fingerprint_is_last() -> None:
+def test_e483_native_personal_coupon_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261112210500 (E-483, C2): el cupon propio por persona en el nativo.
+    fingerprint = sql.split("'20261112210500'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261112210500_e483_native_personal_coupon_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",7,'e483_native_personal_coupon')")
+    assert "_flow_engine_native_first_coupon_ordinal(uuid)" in compact_fingerprint
+    assert "get_flow_engine_native_step_coupon_v1(uuid)" in compact_fingerprint
+    assert "has_function_privilege('service_role',oid,'EXECUTE')" in compact_fingerprint
+    assert "claim_due_recovery_coupons_v1(" in compact_fingerprint
+    assert "reserve_recovery_checkout_issuance_v1(" in compact_fingerprint
+
+
+def test_e483_payment_failure_by_phone_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261112210400 (E-483, pieza PF): el pago rechazado sin formulario de una oferta de campana.
-    fingerprint = sql.split("'20261112210400'", 1)[1].split("select\n    version,", 1)[0]
+    fingerprint = sql.split("'20261112210400'", 1)[1].split("'20261112210500'", 1)[0].rsplit("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261112210400_e483_payment_failure_by_phone_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",4,'e483_payment_failure_by_phone')")
+    assert compact_fingerprint.endswith(",4,'e483_payment_failure_by_phone'")
     assert "_flow_engine_native_payment_failure_phone_audience(uuid,uuid,text,text,text)" in compact_fingerprint
     assert "admit_flow_engine_event_v1(jsonb,jsonb)" in compact_fingerprint
     assert "_flow_engine_authorize_native_tail(" in compact_fingerprint

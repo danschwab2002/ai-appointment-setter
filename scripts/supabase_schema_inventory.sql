@@ -7097,6 +7097,60 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         4,
         'e483_payment_failure_by_phone'
+    union all
+    select
+        '20261112210500',
+        '20261112210500_e483_native_personal_coupon_v1.sql',
+        -- el cupon propio por persona en el nativo (E-483, C2): el ordinal del
+        -- primer envio nativo y la lectura del bridge ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_first_coupon_ordinal(uuid)')
+              and position('e483_native_personal_coupon' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_flow_engine_native_step_coupon_v1(uuid)')
+              and position('e483_native_personal_coupon' in definition) > 0
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+        )::int
+        -- ... las ranuras con cupon y el compilador ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_steps(text)')
+              and position('e483_native_personal_coupon' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_compile_policy_core(jsonb,text,integer,text,text)')
+              and position('e483_native_personal_coupon: end' in definition) > 0
+        )::int
+        -- ... lo que abre la base, la siembra del cupon y el link.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_unsupported(jsonb)')
+              and position('e483_native_personal_coupon: end' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.claim_due_recovery_coupons_v1(timestamptz,text,integer,text,interval,interval,numeric,integer)')
+              and position('e483_native_personal_coupon: end' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.reserve_recovery_checkout_issuance_v1(uuid,text,bigint,uuid,text,timestamptz)')
+              and position('e483_native_personal_coupon' in definition) > 0
+        )::int,
+        7,
+        'e483_native_personal_coupon'
 )
 select
     version,

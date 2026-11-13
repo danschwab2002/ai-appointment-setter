@@ -77,7 +77,10 @@ const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.end
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Despues va el pago rechazado sin formulario (20261112210400, E-483, pieza PF): no toca nada de esta.
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261112210400_e483_payment_failure_by_phone_v1.sql'])) {
+// Y el cupon propio por persona (20261112210500, E-483, C2): toca la forma, el compilador y lo que abre la
+// base solo en una ranura con cupon_personal o un boton de cupon propio; la cadena sigue igual.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261112210400_e483_payment_failure_by_phone_v1.sql',
+  '20261112210500_e483_native_personal_coupon_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de PF`, names.slice(position + 1));
 }
 

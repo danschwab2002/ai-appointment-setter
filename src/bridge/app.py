@@ -285,6 +285,7 @@ from bridge.recovery_coupon_reply import (
     reply_may_renew,
 )
 from bridge.recovery_coupons import RecoveryCouponWorker
+from bridge.native_personal_coupon import NativePersonalCouponConfig
 from bridge.campaign_inbound_entry import campaign_inbound_entry_setup as _campaign_inbound_entry_setup
 from bridge.segment_labels import (
     automation_expert_segments,
@@ -516,6 +517,9 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # oferta de campana entra con el telefono de Hotmart. Lo especifico (que
     # ofertas) sale de las campanas vigentes; por instancia, solo prenderlo.
     "flow_engine_native_payment_failure_by_phone_enabled",
+    # E-483 (C2, 20261112210500): el toque nativo con el cupon propio. Lo
+    # especifico (que toques) es de la base; por instancia, solo prenderlo.
+    "flow_engine_native_personal_coupon_enabled",
     # E-316 (segment-labels-v1): la etiqueta de un segmento antes del primer
     # turno del agente, la que pone el motor nativo antes del primer envio y la
     # que se hereda de otra conversacion del contacto. Lo especifico (que
@@ -1211,6 +1215,12 @@ class Settings:
     # el recorrido nativo aunque la persona no haya llenado el formulario, con el
     # telefono del evento de Hotmart. Apagado, el permiso es el formulario, como hoy.
     flow_engine_native_payment_failure_by_phone_enabled: bool = False
+    # E-483 (C2, 20261112210500): el toque nativo con boton {link: checkout,
+    # cupon: personal} sale con el cupon propio de la persona, el que crea el
+    # trabajador del cupon (RECOVERY_COUPON_WORKER_ENABLED). Apagado, ese toque
+    # cierra sin salir (flow_engine_native_personal_coupon_disabled) y lo de hoy
+    # no cambia: ningun flujo publicado lo lleva.
+    flow_engine_native_personal_coupon_enabled: bool = False
     # E-316 (segment-labels-v1, PR-C de los segmentos): el paso etiquetar de un
     # flujo nativo acepta la etiqueta de cada [[agente.segmentos]] con macro, con
     # cualquier disparador, y el motor la pone antes del primer envio. Apagado, el
@@ -2764,6 +2774,12 @@ class Settings:
                 .lower()
                 == "true"
             ),
+            flow_engine_native_personal_coupon_enabled=(
+                os.getenv("FLOW_ENGINE_NATIVE_PERSONAL_COUPON_ENABLED", "false")
+                .strip()
+                .lower()
+                == "true"
+            ),
             flow_engine_segment_labels_enabled=(
                 os.getenv("FLOW_ENGINE_SEGMENT_LABELS_ENABLED", "false").strip().lower()
                 == "true"
@@ -3574,6 +3590,7 @@ def instance_runtime_from(
         cart_touches=flow_engine_cart_touches_enabled(settings),
         main_product=settings.instance_manifest.funnel_ref,
         native_multitouch=settings.flow_engine_native_multitouch_enabled,
+        native_personal_coupon=settings.flow_engine_native_personal_coupon_enabled,
     )
 
 
@@ -3601,6 +3618,27 @@ def _validate_flow_engine(settings: Settings) -> None:
     for field_name, env_name in FLOW_ENGINE_REQUIRED_FLAGS:
         if getattr(settings, field_name) is not True:
             raise ValueError(f"{flag} requires {env_name}")
+
+
+def _validate_flow_engine_native_personal_coupon(settings: Settings) -> None:
+    """Startup gates of the native step with the personal coupon (E-483, C2).
+
+    The code comes from the coupon worker (it creates it in Hotmart), the step
+    is a native one (the engine) sent by the direct template (its checkout
+    button). The price, when the instance has one, has to be sayable. Off,
+    nothing is read.
+    """
+    if not settings.flow_engine_native_personal_coupon_enabled:
+        return
+    flag = "FLOW_ENGINE_NATIVE_PERSONAL_COUPON_ENABLED"
+    if not settings.flow_engine_enabled:
+        raise ValueError(f"{flag} requires FLOW_ENGINE_ENABLED")
+    if not settings.recovery_coupon_worker_enabled:
+        raise ValueError(f"{flag} requires RECOVERY_COUPON_WORKER_ENABLED")
+    if not settings.dispatcher_approved_template_direct_enabled:
+        raise ValueError(f"{flag} requires DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED")
+    if settings.recovery_discount_price is not None:
+        format_price(settings.recovery_discount_price, settings.recovery_discount_currency)
 
 
 def _validate_flow_engine_native_intent(settings: Settings) -> None:
@@ -5272,6 +5310,7 @@ def create_app(
     _validate_agent_segments(settings)
     _validate_flow_engine(settings)
     _validate_flow_engine_native_intent(settings)
+    _validate_flow_engine_native_personal_coupon(settings)
     waba_template = _waba_template_config(settings)
     _validate_approved_template_direct(
         settings,
@@ -6606,6 +6645,14 @@ def create_app(
         durable_dispatcher = DurableDispatcher(
             flow_engine_enabled=settings.flow_engine_enabled,
             native_multitouch_enabled=settings.flow_engine_native_multitouch_enabled,
+            native_personal_coupon=(
+                NativePersonalCouponConfig(
+                    price=settings.recovery_discount_price,
+                    currency=settings.recovery_discount_currency,
+                )
+                if settings.flow_engine_native_personal_coupon_enabled
+                else None
+            ),
             native_client_labeler=native_client_labeler,
             native_segment_labels=native_segment_labels,
             segment_catalog=segment_catalog,

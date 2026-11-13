@@ -91,8 +91,10 @@ def test_the_migration_is_one_transaction_with_its_guard() -> None:
 
 def test_the_new_test_runs_with_npm_test() -> None:
     package = json.loads((ROOT / "tests/sql/followup_engine/package.json").read_text(encoding="utf-8"))
+    # Despues va el de C2 (20261112210500).
     assert package["scripts"]["test"].endswith(
-        "node validate_e483_native_condition_after_send.mjs --check && node validate_e483_payment_failure_by_phone.mjs")
+        "node validate_e483_native_condition_after_send.mjs --check && node validate_e483_payment_failure_by_phone.mjs"
+        " && node validate_e483_native_personal_coupon.mjs --check")
 
 
 # -- El cliente de la base -------------------------------------------------------

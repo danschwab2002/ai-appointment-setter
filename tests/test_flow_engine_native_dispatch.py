@@ -58,6 +58,7 @@ from bridge.native_flows import (
 )
 from bridge.product_label import ProductLabeler
 from bridge.supabase import FlowEngineNativeStepTail, FlowEngineStepContext
+from bridge.native_personal_coupon import NATIVE_PERSONAL_COUPON_DISABLED
 from bridge.worker import FLOW_ENGINE_STEP_UNSUPPORTED, DurableDispatcher
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -354,7 +355,9 @@ def test_a_native_step_the_bridge_cannot_build_closes_for_good(tmp_path: Path, c
 
     assert _templates(chatwoot) == []
     [closed] = authority.finalizations
-    assert closed["reason_code"] == FLOW_ENGINE_STEP_UNSUPPORTED
+    # E-483 (C2): el boton del cupon propio, sin FLOW_ENGINE_NATIVE_PERSONAL_COUPON_ENABLED, cierra con su motivo.
+    assert closed["reason_code"] == (
+        NATIVE_PERSONAL_COUPON_DISABLED if "template_button" in changes else FLOW_ENGINE_STEP_UNSUPPORTED)
     assert closed["next_attempt_at"] is None
 
 

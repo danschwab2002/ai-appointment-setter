@@ -27,7 +27,7 @@ La entrada de ``validar``::
                   "segment_labels": [{"etiqueta", "estado"}]?,
                   "runtime": {"engine_enabled", "native_intent_enabled",
                               "native_silence_sweeper", "cart_touches", "main_product",
-                              "native_multitouch_enabled"?}?,
+                              "native_multitouch_enabled"?, "native_personal_coupon_enabled"?}?,
                   "template_images": [<nombre de plantilla>]?},
      "store": {"flows": [{"flow_id", "product_ref", "flow_key", "state",
                           "active_version", "generation", "route_executor"?,
@@ -110,10 +110,13 @@ def instance_from_input(value: object) -> InstanceView:
             key: _mapping(raw_runtime, "operator_instance_invalid")[key] for key in (
                 "engine_enabled", "native_intent_enabled", "native_silence_sweeper", "cart_touches",
                 "main_product")}
-        # E-483: native_multitouch_enabled es opcional; sin la clave, el InstanceRuntime de antes (apagado).
+        # E-483: native_multitouch_enabled y native_personal_coupon_enabled (C2) son opcionales; sin ninguna
+        # de las dos, el InstanceRuntime de antes (apagado).
         runtime = None if fields is None else (
-            NativeRuntime(**fields, native_multitouch=raw_runtime["native_multitouch_enabled"])
-            if "native_multitouch_enabled" in raw_runtime else InstanceRuntime(**fields))
+            NativeRuntime(**fields, native_multitouch=raw_runtime.get("native_multitouch_enabled", False),
+                          native_personal_coupon=raw_runtime.get("native_personal_coupon_enabled", False))
+            if {"native_multitouch_enabled", "native_personal_coupon_enabled"} & set(raw_runtime)
+            else InstanceRuntime(**fields))
     except (KeyError, TypeError, ValueError) as error:
         raise OperatorInputError("operator_instance_invalid") from error
     # E-370: las plantillas con imagen de encabezado declarada. Opcional: sin la clave, ninguna.

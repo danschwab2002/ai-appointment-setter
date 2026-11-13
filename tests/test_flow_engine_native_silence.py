@@ -62,6 +62,7 @@ from bridge.flow_engine import (
     ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE,
     ENGINE_CAPABILITIES_NATIVE_SILENCE,
     ENGINE_CAPABILITIES_NATIVE_MULTITOUCH,
+    ENGINE_CAPABILITIES_NATIVE_CART_MULTITOUCH,
     ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE_MULTITOUCH,
     NATIVE_CAPABILITIES_BY_TRIGGER,
     NATIVE_PERMISSION_BY_TRIGGER,
@@ -141,7 +142,8 @@ def test_the_fixtures_are_the_captured_followup_template_and_an_adopted_cart_con
 def test_the_capabilities_are_per_trigger() -> None:
     assert dict(NATIVE_CAPABILITIES_BY_TRIGGER) == {
         # E-483 (20261112210000): el carrito, el formulario y el pago rechazado, de hasta tres toques.
-        "compra": ENGINE_CAPABILITIES_NATIVE, "carrito": ENGINE_CAPABILITIES_NATIVE_MULTITOUCH,
+        # E-483 (C2, 20261112210500): el carrito con el boton del cupon propio y sus variables.
+        "compra": ENGINE_CAPABILITIES_NATIVE, "carrito": ENGINE_CAPABILITIES_NATIVE_CART_MULTITOUCH,
         # El pago rechazado, con sus ramas y el boton del checkout (P-16, E-306, flow-engine-v2 §27).
         "pago_fallido": ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE_MULTITOUCH,
         "intencion": ENGINE_CAPABILITIES_NATIVE_MULTITOUCH,
@@ -231,7 +233,8 @@ def test_the_native_events_run_as_before(definition: dict[str, Any]) -> None:
     if definition is PAYMENT:
         assert native_not_supported(with_button) == ()
     else:
-        assert "engine_not_supported:boton_checkout" in native_not_supported(with_button)
+        # E-483 (C2, 20261112210500): el carrito lleva boton solo con el cupon propio.
+        assert "engine_not_supported:boton_sin_cupon_personal" in native_not_supported(with_button)
 
 
 # -- El esquema: cualquier_plantilla y el cupon -------------------------------------

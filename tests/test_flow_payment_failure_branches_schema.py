@@ -315,11 +315,13 @@ def test_what_the_native_engine_does_not_run_with_the_branches(change: Any, code
 
 
 def test_the_purchase_the_cart_and_the_first_contact_do_not_change() -> None:
-    # La compra no cambia; el carrito y el formulario suman varios toques (E-483), sin condicion ni boton.
+    # La compra no cambia; el carrito y el formulario suman varios toques (E-483), sin condicion; el formulario
+    # sin boton y el carrito solo con el del cupon propio (E-483, C2, 20261112210500).
     assert NATIVE_CAPABILITIES_BY_TRIGGER["compra"] is ENGINE_CAPABILITIES_NATIVE
     for event in ("carrito", "intencion"):
         assert NATIVE_CAPABILITIES_BY_TRIGGER[event].step_types == ENGINE_CAPABILITIES_NATIVE.step_types
-        assert NATIVE_CAPABILITIES_BY_TRIGGER[event].buttons == frozenset()
+    assert NATIVE_CAPABILITIES_BY_TRIGGER["intencion"].buttons == frozenset()
+    assert NATIVE_CAPABILITIES_BY_TRIGGER["carrito"].buttons == {"checkout"}
     assert "condicion" not in ENGINE_CAPABILITIES_NATIVE.step_types
     assert ENGINE_CAPABILITIES_NATIVE.buttons == frozenset()
     cart = copy.deepcopy(CART)
@@ -328,4 +330,4 @@ def test_the_purchase_the_cart_and_the_first_contact_do_not_change() -> None:
     assert "engine_not_supported:condicion" in native_not_supported(cart)
     with_button = copy.deepcopy(CART)
     with_button["pasos"][-1] = {**with_button["pasos"][-1], "boton": {"link": "checkout"}}
-    assert "engine_not_supported:boton_checkout" in native_not_supported(with_button)
+    assert "engine_not_supported:boton_sin_cupon_personal" in native_not_supported(with_button)
