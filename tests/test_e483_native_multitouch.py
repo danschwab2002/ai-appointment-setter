@@ -202,10 +202,13 @@ def test_one_touch_does_not_need_the_flag() -> None:
     assert not {"native_multitouch_not_running", "native_multitouch_not_running_warning"} & codes
 
 
-def test_the_operator_is_warned_and_not_blocked() -> None:
+def test_the_operator_is_blocked_too() -> None:
+    # Correccion de la revision (2026-11-13): mejor no publicar que mandar solo el primero. Antes era una
+    # advertencia (native_multitouch_not_running_warning), que ya no existe.
     codes = _new_cart_findings(_multitouch_runtime(False), actor="operador")
-    assert "native_multitouch_not_running_warning" in codes
-    assert "native_multitouch_not_running" not in codes
+    assert "native_multitouch_not_running" in codes
+    assert "native_multitouch_not_running_warning" not in codes
+    assert "native_multitouch_not_running" not in _new_cart_findings(_multitouch_runtime(True), actor="operador")
 
 
 def test_an_unknown_runtime_does_not_block() -> None:

@@ -816,20 +816,13 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
         lambda: run_new(_three_touch_form(), "primer_contacto", instance=_running(multitouch=False)),
         lambda: run_new(_three_touch_form(), "primer_contacto", instance=_running()),
     ),
-    "native_multitouch_not_running_warning": (
-        lambda: run_new(_three_touch_form(), "primer_contacto", actor="operador",
-                        instance=_running(multitouch=False)),
-        lambda: run_new(_three_touch_form(), "primer_contacto", actor="operador", instance=_running()),
-    ),
+
     # E-483 (C2): el cupon propio con ese toque apagado en el bridge.
     "native_personal_coupon_not_running": (
         lambda: run_new(_cart_personal(), "carrito_cupon", instance=_running(personal=False)),
         lambda: run_new(_cart_personal(), "carrito_cupon", instance=_running()),
     ),
-    "native_personal_coupon_not_running_warning": (
-        lambda: run_new(_cart_personal(), "carrito_cupon", actor="operador", instance=_running(personal=False)),
-        lambda: run_new(_cart_personal(), "carrito_cupon", actor="operador", instance=_running()),
-    ),
+
     # E-483 (C8): cancelar lo que espera con los toques siguientes apagados en el bridge.
     "native_cancel_in_flight_not_running": (
         lambda: _native_cancel(actor="automation_expert", multitouch=False),
@@ -999,7 +992,8 @@ def test_each_code_has_a_positive_neighbour_that_does_not_produce_it(code: str) 
 def test_every_code_of_the_closed_catalog_has_its_cases() -> None:
     assert set(CASES) == fv.BLOCK_CODES | fv.WARNING_CODES
     assert not fv.BLOCK_CODES & fv.WARNING_CODES
-    assert len(fv.WARNING_CODES) == 10  # E-483: native_multitouch_, native_personal_coupon_ y native_cancel_in_flight_not_running_warning
+    assert len(fv.WARNING_CODES) == 8  # E-483: native_cancel_in_flight_not_running_warning (las de varios toques y
+    # el cupon propio son bloqueos tambien para el operador desde la correccion del 2026-11-13)
 
 
 def test_every_code_of_the_closed_catalog_is_produced_by_some_case() -> None:
@@ -1759,9 +1753,6 @@ def test_always_does_not_warn_with_a_utility_template() -> None:
 WARNING_PATHS = {
     "always_with_marketing": "/0/definicion/horario",
     "empty_branch_with_le_gana_a": "/0/definicion/pasos/0",
-    # E-483: el item entero, como los bloqueos de lo que se publicaria sin efecto.
-    "native_multitouch_not_running_warning": "/0",
-    "native_personal_coupon_not_running_warning": "/0",
     # E-483 (C8): el en_curso del item.
     "native_cancel_in_flight_not_running_warning": "/0/en_curso",
     "recovery_without_cap": "/0/definicion/topes",

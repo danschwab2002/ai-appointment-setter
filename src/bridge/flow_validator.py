@@ -789,8 +789,8 @@ def _personal_coupon_sends(steps: object) -> int:
 
 # E-483: un nativo de varios mensajes con FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED apagado. La base lo abre y
 # lo publica, pero el bridge cierra el segundo y el tercero sin mandarlos
-# (flow_engine_native_multitouch_disabled): sale solo el primero. Bloqueo para el AE, como los otros
-# cinco; al operador se le avisa (puede preparar el flujo antes de que se prenda).
+# (flow_engine_native_multitouch_disabled): sale solo el primero. Bloqueo para el AE y para el operador
+# (correccion de la revision, 2026-11-13: mejor no publicar que mandar solo el primero).
 NATIVE_MULTITOUCH_NOT_RUNNING = _spec(
     "native_multitouch_not_running", None, KIND_CYCLE,
     "Esta cuenta todavía no manda más de un mensaje por flujo en el sistema nuevo: si se publica, le llegaría "
@@ -799,25 +799,16 @@ NATIVE_MULTITOUCH_NOT_RUNNING = _spec(
                 "equipo técnico tiene que prender los mensajes siguientes en su cuenta antes de publicar uno de "
                 "varios.",
 )
-NATIVE_MULTITOUCH_NOT_RUNNING_WARNING = _spec(
-    "native_multitouch_not_running_warning", None, KIND_WARNING,
-    "Esta cuenta todavía no manda más de un mensaje por flujo en el sistema nuevo: publicado así, sale solo el "
-    "primero hasta que se prenda FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED.",
-)
 # E-483 (C2, 20261112210500): un nativo con el cupon propio con FLOW_ENGINE_NATIVE_PERSONAL_COUPON_ENABLED
 # apagado. La base lo publica y el trabajador del cupon crearia el codigo en Hotmart, pero el bridge cierra el
-# toque sin mandarlo (flow_engine_native_personal_coupon_disabled). Bloqueo para el AE; al operador se le avisa.
+# toque sin mandarlo (flow_engine_native_personal_coupon_disabled): crearia cupones reales que nadie recibe. Bloqueo
+# para el AE y para el operador (correccion de la revision, 2026-11-13).
 NATIVE_PERSONAL_COUPON_NOT_RUNNING = _spec(
     "native_personal_coupon_not_running", None, KIND_CYCLE,
     "Esta cuenta todavía no manda el cupón propio de cada persona en el sistema nuevo: si se publica, los mensajes "
     "con ese cupón no saldrían.",
     alternative="No se arregla cambiando la propuesta, salvo sacando el cupón propio de los mensajes. Decile al "
                 "dueño que el equipo técnico tiene que prender el cupón propio en su cuenta antes de publicarlo.",
-)
-NATIVE_PERSONAL_COUPON_NOT_RUNNING_WARNING = _spec(
-    "native_personal_coupon_not_running_warning", None, KIND_WARNING,
-    "Esta cuenta todavía no manda el cupón propio de cada persona en el sistema nuevo: publicado así, los mensajes "
-    "con ese cupón no salen hasta que se prenda FLOW_ENGINE_NATIVE_PERSONAL_COUPON_ENABLED.",
 )
 # E-483 (C8, 20261112210100): en_curso: cancelar en un nativo con FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED apagado.
 # La base cancela al publicar sin mirar el flag (los toques que esperan, tambien el primero de quien todavia no lo
@@ -955,8 +946,7 @@ _VALIDATOR_CODES: tuple[CodeSpec, ...] = (
     NATIVE_CHANGE_PRIORITY_WINS_REF, NATIVE_CHANGE_PRIORITY_REF, NATIVE_CHANGE_ENTRY, NATIVE_CHANGE_POOL, NATIVE_CHANGE_OTHER,
     CHANGE_WITHOUT_EFFECT_LEGACY_ROUTE, NATIVE_ENGINE_NOT_RUNNING, NATIVE_FIRST_CONTACT_NOT_RUNNING,
     NATIVE_SILENCE_NOT_RUNNING, NATIVE_TRIGGER_OTHER_PRODUCT, NATIVE_MULTITOUCH_NOT_RUNNING,
-    NATIVE_MULTITOUCH_NOT_RUNNING_WARNING, NATIVE_PERSONAL_COUPON_NOT_RUNNING,
-    NATIVE_PERSONAL_COUPON_NOT_RUNNING_WARNING,
+    NATIVE_PERSONAL_COUPON_NOT_RUNNING,
     NATIVE_CANCEL_IN_FLIGHT_NOT_RUNNING, NATIVE_CANCEL_IN_FLIGHT_NOT_RUNNING_WARNING,
     ROLLBACK_TARGET_NOT_FOUND, ROLLBACK_TARGET_IS_ACTIVE, STATE_TRANSITION_INVALID,
     FLOW_HAS_NO_VERSION, EN_CURSO_NOT_SUPPORTED, CLIENT_PURCHASE_OK_MISSING,
@@ -1586,8 +1576,8 @@ class _Run:
         La base publica hasta tres envios (20261112210000) y el bridge manda el segundo y el tercero solo con
         ``FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED``; apagado, los cierra sin mandar. Mira lo mismo que
         ``_without_effect`` (``nuevo``, ``version``, ``volver`` y ``prender``) y solo si la instancia dice lo
-        que corre: el AE no lo publica; al operador se le avisa. Con el motor apagado ya bloquea
-        ``native_engine_not_running``.
+        que corre: ni el AE ni el operador lo publican (mejor no publicar que mandar solo el primero). Con el
+        motor apagado ya bloquea ``native_engine_not_running`` al AE.
         """
         runtime = self.instance.runtime
         if runtime is None or runtime_runs_multitouch(runtime) or not runtime.engine_enabled:
@@ -1598,11 +1588,7 @@ class _Run:
             definition = self.effective.get(flow.flow_id)
             if not isinstance(definition, Mapping) or _max_sends(definition.get("pasos")) <= 1:
                 continue
-            at = finding_path((index,))
-            if self.actor == "automation_expert":
-                self.blocks.append(NATIVE_MULTITOUCH_NOT_RUNNING.at(at))
-            else:
-                self.warnings.append(NATIVE_MULTITOUCH_NOT_RUNNING_WARNING.at(at))
+            self.blocks.append(NATIVE_MULTITOUCH_NOT_RUNNING.at(finding_path((index,))))
 
     def _cancel_without_multitouch(self) -> None:
         """``en_curso: cancelar`` en un nativo con los toques siguientes apagados en el bridge (E-483, C8).
@@ -1628,8 +1614,8 @@ class _Run:
 
         La base lo publica (20261112210500) y el bridge arma el toque con el cupon solo con
         ``FLOW_ENGINE_NATIVE_PERSONAL_COUPON_ENABLED``; apagado, lo cierra sin mandarlo. El mismo molde que
-        ``_multitouch_without_effect``: solo si la instancia dice lo que corre; el AE no lo publica, al operador
-        se le avisa.
+        ``_multitouch_without_effect``: solo si la instancia dice lo que corre; ni el AE ni el operador lo publican
+        (el trabajador del cupon crearia el codigo en Hotmart para un toque que no sale).
         """
         runtime = self.instance.runtime
         if runtime is None or runtime_runs_personal_coupon(runtime) or not runtime.engine_enabled:
@@ -1640,11 +1626,7 @@ class _Run:
             definition = self.effective.get(flow.flow_id)
             if not isinstance(definition, Mapping) or not _personal_coupon_sends(definition.get("pasos")):
                 continue
-            at = finding_path((index,))
-            if self.actor == "automation_expert":
-                self.blocks.append(NATIVE_PERSONAL_COUPON_NOT_RUNNING.at(at))
-            else:
-                self.warnings.append(NATIVE_PERSONAL_COUPON_NOT_RUNNING_WARNING.at(at))
+            self.blocks.append(NATIVE_PERSONAL_COUPON_NOT_RUNNING.at(finding_path((index,))))
 
     def _switch_off(self, index: int, item: ProposalItem, flow: WorldFlow) -> None:
         if flow.state == "apagado":

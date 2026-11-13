@@ -476,3 +476,17 @@ def test_the_runtime_says_whether_the_bridge_builds_the_personal_coupon() -> Non
     assert NativeRuntime(**fields, native_personal_coupon=True).to_json()["native_personal_coupon_enabled"] is True
     with pytest.raises(ValueError):
         NativeRuntime(**fields, native_personal_coupon="si")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("actor", ["automation_expert", "operador"])
+def test_without_the_flag_nobody_publishes_the_personal_coupon(actor: str) -> None:
+    # Correccion de la revision (2026-11-13): con el flag apagado la base publica y el trabajador del cupon crea el
+    # codigo en Hotmart para un toque que el bridge cierra sin mandar. Antes el operador recibia solo una
+    # advertencia (native_personal_coupon_not_running_warning), que ya no existe.
+    import test_flow_validator as tfv
+
+    off = tfv.run_new(tfv._cart_personal(), "carrito_cupon", actor=actor, instance=tfv._running(personal=False))
+    on = tfv.run_new(tfv._cart_personal(), "carrito_cupon", actor=actor, instance=tfv._running(personal=True))
+    assert "native_personal_coupon_not_running" in {finding.code for finding in off}
+    assert "native_personal_coupon_not_running" not in {finding.code for finding in on}
+    assert "native_personal_coupon_not_running_warning" not in {finding.code for finding in off}
