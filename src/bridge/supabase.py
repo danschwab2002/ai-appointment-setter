@@ -8068,6 +8068,74 @@ class SupabaseClient:
             ),
         )
 
+    async def get_flow_engine_native_payment_slip_context_v1(
+        self,
+        *,
+        action_id: str,
+        worker_id: str,
+        lease_generation: int,
+        now: str,
+    ) -> PaymentSlipSendContext:
+        """The latest slip of a native slip case, under the current lease (E-528, C4, 20261113200000).
+
+        The same row and fence as ``get_portable_payment_slip_send_context``, for a case with a native slip run.
+
+        A 55000 (no lease, an action that is not ``payment_slip``, a case
+        without a resolved slip) is a ``SupabasePermanentError`` with its
+        reason: it does not change by retrying.
+        """
+        operation = "flow_engine_native_payment_slip_context"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_flow_engine_native_payment_slip_context_v1",
+            content=json.dumps({
+                "p_action_id": action_id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": lease_generation,
+                "p_now": now,
+            }),
+        )
+        if response.status_code != 200:
+            rejection = _pilot_plan_rejection(response)
+            if rejection is not None:
+                raise SupabasePermanentError(
+                    f"{operation}_rejected: {rejection}", reason=rejection
+                )
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        if set(row) != {
+            "webhook_event_id",
+            "payment_type",
+            "checkout_country_iso",
+            "billet_url",
+            "billet_barcode",
+            "generated_at",
+        }:
+            raise _invalid_row_error(operation)
+        return PaymentSlipSendContext(
+            webhook_event_id=_required_uuid(
+                row, "webhook_event_id", operation=operation
+            ),
+            payment_type=_optional_string(row, "payment_type", operation=operation),
+            checkout_country_iso=_optional_string(
+                row, "checkout_country_iso", operation=operation
+            ),
+            billet_url=_optional_string(row, "billet_url", operation=operation),
+            billet_barcode=_optional_string(
+                row, "billet_barcode", operation=operation
+            ),
+            generated_at=(
+                None
+                if row.get("generated_at") is None
+                else _required_aware_timestamp(
+                    row, "generated_at", operation=operation
+                )
+            ),
+        )
+
     async def get_portable_payment_failure_send_context(
         self,
         *,

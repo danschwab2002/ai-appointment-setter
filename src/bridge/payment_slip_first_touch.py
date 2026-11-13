@@ -178,14 +178,26 @@ async def compose_payment_slip_first_touch(
     worker_id: str,
     now: str,
     step: PaymentSlipStep | None = None,
+    native: bool = False,
+    categories: frozenset[str] | None = None,
 ) -> PaymentSlipOutcome:
     """Build C1 (or, with ``step``, C2 or C3) for one payment slip action.
 
     With ``step``, after the slip resolves: before the moment of the step the
     attempt is deferred until then, and on a later day it does not go out.
+
+    ``native`` (E-528, C4): the slip of a native slip run, read with
+    ``get_flow_engine_native_payment_slip_context_v1`` (same row, same fence);
+    ``categories`` are then the ones its pinned permission accepts, and the
+    template params carry the category the catalog says.
     """
+    reader = (
+        supabase.get_flow_engine_native_payment_slip_context_v1  # type: ignore[attr-defined]
+        if native
+        else supabase.get_portable_payment_slip_send_context  # type: ignore[attr-defined]
+    )
     try:
-        context = await supabase.get_portable_payment_slip_send_context(  # type: ignore[attr-defined]
+        context = await reader(
             action_id=action.action_id,  # type: ignore[attr-defined]
             worker_id=worker_id,
             lease_generation=action.lease_generation,  # type: ignore[attr-defined]
@@ -246,7 +258,7 @@ async def compose_payment_slip_first_touch(
             inbox,
             template_name=template_name,
             expected_language=language,
-            expected_category=category,
+            expected_category=categories if categories is not None else category,
             parameter_count=len(parameters),
             url_button=resolution.button_url_template,
         )
@@ -265,7 +277,7 @@ async def compose_payment_slip_first_touch(
         template_name=template_name,
         template_params={
             "name": template_name,
-            "category": category,
+            "category": approved.category if categories is not None else category,
             "language": language,
             "processed_params": processed,
         },

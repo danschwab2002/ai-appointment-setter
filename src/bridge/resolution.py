@@ -266,6 +266,7 @@ async def resolve_event(
     flow_engine: FlowEngineRuntime | None = None,
     native_cart_product_ref: str | None = None,
     native_payment_failure_product_ref: str | None = None,
+    native_payment_slip_product_ref: str | None = None,
     native_only: bool = False,
 ) -> SituationReport:
     """Resolve identity for one webhook event and return a situation report.
@@ -284,7 +285,9 @@ async def resolve_event(
     cart with a native cart flow on or in its cohort. Only then the cart goes
     first to the native admission, and the legacy (or the engine of the cart)
     plans only what no native flow takes. None is exactly today's path. Same
-    with ``native_payment_failure_product_ref`` and a payment failure (E-207).
+    with ``native_payment_failure_product_ref`` and a payment failure (E-207), and
+    with ``native_payment_slip_product_ref`` and a printed slip (E-528, C4): a
+    second slip of a run in course is added to its case (``sumado``).
 
     ``native_only`` (E-350) is the event of a product that is not the principal:
     only its native flows can take it. What no native flow takes ends
@@ -537,6 +540,10 @@ async def resolve_event(
             elif buyer.event_type == EVENT_PURCHASE_CANCELED:
                 native_product_ref = native_payment_failure_product_ref
                 native_trigger = "pago_fallido"
+            elif buyer.event_type == EVENT_PURCHASE_BILLET_PRINTED:
+                # E-528 (C4): la ficha, con su flujo nativo prendido o en cohorte.
+                native_product_ref = native_payment_slip_product_ref
+                native_trigger = "ficha_impresa"
             if (
                 flow_engine is not None
                 and native_product_ref is not None

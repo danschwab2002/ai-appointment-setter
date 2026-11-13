@@ -376,6 +376,9 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # la plantilla salen del manifiesto; el scope y la politica, de
     # LANCEMOS_PILOT_PAYMENT_SLIP_SCOPE_* y PAYMENT_SLIP_FOLLOWUP_POLICY_*.
     "portable_hotmart_payment_slip_enabled",
+    # E-528 (C4, D-P25-6): PORTABLE_HOTMART_PAYMENT_SLIP_LEGACY_ENABLED=false,
+    # la ficha solo nativa (por defecto False: ATT1 no cambia).
+    "portable_hotmart_payment_slip_native_only",
     # B1 del pago rechazado (cuatro variantes con el link y, cuando
     # corresponde, el cupon): las plantillas son del runtime, y el scope y la
     # politica propios de LANCEMOS_PILOT_PAYMENT_FAILURE_SCOPE_* y
@@ -526,6 +529,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # E-483 (C6, 20261112230000): el tope por persona del nativo. Los numeros
     # (FLOW_ENGINE_NATIVE_PERSON_CAP_MAX_SENDS y _WINDOW_HOURS) son de la instancia.
     "flow_engine_native_person_cap_enabled",
+    # E-528 (C4, 20261113200000): la ficha de OXXO nativa (ficha_impresa). Lo
+    # especifico (que flujo, que plantillas) es de la base; por instancia, solo
+    # prenderlo.
+    "flow_engine_native_payment_slip_enabled",
     # E-316 (segment-labels-v1): la etiqueta de un segmento antes del primer
     # turno del agente, la que pone el motor nativo antes del primer envio y la
     # que se hereda de otra conversacion del contacto. Lo especifico (que
@@ -937,6 +944,15 @@ class Settings:
     # intencion, el worker la filtra por [[ficha.medios]] y la planifica
     # contra su scope y su politica, y el dispatcher manda C1.
     portable_hotmart_payment_slip_enabled: bool = False
+    # E-528 (C4, D-P25-6): la ficha del legado (su scope, su politica y la
+    # plantilla del manifiesto). Prendida por defecto: ATT1 no cambia. Con
+    # false, PORTABLE_HOTMART_PAYMENT_SLIP_ENABLED prende solo la admision v2,
+    # el filtro de [[ficha.medios]] y la ficha nativa
+    # (FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED, obligatorio): nunca las dos.
+    # Se guarda al reves (solo nativa, por defecto False) porque todo booleano
+    # en True de un runtime portable tiene que ser una capacidad declarada; la
+    # lectura es portable_hotmart_payment_slip_legacy_enabled.
+    portable_hotmart_payment_slip_native_only: bool = False
     pilot_payment_slip_scope_key: str | None = None
     pilot_payment_slip_scope_version: int | None = None
     payment_slip_followup_policy_key: str | None = None
@@ -1236,6 +1252,11 @@ class Settings:
     flow_engine_native_person_cap_enabled: bool = False
     flow_engine_native_person_cap_max_sends: int = 4
     flow_engine_native_person_cap_window_hours: int = 120
+    # E-528 (C4, 20261113200000): la ficha impresa sin pagar va a la admision
+    # nativa y el validador deja publicar un flujo ficha_impresa. Apagado, un
+    # flujo nativo de la ficha es motor_nativo:disparador y lo de hoy no cambia:
+    # ningun flujo publicado lo lleva.
+    flow_engine_native_payment_slip_enabled: bool = False
     # E-316 (segment-labels-v1, PR-C de los segmentos): el paso etiquetar de un
     # flujo nativo acepta la etiqueta de cada [[agente.segmentos]] con macro, con
     # cualquier disparador, y el motor la pone antes del primer envio. Apagado, el
@@ -1282,6 +1303,12 @@ class Settings:
     # agente como un texto de sistema y, si es el segundo seguido, se deriva.
     # Apagado, sigue sin respuesta, con su linea en el log.
     inbound_attachment_without_text_enabled: bool = False
+
+
+    @property
+    def portable_hotmart_payment_slip_legacy_enabled(self) -> bool:
+        """E-528 (C4, D-P25-6): la ficha del legado; False solo con PORTABLE_HOTMART_PAYMENT_SLIP_LEGACY_ENABLED=false."""
+        return not self.portable_hotmart_payment_slip_native_only
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -1500,6 +1527,14 @@ class Settings:
         portable_hotmart_payment_slip_enabled = (
             os.getenv("PORTABLE_HOTMART_PAYMENT_SLIP_ENABLED", "false").lower()
             == "true"
+        )
+        # E-528 (C4, D-P25-6): la ficha del legado, por defecto prendida. Solo
+        # "false" la apaga: cualquier otro valor deja la de hoy.
+        portable_hotmart_payment_slip_native_only = not (
+            os.getenv("PORTABLE_HOTMART_PAYMENT_SLIP_LEGACY_ENABLED", "true")
+            .strip()
+            .lower()
+            != "false"
         )
         pilot_payment_slip_scope_version_raw = os.getenv(
             "LANCEMOS_PILOT_PAYMENT_SLIP_SCOPE_VERSION", ""
@@ -2300,6 +2335,9 @@ class Settings:
             portable_hotmart_payment_slip_enabled=(
                 portable_hotmart_payment_slip_enabled
             ),
+            portable_hotmart_payment_slip_native_only=(
+                portable_hotmart_payment_slip_native_only
+            ),
             pilot_payment_slip_scope_key=(
                 os.getenv("LANCEMOS_PILOT_PAYMENT_SLIP_SCOPE_KEY", "").strip()
                 or None
@@ -2806,6 +2844,12 @@ class Settings:
             ),
             flow_engine_native_person_cap_window_hours=_parse_positive_int_env(
                 "FLOW_ENGINE_NATIVE_PERSON_CAP_WINDOW_HOURS", 120
+            ),
+            flow_engine_native_payment_slip_enabled=(
+                os.getenv("FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED", "false")
+                .strip()
+                .lower()
+                == "true"
             ),
             flow_engine_segment_labels_enabled=(
                 os.getenv("FLOW_ENGINE_SEGMENT_LABELS_ENABLED", "false").strip().lower()
@@ -3370,6 +3414,12 @@ def _validate_instance_manifest_gates(settings: Settings) -> None:
         f"{flag}->{flow}"
         for flag, flow in _FLAG_REQUIRED_FLOW.items()
         if getattr(settings, flag) is True and not manifest.flow_enabled(flow)
+        # E-528 (C4, D-P25-6): flujos.ficha es la ficha del legado; sin el
+        # legado, la ficha es solo nativa y el manifiesto puede no tenerla.
+        and not (
+            flag == "portable_hotmart_payment_slip_enabled"
+            and not settings.portable_hotmart_payment_slip_legacy_enabled
+        )
     )
     if settings.lead_precheckout_enabled and "intencion" not in manifest.events:
         blocked.append("lead_precheckout_enabled->intencion")
@@ -3618,6 +3668,7 @@ def instance_runtime_from(
         main_product=settings.instance_manifest.funnel_ref,
         native_multitouch=settings.flow_engine_native_multitouch_enabled,
         native_personal_coupon=settings.flow_engine_native_personal_coupon_enabled,
+        native_payment_slip=settings.flow_engine_native_payment_slip_enabled,
     )
 
 
@@ -3996,13 +4047,23 @@ def _validate_payment_slip_first_contact(settings: Settings) -> None:
       category written down;
     * the purchase stop and the scoped inbound, which carries the opt-out.
     """
+    if settings.flow_engine_native_payment_slip_enabled and (
+        not settings.flow_engine_enabled
+        or not settings.portable_hotmart_payment_slip_enabled
+    ):
+        # E-528 (C4): la ficha nativa lee la ficha que guarda la admision v2.
+        raise ValueError(
+            "FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED requires FLOW_ENGINE_ENABLED "
+            "and PORTABLE_HOTMART_PAYMENT_SLIP_ENABLED"
+        )
     if not settings.portable_hotmart_payment_slip_enabled:
         return
     flag = "PORTABLE_HOTMART_PAYMENT_SLIP_ENABLED"
+    legacy = settings.portable_hotmart_payment_slip_legacy_enabled
     manifest = settings.instance_manifest
     if manifest is None:
         raise ValueError(f"{flag} requires an instance manifest")
-    if not manifest.flow_enabled("ficha"):
+    if legacy and not manifest.flow_enabled("ficha"):
         raise ValueError(f"{flag} requires flujos.ficha in the instance manifest")
     if not any(method.habilitada for method in manifest.payment_slip_methods):
         raise ValueError(f"{flag} requires an enabled row in [[ficha.medios]]")
@@ -4018,6 +4079,21 @@ def _validate_payment_slip_first_contact(settings: Settings) -> None:
         raise ValueError(
             f"{flag} requires DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED"
         )
+    if not legacy:
+        # E-528 (C4, D-P25-6): sin el legado, la ficha es solo nativa: no pide
+        # el scope, la politica ni la plantilla del legado, y si el flag nativo.
+        if not settings.flow_engine_native_payment_slip_enabled:
+            raise ValueError(
+                "PORTABLE_HOTMART_PAYMENT_SLIP_LEGACY_ENABLED=false requires "
+                "FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED"
+            )
+        if not settings.portable_hotmart_purchase_stop_enabled:
+            raise ValueError(f"{flag} requires PORTABLE_HOTMART_PURCHASE_STOP_ENABLED")
+        if not settings.chatwoot_scoped_inbound_senders_enabled:
+            raise ValueError(
+                f"{flag} requires CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED"
+            )
+        return
     if not settings.pilot_payment_slip_scope_key:
         raise ValueError(
             f"LANCEMOS_PILOT_PAYMENT_SLIP_SCOPE_KEY is required for {flag}"
@@ -4551,6 +4627,8 @@ def _waba_template_config(settings: Settings) -> WhatsAppTemplateConfig | None:
     payment_slip_category: str | None = None
     if (
         settings.portable_hotmart_payment_slip_enabled
+        # E-528 (C4): la plantilla del manifiesto es la del legado.
+        and settings.portable_hotmart_payment_slip_legacy_enabled
         and settings.instance_manifest is not None
         and "ficha" in settings.instance_manifest.templates
     ):
@@ -5420,6 +5498,8 @@ def create_app(
             channel_account_ref=settings.pilot_channel_account_ref,  # type: ignore[arg-type]
         )
         if settings.portable_hotmart_payment_slip_enabled
+        # E-528 (C4): el scope de la ficha es del legado.
+        and settings.portable_hotmart_payment_slip_legacy_enabled
         else None
     )
     # El scope propio del pago rechazado (B1, o sin las variantes con
@@ -6582,6 +6662,17 @@ def create_app(
                 if payment_failure_pilot_boundary is not None
                 else None
             ),
+            # E-528 (C4): la ficha va primero a la admision nativa, con un flujo nativo de la ficha; sin el
+            # legado, solo a ella, con el filtro de [[ficha.medios]].
+            native_payment_slip_enabled=settings.flow_engine_native_payment_slip_enabled,
+            native_payment_slip_methods=(
+                settings.instance_manifest.payment_slip_methods
+                if settings.flow_engine_native_payment_slip_enabled
+                and settings.portable_hotmart_payment_slip_enabled
+                and not settings.portable_hotmart_payment_slip_legacy_enabled
+                and settings.instance_manifest is not None
+                else None
+            ),
         )
 
     if settings.dispatcher_enabled:
@@ -6704,6 +6795,14 @@ def create_app(
             flow_engine_enabled=settings.flow_engine_enabled,
             native_multitouch_enabled=settings.flow_engine_native_multitouch_enabled,
             native_person_cap=native_person_cap(settings),
+            # E-528 (C4): C1 y C3 de la ficha nativa, con las filas de [[ficha.medios]] del manifiesto.
+            native_payment_slip=(
+                PaymentSlipFirstTouchConfig(methods=settings.instance_manifest.payment_slip_methods)
+                if settings.flow_engine_native_payment_slip_enabled
+                and settings.instance_manifest is not None
+                and any(method.habilitada for method in settings.instance_manifest.payment_slip_methods)
+                else None
+            ),
             native_personal_coupon=(
                 NativePersonalCouponConfig(
                     price=settings.recovery_discount_price,
@@ -6782,6 +6881,8 @@ def create_app(
                     methods=settings.instance_manifest.payment_slip_methods
                 )
                 if settings.portable_hotmart_payment_slip_enabled
+                # E-528 (C4): C1 y C3 del legado, solo con la ficha del legado.
+                and settings.portable_hotmart_payment_slip_legacy_enabled
                 and settings.instance_manifest is not None
                 else None
             ),
