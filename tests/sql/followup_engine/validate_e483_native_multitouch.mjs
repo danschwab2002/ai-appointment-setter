@@ -231,6 +231,12 @@ const cases = {
   boton_segundo: { ...CART, dispara: { evento: 'pago_fallido' },
     pasos: [send(), { esperar: '1m' }, send(['nombre', 'producto'], { boton: { link: 'checkout' } })] },
   pago_plantilla_y_condicion: { ...CART, dispara: { evento: 'pago_fallido' }, pasos: [send(), { esperar: '1m' }, PAY_CHAIN] },
+  // La regla del validador (correccion de la revision, 2026-11-13): al menos un minuto entre dos envios y
+  // ninguna espera despues del ultimo. Antes la base los abria.
+  sin_espera: { ...CART, pasos: [send(), send()] },
+  sin_espera_entre_el_1_y_el_2: { ...CART, pasos: [send(), send(['nombre']), { esperar: '2m' }, send()] },
+  espera_cero: { ...CART, pasos: [send(), { esperar: '0m' }, send()] },
+  espera_final: { ...CART, pasos: [send(), { esperar: '1m' }, send(), { esperar: '1m' }] },
 };
 const refusals = {};
 for (const [label, definition] of Object.entries(cases)) {
@@ -244,6 +250,8 @@ const oneTouch = {
     pasos: [send(['nombre', 'producto'], { boton: { link: 'checkout' } }), { esperar: '1m' }, send()] }),
   intencion_tres: await unsupported({ ...CART, dispara: { evento: 'intencion' } }),
   pago_cadena: await unsupported({ ...ONE, dispara: { evento: 'pago_fallido' }, pasos: [PAY_CHAIN] }),
+  espera_antes_del_primero: await unsupported({ ...CART, pasos: [{ esperar: '5m' }, send(), { esperar: '1m' }, send()] }),
+  espera_en_horas: await unsupported({ ...CART, pasos: [send(), { esperar: '24h' }, send()] }),
 };
 for (const [label, reason] of Object.entries(oneTouch)) {
   if (reason !== null) fail(`${label} se abre`, reason);

@@ -24,7 +24,9 @@
 --   2. _flow_engine_native_unsupported: de uno a tres envios en el camino. Con
 --      mas de uno: solo carrito, intencion y pago_fallido; la salida contesta
 --      escrita (la respuesta corta el toque siguiente: el flujo lo tiene que
---      decir); el boton solo en el primer envio; y sin condicion (una condicion
+--      decir); al menos un minuto de espera entre dos envios y ninguna espera
+--      despues del ultimo (la regla del validador); el boton solo en el primer
+--      envio; y sin condicion (una condicion
 --      despues de un envio es C3, todavia no). Un pago rechazado con una
 --      plantilla antes de su cadena tampoco: hoy no compilaba (more_sends_than_
 --      steps) y con la forma nueva compilaria sin que nadie lo haya probado.
@@ -79,7 +81,8 @@ declare
     c_new_shape constant text :=
         E'        -- e483_native_multitouch: begin (20261112210000)\n'
         || E'        -- Hasta tres envios. Con mas de uno: carrito, intencion o pago_fallido, la\n'
-        || E'        -- salida contesta escrita, el boton solo en el primero y sin condicion.\n'
+        || E'        -- salida contesta escrita, el boton solo en el primero, sin condicion y con\n'
+        || E'        -- al menos un minuto entre dos envios y sin espera al final.\n'
         || E'        when ' || c_plantillas || E' > 3 then ''motor_nativo:forma''\n'
         || E'        when ' || c_plantillas || E' > 1\n'
         || E'             and (coalesce(public._flow_engine_native_trigger(p_definition), '''') not in (''carrito'', ''intencion'', ''pago_fallido'')\n'
@@ -92,6 +95,27 @@ declare
         || E'                                         select min(first.ordinal) from jsonb_array_elements(case when jsonb_typeof(p_definition -> ''pasos'') = ''array'' then p_definition -> ''pasos'' else ''[]''::jsonb end)\n'
         || E'                                                with ordinality first(value, ordinal)\n'
         || E'                                          where jsonb_typeof(first.value) = ''object'' and first.value ? ''plantilla'')))))\n'
+        || E'            then ''motor_nativo:forma''\n'
+        || E'        -- Con mas de un envio, la regla del validador (flow_engine.py, T2.1): al menos un minuto de\n'
+        || E'        -- espera entre dos envios y ninguna espera despues del ultimo.\n'
+        || E'        when ' || c_plantillas || E' > 1\n'
+        || E'             and (exists (select 1 from jsonb_array_elements(case when jsonb_typeof(p_definition -> ''pasos'') = ''array'' then p_definition -> ''pasos'' else ''[]''::jsonb end) with ordinality send(value, ordinal)\n'
+        || E'                           where jsonb_typeof(send.value) = ''object'' and send.value ? ''plantilla''\n'
+        || E'                             and exists (select 1 from jsonb_array_elements(case when jsonb_typeof(p_definition -> ''pasos'') = ''array'' then p_definition -> ''pasos'' else ''[]''::jsonb end) with ordinality earlier(value, ordinal)\n'
+        || E'                                          where earlier.ordinal < send.ordinal and jsonb_typeof(earlier.value) = ''object''\n'
+        || E'                                            and earlier.value ? ''plantilla'')\n'
+        || E'                             and not exists (select 1 from jsonb_array_elements(case when jsonb_typeof(p_definition -> ''pasos'') = ''array'' then p_definition -> ''pasos'' else ''[]''::jsonb end) with ordinality pause(value, ordinal)\n'
+        || E'                                              where pause.ordinal < send.ordinal and jsonb_typeof(pause.value) = ''object''\n'
+        || E'                                                and coalesce(pause.value ->> ''esperar'', '''') ~ ''^0*[1-9][0-9]*[mhd]$''\n'
+        || E'                                                and pause.ordinal > (select max(previous.ordinal)\n'
+        || E'                                                      from jsonb_array_elements(case when jsonb_typeof(p_definition -> ''pasos'') = ''array'' then p_definition -> ''pasos'' else ''[]''::jsonb end) with ordinality previous(value, ordinal)\n'
+        || E'                                                     where previous.ordinal < send.ordinal and jsonb_typeof(previous.value) = ''object''\n'
+        || E'                                                       and previous.value ? ''plantilla'')))\n'
+        || E'                  or exists (select 1 from jsonb_array_elements(case when jsonb_typeof(p_definition -> ''pasos'') = ''array'' then p_definition -> ''pasos'' else ''[]''::jsonb end) with ordinality pause(value, ordinal)\n'
+        || E'                              where jsonb_typeof(pause.value) = ''object'' and pause.value ? ''esperar''\n'
+        || E'                                and pause.ordinal > (select max(last.ordinal)\n'
+        || E'                                      from jsonb_array_elements(case when jsonb_typeof(p_definition -> ''pasos'') = ''array'' then p_definition -> ''pasos'' else ''[]''::jsonb end) with ordinality last(value, ordinal)\n'
+        || E'                                     where jsonb_typeof(last.value) = ''object'' and last.value ? ''plantilla'')))\n'
         || E'            then ''motor_nativo:forma''\n'
         || E'        when public._flow_engine_native_trigger(p_definition) = ''pago_fallido''\n'
         || E'             and ' || c_plantillas || E' >= 1\n'
