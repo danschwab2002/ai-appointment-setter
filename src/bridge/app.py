@@ -172,6 +172,8 @@ from bridge.opt_out_confirmation import (
 from bridge import automation_expert_chatwoot, flow_approval, flow_change_api
 from bridge import template_approval, template_request, template_request_api
 from bridge import agent_campaign_api, agent_campaigns, campaign_approval
+from bridge import flow_audience_page
+from bridge.flow_audience_wiring import FlowAudience, build_flow_audience
 from bridge.meta_templates import MetaTemplatesClient
 from bridge.template_status import MetaTemplateStatusWorker, TemplateStatusStore, slack_token_problem
 from slack_correlation.client import SlackClient
@@ -6291,6 +6293,8 @@ def create_app(
             native_intent_enabled=settings.flow_engine_native_intent_enabled,
             # E-483 (C7): le_gana_a en el nativo va con los toques siguientes.
             native_priority_wins=settings.flow_engine_native_multitouch_enabled,
+            # E-483 (AUD) para E-484: la persona de una lista de audiencia, con el mismo flag.
+            native_audience=settings.flow_engine_native_multitouch_enabled,
             payment_failure_by_phone_offers=payment_failure_by_phone_offers,
         )
     # MOT-001 (flow-engine-v1, seccion 8): comparte el productor del conector
@@ -6830,6 +6834,9 @@ def create_app(
     # el motor (FLOW_ENGINE_ENABLED) con Chatwoot; sin un silencio nativo
     # publicado no arma ningun barredor.
     native_silence_sweepers: NativeSilenceSweepers | None = None
+    # E-484 (flow-audience-trigger-v1): fecha, cada y manual. Sin
+    # FLOW_AUDIENCE_TRIGGERS_ENABLED no existe.
+    flow_audience: FlowAudience | None = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
@@ -6891,6 +6898,8 @@ def create_app(
                 await handoff_wait_alert_sweeper.start()
             if native_silence_sweepers is not None:
                 await native_silence_sweepers.start()
+            if flow_audience is not None:
+                await flow_audience.start()
             if flow_engine_divergence_notifier is not None:
                 await flow_engine_divergence_notifier.start()
             if flow_engine_rejection_notifier is not None:
@@ -6935,6 +6944,7 @@ def create_app(
                 ("hotmart_abandonment_timer", hotmart_abandonment_timer_worker),
                 ("resolution", resolution_worker),
                 ("agent_campaigns", agent_campaign_live),
+                ("flow_audience", flow_audience),
             ):
                 if worker is None:
                     continue
@@ -10080,6 +10090,25 @@ def create_app(
             )
             app.state.native_silence_sweepers = native_silence_sweepers
 
+    # E-484: el disparo por audiencia (fecha, cada, manual) y su pagina. Todo
+    # el armado vive en flow_audience_wiring; aca solo se crea.
+    flow_audience = build_flow_audience(
+        environ=None,
+        supabase_base_url=settings.supabase_base_url,
+        supabase_service_role_key=settings.supabase_service_role_key,
+        tenant_ref=settings.instance_manifest.tenant_ref if settings.instance_manifest else None,
+        ally_ref=settings.instance_manifest.ally_ref if settings.instance_manifest else None,
+        chatwoot_account_id=settings.chatwoot_account_id or (
+            settings.instance_manifest.chatwoot_account_id if settings.instance_manifest else None),
+        chatwoot_inbox_id=settings.chatwoot_inbox_id or (
+            settings.instance_manifest.chatwoot_inbox_id if settings.instance_manifest else None),
+        chatwoot=control_client,
+        flow_engine_runtime=flow_engine_runtime,
+        supabase=shared_supabase,
+        producer=slack_runtime.producer if slack_runtime is not None else None,
+    )
+    app.state.flow_audience = flow_audience
+
     if settings.operator_correlation_read_enabled:
         operator_token = settings.operator_correlation_read_token
         operator_tenant = settings.operator_correlation_tenant_ref
@@ -10516,6 +10545,9 @@ def create_app(
                 # E-355: la pagina de una campana y su boton de publicar.
                 campaign_approval.routes(live=agent_campaign_live)
                 if agent_campaign_live is not None else None,
+                # E-484: ver cuantos van a salir y confirmar un envio manual.
+                flow_audience_page.routes(sweeper=flow_audience.sweeper)
+                if flow_audience is not None else None,
             ),
         )
 
@@ -11172,6 +11204,12 @@ def create_app(
             stalled_monitor_readiness = {
                 **stalled_monitor_readiness,
                 "meta_template_status": "sin_service_role",
+            }
+        if flow_audience is not None:
+            # E-484: de lo que ya esta en memoria; ninguna clave da 503.
+            stalled_monitor_readiness = {
+                **stalled_monitor_readiness,
+                **flow_audience.readiness(),
             }
         if native_silence_sweepers is not None:
             # El barrido nativo del seguimiento (E-269): de lo que ya esta en

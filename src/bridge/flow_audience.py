@@ -15,7 +15,7 @@ formas:
   confirma en la pagina con el conteo exacto y un segundo paso.
 
 Cada ocurrencia materializa la audiencia en una lista congelada
-(``flow_audience_occurrences`` + ``flow_audience_members``, 20261112100100),
+(``flow_audience_occurrences`` + ``flow_audience_members``, 20261112220000),
 idempotente por flujo, version y ocurrencia, y la suelta al ritmo por hora
 (``ritmo``). Solo recibe quien tiene permiso: ``formulario`` (dejo el formulario con
 la aclaracion de WhatsApp en la ventana ``formulario_en``) o, para una clienta,
