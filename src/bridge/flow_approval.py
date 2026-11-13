@@ -1065,6 +1065,9 @@ _TOUCH_NO_BASIS = {
     "depende_de_quien_compra_contesta_o_vence_antes": "sin base para estimarlo: depende de quién compra, contesta o "
                                                      "se le vence antes",
     "la_lectura_no_separa_las_ramas": "sin base para estimarlo: el conteo no separa a quién le toca cada camino",
+    # E-528 (C4, E-531): C3 de la ficha nativa le llega a quien no pagó la ficha antes del día que vence.
+    "depende_de_quien_paga_la_ficha_antes": "sin base para estimarlo: depende de quién paga la ficha antes de que "
+                                            "venza",
 }
 
 
@@ -1081,6 +1084,10 @@ def _native_touches_lines(touches: object) -> str:
             label = f"Camino {_esc(touch['camino'])}, mensaje {_esc(touch['toque'])}"
         if isinstance(touch.get("espera"), str):
             label += f" ({_duration(touch['espera'])} después)"
+        anchor = touch.get("espera_vencimiento")
+        if isinstance(anchor, Mapping) and anchor.get("dias_antes") in (0, 1):
+            day = "el día que vence la ficha" if anchor["dias_antes"] == 0 else "el día antes de que venza la ficha"
+            label += f" ({day}, a las {_esc(anchor.get('a_las'))})"
         if touch.get("cota") == "como_maximo" and type(touch.get("llegan")) is int:
             people = touch["llegan"]
             said = f"como máximo <strong>{_esc(people)}</strong> {'persona' if people == 1 else 'personas'}"

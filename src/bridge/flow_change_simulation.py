@@ -37,7 +37,7 @@ from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 from typing import Any
 
-from .flow_definition import FlowWorld, ProposalItem
+from .flow_definition import FlowWorld, ProposalItem, parse_due_anchor
 from .flow_engine import (
     ENGINE_CAPABILITIES_V1,
     EngineFlow,
@@ -345,20 +345,31 @@ TOUCH_AT_MOST = "como_maximo"
 TOUCH_NO_BASIS = "sin_base"
 TOUCH_NEXT = "depende_de_quien_compra_contesta_o_vence_antes"
 TOUCH_BRANCH = "la_lectura_no_separa_las_ramas"
+# E-528 (C4, E-531): C3 de la ficha nativa sale el dia del vencimiento y contestar no lo corta; le llega a quien
+# no pago la ficha antes, y la lectura de conteos cuenta fichas impresas, no pagos.
+TOUCH_SLIP_NEXT = "depende_de_quien_paga_la_ficha_antes"
 
 
-def _path_touches(steps: Sequence[Any]) -> list[tuple[str | None, Mapping[str, Any]]]:
-    """Los envios de un camino con la espera que los precede (desde el evento o desde el envio anterior)."""
-    touches: list[tuple[str | None, Mapping[str, Any]]] = []
+def _path_touches(steps: Sequence[Any]) -> list[tuple[str | None, Mapping[str, Any], Mapping[str, Any] | None]]:
+    """Los envios de un camino con la espera que los precede (desde el evento o desde el envio anterior).
+
+    La tercera pieza es la espera anclada al vencimiento de la ficha que lo precede (E-528), o None.
+    """
+    touches: list[tuple[str | None, Mapping[str, Any], Mapping[str, Any] | None]] = []
     waits: list[str] = []
+    anchor: Mapping[str, Any] | None = None
     for step in steps:
         if not isinstance(step, Mapping):
             continue
         if isinstance(step.get("esperar"), str):
             waits.append(step["esperar"])
+        elif parse_due_anchor(step.get("esperar")) is not None:
+            days, minutes = parse_due_anchor(step["esperar"])  # type: ignore[misc]
+            anchor = {"dias_antes": days, "a_las": f"{minutes // 60:02d}:{minutes % 60:02d}"}
         elif "plantilla" in step:
-            touches.append((" + ".join(waits) or None, step))
+            touches.append((" + ".join(waits) or None, step, anchor))
             waits = []
+            anchor = None
     return touches
 
 
@@ -384,15 +395,19 @@ def native_touches(definition: object, people: int) -> list[dict[str, Any]] | No
         return None
     out: list[dict[str, Any]] = []
     for path_index, condition, touches in touched:
-        for ordinal, (wait, step) in enumerate(touches, start=1):
+        for ordinal, (wait, step, anchor) in enumerate(touches, start=1):
             row: dict[str, Any] = {"toque": ordinal, "espera": wait, "plantilla": step.get("plantilla")}
+            if anchor is not None:
+                # E-528: la espera anclada no es una duracion; la pagina la dice con el dia del vencimiento.
+                row["espera_vencimiento"] = dict(anchor)
             if branches is not None:
                 row["camino"] = path_index
                 row["condicion"] = dict(condition) if isinstance(condition, Mapping) else None
             if ordinal == 1 and branches is None:
                 row.update(llegan=people, cota=TOUCH_AT_MOST)
             else:
-                row.update(llegan=None, cota=TOUCH_NO_BASIS, por_que=TOUCH_NEXT if ordinal > 1 else TOUCH_BRANCH)
+                reason = TOUCH_BRANCH if ordinal == 1 else TOUCH_SLIP_NEXT if anchor is not None else TOUCH_NEXT
+                row.update(llegan=None, cota=TOUCH_NO_BASIS, por_que=reason)
             out.append(row)
     return out
 

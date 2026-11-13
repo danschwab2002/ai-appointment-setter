@@ -191,3 +191,59 @@ def test_the_runtime_carries_the_flag_and_the_operator_input_defaults_it_off() -
     assert runtime_runs_payment_slip(instance_from_input({**base, "runtime": without}).runtime) is False
     with pytest.raises(Exception):
         instance_from_input({**base, "runtime": {**on.to_json(), "native_payment_slip_enabled": "si"}})
+
+
+# -- La vista previa de la ficha nativa (E-531, lo que quedo de C9 para la ficha) ---------------------------
+
+# Los conteos que daria read_flow_engine_native_trigger_counts_v1 con ficha_impresa (20261113200000) sobre las
+# 13 fichas capturadas de ATT1 (una por persona y por transaccion).
+SLIP_FIXTURE = ROOT / "tests" / "fixtures" / "hotmart_payment_slip_printed_att1_20261018.json"
+_SLIPS = json.loads(SLIP_FIXTURE.read_text(encoding="utf-8"))["eventos"]
+SLIP_COUNTS = {"contract": "flow-engine-v2", "trigger": "ficha_impresa", "product_ref": "att1",
+               "since": "2026-10-11T19:40:00Z", "until": "2026-10-18T19:40:00Z",
+               "events": len({e["payload"]["data"]["purchase"]["transaction"] for e in _SLIPS}),
+               "people": len({e["payload"]["data"]["buyer"]["email"] for e in _SLIPS})}
+
+
+def _slip_item(definition: dict[str, Any]) -> Any:
+    from bridge.flow_definition import parse_items
+
+    [item] = parse_items([{"producto": "att1", "flujo": "ficha_nativa", "tipo": "nuevo", "definicion": definition,
+                          "prender": "cohorte"}])
+    return item
+
+
+def test_the_preview_of_the_slip_says_c3_waits_for_the_due_day_and_has_no_basis() -> None:
+    from bridge.flow_change_simulation import (
+        TOUCH_AT_MOST,
+        TOUCH_NO_BASIS,
+        TOUCH_SLIP_NEXT,
+        build_new_flow_simulation,
+    )
+
+    assert SLIP_COUNTS["events"] == 13 and SLIP_COUNTS["people"] == 13
+    built = build_new_flow_simulation(SLIP_COUNTS, [_slip_item(FICHA)])
+    assert built["status"] == "built", built
+    summary = built["summary"]
+    assert summary["disparador"] == "ficha_impresa" and summary["personas"] == 13
+    assert summary["toques"] == [
+        {"toque": 1, "espera": "60m", "plantilla": "att1_ficha_efectivo_01", "llegan": 13, "cota": TOUCH_AT_MOST},
+        {"toque": 2, "espera": None, "espera_vencimiento": {"dias_antes": 0, "a_las": "09:00"},
+         "plantilla": "att1_ficha_vence_hoy_01", "llegan": None, "cota": TOUCH_NO_BASIS, "por_que": TOUCH_SLIP_NEXT},
+    ]
+    # La cota de mensajes: dos toques por persona, como maximo.
+    assert summary["mensajes_si_fuera_para_todos"] == 26 and summary["mensajes_cota"] == TOUCH_AT_MOST
+    # Con solo C1, el resumen de antes: sin toques.
+    one = build_new_flow_simulation(SLIP_COUNTS, [_slip_item(_ficha(pasos=[{"esperar": "60m"}, C1]))])
+    assert "toques" not in one["summary"] and one["summary"]["mensajes_si_fuera_para_todos"] == 13
+
+
+def test_the_approval_page_says_the_due_day_of_c3_in_words() -> None:
+    from bridge.flow_approval import _simulation_summary
+    from bridge.flow_change_simulation import build_new_flow_simulation
+
+    built = build_new_flow_simulation(SLIP_COUNTS, [_slip_item(FICHA)])
+    html = _simulation_summary(built)
+    assert "Mensaje 1 (60 minutos después): como máximo <strong>13</strong> personas" in html
+    assert "Mensaje 2 (el día que vence la ficha, a las 09:00): sin base para estimarlo: depende de quién paga " \
+           "la ficha antes de que venza" in html
