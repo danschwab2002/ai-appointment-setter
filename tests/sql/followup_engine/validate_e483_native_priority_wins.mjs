@@ -28,6 +28,8 @@
 //      el del pago lo anota (mandandose: 1);
 //   4b. un lease vencido no cuenta como envio en curso: el carrito se corta; un
 //      caso pausado tambien;
+//   4c. el carrito de la misma persona en otro producto (la misma clave) no se
+//      corta;
 //   5. el legado: Elena con el carrito del legado por la ruta motor (un
 //      recorrido con legacy_kind) y le_gana_a: [carrito] no se toca;
 //   6. sin le_gana_a (la v2 del pago): Sofia con el carrito y el pago, los dos
@@ -120,8 +122,8 @@ const previousDefinitions = {};
 // El mundo.
 // ---------------------------------------------------------------------------
 const world = await buildWorld();
-const { db, A, FLOWS, SCOPE, INSTANCE, register, cycle, versionItem, reserve, startNew, accept, cartFor, dbNow,
-  admit, createRoute, route } = world;
+const { db, A, B, FLOWS, SCOPE, INSTANCE, register, cycle, versionItem, reserve, startNew, accept, cartFor, dbNow,
+  admit, createRoute, route, person, admitForm } = world;
 const sql = async (text, params = []) => (await db.query(text, params)).rows;
 await db.exec('alter role service_role bypassrls');
 const asService = async (run) => {
@@ -341,6 +343,51 @@ try {
   await sql("update public.recovery_cases set status = 'paused' where id = $1", [paula.cartCase]);
   results.bordes = { lease_vencido: await cut(carla, 'Carla con el lease vencido'), pausado: await cut(paula, 'Paula pausada') };
   if (results.bordes.pausado.desde !== 'paused') fail('Paula estaba pausada', results.bordes);
+}
+
+// ---------------------------------------------------------------------------
+// 4c. Otro producto (correccion de la revision, 2026-11-13): el carrito de tres
+//     toques de la misma persona en B (att9, con la misma clave carrito_tres)
+//     no se corta con el pago rechazado de A.
+// ---------------------------------------------------------------------------
+{
+  const flowB = await register(B.funnel, 'carrito_tres');
+  await cycle([versionItem(flowB, B.funnel, 'carrito_tres', { ...CART, producto: B.funnel,
+    topes: { ...CART.topes, bolsa: 'att9-carrito-tres' } })], 'v1 del carrito de tres toques de B');
+  const proposalB = one(await sql('select proposal_id from public.flow_definitions where flow_id = $1 and version = 1',
+    [flowB]), 'propuesta B').proposal_id;
+  const openedB = JSON.parse(one(await sql('select public._flow_engine_open_native_flow($1, $2, $3)::text as r',
+    [flowB, proposalB, B.timezone]), 'abrir B').r);
+  if (!openedB.ok) fail('abrir el carrito de B', openedB);
+  // Rita: el carrito en B y el pago rechazado en A, la misma persona.
+  // La misma persona (el mismo mail y el mismo telefono) en los dos productos: el formulario de cada uno.
+  const ritaA = person('prioridad-rita');
+  const rita = await cartFor({ ...person('prioridad-rita-b', B), name: ritaA.name, email: ritaA.email, phone: ritaA.phone },
+    { P: B });
+  await admitForm({ ...ritaA, contact: rita.contact }, new Date((await dbNow()).getTime() - 40 * 60_000));
+  for (const flowId of [flowB, payFlow]) {
+    await sql(`insert into public.flow_cohort_members (flow_id, contact_id, added_by_ref) values ($1, $2, 'dan')`,
+      [flowId, rita.contact]);
+  }
+  const cartB = await admitEvent(INSTANCE, { ...eventOf(rita, 'carrito', rita.event, rita.cartArgs[6]), producto_ref: B.funnel },
+    flowB, 'Rita carrito B');
+  if (cartB.outcome !== 'motor_arranco') fail('Rita: el carrito de B arranca', cartB);
+  const runB = one(await sql('select person_ref, product_ref from public.flow_engine_runs where recovery_case_id = $1',
+    [cartB.recovery_case_id]), 'recorrido B');
+  rita.offer = ritaA.offer;
+  rita.label = 'prioridad-rita';
+  await refusalOf(rita);
+  const started = await pay(rita, WITH_KEY);
+  if (started.outcome !== 'motor_arranco') fail('Rita: el pago de A arranca', started);
+  const runA = one(await sql('select person_ref, product_ref from public.flow_engine_runs where recovery_case_id = $1',
+    [started.recovery_case_id]), 'recorrido A');
+  const caseB = await caseRow(cartB.recovery_case_id);
+  const liveB = (await actionsOf(cartB.recovery_case_id)).filter((row) => row.status === 'pending');
+  if (runA.person_ref !== runB.person_ref || runA.product_ref === runB.product_ref) fail('la misma persona en dos productos', { runA, runB });
+  if (caseB.status === 'cancelled' || caseB.context?.closed_by_priority || liveB.length === 0) {
+    fail('el carrito de otro producto no se corta', { caseB, liveB });
+  }
+  results.otro_producto = { carrito_b: caseB.status, pendientes: liveB.length };
 }
 
 // ---------------------------------------------------------------------------

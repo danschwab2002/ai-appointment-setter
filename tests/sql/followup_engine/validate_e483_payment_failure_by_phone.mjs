@@ -35,7 +35,9 @@
 //      sin checkout_phone con el destino que guardo otro momento
 //      (no_entra:permiso), un pendiente cancelado (no_es_un_rechazo), el
 //      contacto dado de baja (baja), y la baja entre la reevaluacion y el
-//      arranque (la puerta: baja, sin autorizacion);
+//      arranque (la puerta: baja, sin autorizacion); el telefono del evento
+//      distinto del destino, una correlacion ambigua y el binding de otra oferta
+//      (no_entra:permiso);
 //   4. con formulario, el permiso formulario de siempre (con intencion, sin la
 //      marca), con o sin la lista.
 import { PGlite } from '@electric-sql/pglite';
@@ -372,6 +374,25 @@ if (await correlationOf(ana) !== 'unmatched') fail('sin formulario, la admision 
     where action_id = $1`, [reserved.actionId]), 'autorizaciones').n;
   if (authorizations !== 0) fail('la baja no consume cupo', authorizations);
   out.baja_en_la_puerta = refused.reason;
+  // Correccion de la revision (2026-11-13): el telefono del evento distinto del destino, una correlacion
+  // ambigua de la admision portable y el binding de otra oferta no entran.
+  const otroDestino = await refusalOf(person('pf-otro-destino'));
+  const elOtro = person('pf-otro-destino-telefono');
+  out.destino_distinto = (await admitWith(WITH_LIST, { ...otroDestino, phone: elOtro.phone })).reason;
+  if (out.destino_distinto !== 'no_entra:permiso') fail('el destino no es el telefono del evento', out);
+  const ambigua = await refusalOf(person('pf-ambigua'));
+  if (await correlationOf(ambigua) !== 'unmatched') fail('pf-ambigua: la admision portable la deja unmatched');
+  await rolledBack(async () => {
+    // La evidencia es inmutable (commercial_ally_payment_failure_evidence_immutable): el cambio vive solo aca.
+    await db.exec('alter table public.commercial_ally_payment_failure_details disable trigger user');
+    await sql(`update public.commercial_ally_payment_failure_details set correlation_outcome = 'ambiguous'
+      where webhook_event_id = $1`, [ambigua.event]);
+    out.correlacion_ambigua = (await admitWith(WITH_LIST, ambigua)).reason;
+  });
+  if (out.correlacion_ambigua !== 'no_entra:permiso') fail('una correlacion ambigua', out);
+  const otroBinding = await refusalOf(person('pf-binding-otra-oferta'), { offer: OTHER });
+  out.binding_de_otra_oferta = (await admitWith(WITH_LIST, { ...otroBinding, offerCode: CAMPAIGN })).reason;
+  if (out.binding_de_otra_oferta !== 'no_entra:permiso') fail('el binding de otra oferta', out);
   results.no_entra = out;
 }
 

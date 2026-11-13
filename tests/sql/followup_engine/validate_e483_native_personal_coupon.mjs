@@ -402,6 +402,68 @@ results.nativo_a1_y_z = { rojo: { siembra: seededBefore, link: linkBefore }, pol
   links: [a1Link.outcome, zLink.outcome], total };
 
 // ---------------------------------------------------------------------------
+// 2b. Las guardas de la siembra del primer envio nativo (correccion de la
+//     revision, 2026-11-13): la baja, el caso comprado, la accion cancelada,
+//     fuera de la anticipacion y la accion vencida no siembran; el mismo caso
+//     sin nada de eso, si.
+// ---------------------------------------------------------------------------
+{
+  let serial = 0;
+  const freshCase = async () => {
+    serial += 1;
+    const person = await cartFor(`cupon-guarda-${serial}`);
+    await sql(`insert into public.flow_cohort_members (flow_id, contact_id, added_by_ref) values ($1, $2, 'dan')`,
+      [flowId, person.contact]);
+    const row = one((await asService(async () => (await db.query(
+      'select * from public.admit_flow_engine_event_v1($1::jsonb, $2::jsonb)',
+      [JSON.stringify(INSTANCE), JSON.stringify({
+        fuente: 'hotmart', tipo: 'carrito', evento_id: person.event, producto_ref: A.funnel, oferta: person.offer.offer_code,
+        contacto_id: person.contact, momento: person.cartArgs[6], chatwoot: { account_id: A.accountId, inbox_id: A.inboxId },
+        destino: person.phone,
+      })])).rows)).filter((r) => r.flow_id === flowId), `guarda ${serial}`);
+    if (row.outcome !== 'motor_arranco') fail(`la guarda ${serial} arranca`, row);
+    return { caseId: row.recovery_case_id, actionId: row.scheduled_action_id, contact: person.contact, event: person.event };
+  };
+  const guards = {
+    baja: (c) => sql("update public.contacts set contact_permission = 'opted_out' where id = $1", [c.contact]),
+    // El caso ganado por la compra (recovery_cases_check1: purchase_event_id solo con won).
+    caso_comprado: async (c) => {
+      const purchase = one(await sql(`insert into public.webhook_events (source, external_event_id, event_type, payload,
+        processing_status) values ('hotmart', $1, 'PURCHASE_APPROVED', '{}'::jsonb, 'processed') returning id`,
+      [`cupon-guarda-compra-${c.caseId}`]), 'compra').id;
+      await sql(`update public.recovery_cases set status = 'won', won_at = now(), closed_at = now(), purchase_event_id = $2
+        where id = $1`, [c.caseId, purchase]);
+    },
+    accion_cancelada: (c) => sql("update public.scheduled_actions set status = 'cancelled', terminal_reason = 'prueba' where id = $1",
+      [c.actionId]),
+    fuera_de_la_anticipacion: (c) => sql(`update public.scheduled_actions set due_at = now() + interval '2 hours',
+      expires_at = now() + interval '30 hours' where id = $1`, [c.actionId]),
+    accion_vencida: (c) => sql(`update public.scheduled_actions set due_at = now() - interval '2 hours',
+      expires_at = now() - interval '1 minute' where id = $1`, [c.actionId]),
+    cupon_que_ya_venceria: (c) => sql(`update public.scheduled_actions set due_at = now() - interval '25 hours',
+      expires_at = now() + interval '1 hour' where id = $1`, [c.actionId]),
+  };
+  const seeded = {};
+  for (const [label, apply] of Object.entries(guards)) {
+    seeded[label] = await inRollback(async () => {
+      const c = await freshCase();
+      await apply(c);
+      await claimCoupons();
+      return (await couponsOf(c.caseId)).length;
+    });
+  }
+  seeded.sin_guarda = await inRollback(async () => {
+    const c = await freshCase();
+    await claimCoupons();
+    return (await couponsOf(c.caseId)).length;
+  });
+  const expected = { baja: 0, caso_comprado: 0, accion_cancelada: 0, fuera_de_la_anticipacion: 0, accion_vencida: 0,
+    cupon_que_ya_venceria: 0, sin_guarda: 1 };
+  if (JSON.stringify(seeded) !== JSON.stringify(expected)) fail('las guardas de la siembra nativa', { seeded, expected });
+  results.guardas_de_la_siembra = seeded;
+}
+
+// ---------------------------------------------------------------------------
 // 3. El cupon en A2 y Z: ordinales 1 y 2 en los toques siguientes.
 // ---------------------------------------------------------------------------
 const PLAIN = { plantilla: 'att1_carrito_abandonado_01', idioma: 'es_MX', variables: ['nombre', 'producto'] };

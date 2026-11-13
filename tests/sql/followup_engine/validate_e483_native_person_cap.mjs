@@ -18,7 +18,8 @@
 //      por la v2; Z llegaria al tercero;
 //   2. lo que no cuenta o no frena (cada uno en una transaccion que se deshace):
 //      la v1 sin tope; los envios fuera de la ventana; el seguimiento de una
-//      conversacion (una autorizacion sin accion programada); y rojo: con la
+//      conversacion (una autorizacion sin accion programada); dos autorizaciones
+//      de la ruta motor del carrito del legado en la ventana; y rojo: con la
 //      autorizacion de antes, la v2 deja pasar a Z;
 //   3. la persona es el telefono: otro contacto con la otra forma del movil suma;
 //   4. Z por la v2: terminado con tope_por_persona, el intento, la accion, la
@@ -107,7 +108,8 @@ const previousDefinitions = {};
 // El mundo.
 // ---------------------------------------------------------------------------
 const world = await buildWorld();
-const { db, A, INSTANCE, register, cycle, versionItem, reserve, accept, cartFor, dbNow, person } = world;
+const { db, A, INSTANCE, register, cycle, versionItem, reserve, accept, cartFor, dbNow, person, FLOWS, SCOPE, admit,
+  createRoute, route } = world;
 const sql = async (text, params = []) => (await db.query(text, params)).rows;
 await db.exec('alter role service_role bypassrls');
 const asService = async (run) => {
@@ -213,6 +215,28 @@ const passes = {
         action_id, attempt_id, contact_id, local_budget_date, flow_generation, authorized_at)
       select $1, 1, 'att1-carrito-tope', null, x.id, x.id, $2, current_date, 0, now()
         from (select gen_random_uuid() as id) x`, [flowId, maria.contact]);
+  }),
+  // Correccion de la revision (2026-11-13): una autorizacion de la ruta motor del carrito del legado (un
+  // recorrido con legacy_kind, sin flow_engine_native_runs) de la misma persona, dentro de la ventana, no
+  // cuenta: el tope es del nativo.
+  ruta_motor_no_cuenta: await tryInside('ruta motor', async () => {
+    await age(sent.map((row) => row.id));
+    const created = await createRoute(A.funnel, 'carrito', 'carrito', SCOPE);
+    if (!created.ok) fail('la ruta del carrito del legado', created);
+    const moved = await route(A.funnel, 'carrito', FLOWS.carrito, 'motor');
+    if (!moved.ok) fail('la ruta del carrito del legado a motor', moved);
+    const elena = await cartFor('tope-ruta-motor');
+    const row = await admit(elena);
+    if (row.outcome !== 'motor_arranco') fail('el carrito del legado por el motor', row);
+    const legacyKind = one(await sql('select legacy_kind from public.flow_engine_runs where recovery_case_id = $1',
+      [row.recovery_case_id]), 'recorrido').legacy_kind;
+    if (legacyKind !== 'carrito') fail('el recorrido es del legado', legacyKind);
+    for (let i = 0; i < 2; i += 1) {
+      await sql(`insert into public.flow_engine_request_authorizations (flow_id, version, pool, legacy_scope_key,
+          action_id, attempt_id, contact_id, local_budget_date, flow_generation, authorized_at)
+        values ($1, 1, 'att1-carrito-tope', null, $2, gen_random_uuid(), $3, current_date, 0, now())`,
+      [flowId, row.scheduled_action_id, maria.contact]);
+    }
   }),
   rojo_sin_la_migracion: await tryInside('rojo', async () => {
     await db.exec(previousDefinitions[TAIL]);

@@ -32,7 +32,9 @@
 //      los dos cambie el motivo; el rojo: con el contexto de antes, el segundo
 //      toque no sale de la rama elegida;
 //   4. la respuesta corta el segundo; la compra lo corta;
-//   5. sin la eleccion del primer envio aceptado, el segundo no tiene envio.
+//   5. sin la eleccion del primer envio aceptado, el segundo no tiene envio;
+//   6. la rama es la del intento aceptado: un reintento en otra rama y un primer
+//      envio aceptado por la reconciliacion.
 //
 // B2 y Z son los nombres de ATT1: la base no mira el catalogo. Tal como estan aprobadas llevan el boton del
 // checkout con el cupon 2 y una variable mas que nombre y producto, asi que el validador no las deja en un
@@ -523,6 +525,74 @@ const people = {};
     if (without.length !== 0) fail('sin un primer envio aceptado con su rama, el segundo no adivina', without);
     results.sin_eleccion = without.length;
   }
+}
+
+// ---------------------------------------------------------------------------
+// 6. La rama del intento aceptado (correccion de la revision, 2026-11-13): un
+//    primer intento que falla antes del pedido con una rama y un reintento
+//    aceptado con otra -> el segundo toque sale de la del aceptado; un primer
+//    envio aceptado por la reconciliacion (delivery_unknown y despues el
+//    mensaje encontrado) agenda el segundo y sale de su rama.
+// ---------------------------------------------------------------------------
+{
+  // El orden de la base: el motivo, el proximo intento, el plazo de la reconciliacion y ahora.
+  const finalize = async (reserved, outcome, reason, deadline, next) => one(await sql(`
+    select * from public.finalize_followup_delivery_attempt($1, $2, $3, $4, $5, null, null, $6, $8, $7, $9)`,
+  [reserved.actionId, reserved.attempt.id, reserved.worker, reserved.lease, outcome, reason, deadline, next,
+    await dbNow()]), `final ${outcome}`);
+  const secondOf = async (lead, want, label) => {
+    const [touch2] = await touch2Of(lead);
+    if (!touch2 || touch2.status !== 'pending') fail(`${label}: el segundo toque, agendado`, await touch2Of(lead));
+    await dueNow(touch2.id);
+    const context = one(await contextOf(touch2.id), `${label}: contexto del segundo`);
+    if (context.template_name !== want) fail(`${label}: el segundo sale de la rama aceptada`, context);
+    return context.template_name;
+  };
+
+  // Reintento en otra rama: el primer intento registra la rama 2 (saldo, con cupon: su segundo es Z) y falla
+  // antes del pedido; entre los dos entra otro rechazo (del banco: ahora son varios), y el reintento
+  // registra la rama 1 (dos_veces, sin cupon) y se acepta: el segundo es B2, el de la rama aceptada.
+  const retry = await refusalOf(await leadFor('c3-reintento'), { index: 0 });
+  await sql(`insert into public.flow_cohort_members (flow_id, contact_id, added_by_ref) values ($1, $2, 'dan')`,
+    [flowId, retry.contact]);
+  retry.start = await admitNative(retry);
+  if (retry.start.outcome !== 'motor_arranco') fail('c3-reintento arranca', retry.start);
+  const first = await reserve(retry, retry.start.scheduled_action_id);
+  if (branchOf(await dataOf(first)) !== 2) fail('c3-reintento: la primera rama es saldo');
+  if ((await recordOf(first, 2)).outcome !== 'recorded') fail('c3-reintento: registro del primer intento');
+  await finalize(first, 'failed_before_request', 'provider_unavailable', null,
+    new Date((await dbNow()).getTime() + 60_000).toISOString());
+  const failedState = one(await sql('select status from public.scheduled_actions where id = $1', [first.actionId]), 'B1').status;
+  if (failedState !== 'retryable_failed') fail('c3-reintento: el primer intento queda para reintentar', failedState);
+  if ((await touch2Of(retry)).length !== 0) fail('c3-reintento: sin aceptado no hay segundo', await touch2Of(retry));
+  await refusalOf(retry, { index: 1 });
+  if ((await admitNative(retry)).reason !== 'ya_en_curso') fail('c3-reintento: el rechazo nuevo se suma');
+  await dueNow(first.actionId);
+  await sql("update public.scheduled_actions set next_attempt_at = now() - interval '1 second' where id = $1", [first.actionId]);
+  const second = await reserve(retry, first.actionId);
+  if (second.attempt.id === first.attempt.id) fail('c3-reintento: otro intento');
+  if (branchOf(await dataOf(second)) !== 1) fail('c3-reintento: la rama del reintento es dos_veces');
+  if ((await recordOf(second, 1)).outcome !== 'recorded') fail('c3-reintento: registro del reintento');
+  if ((await startNew(second)).outcome !== 'request_started') fail('c3-reintento: el arranque del reintento');
+  await accept(retry, second);
+  const retried = await secondOf(retry, B2, 'c3-reintento');
+
+  // Aceptado por la reconciliacion: B1 banco sale, queda en delivery_unknown y la reconciliacion encuentra
+  // el mensaje.
+  const found = await refusalOf(await leadFor('c3-reconciliado'), { index: 1 });
+  await sql(`insert into public.flow_cohort_members (flow_id, contact_id, added_by_ref) values ($1, $2, 'dan')`,
+    [flowId, found.contact]);
+  found.start = await admitNative(found);
+  if (found.start.outcome !== 'motor_arranco') fail('c3-reconciliado arranca', found.start);
+  const sent = await reserve(found, found.start.scheduled_action_id);
+  if ((await recordOf(sent, 3)).outcome !== 'recorded') fail('c3-reconciliado: registro');
+  if ((await startNew(sent)).outcome !== 'request_started') fail('c3-reconciliado: el arranque');
+  const deadline = new Date((await dbNow()).getTime() + 3_600_000).toISOString();
+  await finalize(sent, 'delivery_unknown', 'ambiguous_timeout', deadline, null);
+  if ((await touch2Of(found)).length !== 0) fail('c3-reconciliado: sin saber, no hay segundo', await touch2Of(found));
+  await accept(found, sent);
+  const reconciled = await secondOf(found, B2, 'c3-reconciliado');
+  results.rama_del_aceptado = { reintento_en_otra_rama: retried, aceptado_por_reconciliacion: reconciled };
 }
 
 // ---------------------------------------------------------------------------
