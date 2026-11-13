@@ -171,6 +171,7 @@ def test_it_is_one_transaction_and_comes_before_the_motor() -> None:
         "20261112210500_e483_native_personal_coupon_v1.sql",
         # El evento de un disparo por audiencia en el nativo (20261112210600, E-483, para E-484).
         "20261112210600_e483_native_audience_source_v1.sql",
+        "20261112220000_flow_audience_triggers_v1.sql",
     ]
     for later in names[position + 1:]:
         if later != reads:

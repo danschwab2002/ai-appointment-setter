@@ -168,6 +168,7 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
         "20261112210500_e483_native_personal_coupon_v1.sql",
         # El evento de un disparo por audiencia en el nativo (20261112210600, E-483, para E-484).
         "20261112210600_e483_native_audience_source_v1.sql",
+        "20261112220000_flow_audience_triggers_v1.sql",
     ]
     native = (MIGRATIONS / "20261024000200_flow_engine_native_v1.sql").read_text(encoding="utf-8")
     assert "read_automation_expert_flows_v1" not in native

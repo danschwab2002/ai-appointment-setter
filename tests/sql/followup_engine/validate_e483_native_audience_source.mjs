@@ -62,7 +62,10 @@ const results = {};
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-if (names.slice(position + 1).length !== 0) fail(`despues de ${MIGRATION} no va ninguna`, names.slice(position + 1));
+// Despues va la lista congelada de E-484 (20261112220000): tablas y funciones nuevas, sin tocar la admision.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261112220000_flow_audience_triggers_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de la lista congelada de E-484`, names.slice(position + 1));
+}
 
 // ---------------------------------------------------------------------------
 // 0. La forma de la migracion.

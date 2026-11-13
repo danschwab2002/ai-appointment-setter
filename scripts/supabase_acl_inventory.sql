@@ -235,7 +235,16 @@ expected_service_role(signature) as (
         -- 20261112200000: los numeros del tablero (E-507).
         ('public.read_results_v1(timestamp with time zone, timestamp with time zone, text, text[], integer, integer)'),
         -- 20261112210500: el cupon propio de un paso nativo, la lectura del bridge (E-483, C2).
-        ('public.get_flow_engine_native_step_coupon_v1(uuid)')
+        ('public.get_flow_engine_native_step_coupon_v1(uuid)'),
+        -- 20261112220000: el disparo por audiencia y su lista congelada (E-484).
+        -- (las tres de la pagina son de flow_change_approver, no de service_role).
+        ('public.read_flow_audience_flows_v1(jsonb)'),
+        ('public.read_flow_audience_candidates_v1(jsonb, uuid, integer, integer)'),
+        ('public.materialize_flow_audience_occurrence_v1(jsonb, uuid, integer, jsonb, jsonb)'),
+        ('public.brake_flow_audience_occurrence_v1(uuid, text)'),
+        ('public.release_flow_audience_members_v1(uuid, timestamp with time zone, integer)'),
+        ('public.settle_flow_audience_member_v1(uuid, uuid, text)'),
+        ('public.read_flow_audience_occurrences_v1(jsonb, integer)')
 ),
 functions as (
     select

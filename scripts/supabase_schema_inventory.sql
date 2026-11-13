@@ -7207,6 +7207,39 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         7,
         'e483_native_audience_source'
+    union all
+    select
+        '20261112220000',
+        '20261112220000_flow_audience_triggers_v1.sql',
+        -- El disparo por audiencia y su lista congelada (E-484): las dos tablas
+        -- cerradas, con RLS ...
+        (
+            select count(*) = 2
+            from pg_catalog.pg_class c
+            where c.oid in (to_regclass('public.flow_audience_occurrences'), to_regclass('public.flow_audience_members'))
+              and c.relrowsecurity
+              and not has_table_privilege('anon', c.oid, 'SELECT')
+        )::int
+        -- ... y las siete del bridge, solo de service_role y security definer.
+        + (
+            select count(*) = 7
+            from functions
+            where oid in (
+                to_regprocedure('public.read_flow_audience_flows_v1(jsonb)'),
+                to_regprocedure('public.read_flow_audience_candidates_v1(jsonb,uuid,integer,integer)'),
+                to_regprocedure('public.materialize_flow_audience_occurrence_v1(jsonb,uuid,integer,jsonb,jsonb)'),
+                to_regprocedure('public.brake_flow_audience_occurrence_v1(uuid,text)'),
+                to_regprocedure('public.release_flow_audience_members_v1(uuid,timestamptz,integer)'),
+                to_regprocedure('public.settle_flow_audience_member_v1(uuid,uuid,text)'),
+                to_regprocedure('public.read_flow_audience_occurrences_v1(jsonb,integer)')
+            )
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        2,
+        'flow_audience_triggers'
 )
 select
     version,

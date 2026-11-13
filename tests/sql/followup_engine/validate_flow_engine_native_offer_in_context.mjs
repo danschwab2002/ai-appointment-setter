@@ -126,7 +126,7 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026102800010
   // El cupon propio por persona en el nativo (20261112210500, E-483, C2).
   '20261112210500_e483_native_personal_coupon_v1.sql',
   // El evento de un disparo por audiencia en el nativo (20261112210600, E-483, para E-484).
-  '20261112210600_e483_native_audience_source_v1.sql'])) {
+  '20261112210600_e483_native_audience_source_v1.sql', '20261112220000_flow_audience_triggers_v1.sql'])) {
   fail(`despues de ${MIGRATION} van solo la de la pagina de aprobacion y la del carrito nativo`, names.slice(position + 1));
 }
 if (captured.payload.event !== 'PURCHASE_APPROVED' || captured.payload.data.purchase.offer.code !== 'gopi6lh7'
