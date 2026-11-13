@@ -75,10 +75,10 @@ from .flow_policy import STEPS_BY_LEGACY_KIND
 from .flow_schedule import DEFAULT_ZONE, LAST_MINUTE, Franja, franja_of, is_open, next_open
 
 __all__ = [
-    "ENGINE_CAPABILITIES_NATIVE", "ENGINE_CAPABILITIES_NATIVE_MULTITOUCH", "ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE", "ENGINE_CAPABILITIES_NATIVE_CART_MULTITOUCH", "NATIVE_COUPON_FIRST_VARIABLES", "NATIVE_COUPON_NEXT_VARIABLES", "NATIVE_MAX_PERSONAL_COUPONS", "NATIVE_PERSONAL_COUPON_BUTTON", "NATIVE_PERSONAL_COUPON_TRIGGERS", "NATIVE_MULTITOUCH_TRIGGERS", "NATIVE_TOUCH_STEP_PREFIX", "ENGINE_CAPABILITIES_NATIVE_SILENCE", "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_PARAMETERS", "NATIVE_CAPABILITIES_BY_TRIGGER", "NATIVE_SILENCE_TRIGGER", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
+    "ENGINE_CAPABILITIES_NATIVE", "ENGINE_CAPABILITIES_NATIVE_AUDIENCE", "NATIVE_AUDIENCE_FORMS", "NATIVE_AUDIENCE_PERMISSIONS", "NATIVE_AUDIENCE_TRIGGER", "ENGINE_CAPABILITIES_NATIVE_MULTITOUCH", "ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE", "ENGINE_CAPABILITIES_NATIVE_CART_MULTITOUCH", "NATIVE_COUPON_FIRST_VARIABLES", "NATIVE_COUPON_NEXT_VARIABLES", "NATIVE_MAX_PERSONAL_COUPONS", "NATIVE_PERSONAL_COUPON_BUTTON", "NATIVE_PERSONAL_COUPON_TRIGGERS", "NATIVE_MULTITOUCH_TRIGGERS", "NATIVE_TOUCH_STEP_PREFIX", "ENGINE_CAPABILITIES_NATIVE_SILENCE", "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_PARAMETERS", "NATIVE_CAPABILITIES_BY_TRIGGER", "NATIVE_SILENCE_TRIGGER", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
     "BolsaLedger", "ControlLine", "Eligible", "EngineCapabilities", "EngineFlow", "Firing", "FlowRef",
     "GateDecision", "GateFacts", "PersonView", "Plan", "PlanInvalid", "PlanNotSupported", "PlannedStep",
-    "RunView", "StartDecision", "evaluate_gate", "first_eligible", "legacy_motivo", "native_not_supported", "native_payment_failure_branches", "native_payment_failure_paths", "native_trigger_key", "native_variables_fit", "is_native_personal_coupon_button", "not_supported", "plan_start",
+    "RunView", "StartDecision", "evaluate_gate", "first_eligible", "legacy_motivo", "native_audience_form", "native_not_supported", "native_payment_failure_branches", "native_payment_failure_paths", "native_trigger_key", "native_variables_fit", "is_native_personal_coupon_button", "not_supported", "plan_start",
     "plan_steps", "pool_zone", "step_start", "wins",
 ]
 
@@ -407,6 +407,34 @@ NATIVE_REPEAT_BY_TRIGGER: Mapping[str, tuple[str, ...]] = MappingProxyType({
     **{event: NATIVE_EVENT_REPEAT_UNITS for event in sorted(ENGINE_CAPABILITIES_NATIVE.triggers)},
     NATIVE_SILENCE_TRIGGER: ("conversacion",),
 })
+# E-483, para E-484 (20261112210600): el disparo por audiencia (``dispara.fecha``, ``dispara.cada`` o
+# ``dispara.manual``). La persona de la lista congelada de una ocurrencia entra a la admision nativa atada al
+# flujo y a su version (``fuente: audiencia``), con la forma ``nativo:audiencia``: hasta tres toques con nombre y
+# producto, sin boton y sin cupon, y la salida contesta escrita si hay mas de uno. Entra con permiso
+# ``formulario`` (prospectas) o ``compra`` (clientas). La base lo abre siempre (como los varios toques); lo que
+# deja publicarlo o no es el flag: ``native_not_supported(..., audience=True)`` solo con
+# FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED (``NativeRuntime.native_multitouch``); sin el, la audiencia es
+# ``motor_nativo:disparador``, como antes.
+NATIVE_AUDIENCE_TRIGGER = "audiencia"
+# La interfaz minima del disparo por audiencia de E-484 (``flow_audience.AUDIENCE_FORMS``): las tres formas,
+# cada una un objeto, y ninguna otra clave en ``dispara``. Al integrar E-484 se puede leer de ahi.
+NATIVE_AUDIENCE_FORMS = ("fecha", "cada", "manual")
+NATIVE_AUDIENCE_PERMISSIONS = frozenset({"formulario", "compra"})
+ENGINE_CAPABILITIES_NATIVE_AUDIENCE = dataclasses.replace(
+    ENGINE_CAPABILITIES_NATIVE_MULTITOUCH,
+    triggers=frozenset({NATIVE_AUDIENCE_TRIGGER}),
+)
+
+
+def native_audience_form(definition: Mapping[str, Any]) -> str | None:
+    """``fecha``, ``cada`` o ``manual`` si ``dispara`` es exactamente una de ellas con un objeto (E-484)."""
+    trigger = definition.get("dispara")
+    if not isinstance(trigger, Mapping) or len(trigger) != 1:
+        return None
+    (key,) = tuple(trigger)
+    return key if key in NATIVE_AUDIENCE_FORMS and isinstance(trigger.get(key), Mapping) else None
+
+
 # Las variables que el bridge sabe llenar en un paso nativo de la compra
 # (``_flow_engine_native_steps('nativo:compra')``, ``variables_de``): el paso manda las que declara, en
 # su orden, al menos una y ninguna repetida; otra lista es ``variables_differ`` (20261026000100).
@@ -437,14 +465,18 @@ NATIVE_UNSUPPORTED_REPEAT = "motor_nativo:repeticion"
 NATIVE_UNSUPPORTED_PRIORITY = "motor_nativo:prioridad"
 
 
-def native_trigger_key(definition: Mapping[str, Any]) -> str | None:
+def native_trigger_key(definition: Mapping[str, Any], *, audience: bool = False) -> str | None:
     """El disparador nativo de la definicion (``compra``, ``carrito``, ``pago_fallido`` o ``silencio:agente``).
 
-    ``None`` si ``dispara`` no es exactamente un evento o un silencio que el motor nativo ejecuta.
+    ``None`` si ``dispara`` no es exactamente un evento o un silencio que el motor nativo ejecuta. Con
+    ``audience`` (E-483, para E-484: FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED), tambien ``audiencia`` para un
+    disparo por fecha, cada cierto tiempo o manual; sin el, ``None`` como antes.
     """
     trigger = definition.get("dispara")
     if not isinstance(trigger, Mapping):
         return None
+    if native_audience_form(definition) is not None:
+        return NATIVE_AUDIENCE_TRIGGER if audience else None
     if set(trigger) == {"evento"}:
         event = trigger.get("evento")
         key = event if isinstance(event, str) and event in ENGINE_CAPABILITIES_NATIVE.triggers else None
@@ -660,7 +692,7 @@ def _native_multitouch_not_supported(definition: Mapping[str, Any], key: str | N
         exits = ends.get("si") if isinstance(ends, Mapping) else None
         if multi and (not isinstance(exits, list) or "contesta" not in exits):
             add(f"{NOT_SUPPORTED}:varios_envios_sin_contesta")
-    if len(sends) <= 1 or key not in NATIVE_MULTITOUCH_TRIGGERS:
+    if len(sends) <= 1 or (key not in NATIVE_MULTITOUCH_TRIGGERS and key != NATIVE_AUDIENCE_TRIGGER):
         return
     ends = definition.get("termina")
     exits = ends.get("si") if isinstance(ends, Mapping) else None
@@ -711,7 +743,7 @@ def _native_personal_coupon_not_supported(definition: Mapping[str, Any], key: st
         add(f"{NOT_SUPPORTED}:cupones_personales_de_mas")
 
 
-def native_not_supported(definition: Mapping[str, Any]) -> tuple[str, ...]:
+def native_not_supported(definition: Mapping[str, Any], *, audience: bool = False) -> tuple[str, ...]:
     """Lo que el motor nativo no ejecuta de una definicion, en orden; vacio si la ejecuta.
 
     Es la regla 14 de un flujo nativo (flow-engine-v2 §9): lo que la base mira al abrirlo y al admitirlo
@@ -725,6 +757,11 @@ def native_not_supported(definition: Mapping[str, Any]) -> tuple[str, ...]:
     permiso ``conversacion``, ``contesto_a: cualquier_plantilla``, una vez por conversacion y nunca otra,
     y el boton del checkout con un cupon fijo. Con un disparador que el motor nativo no ejecuta, las de
     los eventos, como antes.
+
+    ``audience`` (E-483, para E-484, 20261112210600) es FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED: con el, un
+    disparo por audiencia tiene las capacidades de ``ENGINE_CAPABILITIES_NATIVE_AUDIENCE`` y entra con
+    permiso ``formulario`` o ``compra``; sin el, ``motor_nativo:disparador`` como cualquier disparador que el
+    nativo no ejecuta.
     """
     found: list[str] = []
 
@@ -732,12 +769,17 @@ def native_not_supported(definition: Mapping[str, Any]) -> tuple[str, ...]:
         if code not in found:
             found.append(code)
 
-    key = native_trigger_key(definition)
+    key = native_trigger_key(definition, audience=audience)
     if key is None:
         add(NATIVE_UNSUPPORTED_TRIGGER)
-    capabilities = NATIVE_CAPABILITIES_BY_TRIGGER.get(key or "", ENGINE_CAPABILITIES_NATIVE)
+    capabilities = ENGINE_CAPABILITIES_NATIVE_AUDIENCE if key == NATIVE_AUDIENCE_TRIGGER \
+        else NATIVE_CAPABILITIES_BY_TRIGGER.get(key or "", ENGINE_CAPABILITIES_NATIVE)
     entry = definition.get("entra")
-    if not isinstance(entry, Mapping) or entry.get("permiso") != NATIVE_PERMISSION_BY_TRIGGER.get(key or "compra"):
+    permission = entry.get("permiso") if isinstance(entry, Mapping) else None
+    if key == NATIVE_AUDIENCE_TRIGGER:
+        if permission not in NATIVE_AUDIENCE_PERMISSIONS:
+            add(NATIVE_UNSUPPORTED_PERMISSION)
+    elif permission != NATIVE_PERMISSION_BY_TRIGGER.get(key or "compra"):
         add(NATIVE_UNSUPPORTED_PERMISSION)
     caps = definition.get("topes")
     repeat = caps.get("repeticion") if isinstance(caps, Mapping) else None
@@ -752,7 +794,11 @@ def native_not_supported(definition: Mapping[str, Any]) -> tuple[str, ...]:
     if isinstance(priority, Mapping) and "no_arranca_mientras" in priority \
             and not isinstance(priority.get("no_arranca_mientras"), list):
         add(NATIVE_UNSUPPORTED_PRIORITY)
-    for code in not_supported(definition, capabilities):
+    # El disparo por audiencia ya lo miro native_trigger_key: not_supported lo lee sin dispara (el
+    # trigger_of de esta rama no lo conoce; lo que la definicion no trae no se marca).
+    shape = {k: v for k, v in definition.items() if k != "dispara"} if key == NATIVE_AUDIENCE_TRIGGER \
+        else definition
+    for code in not_supported(shape, capabilities):
         add(code)
     _native_multitouch_not_supported(definition, key, add)
     if key == NATIVE_SILENCE_TRIGGER:

@@ -2084,14 +2084,28 @@ def test_read_results_fingerprint() -> None:
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
 
 
-def test_e483_native_personal_coupon_fingerprint_is_last() -> None:
+def test_e483_native_audience_source_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261112210600 (E-483, para E-484): el evento de un disparo por audiencia en el nativo.
+    fingerprint = sql.split("'20261112210600'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261112210600_e483_native_audience_source_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",7,'e483_native_audience_source')")
+    assert "_flow_engine_admit_native_audience_v1(jsonb,jsonb)" in compact_fingerprint
+    assert "nothas_function_privilege('service_role',oid,'EXECUTE')" in compact_fingerprint
+    assert "admit_flow_engine_event_v1(jsonb,jsonb)" in compact_fingerprint
+    assert "_portable_case_purchase_stop_reason(uuid)" in compact_fingerprint
+
+
+def test_e483_native_personal_coupon_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261112210500 (E-483, C2): el cupon propio por persona en el nativo.
-    fingerprint = sql.split("'20261112210500'", 1)[1].split("select\n    version,", 1)[0]
+    fingerprint = sql.split("'20261112210500'", 1)[1].split("'20261112210600'", 1)[0].rsplit("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261112210500_e483_native_personal_coupon_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",7,'e483_native_personal_coupon')")
+    assert compact_fingerprint.endswith(",7,'e483_native_personal_coupon'")
     assert "_flow_engine_native_first_coupon_ordinal(uuid)" in compact_fingerprint
     assert "get_flow_engine_native_step_coupon_v1(uuid)" in compact_fingerprint
     assert "has_function_privilege('service_role',oid,'EXECUTE')" in compact_fingerprint

@@ -7151,6 +7151,62 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         7,
         'e483_native_personal_coupon'
+    union all
+    select
+        '20261112210600',
+        '20261112210600_e483_native_audience_source_v1.sql',
+        -- el evento de un disparo por audiencia en el nativo (E-483, para
+        -- E-484): la admision de una persona de la lista, atada a su flujo ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_admit_native_audience_v1(jsonb,jsonb)')
+              and position('e483_native_audience_admission' in definition) > 0
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+        )::int
+        -- ... la entrada que la llama solo con la clave del bridge ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_flow_engine_event_v1(jsonb,jsonb)')
+              and position('e483_native_audience_admit: end' in definition) > 0
+        )::int
+        -- ... el disparador, la forma y lo que abre la base ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_trigger(jsonb)')
+              and position('e483_native_audience_trigger' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_steps(text)')
+              and position('e483_native_audience_steps' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_unsupported(jsonb)')
+              and position('e483_native_audience_multitouch' in definition) > 0
+        )::int
+        -- ... el permiso de la audiencia en la admision ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_admit_native_flow(public.flow_controls,public.webhook_events,uuid,text,timestamptz,bigint,bigint,text)')
+              and position('e483_native_audience_permission: end' in definition) > 0
+        )::int
+        -- ... y la compra como salida en la reevaluacion.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._portable_case_purchase_stop_reason(uuid)')
+              and position('e483_native_audience_case' in definition) > 0
+        )::int,
+        7,
+        'e483_native_audience_source'
 )
 select
     version,

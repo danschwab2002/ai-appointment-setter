@@ -92,7 +92,10 @@ const MIGRATIONS = readdirSync(join(root, 'supabase/migrations'))
 // aborta con 55000 e483_native_condition_after_send_missing. 20261112210500
 // (el cupon propio en el nativo, E-483 C2) reemplaza las ranuras de varios
 // toques de 20261112210000: sin ella aborta con 55000
-// unexpected_flow_engine_native_steps_definition.
+// unexpected_flow_engine_native_steps_definition. 20261112210600 (el evento
+// de un disparo por audiencia, E-483 para E-484) parcha lo que abre la base
+// sobre la de 20261112210500: sin ella aborta con 55000
+// unexpected_e483_native_audience_definition.
 const DERIVED_FROM_MIGRATION = [
   '20261010000100_portable_conversation_followup_claim.sql',
   '20261101000200_flow_engine_native_silence_v1.sql',
@@ -102,6 +105,7 @@ const DERIVED_FROM_MIGRATION = [
   '20261112210000_e483_native_multitouch_v1.sql',
   '20261112210300_e483_native_condition_after_send_v1.sql',
   '20261112210500_e483_native_personal_coupon_v1.sql',
+  '20261112210600_e483_native_audience_source_v1.sql',
 ];
 for (const name of DERIVED_FROM_MIGRATION) {
   if (!MIGRATIONS.includes(name) || name <= MIGRATION) {

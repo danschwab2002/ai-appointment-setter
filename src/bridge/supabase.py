@@ -7566,6 +7566,7 @@ class SupabaseClient:
         *,
         priority_wins: bool = False,
         payment_failure_by_phone_offers: Sequence[str] | None = None,
+        audience: bool = False,
     ) -> tuple[FlowEngineNativeAdmissionRow, ...]:
         """The native admission of one normalized event (flow-engine-v2, 4).
 
@@ -7584,11 +7585,20 @@ class SupabaseClient:
         list) to ``p_instance``: a payment failure without a form of one of
         those offers enters with the phone of the Hotmart event. ``None`` (the
         flag off) leaves the body exactly the one of before.
+
+        ``audience`` (E-483, for E-484, migration 20261112210600) adds
+        ``native_audience: true`` to ``p_instance``: an event with ``fuente:
+        audiencia`` (a person of the frozen list of an audience occurrence,
+        tied to ``flujo_id`` and ``version``) goes to the native admission of
+        that flow. Without it such an event is ``invalid_flow_engine_event``
+        (22023), as before, and any other event is admitted exactly the same.
         """
         operation = "admit_flow_engine_event_v1"
         p_instance = dict(instance)
         if priority_wins:
             p_instance["native_priority_wins"] = True
+        if audience:
+            p_instance["native_audience"] = True
         if payment_failure_by_phone_offers is not None:
             p_instance["native_payment_failure_by_phone_offers"] = list(payment_failure_by_phone_offers)
         body = json.dumps(

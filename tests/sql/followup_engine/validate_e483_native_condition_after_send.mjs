@@ -80,7 +80,9 @@ if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Y el cupon propio por persona (20261112210500, E-483, C2): toca la forma, el compilador y lo que abre la
 // base solo en una ranura con cupon_personal o un boton de cupon propio; la cadena sigue igual.
 if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261112210400_e483_payment_failure_by_phone_v1.sql',
-  '20261112210500_e483_native_personal_coupon_v1.sql'])) {
+  '20261112210500_e483_native_personal_coupon_v1.sql',
+  // El evento de un disparo por audiencia en el nativo (20261112210600, E-483, para E-484).
+  '20261112210600_e483_native_audience_source_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de PF`, names.slice(position + 1));
 }
 

@@ -58,7 +58,8 @@ def test_the_new_test_runs_with_npm_test() -> None:
     # Despues van el de C3 (20261112210300), el de la pieza PF (20261112210400) y el de C2 (20261112210500).
     assert package["scripts"]["test"].endswith(
         "node validate_e483_native_priority_wins.mjs && node validate_e483_native_condition_after_send.mjs --check"
-        " && node validate_e483_payment_failure_by_phone.mjs && node validate_e483_native_personal_coupon.mjs --check")
+        " && node validate_e483_payment_failure_by_phone.mjs && node validate_e483_native_personal_coupon.mjs --check"
+        " && node validate_e483_native_audience_source.mjs")
 
 
 # -- El bridge -------------------------------------------------------------------

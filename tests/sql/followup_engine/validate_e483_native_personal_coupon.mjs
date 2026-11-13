@@ -53,7 +53,11 @@ const emitted = {};
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-if (names.slice(position + 1).length !== 0) fail(`despues de ${MIGRATION} no va ninguna`, names.slice(position + 1));
+// Despues va el evento de un disparo por audiencia (20261112210600, E-483, para E-484): suma la ranura
+// nativo:audiencia y el permiso de la audiencia, sin tocar las del carrito ni las del pago rechazado.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261112210600_e483_native_audience_source_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de la audiencia`, names.slice(position + 1));
+}
 
 // ---------------------------------------------------------------------------
 // 0. La forma de la migracion.

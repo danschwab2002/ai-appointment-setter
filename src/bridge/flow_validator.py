@@ -2274,7 +2274,9 @@ class _Run:
                 if step_type(step) == "etiquetar":
                     emitter.add(ENGINE_NOT_SUPPORTED_ETIQUETAR, at + ("etiquetar",))
             return
-        codes = native_not_supported(definition)
+        # E-483, para E-484 (20261112210600): el disparo por audiencia lo admite la base solo si el bridge lo
+        # pide (FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED); sin el flag, motor_nativo:disparador como antes.
+        codes = native_not_supported(definition, audience=runtime_runs_multitouch(self.instance.runtime))
         if self.actor == "automation_expert" and f"{NOT_SUPPORTED}:{TOO_MANY_SENDS}" in codes:
             # Dos mensajes seguidos son dos problemas para el motor (la espera en el medio y el segundo envio) y
             # uno solo para el dueno: el del mensaje de mas. Los dos caen en el mismo camino y se contaria solo el primero.

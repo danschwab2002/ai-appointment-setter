@@ -94,7 +94,8 @@ def test_the_new_test_runs_with_npm_test() -> None:
     # Despues va el de C2 (20261112210500).
     assert package["scripts"]["test"].endswith(
         "node validate_e483_native_condition_after_send.mjs --check && node validate_e483_payment_failure_by_phone.mjs"
-        " && node validate_e483_native_personal_coupon.mjs --check")
+        " && node validate_e483_native_personal_coupon.mjs --check"
+        " && node validate_e483_native_audience_source.mjs")
 
 
 # -- El cliente de la base -------------------------------------------------------
