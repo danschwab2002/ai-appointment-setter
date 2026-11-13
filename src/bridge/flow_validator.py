@@ -556,6 +556,19 @@ NATIVE_CHANGE_PRIORITY_WINS = _spec(
     "Hoy un flujo no le puede ganar a otro. Lo que sí se puede decir es que este flujo no arranque mientras la persona está en otro.",
     alternative="Cambiá el pedido a «que no arranque mientras está en ese otro flujo», en el flujo que tiene que esperar, y confirmalo con el dueño.",
 )
+# E-483 (C7, migracion 20261112210200): con FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED la admision nativa corta los
+# recorridos en curso de la misma persona de los flujos de le_gana_a. Solo nombra flujos del mismo producto que
+# corren en el sistema nuevo: el carrito de hoy (el del legado, tambien con la ruta motor) no se toca.
+NATIVE_CHANGE_PRIORITY_WINS_REF = _spec(
+    "native_change_priority_wins_ref", None, KIND_CYCLE,
+    "Un flujo solo puede cortar a otro del mismo producto que corra en el sistema nuevo: a este no lo cortaría.",
+    alternative=_DROP_THAT_CHANGE + "Si el dueño quiere cortar un flujo que corre en el sistema anterior, como el "
+                "carrito de hoy, el equipo técnico tiene que pasarlo antes al sistema nuevo.",
+)
+# Solo cortan los flujos que arrancan con la admision de un evento de Hotmart (admit_flow_engine_event_v1).
+NATIVE_PRIORITY_WINS_TRIGGERS = frozenset({"compra", "carrito", "pago_fallido"})
+_NATIVE_PRIORITY_WINS_TRIGGER = ("Solo el carrito, el pago rechazado y la bienvenida pueden cortar a otro flujo: "
+                                 "este no lo cortaría.")
 NATIVE_CHANGE_PRIORITY_REF = _spec(
     "native_change_priority_ref", None, KIND_CYCLE,
     "Un flujo solo puede esperar a otro del mismo producto y que corra en el sistema nuevo: con este no cambiaría nada.",
@@ -848,7 +861,7 @@ _VALIDATOR_CODES: tuple[CodeSpec, ...] = (
     ENGINE_NOT_SUPPORTED_NATIVE_REPEAT, ENGINE_NOT_SUPPORTED_NATIVE_PRIORITY, ENGINE_NOT_SUPPORTED_NATIVE_SHAPE,
     ENGINE_NOT_SUPPORTED_ETIQUETAR, CHANGE_OUTSIDE_1B_SCOPE, TRIGGER_CHANGE_IS_ANOTHER_FLOW, FLOW_CHANGE_STALE_BASE,
     NATIVE_CHANGE_EXITS, NATIVE_CHANGE_REPEAT_SILENCE, NATIVE_CHANGE_PRIORITY_SILENCE, NATIVE_CHANGE_PRIORITY_WINS,
-    NATIVE_CHANGE_PRIORITY_REF, NATIVE_CHANGE_ENTRY, NATIVE_CHANGE_POOL, NATIVE_CHANGE_OTHER,
+    NATIVE_CHANGE_PRIORITY_WINS_REF, NATIVE_CHANGE_PRIORITY_REF, NATIVE_CHANGE_ENTRY, NATIVE_CHANGE_POOL, NATIVE_CHANGE_OTHER,
     CHANGE_WITHOUT_EFFECT_LEGACY_ROUTE, NATIVE_ENGINE_NOT_RUNNING, NATIVE_FIRST_CONTACT_NOT_RUNNING,
     NATIVE_SILENCE_NOT_RUNNING, NATIVE_TRIGGER_OTHER_PRODUCT, NATIVE_MULTITOUCH_NOT_RUNNING,
     NATIVE_MULTITOUCH_NOT_RUNNING_WARNING,
@@ -1519,6 +1532,9 @@ class _Run:
                     emitter.add(TRIGGER_CHANGE_IS_ANOTHER_FLOW, ("dispara",))
                 if self.actor == "automation_expert":
                     self._scope(subject, active)
+            elif self.actor == "automation_expert" and subject.item.is_new_flow:
+                # E-483 (C7): el flujo nuevo con le_gana_a, con la misma regla que una version.
+                self._native_priority_wins(subject)
         self._rule2(emitter, definition)
         self._rule3(emitter, definition)
         self._rule4(emitter, definition)
@@ -1600,7 +1616,7 @@ class _Run:
             else:
                 self._native_priority_refs(subject)
         elif key == ("prioridad", "le_gana_a"):
-            emitter.add(NATIVE_CHANGE_PRIORITY_WINS, key)
+            self._native_priority_wins(subject)
         elif key == ("termina", "si"):
             if trigger in NATIVE_MULTITOUCH_TRIGGERS and _only_reply_exit_changed(active, subject.definition):
                 # E-483: que conteste ahora lo lee el motor (corta el toque siguiente, 20261112210000).
@@ -1612,6 +1628,43 @@ class _Run:
             emitter.add(NATIVE_CHANGE_POOL, key)
         else:
             emitter.add(NATIVE_CHANGE_OTHER, key)
+
+    def _native_priority_wins(self, subject: _Subject) -> None:
+        """``prioridad.le_gana_a`` de un flujo nativo que propone el AE (E-483, C7, 20261112210200).
+
+        La admision nativa la lee solo si el bridge corre los toques siguientes
+        (``FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED``: ``runtime_runs_multitouch``), y solo en los flujos que
+        arrancan con un evento de Hotmart (``NATIVE_PRIORITY_WINS_TRIGGERS``): sin eso, ``native_change_priority_wins``
+        como antes. Con eso, cada flujo de la lista tiene que ser un nativo del mismo producto, por su clave, que
+        no sea el seguimiento (su corrida no es un recorrido): si no, ``native_change_priority_wins_ref``. Sacar
+        la lista entera siempre se puede.
+        """
+        definition = subject.definition
+        emitter = subject.emitter
+        refs = _refs(definition, "prioridad", "le_gana_a")
+        if not refs:
+            return
+        at = ("prioridad", "le_gana_a")
+        if not runtime_runs_multitouch(self.instance.runtime):
+            emitter.add(NATIVE_CHANGE_PRIORITY_WINS, at)
+            return
+        if native_trigger_key(definition) not in NATIVE_PRIORITY_WINS_TRIGGERS:
+            emitter.add(NATIVE_CHANGE_PRIORITY_WINS, at, reason=_NATIVE_PRIORITY_WINS_TRIGGER)
+            return
+        flow = subject.flow
+        own_product = _own_product(definition, flow)
+        for index, ref in enumerate(refs):
+            if is_unresolved(ref):
+                continue
+            parsed = parse_flow_ref(ref, own_product)
+            other = self.world.find(*parsed) if parsed is not None else None
+            if other is None:
+                continue  # unknown_flow_reference, de la regla 10
+            active = other.active_definition
+            silence = active is not None and native_trigger_key(active) == NATIVE_SILENCE_TRIGGER
+            if ref != other.flow_key or other.product_ref != own_product or other.flow_id == flow.flow_id \
+                    or not other.is_native or silence:
+                emitter.add(NATIVE_CHANGE_PRIORITY_WINS_REF, at + (index,))
 
     def _native_priority_refs(self, subject: _Subject) -> None:
         """Cada flujo de ``no_arranca_mientras`` lo puede leer la base (``_flow_engine_admit_native_flow``).

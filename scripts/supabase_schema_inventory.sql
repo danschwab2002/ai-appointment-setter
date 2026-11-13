@@ -7002,6 +7002,27 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'e483_native_cancel_in_flight'
+    union all
+    select
+        '20261112210200',
+        '20261112210200_e483_native_priority_wins_v1.sql',
+        -- prioridad.le_gana_a en un flujo nativo (E-483, C7): la funcion que
+        -- corta los recorridos a los que el que arranca le gana ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_priority_wins_v1(uuid,uuid,timestamptz)')
+              and position('le_gana_otro_flujo' in definition) > 0
+        )::int
+        -- ... y la admision que la llama solo si el bridge lo pide.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_flow_engine_event_v1(jsonb,jsonb)')
+              and position('e483_native_priority_wins: end' in definition) > 0
+        )::int,
+        2,
+        'e483_native_priority_wins'
 )
 select
     version,

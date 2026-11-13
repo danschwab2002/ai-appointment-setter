@@ -7548,7 +7548,11 @@ class SupabaseClient:
         })
 
     async def admit_flow_engine_event(
-        self, instance: Mapping[str, object], flow_event: Mapping[str, object]
+        self,
+        instance: Mapping[str, object],
+        flow_event: Mapping[str, object],
+        *,
+        priority_wins: bool = False,
     ) -> tuple[FlowEngineNativeAdmissionRow, ...]:
         """The native admission of one normalized event (flow-engine-v2, 4).
 
@@ -7556,10 +7560,18 @@ class SupabaseClient:
         (the purchase stays in the queue). A 22023 or a P0002 is a permanent
         ``SupabasePermanentError`` with its reason: the same event never
         passes. An answer outside the contract is a committed response.
+
+        ``priority_wins`` (E-483, C7, migration 20261112210200) adds
+        ``native_priority_wins: true`` to ``p_instance``: a run that starts
+        closes the open runs of the flows in its ``prioridad.le_gana_a``.
+        Without it the body is exactly the one of before.
         """
         operation = "admit_flow_engine_event_v1"
+        p_instance = dict(instance)
+        if priority_wins:
+            p_instance["native_priority_wins"] = True
         body = json.dumps(
-            {"p_instance": dict(instance), "p_flow_event": dict(flow_event)},
+            {"p_instance": p_instance, "p_flow_event": dict(flow_event)},
             ensure_ascii=False,
         )
         try:

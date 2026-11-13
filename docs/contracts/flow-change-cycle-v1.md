@@ -570,7 +570,7 @@ E-357, P28 del diseño del 2026-11-01 (`2026-11-01-m16-diseno-primer-contacto-na
 | `pasos` | Se abre, y la regla 14 decide qué ejecuta: sumar o sacar una espera, una etiqueta (con la compra `cliente`; con cualquier evento, la de un segmento), las variantes del pago rechazado | Se abre, pero solo admite su único paso con el botón y el cupón |
 | `topes.repeticion` | Se abre: `una_por` persona o persona y oferta, `otra_despues_de` una duración o `nunca` | `native_change_repeat_silence`: una por conversación |
 | `prioridad.no_arranca_mientras` | Se abre: flujos del mismo producto con recorridos en el motor, por su clave (`native_change_priority_ref` si no, también con el seguimiento con cupón, cuya corrida no es un recorrido) | `native_change_priority_silence`: el barrido no lo lee |
-| `prioridad.le_gana_a` | `native_change_priority_wins`: ninguna migración lo lee | igual |
+| `prioridad.le_gana_a` | `native_change_priority_wins`: ninguna migración lo lee. Desde E-483 (C7, `20261112210200`, escrito al construirlo, antes del merge): con `FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED`, se abre en el carrito, el pago rechazado y la bienvenida, con flujos nativos del mismo producto por su clave (`native_change_priority_wins_ref` si no); el que arranca corta lo que esperan los de la lista para esa persona (flow-engine-v2, sección 30). Sacar la lista se puede siempre | `native_change_priority_wins` |
 | `termina.si` | `native_change_exits`: cada flujo dice las suyas | igual |
 | `entra.*`, `topes.bolsa`, `dispara.silencio.conversaciones` | `native_change_entry`, `native_change_pool`, `native_change_other` | igual |
 | `nombre` | Se abre | Se abre |

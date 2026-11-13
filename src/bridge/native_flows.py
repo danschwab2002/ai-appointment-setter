@@ -306,7 +306,9 @@ async def admit_native_cart(
         "destino": destination,
     }
     try:
-        rows = await supabase.admit_flow_engine_event(runtime.instance, flow_event)
+        rows = await supabase.admit_flow_engine_event(
+            runtime.instance, flow_event, priority_wins=runtime.native_priority_wins
+        )
     except SupabasePermanentError as exc:
         logger.warning(
             "flow_engine_native_cart_rejected event_id=%s reason=%s",
@@ -470,7 +472,9 @@ async def admit_native_purchase(
             },
             "destino": destination,
         }
-        rows = await supabase.admit_flow_engine_event(runtime.instance, flow_event)
+        rows = await supabase.admit_flow_engine_event(
+            runtime.instance, flow_event, priority_wins=runtime.native_priority_wins
+        )
     except NativePurchaseSkipped as exc:
         outcome = f"descartada:{exc.reason}"
         done = True

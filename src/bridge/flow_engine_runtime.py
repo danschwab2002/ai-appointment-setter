@@ -234,8 +234,12 @@ class FlowEngineRuntime:
         clock: Callable[[], float] = time.monotonic,
         cart_touches_enabled: bool = True,
         native_intent_enabled: bool = False,
+        native_priority_wins: bool = False,
     ) -> None:
         self.instance: dict[str, object] = dict(instance)
+        # E-483 (C7): si la admision nativa corta los recorridos de le_gana_a
+        # (FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED). Apagado, la admision de antes.
+        self.native_priority_wins = native_priority_wins
         # E-165: si el bridge corre A1 con cupon y A2/Z. Sin ellos el motor arranca igual (por sus
         # flujos nativos), y el carrito de una ruta del legado en motor va forzado al legado.
         self.cart_touches_enabled = cart_touches_enabled

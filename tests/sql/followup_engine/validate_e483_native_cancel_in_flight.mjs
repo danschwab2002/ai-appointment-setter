@@ -41,7 +41,10 @@ const results = {};
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-if (names.slice(position + 1).length !== 0) fail(`despues de ${MIGRATION} no va ninguna`, names.slice(position + 1));
+// Despues va solo prioridad.le_gana_a en el nativo (20261112210200, E-483, C7): no toca la publicacion.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261112210200_e483_native_priority_wins_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de C7`, names.slice(position + 1));
+}
 
 // ---------------------------------------------------------------------------
 // 0. La forma de la migracion.

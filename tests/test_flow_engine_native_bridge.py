@@ -167,7 +167,10 @@ class _Base:
         self.calls.append("identities")
         return []
 
-    async def admit_flow_engine_event(self, instance: Any, flow_event: dict[str, Any]) -> tuple[Any, ...]:
+    async def admit_flow_engine_event(self, instance: Any, flow_event: dict[str, Any], *,
+                                      priority_wins: bool = False) -> tuple[Any, ...]:
+        # E-483 (C7): la clave del bridge para le_gana_a; apagada con el flag de hoy.
+        assert priority_wins is False
         self.calls.append("admit")
         self.flow_events.append(flow_event)
         if self.admission == "unavailable":

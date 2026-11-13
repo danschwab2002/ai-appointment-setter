@@ -346,7 +346,14 @@ def native_flow(definition: dict[str, Any], *, key: str = "nativo", state: str =
                      generation=1, versions={1: published({**definition, "flujo": key})}, native=True)
 
 
-def _native_change(definition: dict[str, Any], change: Callable[[dict[str, Any]], None] | None = None) -> list[Finding]:
+def _native_cart() -> dict[str, Any]:
+    """Un carrito nativo de un mensaje: uno de los que cortan a otro flujo con le_gana_a (E-483, C7)."""
+    return welcome(nombre="Carrito", dispara={"evento": "carrito"}, entra={"permiso": "formulario"},
+                   pasos=[copy.deepcopy(CONFIRMED_STEP)], termina={"si": ["compra"], "vence": "1d"})
+
+
+def _native_change(definition: dict[str, Any], change: Callable[[dict[str, Any]], None] | None = None,
+                   instance: InstanceView = INSTANCE) -> list[Finding]:
     """Lo que devuelve el validador a una version de un nativo que propone el AE, sin mirar la plantilla."""
     base = native_flow(definition)
     draft = fd.as_draft(base.versions[1])
@@ -354,7 +361,7 @@ def _native_change(definition: dict[str, Any], change: Callable[[dict[str, Any]]
         change(draft)
     others = world(base, _native_welcome("bienvenida", WELCOME_ID, "prendido"), _routed("legado"))
     result = check([version_item(draft, "nativo", flow_id=NATIVE_ID)], actor="automation_expert",
-                   in_world=others, catalog=None, phase="draft")
+                   in_world=others, catalog=None, phase="draft", instance=instance)
     return [*result.blocks, *result.warnings]
 
 
@@ -724,6 +731,13 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
         lambda: _native_change(_form(), lambda d: d["prioridad"]["le_gana_a"].append("bienvenida")),
         lambda: _native_change(_form(), lambda d: d["prioridad"]["no_arranca_mientras"].append("bienvenida")),
     ),
+    # E-483 (C7): con los toques siguientes prendidos, le_gana_a nombra solo flujos del sistema nuevo.
+    "native_change_priority_wins_ref": (
+        lambda: _native_change(_native_cart(), lambda d: d["prioridad"]["le_gana_a"].append("carrito"),
+                               instance=_running()),
+        lambda: _native_change(_native_cart(), lambda d: d["prioridad"]["le_gana_a"].append("bienvenida"),
+                               instance=_running()),
+    ),
     "native_change_priority_ref": (
         lambda: _native_change(_form(), lambda d: d["prioridad"]["no_arranca_mientras"].append("carrito")),
         lambda: _native_change(_form(), lambda d: d["prioridad"]["no_arranca_mientras"].append("bienvenida")),
@@ -1005,8 +1019,8 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         "native_engine_not_running", "native_first_contact_not_running", "native_silence_not_running",
         "native_trigger_other_product", "native_multitouch_not_running",
         "native_change_exits", "native_change_repeat_silence", "native_change_priority_silence",
-        "native_change_priority_wins", "native_change_priority_ref", "native_change_entry", "native_change_pool",
-        "native_change_other",
+        "native_change_priority_wins", "native_change_priority_wins_ref", "native_change_priority_ref",
+        "native_change_entry", "native_change_pool", "native_change_other",
     }
     assert all(pairs == {(None, "advertencia")} for code, pairs in fv.CODE_RULES.items()
                if code in fv.WARNING_CODES)

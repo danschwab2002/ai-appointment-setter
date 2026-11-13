@@ -71,8 +71,8 @@ FOUR = ("carrito", "pago_rechazado", "primer_contacto", "bienvenida")
 OUT_OF_SCOPE = {"change_outside_1b_scope"}
 STRUCTURE_BLOCKS = {
     "native_change_exits", "native_change_repeat_silence", "native_change_priority_silence",
-    "native_change_priority_wins", "native_change_priority_ref", "native_change_entry", "native_change_pool",
-    "native_change_other",
+    "native_change_priority_wins", "native_change_priority_wins_ref", "native_change_priority_ref",
+    "native_change_entry", "native_change_pool", "native_change_other",
 }
 TECHNICAL = re.compile(r"\boperador\b|motor nativo|\bnativo\b|\blegado\b|\bscope\b|[a-z]+_[a-z]+|\{\{")
 

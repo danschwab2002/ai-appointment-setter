@@ -6220,6 +6220,8 @@ def create_app(
             },
             cart_touches_enabled=flow_engine_cart_touches_enabled(settings),
             native_intent_enabled=settings.flow_engine_native_intent_enabled,
+            # E-483 (C7): le_gana_a en el nativo va con los toques siguientes.
+            native_priority_wins=settings.flow_engine_native_multitouch_enabled,
         )
     # MOT-001 (flow-engine-v1, seccion 8): comparte el productor del conector
     # de Slack; sin conector, no avisa y /ready dice sin_slack.

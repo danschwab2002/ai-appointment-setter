@@ -2287,6 +2287,43 @@
    }
   },
   {
+   "code": "native_change_priority_wins_ref",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "native_change_priority_wins_ref",
+      "kind": "ciclo",
+      "path": "/0/definicion/prioridad/le_gana_a/0",
+      "reason": "Un flujo solo puede cortar a otro del mismo producto que corra en el sistema nuevo: a este no lo cortaría.",
+      "alternative": "Sacá ese cambio de la propuesta (lo demás sigue) y decile al dueño, con este motivo, que hoy no se puede. Si el dueño quiere cortar un flujo que corre en el sistema anterior, como el carrito de hoy, el equipo técnico tiene que pasarlo antes al sistema nuevo."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "native_change_priority_wins_ref",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "automation_expert"
+   }
+  },
+  {
    "code": "native_change_repeat_silence",
    "case": "negativo",
    "result": {

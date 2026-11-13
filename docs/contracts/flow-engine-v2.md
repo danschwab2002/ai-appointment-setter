@@ -202,7 +202,7 @@ mark_flow_engine_start_rejection_notified_v1(p_flow_id uuid, p_phase text, p_rea
 - las variables que el paso declara, de entre `nombre` y `producto` (sección 16); `nombre` sale del evento desde el PR 3;
 - ningún `boton` declarado por el paso. La plantilla puede traer botones de URL fija (sección 16) y de respuesta rápida (sección 18): no llevan parámetro;
 - la salida `compra` (la que pide la regla 4 a todo evento que no es la compra), y ninguna otra;
-- la prioridad solo entre flujos del motor (`no_arranca_mientras`);
+- la prioridad solo entre flujos del motor (`no_arranca_mientras`; `le_gana_a` desde E-483, sección 30);
 - `repeticion` por `persona` o `persona_y_oferta`, con `otra_despues_de: nunca` o una duración: en el carrito del motor v1 cae al legado (`ruta:repeticion_no_soportada`, `M-carrito:520-522`), y en un flujo nativo se ejecuta.
 
 `horario: siempre` y `sin_tope` no hace falta levantarlos: `siempre` ya compila (`M-rutas:461`) y un tope que no es un número no se cuenta (`M-carrito:1191-1203`).
@@ -537,6 +537,17 @@ Escrito al construir el cambio, el 2026-11-09, antes de cualquier merge o despli
 - **La validación (regla 13).** Solo en un nativo que no sea el silencio; ver [flow-definition-v1](flow-definition-v1.md). El barrido del silencio manda con `parse_followup_template`, que no lleva encabezado. La vista de la instancia llega al validador por los tres caminos: la API del Automation Expert, la página de aprobación y `template_images` en la entrada del operador. El comando del operador no lee el manifiesto: ahí una plantilla con imagen bloquea siempre, y el comando lo avisa (`IMAGE_BLOCK_NOTE`); se valida y se publica por la página. Un cierre por `approved_template_header_media_not_declared` queda en la acción y en el log, sin aviso a nadie: solo pasa si el catálogo o el manifiesto cambian después de publicar.
 - **Lo que no cambia.** El sistema anterior sigue sin mandar el encabezado, y el video no se declara.
 - **Las pruebas:** `tests/test_native_template_image_header.py`. Ninguna plantilla con encabezado de imagen pasó por el producto en real: el catálogo es una captura con el `HEADER` agregado a mano, con la forma que documenta Meta. Lo que sale hacia Chatwoot lo fija el código del tag `v4.13.0`.
+
+## 30. Un flujo nativo le gana a otro: `prioridad.le_gana_a` (E-483, C7)
+
+Escrito al construirlo, el 2026-11-12, antes del merge: no afirma nada desplegado ni activado. Migración `20261112210200_e483_native_priority_wins_v1.sql`. La regla de ATT1 desde el 18/10 (D4 del mapa «el AE maneja todos los flujos»): el pago rechazado le gana a un carrito en curso, lo corta.
+
+- **Cuándo.** Va a correr solo si el bridge lo pide: con `FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED`, el bridge suma `native_priority_wins: true` a `p_instance` de `admit_flow_engine_event_v1` (`SupabaseClient.admit_flow_engine_event(..., priority_wins=True)`); la instancia del runtime, que usan las otras lecturas, no cambia. Sin la clave, la admisión es la de antes.
+- **Qué hace.** Cuando un flujo arranca un recorrido **nuevo** (`motor_arranco` con `created = true`), en la misma subtransacción del flujo, `_flow_engine_native_priority_wins_v1` (privada) lee el `le_gana_a` de la versión fijada del recorrido y, para cada recorrido nativo en curso (`grace_period`, `active` o `paused`) de la **misma persona y el mismo producto** cuyo `flow_key` está en la lista, en otro caso: cancela sus acciones vivas (`pending`, `deferred`, `retryable_failed`) con `terminal_reason = le_gana_otro_flujo`, cierra sus secuencias (`cancel_reason`) y su caso (`cancelled`, `next_contact_reason = le_gana_otro_flujo`, la marca `closed_by_priority` en `context` y el evento `recovery_case_closed_by_priority`). En el caso que ganó queda `flow_engine_native_priority_won` con `cerrados` y `mandandose` (solo si encontró alguno). Los candados, en el orden de `claim_due_followup_actions`.
+- **Lo que no toca.** Un caso con un toque que ya se está mandando (con lease, con un intento sin terminar o en `delivery_unknown`): sigue entero y se cuenta en `mandandose`. Un recorrido del legado (`legacy_kind`, la ruta `motor` del carrito de ATT1) ni un caso del legado sin recorrido. La repetición de un evento (`created = false`), un flujo que no arranca y el primer contacto (`intencion`, que admite por otra RPC).
+- **El doble caso, medido en PGlite.** El pago rechazado nativo abre su propio `recovery_case` (`abandonment_event_id` es el rechazo); el del carrito nativo es otro. Se corta el del carrito, nunca el que arrancó.
+- **El validador.** Para el Automation Expert, en una `version` de un nativo y en un `nuevo`: sin `FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED` (o sin saber lo que corre la instancia), `native_change_priority_wins` como antes; con el flag, solo cortan `compra`, `carrito` y `pago_fallido` (el primer contacto y el seguimiento dan `native_change_priority_wins` con su motivo), y cada flujo de la lista tiene que ser un nativo del mismo producto, por su clave, que no sea él mismo ni el seguimiento: si no, `native_change_priority_wins_ref` (el carrito del legado, por ejemplo). Sacar la lista se puede siempre.
+- **Las pruebas:** `tests/sql/followup_engine/validate_e483_native_priority_wins.mjs` y `tests/test_e483_native_priority_wins.py`.
 
 ## Varios productos por aliada (E-350)
 
