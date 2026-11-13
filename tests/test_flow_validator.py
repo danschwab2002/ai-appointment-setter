@@ -541,6 +541,18 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
         )
         for datum, value in (("tipo_de_rechazo", "sin_saldo"), ("rechazos", "varios"), ("descuento_previo", "si"))
     },
+    # E-528 (C4): el vencimiento de la ficha y la espera anclada, solo con ficha_impresa.
+    "vencimiento_requires_ficha_trigger": (
+        lambda: run(with_(flow_def("carrito"), lambda d: d["pasos"][0].update(variables=["nombre", "vencimiento"]))),
+        lambda: run(with_(flow_def("ficha"), lambda d: d["pasos"][1]["entonces"][0].update(
+            variables=["nombre", "producto", "medio_de_pago", "vencimiento"])), "ficha", phase="draft"),
+    ),
+    "due_anchor_requires_ficha_trigger": (
+        lambda: run(with_(flow_def("carrito"), lambda d: d["pasos"].insert(
+            1, {"esperar": {"vencimiento": {"dias_antes": 0, "a_las": "09:00"}}})), phase="draft"),
+        lambda: run(with_(flow_def("ficha"), lambda d: d["pasos"].append(
+            {"esperar": {"vencimiento": {"dias_antes": 0, "a_las": "09:00"}}})), "ficha", phase="draft"),
+    ),
     "ficha_link_requires_ficha_trigger": (
         lambda: run(with_(flow_def("carrito"), lambda d: d["pasos"][0].update(boton={"link": "ficha"}))),
         lambda: run(flow_def("ficha"), "ficha", phase="draft"),

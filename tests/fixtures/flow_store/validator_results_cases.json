@@ -838,6 +838,43 @@
    }
   },
   {
+   "code": "due_anchor_requires_ficha_trigger",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 5,
+      "code": "due_anchor_requires_ficha_trigger",
+      "kind": "forma",
+      "path": "/0/definicion/pasos/1/esperar",
+      "reason": "Una espera hasta el vencimiento va solo con ficha_impresa, después del primer mensaje y a una hora dentro del horario.",
+      "alternative": "Escribir la espera como una duración (60m, 24h, 1d)."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "due_anchor_requires_ficha_trigger",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "operador"
+   }
+  },
+  {
    "code": "duplicate_flow_key",
    "case": "negativo",
    "result": {
@@ -4567,6 +4604,43 @@
     "contract": "setter-flujo/v1",
     "rules_version": 1,
     "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "vencimiento_requires_ficha_trigger",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 5,
+      "code": "vencimiento_requires_ficha_trigger",
+      "kind": "forma",
+      "path": "/0/definicion/pasos/0/variables/1",
+      "reason": "vencimiento es el día en que vence la ficha: va solo con el disparador ficha_impresa.",
+      "alternative": "Sacar vencimiento de las variables; con el cupón, el vencimiento es vence."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "vencimiento_requires_ficha_trigger",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
     "actor": "operador"
    }
   },

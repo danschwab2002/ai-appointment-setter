@@ -27,7 +27,8 @@ La entrada de ``validar``::
                   "segment_labels": [{"etiqueta", "estado"}]?,
                   "runtime": {"engine_enabled", "native_intent_enabled",
                               "native_silence_sweeper", "cart_touches", "main_product",
-                              "native_multitouch_enabled"?, "native_personal_coupon_enabled"?}?,
+                              "native_multitouch_enabled"?, "native_personal_coupon_enabled"?,
+                              "native_payment_slip_enabled"?}?,
                   "template_images": [<nombre de plantilla>]?},
      "store": {"flows": [{"flow_id", "product_ref", "flow_key", "state",
                           "active_version", "generation", "route_executor"?,
@@ -114,8 +115,11 @@ def instance_from_input(value: object) -> InstanceView:
         # de las dos, el InstanceRuntime de antes (apagado).
         runtime = None if fields is None else (
             NativeRuntime(**fields, native_multitouch=raw_runtime.get("native_multitouch_enabled", False),
-                          native_personal_coupon=raw_runtime.get("native_personal_coupon_enabled", False))
-            if {"native_multitouch_enabled", "native_personal_coupon_enabled"} & set(raw_runtime)
+                          native_personal_coupon=raw_runtime.get("native_personal_coupon_enabled", False),
+                          # E-528 (C4): la ficha nativa, opcional como las otras dos.
+                          native_payment_slip=raw_runtime.get("native_payment_slip_enabled", False))
+            if {"native_multitouch_enabled", "native_personal_coupon_enabled",
+                "native_payment_slip_enabled"} & set(raw_runtime)
             else InstanceRuntime(**fields))
     except (KeyError, TypeError, ValueError) as error:
         raise OperatorInputError("operator_instance_invalid") from error

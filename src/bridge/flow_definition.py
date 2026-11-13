@@ -100,11 +100,23 @@ EXITS = ("compra", "contesta", "ficha_vencida")
 # personal (cart_discount.cart_discount_values). Las dos horas se escriben en la zona del pais
 # que sale del prefijo del telefono (country_for_phone y timezone_for_country,
 # cart_discount.py:69-82), con la de CDMX si el prefijo no se reconoce.
-VARIABLES = ("nombre", "producto", "medio_de_pago", "cuando", "precio", "vence")
+VARIABLES = ("nombre", "producto", "medio_de_pago", "cuando", "precio", "vence", "vencimiento")
 # Las que solo valen en un paso con cupon: hablan del cupon personal (regla 5).
 COUPON_VARIABLES = ("precio", "vence")
 # La que solo vale con un disparador de evento: es la hora del evento (regla 5).
 EVENT_VARIABLES = ("cuando",)
+# E-528 (C4, P25-1): el vencimiento de la ficha (el dia de impresion en CDMX mas 3, bridge.payment_slip),
+# escrito en la zona del pais como el legado (payment_slip_first_touch). Vale solo con ficha_impresa (regla
+# 5). No es vence, que es el vencimiento del cupon personal.
+FICHA_VARIABLES = ("vencimiento",)
+# E-528 (C4, P25-1, D-P25-1): la espera anclada al vencimiento de la ficha,
+# ``esperar: {vencimiento: {dias_antes: 0|1, a_las: "HH:MM"}}``. El momento real lo decide el bridge
+# (payment_slip_reminders.payment_slip_step_wait): el dia del vencimiento menos dias_antes, a la hora a_las
+# de la persona. Una ficha vence el dia de impresion mas FICHA_DUE_DAYS (payment_slip.py:9-13).
+DUE_ANCHOR = "vencimiento"
+DUE_ANCHOR_KEYS = ("a_las", "dias_antes")
+DUE_ANCHOR_DAYS_BEFORE = (0, 1)
+FICHA_DUE_DAYS = 3
 LINKS = ("checkout", "ficha")
 CONDITION_DATA = ("ventana", "medio_de_pago", "tipo_de_rechazo", "rechazos", "descuento_previo")
 WINDOW_VALUES = ("abierta", "cerrada")
@@ -353,6 +365,36 @@ def parse_duration(value: object) -> int | None:
     if match is None:
         return None
     return int(match.group(1)) * _UNIT_MINUTES[match.group(2)]
+
+
+def parse_due_anchor(value: object) -> tuple[int, int] | None:
+    """``(dias_antes, minutos de a_las)`` de una espera anclada al vencimiento, o None (E-528, P25-1).
+
+    La forma es exacta: ``{vencimiento: {dias_antes: 0|1, a_las: "HH:MM"}}``, sin otras claves.
+    """
+    if not isinstance(value, Mapping) or set(value) != {DUE_ANCHOR}:
+        return None
+    anchor = value[DUE_ANCHOR]
+    if not isinstance(anchor, Mapping) or set(anchor) != set(DUE_ANCHOR_KEYS):
+        return None
+    days = anchor.get("dias_antes")
+    if not _is_int(days) or days not in DUE_ANCHOR_DAYS_BEFORE:
+        return None
+    hour = parse_hour(anchor.get("a_las"))
+    return None if hour is None else (days, hour)
+
+
+def due_anchor_max_minutes(value: object) -> int | None:
+    """Lo mas que puede esperar una espera anclada, contado desde la impresion; None si no lo es.
+
+    Desde la medianoche del dia de impresion hasta el dia del vencimiento menos ``dias_antes`` a ``a_las``:
+    cota de arriba para la regla 12 (``termina.vence`` despues de las esperas).
+    """
+    anchor = parse_due_anchor(value)
+    if anchor is None:
+        return None
+    days, hour = anchor
+    return (FICHA_DUE_DAYS - days) * DAY_MINUTES + hour
 
 
 def parse_hour(value: object) -> int | None:
@@ -1263,6 +1305,10 @@ def touch_times(definition: Mapping[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(step, Mapping):
             return out
         if "esperar" in step:
+            if started and parse_due_anchor(step.get("esperar")) is not None:
+                # E-528 (P25-1): lo que sigue sale el dia del vencimiento de la ficha, no a una hora fija.
+                out.append({"paso": index + 1, "sigue": "depende_del_vencimiento"})
+                return out
             wait = parse_duration(step.get("esperar"))
             if wait is None:
                 return out
@@ -1528,7 +1574,14 @@ def _check_step(out: _Collector, step: object, segments: tuple[Segment, ...]) ->
     _check_keys(out, step, segments, _STEP_KEYS[kind])
     value = step[kind]
     if kind == "esperar":
-        _check_duration(out, value, segments + ("esperar",))
+        if isinstance(value, Mapping):
+            # E-528 (P25-1): la espera anclada al vencimiento de la ficha (la regla 5 la deja solo con
+            # ficha_impresa).
+            if parse_due_anchor(value) is None:
+                out.add(INVALID_VALUE, segments + ("esperar",),
+                        reason="Una espera anclada se escribe {vencimiento: {dias_antes: 0 o 1, a_las: \"HH:MM\"}}.")
+        else:
+            _check_duration(out, value, segments + ("esperar",))
     elif kind == "plantilla":
         _check_template_step(out, step, segments)
     elif kind == "conversar":

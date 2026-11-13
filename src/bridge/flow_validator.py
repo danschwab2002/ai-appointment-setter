@@ -37,6 +37,7 @@ from .flow_definition import (
     COHORT,
     DEFINITION_CODES,
     FICHA_EVENTS,
+    FICHA_VARIABLES,
     INVALID_VALUE,
     KIND_CYCLE,
     KIND_FORM,
@@ -79,6 +80,8 @@ from .flow_definition import (
     json_size,
     loads_strict,
     normalize_definition,
+    due_anchor_max_minutes,
+    parse_due_anchor,
     parse_duration,
     parse_flow_ref,
     parse_hour,
@@ -94,6 +97,7 @@ from .flow_definition import (
 from .flow_audience import AUDIENCE_FORMS, PERMISSION_BY_STATUS
 from .flow_engine import (
     NATIVE_MULTITOUCH_TRIGGERS,
+    NATIVE_PAYMENT_SLIP_TRIGGER,
     NATIVE_SILENCE_TRIGGER,
     NATIVE_UNSUPPORTED_PERMISSION,
     NATIVE_UNSUPPORTED_PRIORITY,
@@ -229,6 +233,17 @@ PAYMENT_FAILURE_DATUM_SPECS = {
 FICHA_LINK_REQUIRES_FICHA_TRIGGER = _spec(
     "ficha_link_requires_ficha_trigger", 5, KIND_FORM,
     "El link ficha va solo con los disparadores de la ficha.",
+)
+# E-528 (C4, P25-1): el vencimiento de la ficha y la espera anclada a el, solo con ficha_impresa.
+VENCIMIENTO_REQUIRES_FICHA_TRIGGER = _spec(
+    "vencimiento_requires_ficha_trigger", 5, KIND_FORM,
+    "vencimiento es el día en que vence la ficha: va solo con el disparador ficha_impresa.",
+    alternative="Sacar vencimiento de las variables; con el cupón, el vencimiento es vence.",
+)
+DUE_ANCHOR_REQUIRES_FICHA_TRIGGER = _spec(
+    "due_anchor_requires_ficha_trigger", 5, KIND_FORM,
+    "Una espera hasta el vencimiento va solo con ficha_impresa, después del primer mensaje y a una hora dentro del horario.",
+    alternative="Escribir la espera como una duración (60m, 24h, 1d).",
 )
 COUPON_REQUIRES_CHECKOUT_LINK = _spec(
     "coupon_requires_checkout_link", 5, KIND_FORM,
@@ -752,20 +767,29 @@ class NativeRuntime(InstanceRuntime):
     native_multitouch: bool = False
     # E-483 (C2): FLOW_ENGINE_NATIVE_PERSONAL_COUPON_ENABLED, el toque nativo con el cupon propio.
     native_personal_coupon: bool = False
+    # E-528 (C4): FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED, la ficha de OXXO nativa (ficha_impresa).
+    native_payment_slip: bool = False
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if not isinstance(self.native_multitouch, bool) or not isinstance(self.native_personal_coupon, bool):
+        if not isinstance(self.native_multitouch, bool) or not isinstance(self.native_personal_coupon, bool) \
+                or not isinstance(self.native_payment_slip, bool):
             raise ValueError("instance_runtime_invalid")
 
     def to_json(self) -> dict[str, Any]:
         return {**super().to_json(), "native_multitouch_enabled": self.native_multitouch,
-                "native_personal_coupon_enabled": self.native_personal_coupon}
+                "native_personal_coupon_enabled": self.native_personal_coupon,
+                "native_payment_slip_enabled": self.native_payment_slip}
 
 
 def runtime_runs_multitouch(runtime: InstanceRuntime | None) -> bool:
     """Si el bridge manda los toques siguientes de un nativo (E-483); un runtime sin el dato, no."""
     return isinstance(runtime, NativeRuntime) and runtime.native_multitouch
+
+
+def runtime_runs_payment_slip(runtime: InstanceRuntime | None) -> bool:
+    """Si el bridge ejecuta la ficha nativa (E-528, C4); un runtime sin el dato, no."""
+    return isinstance(runtime, NativeRuntime) and runtime.native_payment_slip
 
 
 def runtime_runs_personal_coupon(runtime: InstanceRuntime | None) -> bool:
@@ -922,7 +946,8 @@ _VALIDATOR_CODES: tuple[CodeSpec, ...] = (
     FICHA_VENCIDA_REQUIRES_FICHA_TRIGGER, MEDIO_DE_PAGO_REQUIRES_FICHA_TRIGGER,
     TIPO_DE_RECHAZO_REQUIRES_PAYMENT_FAILURE_TRIGGER, RECHAZOS_REQUIRES_PAYMENT_FAILURE_TRIGGER,
     DESCUENTO_PREVIO_REQUIRES_PAYMENT_FAILURE_TRIGGER,
-    FICHA_LINK_REQUIRES_FICHA_TRIGGER, COUPON_REQUIRES_CHECKOUT_LINK, EVENT_REQUIRES_VENCE,
+    FICHA_LINK_REQUIRES_FICHA_TRIGGER, VENCIMIENTO_REQUIRES_FICHA_TRIGGER, DUE_ANCHOR_REQUIRES_FICHA_TRIGGER,
+    COUPON_REQUIRES_CHECKOUT_LINK, EVENT_REQUIRES_VENCE,
     SILENCE_FORBIDS_VENCE, CONVERSAR_OUTSIDE_OPEN_WINDOW_BRANCH, TERMINAL_STEP_NOT_LAST,
     NESTED_CONDITION, HOUR_INVALID, WINDOW_NOT_INCREASING, ZONE_INVALID, ZONE_CHANGED,
     POOL_ZONE_MISMATCH, CAP_INVALID, DAILY_CAP_EXCEEDS_TOTAL, UNKNOWN_FLOW_REFERENCE,
@@ -1090,7 +1115,10 @@ def _max_waits(steps: object, depth: int = 0) -> int | None:
     for step in steps:
         kind = step_type(step)
         if kind == "esperar":
+            # E-528 (P25-1): una espera anclada al vencimiento cuenta lo mas que puede esperar.
             minutes = parse_duration(step["esperar"])
+            if minutes is None:
+                minutes = due_anchor_max_minutes(step["esperar"])
             if minutes is None:
                 return None
             total += minutes
@@ -1588,6 +1616,10 @@ class _Run:
             definition = self.effective.get(flow.flow_id)
             if not isinstance(definition, Mapping) or _max_sends(definition.get("pasos")) <= 1:
                 continue
+            if native_trigger_key(definition, payment_slip=True) == NATIVE_PAYMENT_SLIP_TRIGGER:
+                # E-528 (C4): C3 de la ficha nativa sale con FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED, no con los
+                # toques siguientes de un nativo; sin ese flag la ficha ya es motor_nativo:disparador.
+                continue
             self.blocks.append(NATIVE_MULTITOUCH_NOT_RUNNING.at(finding_path((index,))))
 
     def _cancel_without_multitouch(self) -> None:
@@ -1900,6 +1932,8 @@ class _Run:
             for index, reason in enumerate(reasons):
                 if reason == "ficha_vencida" and not printed:
                     emitter.add(FICHA_VENCIDA_REQUIRES_FICHA_TRIGGER, ("termina", "si", index))
+        printed_trigger = None if ficha is None else (trigger is not None and trigger.event == "ficha_impresa")
+        self._rule5_due_anchor(emitter, definition, printed_trigger)
         for step, at, _, _, _, _ in _iter_steps(definition.get("pasos"), ("pasos",)):
             kind = step_type(step)
             if kind == "plantilla":
@@ -1908,6 +1942,10 @@ class _Run:
                     for index, variable in enumerate(variables):
                         if variable == "medio_de_pago":
                             emitter.add(MEDIO_DE_PAGO_REQUIRES_FICHA_TRIGGER, at + ("variables", index))
+                if isinstance(variables, list) and printed_trigger is False:
+                    for index, variable in enumerate(variables):
+                        if variable in FICHA_VARIABLES:
+                            emitter.add(VENCIMIENTO_REQUIRES_FICHA_TRIGGER, at + ("variables", index))
                 button = _mapping(step.get("boton"))
                 if button is not None:
                     link = button.get("link")
@@ -1930,6 +1968,30 @@ class _Run:
             elif kind == "etiquetar" and trigger is not None and not (
                     trigger.kind == "evento" and trigger.event is None) and not trigger.is_purchase:
                 emitter.add(ETIQUETAR_REQUIRES_PURCHASE_TRIGGER, at + ("etiquetar",))
+
+    def _rule5_due_anchor(self, emitter: _Emitter, definition: Mapping[str, Any], printed: bool | None) -> None:
+        """La espera anclada al vencimiento (E-528, P25-1): solo con ficha_impresa, despues del primer envio
+        y con ``a_las`` dentro del horario. Con el disparador sin resolver no se mira.
+        """
+        if printed is None:
+            return
+        window = _mapping(definition.get("horario"))
+        start = parse_hour(window.get("desde")) if window is not None else None
+        end = parse_hour(window.get("hasta")) if window is not None else None
+        sent = False
+        for step, at, *_ in _iter_steps(definition.get("pasos"), ("pasos",)):
+            kind = step_type(step)
+            if kind in ("plantilla", "conversar"):
+                sent = True
+                continue
+            if kind != "esperar" or not isinstance(step, Mapping):
+                continue
+            anchor = parse_due_anchor(step.get("esperar"))
+            if anchor is None:
+                continue
+            outside = start is not None and end is not None and not start <= anchor[1] <= end
+            if not printed or not sent or outside:
+                emitter.add(DUE_ANCHOR_REQUIRES_FICHA_TRIGGER, at + ("esperar",))
 
     def _rule5_variables(self, emitter: _Emitter, definition: Mapping[str, Any]) -> None:
         """Las variables de la 1.1, en la regla 5: precio y vence solo con cupon personal, cuando solo
@@ -2327,7 +2389,9 @@ class _Run:
             return
         # E-483, para E-484 (20261112210600): el disparo por audiencia lo admite la base solo si el bridge lo
         # pide (FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED); sin el flag, motor_nativo:disparador como antes.
-        codes = native_not_supported(definition, audience=runtime_runs_multitouch(self.instance.runtime))
+        # E-528 (C4, 20261113200000): la ficha, solo con FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED.
+        codes = native_not_supported(definition, audience=runtime_runs_multitouch(self.instance.runtime),
+                                     payment_slip=runtime_runs_payment_slip(self.instance.runtime))
         if self.actor == "automation_expert" and f"{NOT_SUPPORTED}:{TOO_MANY_SENDS}" in codes:
             # Dos mensajes seguidos son dos problemas para el motor (la espera en el medio y el segundo envio) y
             # uno solo para el dueno: el del mensaje de mas. Los dos caen en el mismo camino y se contaria solo el primero.

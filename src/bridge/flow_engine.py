@@ -66,6 +66,7 @@ from .flow_definition import (
     PERSONAL_COUPONS_PER_PATH,
     TO_CREATE,
     is_pool,
+    parse_due_anchor,
     parse_duration,
     parse_flow_ref,
     step_type,
@@ -76,7 +77,7 @@ from .flow_policy import STEPS_BY_LEGACY_KIND
 from .flow_schedule import DEFAULT_ZONE, LAST_MINUTE, Franja, franja_of, is_open, next_open
 
 __all__ = [
-    "ENGINE_CAPABILITIES_NATIVE", "ENGINE_CAPABILITIES_NATIVE_AUDIENCE", "NATIVE_AUDIENCE_FORMS", "NATIVE_AUDIENCE_PERMISSIONS", "NATIVE_AUDIENCE_TRIGGER", "ENGINE_CAPABILITIES_NATIVE_MULTITOUCH", "ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE", "ENGINE_CAPABILITIES_NATIVE_CART_MULTITOUCH", "NATIVE_COUPON_FIRST_VARIABLES", "NATIVE_COUPON_NEXT_VARIABLES", "NATIVE_MAX_PERSONAL_COUPONS", "NATIVE_PERSONAL_COUPON_BUTTON", "NATIVE_PERSONAL_COUPON_TRIGGERS", "NATIVE_MULTITOUCH_TRIGGERS", "NATIVE_TOUCH_STEP_PREFIX", "ENGINE_CAPABILITIES_NATIVE_SILENCE", "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_PARAMETERS", "NATIVE_CAPABILITIES_BY_TRIGGER", "NATIVE_SILENCE_TRIGGER", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
+    "ENGINE_CAPABILITIES_NATIVE", "ENGINE_CAPABILITIES_NATIVE_AUDIENCE", "NATIVE_AUDIENCE_FORMS", "NATIVE_AUDIENCE_PERMISSIONS", "NATIVE_AUDIENCE_TRIGGER", "ENGINE_CAPABILITIES_NATIVE_MULTITOUCH", "ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE", "ENGINE_CAPABILITIES_NATIVE_CART_MULTITOUCH", "NATIVE_COUPON_FIRST_VARIABLES", "NATIVE_COUPON_NEXT_VARIABLES", "NATIVE_MAX_PERSONAL_COUPONS", "NATIVE_PERSONAL_COUPON_BUTTON", "NATIVE_PERSONAL_COUPON_TRIGGERS", "NATIVE_MULTITOUCH_TRIGGERS", "NATIVE_TOUCH_STEP_PREFIX", "ENGINE_CAPABILITIES_NATIVE_SILENCE", "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_PARAMETERS", "NATIVE_CAPABILITIES_BY_TRIGGER", "ENGINE_CAPABILITIES_NATIVE_PAYMENT_SLIP", "NATIVE_PAYMENT_SLIP_DUE_ANCHORS", "NATIVE_PAYMENT_SLIP_TRIGGER", "NATIVE_PAYMENT_SLIP_VARIABLES", "NATIVE_SILENCE_TRIGGER", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
     "BolsaLedger", "ControlLine", "Eligible", "EngineCapabilities", "EngineFlow", "Firing", "FlowRef",
     "GateDecision", "GateFacts", "PersonView", "Plan", "PlanInvalid", "PlanNotSupported", "PlannedStep",
     "RunView", "StartDecision", "evaluate_gate", "first_eligible", "legacy_motivo", "native_audience_form", "native_not_supported", "native_payment_failure_branches", "native_payment_failure_paths", "native_trigger_key", "native_variables_fit", "is_native_personal_coupon_button", "not_supported", "plan_start",
@@ -371,6 +372,32 @@ ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE_MULTITOUCH = dataclasses.replace(
     ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE_MULTITOUCH,
     variables=frozenset(NATIVE_COUPON_FIRST_VARIABLES),
 )
+# E-528 (C4 del mapa del 12/11, P25 de M16): la ficha de OXXO impresa y sin pagar, nativa. Dos toques como el
+# legado de ATT1 (att1-ficha v3): C1 a la hora de la impresion (con la espera de gracia) y C3 el dia del
+# vencimiento a las 09:00 de la persona, con la espera anclada al vencimiento entre los dos
+# (``esperar: {vencimiento: {dias_antes: 0, a_las: "09:00"}}``, D-P25-1). El ancla es la de C3 del legado
+# (``payment_slip_reminders.PAYMENT_SLIP_STEPS``): una constante del codigo (D-P25-2); C2 no va (D-P25-4).
+# Las variables: nombre, producto, medio_de_pago (la tienda, «OXXO») y vencimiento (el dia en que vence). El
+# boton es el link a la ficha, sin cupon. La salida compra y ficha_vencida (el corte del codigo, hoy > el
+# vencimiento, D-P25-3); contesta no, a proposito: contestar no corta C3 (20261019000800, la secuencia del
+# caso es de una ficha), un «no» claro si (F-150, en el bridge). La base lo abre (20261113200000) y el
+# validador lo deja publicar solo con FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED (NativeRuntime.native_payment_slip).
+NATIVE_PAYMENT_SLIP_TRIGGER = "ficha_impresa"
+NATIVE_PAYMENT_SLIP_MAX_SENDS = 2
+NATIVE_PAYMENT_SLIP_VARIABLES = ("nombre", "producto", "medio_de_pago", "vencimiento")
+# (dias_antes, minutos de a_las): solo C3, el dia del vencimiento a las 09:00.
+NATIVE_PAYMENT_SLIP_DUE_ANCHORS = frozenset({(0, 9 * 60)})
+NATIVE_PAYMENT_SLIP_BUTTON: Mapping[str, str] = MappingProxyType({"link": "ficha"})
+ENGINE_CAPABILITIES_NATIVE_PAYMENT_SLIP = EngineCapabilities(
+    triggers=frozenset({NATIVE_PAYMENT_SLIP_TRIGGER}),
+    step_types=frozenset({"esperar", "plantilla"}),
+    max_sends_per_path=NATIVE_PAYMENT_SLIP_MAX_SENDS,
+    waits_between_sends=True,
+    variables=frozenset(NATIVE_PAYMENT_SLIP_VARIABLES),
+    buttons=frozenset({"ficha"}),
+    exits=frozenset({"compra", "ficha_vencida"}),
+    relations_between_engine_flows_only=True,
+)
 # Las variables del seguimiento, en su orden: las que manda el barrido (FollowupTemplate.params).
 FOLLOWUP_VARIABLES = ("nombre", "producto")
 # La ventana del silencio nativo, en minutos (P22-3, E-269): la del barrido del legado, de 24 a 72 h.
@@ -386,6 +413,8 @@ NATIVE_SILENCE_MAX_MINUTES = 72 * 60
 # esa conversacion, como el seguimiento con cupon del legado.
 NATIVE_PERMISSION_BY_TRIGGER: Mapping[str, str] = MappingProxyType(
     {"compra": "compra", "carrito": "formulario", "pago_fallido": "formulario", "intencion": "formulario",
+     # E-528 (C4): la ficha, con la intencion que la admision v2 correlaciono con esa ficha.
+     NATIVE_PAYMENT_SLIP_TRIGGER: "formulario",
      NATIVE_SILENCE_TRIGGER: "conversacion"})
 # Las capacidades del motor nativo, por disparador (P22-1 de M16, flow-engine-v2 §24). Los tres eventos
 # tienen las de ``ENGINE_CAPABILITIES_NATIVE``; el silencio con lo ultimo del agente (el seguimiento a 24 h
@@ -399,6 +428,8 @@ NATIVE_CAPABILITIES_BY_TRIGGER: Mapping[str, EngineCapabilities] = MappingProxyT
     "carrito": ENGINE_CAPABILITIES_NATIVE_CART_MULTITOUCH,
     NATIVE_PAYMENT_FAILURE_TRIGGER: ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE_MULTITOUCH,
     NATIVE_SILENCE_TRIGGER: ENGINE_CAPABILITIES_NATIVE_SILENCE,
+    # E-528 (C4): la ficha; native_trigger_key la da solo con payment_slip (el flag del bridge).
+    NATIVE_PAYMENT_SLIP_TRIGGER: ENGINE_CAPABILITIES_NATIVE_PAYMENT_SLIP,
 })
 # Con que repite cada disparador nativo: un evento, por persona o por persona y oferta; el silencio, como
 # el legado, una vez por conversacion y nunca otra (el indice unico de ``conversation_followup_events``
@@ -468,16 +499,20 @@ NATIVE_UNSUPPORTED_REPEAT = "motor_nativo:repeticion"
 NATIVE_UNSUPPORTED_PRIORITY = "motor_nativo:prioridad"
 
 
-def native_trigger_key(definition: Mapping[str, Any], *, audience: bool = False) -> str | None:
+def native_trigger_key(definition: Mapping[str, Any], *, audience: bool = False,
+                       payment_slip: bool = False) -> str | None:
     """El disparador nativo de la definicion (``compra``, ``carrito``, ``pago_fallido`` o ``silencio:agente``).
 
     ``None`` si ``dispara`` no es exactamente un evento o un silencio que el motor nativo ejecuta. Con
     ``audience`` (E-483, para E-484: FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED), tambien ``audiencia`` para un
-    disparo por fecha, cada cierto tiempo o manual; sin el, ``None`` como antes.
+    disparo por fecha, cada cierto tiempo o manual; sin el, ``None`` como antes. Con ``payment_slip``
+    (E-528, C4: FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED), tambien ``ficha_impresa``; sin el, ``None``.
     """
     trigger = definition.get("dispara")
     if not isinstance(trigger, Mapping):
         return None
+    if payment_slip and dict(trigger) == {"evento": NATIVE_PAYMENT_SLIP_TRIGGER}:
+        return NATIVE_PAYMENT_SLIP_TRIGGER
     if native_audience_form(definition) is not None:
         return NATIVE_AUDIENCE_TRIGGER if audience else None
     if set(trigger) == {"evento"}:
@@ -746,7 +781,44 @@ def _native_personal_coupon_not_supported(definition: Mapping[str, Any], key: st
         add(f"{NOT_SUPPORTED}:cupones_personales_de_mas")
 
 
-def native_not_supported(definition: Mapping[str, Any], *, audience: bool = False) -> tuple[str, ...]:
+def _native_payment_slip_not_supported(definition: Mapping[str, Any], add: Callable[[str], None]) -> None:
+    """Lo que la ficha nativa exige ademas de sus capacidades (E-528, C4; la base, 20261113200000).
+
+    La forma del legado de ATT1: C1 y, opcional, C3. Antes de C1, solo esperas de duracion (la gracia); entre
+    C1 y C3, exactamente la espera anclada de C3 (``NATIVE_PAYMENT_SLIP_DUE_ANCHORS``); otra ancla, otra
+    espera entre los dos o una espera despues del ultimo, no. El boton, si esta, es el link a la ficha sin
+    cupon. Las variables de cada envio, de ``NATIVE_PAYMENT_SLIP_VARIABLES``, sin repetidas.
+    """
+    steps = definition.get("pasos")
+    if not isinstance(steps, list):
+        return
+    sends = 0
+    anchored = False
+    durations_after_send = False
+    for step in steps:
+        kind = step_type(step)
+        if kind == "esperar" and isinstance(step, Mapping):
+            anchor = parse_due_anchor(step.get("esperar"))
+            if anchor is not None:
+                if sends != 1 or anchored or anchor not in NATIVE_PAYMENT_SLIP_DUE_ANCHORS:
+                    add(f"{NOT_SUPPORTED}:espera_anclada")
+                anchored = True
+            elif sends:
+                durations_after_send = True
+        elif kind == "plantilla" and isinstance(step, Mapping):
+            if sends == 1 and (not anchored or durations_after_send):
+                add(f"{NOT_SUPPORTED}:espera_anclada")
+            button = step.get("boton")
+            if button is not None and (not isinstance(button, Mapping)
+                                       or dict(button) != dict(NATIVE_PAYMENT_SLIP_BUTTON)):
+                add(f"{NOT_SUPPORTED}:boton_ficha")
+            if not native_variables_fit(step.get("variables"), NATIVE_PAYMENT_SLIP_VARIABLES):
+                add(f"{NOT_SUPPORTED}:variables_differ")
+            sends += 1
+
+
+def native_not_supported(definition: Mapping[str, Any], *, audience: bool = False,
+                         payment_slip: bool = False) -> tuple[str, ...]:
     """Lo que el motor nativo no ejecuta de una definicion, en orden; vacio si la ejecuta.
 
     Es la regla 14 de un flujo nativo (flow-engine-v2 §9): lo que la base mira al abrirlo y al admitirlo
@@ -765,6 +837,10 @@ def native_not_supported(definition: Mapping[str, Any], *, audience: bool = Fals
     disparo por audiencia tiene las capacidades de ``ENGINE_CAPABILITIES_NATIVE_AUDIENCE`` y entra con
     permiso ``formulario`` o ``compra``; sin el, ``motor_nativo:disparador`` como cualquier disparador que el
     nativo no ejecuta.
+
+    ``payment_slip`` (E-528, C4, 20261113200000) es FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED: con el, la ficha
+    impresa tiene las capacidades de ``ENGINE_CAPABILITIES_NATIVE_PAYMENT_SLIP`` y la forma de
+    ``_native_payment_slip_not_supported``; sin el, ``motor_nativo:disparador`` como antes.
     """
     found: list[str] = []
 
@@ -772,7 +848,7 @@ def native_not_supported(definition: Mapping[str, Any], *, audience: bool = Fals
         if code not in found:
             found.append(code)
 
-    key = native_trigger_key(definition, audience=audience)
+    key = native_trigger_key(definition, audience=audience, payment_slip=payment_slip)
     if key is None:
         add(NATIVE_UNSUPPORTED_TRIGGER)
     capabilities = ENGINE_CAPABILITIES_NATIVE_AUDIENCE if key == NATIVE_AUDIENCE_TRIGGER \
@@ -808,7 +884,10 @@ def native_not_supported(definition: Mapping[str, Any], *, audience: bool = Fals
         _native_silence_not_supported(definition, add)
     if key == NATIVE_PAYMENT_FAILURE_TRIGGER:
         _native_payment_failure_not_supported(definition, add)
-    _native_personal_coupon_not_supported(definition, key, add)
+    if key == NATIVE_PAYMENT_SLIP_TRIGGER:
+        _native_payment_slip_not_supported(definition, add)
+    else:
+        _native_personal_coupon_not_supported(definition, key, add)
     return tuple(found)
 
 

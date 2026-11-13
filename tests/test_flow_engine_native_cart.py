@@ -104,7 +104,9 @@ def test_the_native_engine_runs_the_one_touch_cart() -> None:
     # El silencio del agente (P22-1 de M16) entra con conversacion: test_flow_engine_native_silence.py.
     # El formulario (intencion, E-252) entra con formulario: test_flow_engine_native_intent.py.
     assert dict(NATIVE_PERMISSION_BY_TRIGGER) == {"compra": "compra", "carrito": "formulario", "pago_fallido": "formulario",
-                                                  "intencion": "formulario", "silencio:agente": "conversacion"}
+                                                  "intencion": "formulario", "silencio:agente": "conversacion",
+                                                  # E-528 (C4, 20261113200000): la ficha, con su intencion.
+                                                  "ficha_impresa": "formulario"}
 
 
 @pytest.mark.parametrize(("change", "code"), [
