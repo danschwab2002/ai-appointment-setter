@@ -1292,7 +1292,10 @@ def _render_timeline(record: Mapping[str, Any], time_zone: str | None, me: str |
 
 
 def _render_closed(record: Mapping[str, Any], proposal_id: str, time_zone: str | None, me: str | None) -> str:
-    """El lado de una propuesta cerrada: como termino, quien, y la version que genero. Sin botones."""
+    """El lado de una propuesta cerrada: como termino, quien, y la version que genero.
+
+    Sin botones; los de los flujos de una publicada los suma ``_render_proposal`` (E-486).
+    """
     status = str(record.get("effective_status") or record.get("status"))
     if status == "publicada":
         parts = ['<div class="notice notice--ok"><p>Esta propuesta ya está publicada: es solo lectura.</p></div>']
@@ -1363,7 +1366,7 @@ def _render_version(flow: Mapping[str, Any], number: int, definition: Mapping[st
 def _render_proposal(proposal: Mapping[str, Any], others: list[Mapping[str, Any]], *, actions: str = "",
                      done: Mapping[str, str] | None = None, flows: list[Mapping[str, Any]] | None = None,
                      record: Mapping[str, Any] | None = None, time_zone: str | None = None,
-                     me: str | None = None) -> str:
+                     me: str | None = None, csrf: str | None = None) -> str:
     status = proposal.get("effective_status") or proposal.get("status")
     validation = proposal.get("validation") if isinstance(proposal.get("validation"), Mapping) else {}
     preview = validation.get("preview") if isinstance(validation.get("preview"), Mapping) else {}
@@ -1474,6 +1477,14 @@ def _render_proposal(proposal: Mapping[str, Any], others: list[Mapping[str, Any]
                 f'<div class="actions">{actions}{back}</div></aside>')
     else:
         closed = _render_closed(record or proposal, str(proposal.get("proposal_id")), time_zone, me)
+        # E-486 (8b): una publicada cuyo flujo sigue en cohorte deja sumar un
+        # telefono (y pausar), con el estado de ahora del flujo. Descartada o
+        # vencida, sin botones. Misma ruta, misma base: nada nuevo se escribe.
+        if str(status) == "publicada" and csrf:
+            forms = touched_flow_forms(proposal, proposal_id=str(proposal.get("proposal_id")),
+                                       csrf=csrf, flows=flows)
+            if forms:
+                closed += f'<div class="divider"></div><h3>Los flujos de esta propuesta</h3>{forms}'
         side = (f'<aside class="panel panel--side"><div class="panel-heading"><h2>Cómo terminó</h2>'
                 "<p>Una propuesta cerrada no se aprueba ni se descarta.</p></div>"
                 f'<div class="actions">{closed}{back}</div></aside>')
@@ -1625,13 +1636,19 @@ def _render_actions(proposal: Mapping[str, Any], *, proposal_id: str, csrf: str,
                      f'<input type="text" name="motivo" maxlength="{DISCARD_REASON_MAX}" autocomplete="off" required>'
                      '</label><button type="submit">Descartar este pedido</button>'
                      f'<p class="meta">{_esc(DISCARD_HELP)}</p></form>')
-    touched = {(item.get("producto"), item.get("flujo")) for item in proposal.get("items") or []
-               if isinstance(item, Mapping)}
-    forms = "".join(_flow_forms(flow, csrf, proposal_id) for flow in flows
-                    if isinstance(flow, Mapping) and (flow.get("product_ref"), flow.get("flow_key")) in touched)
+    forms = touched_flow_forms(proposal, proposal_id=proposal_id, csrf=csrf, flows=flows)
     if forms:
         parts.append(f'<div class="divider"></div><h3>Los flujos de esta propuesta</h3>{forms}')
     return "".join(parts)
+
+
+def touched_flow_forms(proposal: Mapping[str, Any], *, proposal_id: str, csrf: str,
+                       flows: list[Mapping[str, Any]]) -> str:
+    """Pausar y sumar a la cohorte, para los flujos que toca la propuesta (con su estado de ahora)."""
+    touched = {(item.get("producto"), item.get("flujo")) for item in proposal.get("items") or []
+               if isinstance(item, Mapping)}
+    return "".join(_flow_forms(flow, csrf, proposal_id) for flow in flows
+                   if isinstance(flow, Mapping) and (flow.get("product_ref"), flow.get("flow_key")) in touched)
 
 
 # Lo que dice el boton de descartar (E-235, 2): descarta la propuesta, no el flujo.
@@ -1982,7 +1999,7 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
         done = _done_from_query(request, config, secret)
         actions = _render_actions(found, proposal_id=proposal_id, csrf=csrf, flows=_flows_of(snapshot), done=done)
         body = _render_proposal(found, rows, actions=actions, done=done, flows=_flows_of(snapshot), record=record,
-                                time_zone=time_zone, me=user)
+                                time_zone=time_zone, me=user, csrf=csrf)
         return HTMLResponse(_shell("Propuesta", body, user=user, csrf=csrf))
 
     async def _record(secret: str, proposal_id: str) -> dict[str, Any] | Response | None:

@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -586,6 +587,51 @@ def test_invalid_reactivation_configuration_refuses_to_start(
             supabase_client=_FakeSupabase(),  # type: ignore[arg-type]
         )
     assert "conversation reactivation configuration" in str(error.value)
+
+
+def test_the_reactivation_stop_on_a_clear_no_follows_the_manifest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # E-486 (item 5): sin manifiesto (Johanna) la reactivacion queda como hoy;
+    # con manifiesto (ATT1, Maribel) un no claro del lead la corta.
+    import bridge.app as app_module
+
+    assert app_module._reactivation_stops_on_lead_decline(_settings()) is False
+    assert (
+        app_module._reactivation_stops_on_lead_decline(
+            replace(_settings(), instance_manifest=object())  # type: ignore[arg-type]
+        )
+        is True
+    )
+
+    from bridge.chatwoot import ChatwootClient
+
+    def _app() -> object:
+        return create_app(
+            _reactivation_settings(),
+            supabase_client=_FakeSupabase(),  # type: ignore[arg-type]
+            chatwoot_client=ChatwootClient(
+                base_url="https://chatwoot.example.test",
+                account_id=1,
+                access_token="control-token",
+                agent_bot_access_token="agent-bot-token",
+                agent_bot_id=1,
+                reply_dir=tmp_path,
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(404, json={})
+                ),
+            ),
+        )
+
+    app = _app()
+    assert app.state.conversation_reactivation_sweeper._stop_on_lead_decline is False
+
+    # El barredor recibe lo que decide la regla, no un valor fijo.
+    monkeypatch.setattr(
+        app_module, "_reactivation_stops_on_lead_decline", lambda settings: True
+    )
+    app = _app()
+    assert app.state.conversation_reactivation_sweeper._stop_on_lead_decline is True
 
 
 def test_the_reactivation_configuration_is_validated_even_when_disabled() -> None:

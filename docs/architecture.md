@@ -217,8 +217,8 @@ avance de conversación, idempotencia e identidad exclusiva del AgentBot.
 La división outbound opcional, implementada localmente pero apagada por defecto,
 consulta el mismo API server Hermes con `provider`
 y modelo pequeño explícitos. El prompt por request sólo propone cortes; el bridge
-exige 1–3 partes y reconstrucción del texto original (una respuesta de menos de
-160 caracteres sale en una parte sin consultar al modelo), y aplica fallback a una
+exige 1–2 partes (1–3 hasta la 1.36.0) y reconstrucción del texto original (una respuesta de menos de
+280 caracteres (160 hasta la 1.36.0) sale en una parte sin consultar al modelo), y aplica fallback a una
 sola parte persistida si el modelo no cumple el contrato. Un fallo de almacenamiento
 falla cerrado antes de cualquier POST. La división válida se persiste
 en el volumen privado antes del primer envío como un manifiesto inmutable

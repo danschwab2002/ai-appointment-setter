@@ -425,3 +425,11 @@ def test_send_first_message_marks_only_the_retry() -> None:
                                    agent_bot_access_token="b", agent_bot_id=2)
                     .send_first_message(conversation_id=1, content="x", delivery_id="d",
                                         purchase_welcome=True, retry_of_message_id=5))
+
+
+def test_a_rejection_with_the_error_as_json_inside_a_string_keeps_its_code() -> None:
+    # E-486: la forma que la QA del 12/11 contaba sin codigo.
+    [rejection] = find_rejections(
+        _entry('{"code": 131049, "title": "Healthy ecosystem engagement"}'), inbox_id=INBOX
+    )
+    assert rejection.code == "131049"

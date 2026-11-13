@@ -102,7 +102,20 @@ def test_the_distribution_copies_the_plugin_and_names_its_variables() -> None:
                                         "list_chatwoot_labels", "create_chatwoot_label",
                                         "add_chatwoot_label_to_conversation", "list_chatwoot_macros",
                                         "create_chatwoot_label_macro", "preview_campaign", "propose_campaign",
-                                        "validate_campaign", "get_campaign", "list_campaigns"]
+                                        "validate_campaign", "get_campaign", "list_campaigns",
+                                        "get_approval_page", "add_to_test_group"]
+
+
+def test_the_soul_sends_the_approval_page_without_a_proposal() -> None:
+    # E-465: el agente le dijo a Dan que la pagina solo se abre con el boton de una propuesta y que vale
+    # 24 horas. La pagina se abre siempre; lo que vence es la propuesta validada.
+    soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
+    assert "**La página de aprobación se abre siempre, sin propuesta.**" in soul
+    assert "«Entrar con Slack»" in soul and "no armes un cambio para que aparezca" in soul
+    assert "el botón vale 24 horas" not in soul
+    assert "la propuesta validada vale 24 horas" in soul
+    for path in ("flujos/crear-un-flujo", "flujos/pasar-flujo-al-sistema-nuevo"):
+        assert "`get_approval_page`" in _skill(path), path
 
 
 def test_the_soul_never_asks_for_a_phone_or_a_mail() -> None:
@@ -778,3 +791,15 @@ def test_the_skills_say_where_the_offer_of_a_campaign_comes_from() -> None:
     assert "campaign_offer_not_verified" in campaign and "pasa a una persona" in campaign
     hotmart = _skill("plataformas/hotmart")
     assert "`off=`" in hotmart and "no lo inventes" in hotmart
+
+
+def test_the_soul_lets_an_approver_hand_over_the_test_group_phone() -> None:
+    # E-486 (D14, aprobada por Dan el 12/11): el AE acepta el numero de
+    # conversacion o el telefono para el grupo de prueba, nunca lo pide primero.
+    soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
+    assert "El teléfono del grupo de prueba lo carga el aprobador en la página (el link de `get_approval_page`), nunca en este chat." not in soul
+    assert "`add_to_test_group`" in soul and "Yo nunca lo pido primero" in soul
+    assert "¿Querés que sume a alguien al grupo de prueba?" in soul
+    for skill in ("crear-un-flujo", "pasar-flujo-al-sistema-nuevo"):
+        text = (PROFILE / "skills" / "flujos" / skill / "SKILL.md").read_text(encoding="utf-8")
+        assert "`add_to_test_group`" in text and "¿Querés que sume a alguien al grupo de prueba?" in text, skill

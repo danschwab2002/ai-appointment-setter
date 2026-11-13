@@ -33,6 +33,14 @@ from collections import Counter
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
+from bridge.lead_decline import (
+    DECLARED_PAYMENT_HOLD_SECONDS,
+    LEAD_DECLARED_PAYMENT,
+    LEAD_DECLINED,
+    detect_declared_payment,
+    detect_lead_decline,
+)
+from bridge.recovery_coupon_reply import prospect_texts_after_last_template
 from bridge.chatwoot import (
     ChatwootProtocolError,
     TeamMessageTimestampError,
@@ -288,6 +296,7 @@ def evaluate_reactivation_candidate(
     max_inbound_age_seconds: int = DEFAULT_MAX_INBOUND_AGE_SECONDS,
     quiet_seconds_threshold: int = 28_800,
     allowed_phone: str | None = None,
+    stop_on_lead_decline: bool = False,
 ) -> ReactivationDecision:
     """Decidir si una conversacion recibe la plantilla de reactivacion.
 
@@ -404,6 +413,23 @@ def evaluate_reactivation_candidate(
     if quiet_seconds is not None and quiet_seconds < quiet_seconds_threshold:
         return _skip("team_recently_active")
 
+    # E-486: un «no» claro o un pago declarado en las ultimas 72 h, lo mismo
+    # que frena el seguimiento con cupon. Apagado por defecto: el barredor sin
+    # manifiesto (Johanna) queda como estaba.
+    if stop_on_lead_decline:
+        history = [message for message in messages if isinstance(message, dict)]
+        if detect_lead_decline(prospect_texts_after_last_template(history)) is not None:
+            return _skip(LEAD_DECLINED)
+        since = now_epoch - DECLARED_PAYMENT_HOLD_SECONDS
+        recent = [
+            message
+            for message in history
+            if not isinstance(message.get("created_at"), int)
+            or message["created_at"] >= since
+        ]
+        if detect_declared_payment(prospect_texts_after_last_template(recent)) is not None:
+            return _skip(LEAD_DECLARED_PAYMENT)
+
     message_id = last_message.get("id")
     assert isinstance(message_id, int)
     return ReactivationDecision(
@@ -455,6 +481,7 @@ class ConversationReactivationSweeper:
         max_pages: int = 5,
         allowed_phone: str | None = None,
         clock: Callable[[], float] = time.time,
+        stop_on_lead_decline: bool = False,
     ) -> None:
         if (
             not isinstance(inbox_id, int)
@@ -489,6 +516,7 @@ class ConversationReactivationSweeper:
         self._max_sends_per_scan = max_sends_per_scan
         self._max_pages = max_pages
         self._allowed_phone = allowed_phone
+        self._stop_on_lead_decline = stop_on_lead_decline
         self._clock = clock
         self._task: asyncio.Task[None] | None = None
         self._stopping = asyncio.Event()
@@ -583,6 +611,7 @@ class ConversationReactivationSweeper:
                     max_inbound_age_seconds=self._max_inbound_age_seconds,
                     quiet_seconds_threshold=self._quiet_seconds_threshold,
                     allowed_phone=self._allowed_phone,
+                    stop_on_lead_decline=self._stop_on_lead_decline,
                 )
             except TeamMessageTimestampError:
                 motivos["team_message_timestamp_invalid"] += 1

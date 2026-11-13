@@ -26,6 +26,7 @@ VARIABLES = (
     "HANDOFF_WAIT_ALERT_AFTER_HOURS",
     "HANDOFF_WAIT_ALERT_MAX_AGE_HOURS",
     "HANDOFF_WAIT_ALERT_INTERVAL_SECONDS",
+    "HANDOFF_WAIT_ALERT_WINDOW_WARNING_HOURS",
 )
 
 
@@ -81,6 +82,7 @@ def test_everything_is_off_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path:
     assert settings.handoff_wait_alert_after_hours == 2
     assert settings.handoff_wait_alert_max_age_hours == 168
     assert settings.handoff_wait_alert_interval_seconds == 600.0
+    assert settings.handoff_wait_alert_window_warning_hours == 2
     app = _att1_app(tmp_path)
     assert app.state.handoff_wait_alert_sweeper is None
     assert not any(key.startswith("handoff_wait") for key in _get_ready(app))
@@ -91,6 +93,7 @@ def test_the_variables_are_read_from_the_environment(monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("HANDOFF_WAIT_ALERT_AFTER_HOURS", "3")
     monkeypatch.setenv("HANDOFF_WAIT_ALERT_MAX_AGE_HOURS", "72")
     monkeypatch.setenv("HANDOFF_WAIT_ALERT_INTERVAL_SECONDS", "900")
+    monkeypatch.setenv("HANDOFF_WAIT_ALERT_WINDOW_WARNING_HOURS", "4")
     # Prendido sin manifiesto no arranca; los valores se leen igual.
     with pytest.raises(ValueError, match="requires an instance manifest"):
         app_module._validate_handoff_wait_alerts(_settings_from_env(monkeypatch))
@@ -99,6 +102,7 @@ def test_the_variables_are_read_from_the_environment(monkeypatch: pytest.MonkeyP
     assert settings.handoff_wait_alert_after_hours == 3
     assert settings.handoff_wait_alert_max_age_hours == 72
     assert settings.handoff_wait_alert_interval_seconds == 900.0
+    assert settings.handoff_wait_alert_window_warning_hours == 4
 
 
 @pytest.mark.parametrize(
@@ -124,6 +128,7 @@ def test_the_ranges_are_checked_even_when_off(monkeypatch: pytest.MonkeyPatch) -
         ("handoff_wait_alert_after_hours", 73, "1-72"),
         ("handoff_wait_alert_max_age_hours", 12, "24-720"),
         ("handoff_wait_alert_interval_seconds", 10.0, "60-3600"),
+        ("handoff_wait_alert_window_warning_hours", 21, "1-20"),
     ):
         with pytest.raises(ValueError, match=message):
             app_module._validate_handoff_wait_alerts(replace(base, **{field: value}))
@@ -163,3 +168,4 @@ def test_the_business_hour_variables_of_e309_are_gone(monkeypatch: pytest.Monkey
     for name in ("handoff_wait_alert_after_business_hours", "handoff_wait_alert_business_hours",
                  "handoff_wait_alert_business_days"):
         assert not hasattr(settings, name)
+

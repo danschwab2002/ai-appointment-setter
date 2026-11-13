@@ -54,8 +54,11 @@ from bridge.opt_out import (
 )
 
 __all__ = [
+    "DECLARED_PAYMENT_HOLD_SECONDS",
+    "LEAD_DECLARED_PAYMENT",
     "LEAD_DECLINED",
     "LeadDeclineMatch",
+    "detect_declared_payment",
     "detect_lead_decline",
 ]
 
@@ -172,6 +175,91 @@ def detect_lead_decline(messages: Sequence[object]) -> LeadDeclineMatch | None:
         ):
             continue
         rule_key = _match_message(message, first=index == 0)
+        if rule_key is not None:
+            return LeadDeclineMatch(rule_key=rule_key, message_index=index)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# E-486 (v1.37.0, item 5): el pago declarado.
+#
+# «voy a hacer el pago en OXXO» (Maribel #9, 29/10) y «ya pague» no frenaban
+# nada: solo la ficha registrada por Hotmart frena el seguimiento. Una segunda
+# lista corta, leida igual que la del rechazo (lo escrito despues de nuestra
+# ultima plantilla, afirmado, ni preguntado ni citado), frena por 72 h el
+# seguimiento con cupon, la renovacion por respuesta y la reactivacion. No es un
+# rechazo ni una baja: si la persona vuelve a escribir, el agente la atiende.
+#
+# Mas permisiva que la del rechazo en lo que rodea a la frase («ya pague, te
+# mando el comprobante» cuenta): frenar 72 h a quien dijo que paga cuesta poco;
+# mandarle el 10 % a quien ya pago, la confianza. «¿Puedo pagar en OXXO?» no
+# cuenta: es una pregunta. «Todavia no pague» tampoco: la negacion queda fuera
+# de la frase.
+# ---------------------------------------------------------------------------
+
+LEAD_DECLARED_PAYMENT = "lead_declared_payment"
+DECLARED_PAYMENT_HOLD_SECONDS = 72 * 3600
+
+_PAY_VERB = (
+    r"(?:pagar|hacer (?:el|mi) pago|realizar (?:el|mi) pago|depositar"
+    r"|hacer (?:el|mi) deposito|pagarlo|pagarla)"
+)
+_PAY_NOW = r"(?:pago|hago (?:el|mi) pago|realizo (?:el|mi) pago|deposito|lo pago)"
+_WHEN = r"(?:manana|ahorita|ahora|hoy|al rato|en un rato|mas tarde|en la tarde|en la noche)"
+_TAIL = r"(?: [a-z0-9 ]{0,80})?"
+
+_PAYMENT_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "already_paid",
+        re.compile(
+            _PREFIX
+            + r"(?:ya )?(?:lo |la )?(?:pague|hice (?:el|mi) pago|realice (?:el|mi) pago"
+            + r"|deposite|hice (?:el|mi) deposito|acabo de pagar|termine de pagar)"
+            + _TAIL
+        ),
+    ),
+    (
+        "will_pay",
+        re.compile(
+            _PREFIX
+            + r"(?:(?:ya |si |bueno )?(?:lo |la )?(?:voy a|vamos a|ire a) " + _PAY_VERB
+            + r"|" + _WHEN + r" (?:mismo )?" + _PAY_NOW + r")"
+            + _TAIL
+        ),
+    ),
+)
+
+
+def _match_payment_message(message: str) -> str | None:
+    for clause in _clauses(message):
+        if _is_quoted_or_referenced(clause) or _is_question(clause):
+            continue
+        normalized = _normalize(clause)
+        # «voy a pagar si me hacen el descuento» es una condicion, no un pago
+        # declarado: un «si» despues de la primera palabra no cuenta.
+        if "si" in normalized.split()[1:]:
+            continue
+        for rule_key, pattern in _PAYMENT_RULES:
+            if pattern.fullmatch(normalized):
+                return rule_key
+    return None
+
+
+def detect_declared_payment(messages: Sequence[object]) -> LeadDeclineMatch | None:
+    """El primer «ya pague» / «voy a pagar» afirmado de la persona, o None.
+
+    ``messages`` son los textos de la persona despues de nuestra ultima
+    plantilla, en orden (el que llama recorta las 72 h, que necesitan la hora
+    de cada mensaje).
+    """
+    for index, message in enumerate(messages):
+        if (
+            not isinstance(message, str)
+            or len(message) > MAX_MESSAGE_CHARS
+            or _is_quoted_or_referenced(message)
+        ):
+            continue
+        rule_key = _match_payment_message(message)
         if rule_key is not None:
             return LeadDeclineMatch(rule_key=rule_key, message_index=index)
     return None

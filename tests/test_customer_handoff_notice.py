@@ -338,3 +338,16 @@ def test_without_the_handoff_admission_it_does_not_start(tmp_path: Path) -> None
         match="CUSTOMER_HANDOFF_NOTICE_ENABLED requires HUMAN_HANDOFF_ADMISSION_ENABLED",
     ):
         create_app(settings, chatwoot_client=StubChatwootClient())
+
+
+@pytest.fixture(autouse=True)
+def _inside_service_hours(monkeypatch: pytest.MonkeyPatch) -> None:
+    """E-486: el aviso depende de la hora; estos tests derivan dentro del
+    horario (martes 10/11, 11:00 de Ciudad de Mexico), con la frase sola."""
+    from datetime import UTC, datetime
+
+    from bridge import handoff_notice
+
+    monkeypatch.setattr(
+        handoff_notice, "current_time", lambda: datetime(2026, 11, 10, 17, 0, tzinfo=UTC)
+    )

@@ -21,19 +21,23 @@ from bridge.reply_splitter import (
 # el modelo partió en 3 globos en Maribel (29/10), de unos 75 caracteres.
 _CUOTAS = (
     "Sí, podés pagar en cuotas: el checkout te muestra las opciones de tu "
-    "tarjeta antes de confirmar."
+    "tarjeta antes de confirmar, y si tu banco no las ofrece, el pago queda "
+    "en una sola vez."
 )
 _PAIS = (
     "¿Desde qué país operás? Así te confirmo qué medios de pago te aparecen "
-    "y si te conviene pagar en tu moneda."
+    "y si te conviene pagar en tu moneda o en dólares con la tarjeta que ya "
+    "usás."
 )
 _PRIMERA = (
     "Primera parte de una respuesta larga, con el detalle del programa, "
-    "cómo se accede y qué incluye."
+    "cómo se accede, qué incluye y cuánto tiempo queda abierto el acceso "
+    "después de la compra."
 )
 _SEGUNDA = (
     "Segunda parte, con la pregunta que sigue para entender qué necesitás "
-    "antes de pasarte el enlace de pago."
+    "antes de pasarte el enlace de pago, sin apurarte ni repetir lo que ya "
+    "hablamos."
 )
 _LARGA = f"{_PRIMERA} {_SEGUNDA}"
 _CORTA_DE_MARIBEL = (
@@ -94,7 +98,7 @@ def test_splits_reply_with_semantic_batch_identity_and_reuses_the_manifest(
     assert request_body["messages"][1] == {
         "role": "user",
         "content": json.dumps(
-            {"reply": reply, "max_parts": 3},
+            {"reply": reply, "max_parts": 2},
             ensure_ascii=False,
         ),
     }
@@ -558,7 +562,7 @@ def test_short_reply_stays_in_one_bubble_without_calling_the_model(
     assert claim_path.read_text(encoding="utf-8") == "claimed\n"
 
 
-def test_short_reply_threshold_is_160_characters(tmp_path: Path) -> None:
+def test_short_reply_threshold_is_280_characters(tmp_path: Path) -> None:
     under: list[httpx.Request] = []
     at: list[httpx.Request] = []
     reply_under = "a" * (SHORT_REPLY_MAX_CHARS - 1)
@@ -575,33 +579,50 @@ def test_short_reply_threshold_is_160_characters(tmp_path: Path) -> None:
         ).split(conversation_id=9, trigger_message_id=91, reply=reply_at)
     )
 
-    assert SHORT_REPLY_MAX_CHARS == 160
+    # E-486 (D12): 160 -> 280.
+    assert SHORT_REPLY_MAX_CHARS == 280
     assert under_result == (reply_under,)
     assert under == []
     assert at_result == ("a" * (SHORT_REPLY_MAX_CHARS - 2), "b")
     assert len(at) == 1
 
 
-def test_long_reply_accepts_three_parts_and_asks_for_three_at_most(
+def test_long_reply_accepts_two_parts_and_asks_for_two_at_most(
     tmp_path: Path,
 ) -> None:
+    # E-486 (D12): el tope baja de 3 a 2 globos.
     requests: list[httpx.Request] = []
-    splitter = _splitter_with(tmp_path, [_CUOTAS, _PRIMERA, _PAIS], requests)
-    reply = f"{_CUOTAS} {_PRIMERA} {_PAIS}"
+    splitter = _splitter_with(tmp_path, [_CUOTAS, _PAIS], requests)
+    reply = f"{_CUOTAS} {_PAIS}"
 
     result = asyncio.run(
         splitter.split(conversation_id=10, trigger_message_id=100, reply=reply)
     )
 
-    assert result == (_CUOTAS, _PRIMERA, _PAIS)
-    assert MAX_REPLY_PARTS == 3
+    assert result == (_CUOTAS, _PAIS)
+    assert MAX_REPLY_PARTS == 2
     body = json.loads(requests[0].content)
     assert json.loads(body["messages"][1]["content"]) == {
         "reply": reply,
-        "max_parts": 3,
+        "max_parts": 2,
     }
-    assert "between 1 and 3" in body["messages"][0]["content"]
-    assert "4" not in body["messages"][0]["content"]
+    assert "between 1 and 2" in body["messages"][0]["content"]
+    assert "3" not in body["messages"][0]["content"]
+
+
+def test_three_paragraphs_never_go_out_in_three_bubbles(tmp_path: Path) -> None:
+    # E-486 (D12): un reply de 3 parrafos de ~200 caracteres; el modelo lo
+    # parte en 3 y el bridge lo manda en un globo (antes, 3 globos).
+    requests: list[httpx.Request] = []
+    splitter = _splitter_with(tmp_path, [_CUOTAS, _PRIMERA, _PAIS], requests)
+    reply = f"{_CUOTAS} {_PRIMERA} {_PAIS}"
+
+    result = asyncio.run(
+        splitter.split(conversation_id=10, trigger_message_id=101, reply=reply)
+    )
+
+    assert len(result) <= 2
+    assert result == (reply,)
 
 
 def test_long_reply_split_in_four_falls_back_to_one_bubble(

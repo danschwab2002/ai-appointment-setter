@@ -133,7 +133,11 @@ from bridge.payment_link_coupon import (
 from bridge.segment_labels import NativeSegmentLabelPlan, NativeSegmentLabels
 from bridge.purchase_agent_pause import PurchaseAgentPause
 from bridge.followup_steps import FOLLOWING_STEP_TRIGGERS
-from bridge.lead_decline import LEAD_DECLINED
+from bridge.lead_decline import (
+    DECLARED_PAYMENT_HOLD_SECONDS,
+    LEAD_DECLARED_PAYMENT,
+    LEAD_DECLINED,
+)
 from bridge.payment_slip_reminders import PAYMENT_SLIP_STEPS
 from bridge.phones import equivalent_whatsapp_phones, whatsapp_phone_region
 from bridge.product_routes import HotmartUnrouted, ProductRoute, ProductRoutes
@@ -1095,6 +1099,9 @@ class DurableDispatcher:
         # lead_declined. Contestar sin un «no» claro lo sigue dejando salir
         # (20261019000800).
         self._declined_after_anchor: set[str] = set()
+        # E-486 (item 5.2): acciones cuya persona escribio «ya pague» o «voy a
+        # pagar» despues del toque anterior, en las ultimas 72 h.
+        self._declared_payment_after_anchor: set[str] = set()
         # E-339: los segmentos del agente (None con AGENT_SEGMENTS_ENABLED
         # apagado) y, por accion, la clave del segmento con cupon que vio la
         # lectura canonica: A2 y Z no le ofrecen otro cupon a esa persona.
@@ -1405,6 +1412,15 @@ class DurableDispatcher:
                         self._declined_after_anchor.add(action.action_id)
                     else:
                         self._declined_after_anchor.discard(action.action_id)
+                    if (
+                        snapshot.declared_payment_at is not None
+                        and snapshot.declared_payment_at
+                        >= datetime.fromisoformat(now).timestamp()
+                        - DECLARED_PAYMENT_HOLD_SECONDS
+                    ):
+                        self._declared_payment_after_anchor.add(action.action_id)
+                    else:
+                        self._declared_payment_after_anchor.discard(action.action_id)
                     if self._segment_catalog is not None:
                         campaign = segment_coupon_for_labels(
                             self._segment_catalog,
@@ -1565,6 +1581,16 @@ class DurableDispatcher:
                 # sea una frase de baja no corta el recordatorio»).
                 return _ApprovedTemplateComposition(
                     failure_reason=LEAD_DECLINED,
+                    retryable=False,
+                )
+            if (
+                cart_step or refusal_step
+            ) and action.action_id in self._declared_payment_after_anchor:
+                # E-486 (item 5.2, Maribel #9): «ya pague» o «voy a pagar en
+                # OXXO» en las ultimas 72 h. A2, Z y B2 no salen y no se
+                # reintentan: la ficha puede no haber llegado a Hotmart.
+                return _ApprovedTemplateComposition(
+                    failure_reason=LEAD_DECLARED_PAYMENT,
                     retryable=False,
                 )
             if cart_step:
@@ -2698,6 +2724,7 @@ class DurableDispatcher:
         decisions: list[ReevaluationDecision] = []
         self._native_purchase_buyers.clear()
         self._declined_after_anchor.clear()
+        self._declared_payment_after_anchor.clear()
         self._segment_coupon_after_anchor.clear()
         for action in actions:
             evidence = await self._load_chatwoot_evidence(action=action, now=now)

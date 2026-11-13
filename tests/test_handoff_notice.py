@@ -310,3 +310,45 @@ def test_only_an_agent_message_marked_as_handoff_counts_as_a_prior_notice() -> N
     assert handoff_notice_already_sent([notice]) is True
     assert handoff_notice_already_sent([reply, private, from_team]) is False
     assert handoff_notice_already_sent([]) is False
+
+
+@pytest.fixture(autouse=True)
+def _inside_service_hours(monkeypatch: pytest.MonkeyPatch) -> None:
+    """E-486: el aviso depende de la hora; estos tests derivan dentro del
+    horario (martes 10/11, 11:00 de Ciudad de Mexico), con la frase sola."""
+    from datetime import UTC, datetime
+
+    from bridge import handoff_notice
+
+    monkeypatch.setattr(
+        handoff_notice, "current_time", lambda: datetime(2026, 11, 10, 17, 0, tzinfo=UTC)
+    )
+
+
+# ------------------------------------- E-486: «para que la revise» y horario
+
+
+def test_the_notice_no_longer_promises_an_answer() -> None:
+    # D1 (Dan, 12/11): el conocimiento prohibe anunciar que alguien responde.
+    assert HANDOFF_NOTICE_TEXT == "Le paso tu consulta al equipo para que la revise."
+    assert "responden" not in HANDOFF_NOTICE_TEXT
+
+
+def test_outside_service_hours_the_notice_says_when_the_team_works(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import UTC, datetime
+
+    from bridge import handoff_notice
+
+    # Viernes 13/11 20:00 de Ciudad de Mexico = sabado 02:00Z: fuera.
+    monkeypatch.setattr(
+        handoff_notice, "current_time", lambda: datetime(2026, 11, 14, 2, 0, tzinfo=UTC)
+    )
+    chatwoot, _ = _derive(tmp_path)
+
+    [reply] = chatwoot.reply_calls
+    assert reply["content"] == (
+        "Le paso tu consulta al equipo para que la revise. El equipo atiende "
+        "de lunes a sábado de 09:00 a 20:00 (hora de Ciudad de México)."
+    )

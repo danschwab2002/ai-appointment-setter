@@ -620,3 +620,9 @@ def test_without_a_manifest_it_does_not_start(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="instance manifest"):
         create_app(settings)
+
+
+@pytest.mark.parametrize("text", ["Ya pagué en OXXO", "voy a pagar en OXXO mañana"])
+def test_a_declared_payment_does_not_renew(text: str) -> None:
+    # E-486: «ya pagué en OXXO» a A2 disparaba Z en el acto.
+    assert reply_may_renew([_ours(13, "A2", template=True), _contact(14, text)]) is False

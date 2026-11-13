@@ -51,7 +51,13 @@ from bridge.business_auto_reply import TEMPLATE_MARKERS
 from bridge.flow_schedule import Franja, is_open
 from bridge.chatwoot import ChatwootProtocolError
 from bridge.checkout_issuance import generate_issuance_ulid
-from bridge.lead_decline import LEAD_DECLINED, detect_lead_decline
+from bridge.lead_decline import (
+    DECLARED_PAYMENT_HOLD_SECONDS,
+    LEAD_DECLARED_PAYMENT,
+    LEAD_DECLINED,
+    detect_declared_payment,
+    detect_lead_decline,
+)
 from bridge.lead_first_name import resolve_greeting_name, template_greeting_name_is_safe
 from bridge.payment_link_coupon import SEGMENT_COUPON_ACTIVE, segment_coupon_for_labels
 from bridge.phones import equivalent_whatsapp_phones, same_whatsapp_phone
@@ -132,8 +138,15 @@ _SUMMARY_TOP_REASONS = 4
 # vigente (los dos los decide la reserva en la base, 20261101000300). Cada uno
 # se loguea una vez por conversacion y por proceso, con el numero de la
 # conversacion y nada mas, para medir 7 dias cuantos seguimientos frena (D3).
+# E-486: el pago declarado («ya pague», «voy a pagar en OXXO») en las ultimas
+# 72 h, con el mismo flag y el mismo log que el «no» claro.
 FOLLOWUP_STOP_REASONS = frozenset(
-    {LEAD_DECLINED, "blocked_after_last_touch", "blocked_pending_payment"}
+    {
+        LEAD_DECLINED,
+        LEAD_DECLARED_PAYMENT,
+        "blocked_after_last_touch",
+        "blocked_pending_payment",
+    }
 )
 
 
@@ -471,6 +484,8 @@ def _is_our_template(message: dict[str, object]) -> bool:
 
 def _inbound_texts_after_last_template(
     conversational: Sequence[dict[str, object]],
+    *,
+    since_epoch: int | None = None,
 ) -> list[object]:
     """Lo que escribio la persona despues de nuestra ultima plantilla, en orden.
 
@@ -488,7 +503,14 @@ def _inbound_texts_after_last_template(
     return [
         message.get("content")
         for message in ordered[last_template + 1 :]
-        if message.get("message_type") == 0 and _sender_type(message) == "contact"
+        if message.get("message_type") == 0
+        and _sender_type(message) == "contact"
+        and (
+            since_epoch is None
+            # Sin hora legible, cuenta: el error barato es no mandar el cupon.
+            or not isinstance(message.get("created_at"), int)
+            or message["created_at"] >= since_epoch  # type: ignore[operator]
+        )
     ]
 
 
@@ -657,6 +679,15 @@ def evaluate_followup_candidate(
         _inbound_texts_after_last_template(conversational)
     ) is not None:
         return _skip(LEAD_DECLINED)
+    # E-486: «ya pague» o «voy a pagar en OXXO» escrito en las ultimas 72 h
+    # (Maribel #9): la ficha puede no haber llegado todavia a Hotmart.
+    if stop_on_lead_decline and detect_declared_payment(
+        _inbound_texts_after_last_template(
+            conversational,
+            since_epoch=now_epoch - DECLARED_PAYMENT_HOLD_SECONDS,
+        )
+    ) is not None:
+        return _skip(LEAD_DECLARED_PAYMENT)
 
     last_outbound_id = last_message.get("id")
     assert isinstance(last_outbound_id, int)
@@ -1087,8 +1118,8 @@ class ConversationFollowupSweeper:
             )
             if decision.candidate is None:
                 motivos[decision.skip_reason or "unknown"] += 1
-                if decision.skip_reason == LEAD_DECLINED:
-                    self._log_stop(details.get("id"), LEAD_DECLINED)
+                if decision.skip_reason in (LEAD_DECLINED, LEAD_DECLARED_PAYMENT):
+                    self._log_stop(details.get("id"), decision.skip_reason)
                 continue
             campaign = segment_coupon_for_labels(
                 self._segment_catalog,

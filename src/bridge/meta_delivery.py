@@ -73,6 +73,7 @@ from bridge.chatwoot import (
     ChatwootProtocolError,
 )
 from bridge.messaging import FinalMetaEffect, FinalMetaEffectGate
+from bridge.meta_error import meta_error_code_of
 from bridge.slack_notifications import NotificationProducer
 from bridge.supabase import SupabaseError
 from slack_correlation.catalog import NotificationCommand
@@ -122,7 +123,6 @@ PERMANENT_SKIPS = frozenset({
     "too_late", "template_params_unreadable", "template_not_retryable",
     "content_unreadable",
 })
-_META_ERROR_CODE_RE = re.compile(r"^(\d{3,6})(?:\D|$)")
 _E164_RE = re.compile(r"\+[1-9]\d{7,14}")
 _EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+")
 
@@ -139,12 +139,11 @@ def _attributes(message: Mapping[str, object]) -> dict[str, object]:
 
 
 def meta_error_code(message: Mapping[str, object]) -> str | None:
-    """Solo el codigo de Meta en digitos, nunca el texto (como el AE)."""
-    error = _attributes(message).get("external_error")
-    if not isinstance(error, str):
-        return None
-    match = _META_ERROR_CODE_RE.match(error.strip())
-    return match.group(1) if match else None
+    """Solo el codigo de Meta en digitos, nunca el texto (como el AE).
+
+    E-486: tambien cuando ``external_error`` es JSON adentro de un string.
+    """
+    return meta_error_code_of(_attributes(message).get("external_error"))
 
 
 def touch_kind(message: Mapping[str, object]) -> str | None:

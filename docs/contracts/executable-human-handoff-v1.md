@@ -26,8 +26,23 @@ Proyección habilitada exige Supabase, control plane Chatwoot, account/inbox can
 Decisiones D5 a D7 de Dan (24/10/2026). Con `HANDOFF_NOTICE_ENABLED=true` (exige
 `HUMAN_HANDOFF_ADMISSION_ENABLED`), toda derivación del entrante le manda a la
 persona un único mensaje fijo, del producto y no del modelo: «Le paso tu
-consulta al equipo y te responden por este mismo chat.» Nombra al equipo, no
-promete plazo, no da un nombre de persona y no dice que escribe una IA.
+consulta al equipo para que la revise.» Nombra al equipo, no promete plazo ni
+que alguien vaya a responder, no da un nombre de persona y no dice que escribe
+una IA. **Desde la 1.37.0 (E-486, D1)**: antes decía «…y te responden por este
+mismo chat», que chocaba con el conocimiento de las aliadas. Si la derivación
+cae fuera del horario del equipo, el aviso suma una segunda frase fija: «El
+equipo atiende de lunes a sábado de 09:00 a 20:00 (hora de Ciudad de México).»
+El horario sale de `[atencion]` del manifiesto (`dias`, `desde`, `hasta` en
+`HH:MM`, `ciudad` opcional, en `instancia.zona_horaria`); sin el bloque rige el
+de por defecto de las aliadas, 09:00 a 20:00 de lunes a sábado. Sin manifiesto
+(Johanna), solo la primera frase.
+
+```toml
+[atencion]
+dias = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado"]
+desde = "09:00"
+hasta = "20:00"
+```
 
 - Sale antes de pedir la derivación durable y antes de la etiqueta
   `automation_paused`, por la misma guarda de envío que cualquier respuesta: si

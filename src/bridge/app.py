@@ -117,10 +117,11 @@ from bridge.handoff_link_note import (
     handoff_link_note_body,
     handoff_link_note_marker,
 )
+from bridge import handoff_notice
 from bridge.handoff_notice import (
     HANDOFF_NOTICE_DECISION,
-    HANDOFF_NOTICE_TEXT,
     handoff_notice_already_sent,
+    handoff_notice_text,
 )
 from bridge.safety_handoff import (
     SAFETY_REPLY_DECISION,
@@ -859,6 +860,9 @@ class Settings:
     handoff_wait_alerts_enabled: bool = False
     handoff_wait_alert_after_hours: int = 2
     handoff_wait_alert_max_age_hours: int = 168
+    # E-486: cuantas horas antes de que cierre la ventana de 24 h sale el
+    # recordatorio (HND-005). 2 = lo de siempre.
+    handoff_wait_alert_window_warning_hours: int = 2
     handoff_wait_alert_interval_seconds: float = 600.0
     hermes_shadow_enabled: bool = False
     hermes_api_base_url: str | None = None
@@ -1932,6 +1936,9 @@ class Settings:
         handoff_wait_alert_max_age_hours = _parse_positive_int_env(
             "HANDOFF_WAIT_ALERT_MAX_AGE_HOURS", 168
         )
+        handoff_wait_alert_window_warning_hours = _parse_positive_int_env(
+            "HANDOFF_WAIT_ALERT_WINDOW_WARNING_HOURS", 2
+        )
         handoff_wait_alert_interval_seconds = float(
             os.environ.get("HANDOFF_WAIT_ALERT_INTERVAL_SECONDS", "600")
         )
@@ -2192,6 +2199,7 @@ class Settings:
             handoff_wait_alerts_enabled=handoff_wait_alerts_raw == "true",
             handoff_wait_alert_after_hours=handoff_wait_alert_after_hours,
             handoff_wait_alert_max_age_hours=handoff_wait_alert_max_age_hours,
+            handoff_wait_alert_window_warning_hours=handoff_wait_alert_window_warning_hours,
             handoff_wait_alert_interval_seconds=handoff_wait_alert_interval_seconds,
             hermes_shadow_enabled=shadow_enabled,
             hermes_api_base_url=hermes_api_base_url,
@@ -3261,6 +3269,13 @@ _OUTBOUND_FLOWS = (
 _GHL_LANDING_REJECTIONS = frozenset({"landing_unknown", "landing_ambiguous"})
 
 
+def _reactivation_stops_on_lead_decline(settings: Settings) -> bool:
+    """E-486 (item 5): con manifiesto (ATT1, Maribel) un no claro del lead
+    corta la reactivacion; sin manifiesto (Johanna) queda como hoy."""
+
+    return settings.instance_manifest is not None
+
+
 def _validate_instance_manifest_gates(settings: Settings) -> None:
     manifest = settings.instance_manifest
     assert manifest is not None
@@ -4124,6 +4139,11 @@ def _validate_handoff_wait_alerts(settings: Settings) -> None:
         and 24 <= settings.handoff_wait_alert_max_age_hours <= 720
     ):
         raise ValueError("HANDOFF_WAIT_ALERT_MAX_AGE_HOURS must be 24-720")
+    if not (
+        isinstance(settings.handoff_wait_alert_window_warning_hours, int)
+        and 1 <= settings.handoff_wait_alert_window_warning_hours <= 20
+    ):
+        raise ValueError("HANDOFF_WAIT_ALERT_WINDOW_WARNING_HOURS must be 1-20")
     if not (
         math.isfinite(settings.handoff_wait_alert_interval_seconds)
         and 60 <= settings.handoff_wait_alert_interval_seconds <= 3600
@@ -8692,10 +8712,18 @@ def create_app(
                         conversation_id,
                     )
                     return "already_sent"
+                # E-486 (D1): fuera del horario del equipo, el aviso suma
+                # cuando atiende; sin manifiesto, solo la frase fija.
+                manifest_for_notice = settings.instance_manifest
                 result = await send_scoped_agent_bot_reply(
                     conversation_id=conversation_id,
                     trigger_message_id=message_id,
-                    content=HANDOFF_NOTICE_TEXT,
+                    content=handoff_notice_text(
+                        manifest_for_notice.service_hours
+                        if manifest_for_notice is not None
+                        else None,
+                        handoff_notice.current_time(),
+                    ),
                     agent_decision=HANDOFF_NOTICE_DECISION,
                     agent_reason_code=_agent_marker(proposal.get("reason_code")),
                 )
@@ -9710,6 +9738,9 @@ def create_app(
                     if settings.chatwoot_scoped_inbound_senders_enabled
                     else allowed_phone_from_jid(settings.allowed_jid)
                 ),
+                # E-486 (item 5): con manifiesto (ATT1, Maribel) un no claro
+                # del lead corta la reactivacion; Johanna queda como hoy.
+                stop_on_lead_decline=_reactivation_stops_on_lead_decline(settings),
             )
             app.state.conversation_reactivation_sweeper = (
                 conversation_reactivation_sweeper
@@ -9879,6 +9910,7 @@ def create_app(
                 inbox_id=settings.chatwoot_inbox_id,
                 after_hours=settings.handoff_wait_alert_after_hours,
                 max_age_hours=settings.handoff_wait_alert_max_age_hours,
+                window_warning_hours=settings.handoff_wait_alert_window_warning_hours,
                 scan_interval_seconds=settings.handoff_wait_alert_interval_seconds,
             )
             app.state.handoff_wait_alert_sweeper = handoff_wait_alert_sweeper

@@ -125,6 +125,14 @@ _BRIDGE_ERRORS = frozenset({
     "agent_campaign_expired",
     "agent_campaign_key_is_immutable",
     "agent_campaign_draft_invalid",
+    # E-486 (8d): sumar un telefono al grupo de prueba de un flujo.
+    "not_an_approver",
+    "flow_cohort_phone_invalid",
+    "flow_cohort_contact_not_found",
+    "flow_cohort_contact_ambiguous",
+    "flow_cohort_full",
+    "flow_cohort_needs_native_flow",
+    "flow_cohort_flow_not_in_cohort",
 })
 
 
@@ -271,6 +279,10 @@ def _request(method: str, path: str, body: dict[str, object] | None = None) -> d
         if exc.code in (404, 405) and detail in ("Not Found", "Method Not Allowed") \
                 and path.startswith(f"{PREFIX}/chatwoot/"):
             return {"error": "chatwoot_tool_not_enabled"}
+        # E-486 (8d): la cohorte por el AE solo existe con AUTOMATION_EXPERT_COHORT_TOOL_ENABLED.
+        if exc.code in (404, 405) and detail in ("Not Found", "Method Not Allowed") \
+                and path.startswith(f"{PREFIX}/flows/") and path.endswith("/cohort"):
+            return {"error": "cohort_tool_not_enabled"}
         # Lo mismo con las campanas: sin AGENT_CAMPAIGNS_ENABLED sus rutas no existen.
         if exc.code == 404 and detail == "Not Found" and path.startswith(CAMPAIGNS):
             return {"error": "campaigns_not_enabled"}
@@ -359,6 +371,15 @@ def _maybe_post_approval_button(proposal_id: str, out: dict[str, object]) -> Non
     button = approval_button.post_after_validation(proposal_id, setting=_profile_setting, session=_session)
     if button is not None:
         data["approval_button"] = button
+
+
+def get_approval_page(params: dict[str, object], **kwargs: object) -> str:
+    """El link de la pagina de aprobacion de la instancia (E-465), sin propuesta. No llama al bridge.
+
+    Sale de la misma base que el boton (``FLOW_APPROVAL_BASE_URL``) y solo con la pagina prendida.
+    """
+    del params, kwargs
+    return _dumps(approval_button.approval_page(_profile_setting))
 
 
 LIST_STATES = ("abiertas", "todas")
@@ -619,3 +640,57 @@ def list_campaigns(params: dict[str, object], **kwargs: object) -> str:
     if estado not in ("abiertas", "todas"):
         return _dumps({"error": "invalid_query", "reason": {"field": "estado"}})
     return _dumps(_request("GET", f"{CAMPAIGNS}?estado={estado}"))
+
+
+# E-486 (8d, D14 y D15 aprobadas por Dan el 12/11): sumar un telefono al grupo de prueba.
+_FLOW_REF_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
+_PHONE_DIGITS_RE = re.compile(r"\+?[0-9]{8,15}")
+
+
+def _phone(value: object) -> str | None:
+    """El telefono con solo digitos (y el + inicial), o None. Nunca se devuelve ni se loguea."""
+    if not isinstance(value, str) or len(value) > 32:
+        return None
+    compact = "".join(character for character in value if character not in " \t\n\r-.()")
+    return compact if _PHONE_DIGITS_RE.fullmatch(compact) else None
+
+
+def add_to_test_group(params: dict[str, object], **kwargs: object) -> str:
+    """Suma una persona al grupo de prueba (cohorte) de un flujo nativo en cohorte. Solo agrega.
+
+    La persona va por su numero de conversacion de Chatwoot o por su telefono, uno de los dos. Solo un
+    aprobador de la pagina puede: el bridge lo chequea con la sesion de Slack (``not_an_approver``). La
+    respuesta nunca trae el telefono.
+    """
+    del kwargs
+    try:
+        requested_by = _requested_by()
+    except ValueError as exc:
+        return _dumps({"error": str(exc)})
+    product, flow = params.get("product"), params.get("flow")
+    if not (isinstance(product, str) and _FLOW_REF_RE.fullmatch(product)
+            and isinstance(flow, str) and _FLOW_REF_RE.fullmatch(flow)):
+        return _dumps({"error": "invalid_body"})
+    conversation_id, raw_phone = params.get("conversation_id"), params.get("phone")
+    body: dict[str, object] = {"requested_by": requested_by}
+    if conversation_id is not None and raw_phone is None:
+        if type(conversation_id) is not int or not 1 <= conversation_id < 10**12:
+            return _dumps({"error": "invalid_conversation_id"})
+        body["conversation_id"] = conversation_id
+    elif raw_phone is not None and conversation_id is None:
+        phone = _phone(raw_phone)
+        if phone is None:
+            return _dumps({"error": "flow_cohort_phone_invalid"})
+        body["phone"] = phone
+    else:
+        return _dumps({"error": "invalid_body"})
+    out = _request("POST", f"{PREFIX}/flows/{product}/{flow}/cohort", body)
+    if "error" in out:
+        return _dumps(out)
+    status = out.get("status")
+    result: dict[str, object] = {"status": status if status in ("added", "already") else "unknown"}
+    for key in ("members", "max_members"):
+        value = out.get(key)
+        if type(value) is int and 0 <= value <= 100:
+            result[key] = value
+    return _dumps(result)

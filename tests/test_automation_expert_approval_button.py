@@ -259,7 +259,8 @@ def test_the_plugin_acks_the_url_button_click_and_adds_no_tool(world: SimpleName
                      "list_template_requests", "get_template_request", "list_chatwoot_labels", "create_chatwoot_label",
                      "add_chatwoot_label_to_conversation", "list_chatwoot_macros",
                      "create_chatwoot_label_macro", "preview_campaign", "propose_campaign",
-                     "validate_campaign", "get_campaign", "list_campaigns"]
+                     "validate_campaign", "get_campaign", "list_campaigns", "get_approval_page",
+                     "add_to_test_group"]
     [(action_id, callback)] = actions
     assert action_id == "flow_approval_open"
     acked: list[bool] = []
@@ -374,3 +375,33 @@ def test_a_template_button_goes_to_the_thread_only_with_a_real_ts(
 def test_not_posted_does_not_send_the_agent_down_a_road_that_does_not_exist(world: SimpleNamespace) -> None:
     note = world.button.TEMPLATE_NOT_POSTED["note"]
     assert "operador" not in note and "no se reemite" in note
+
+
+# --- la pagina de aprobacion sin propuesta (E-465)
+
+
+def test_the_approval_page_link_comes_from_the_same_base_and_needs_no_proposal(world: SimpleNamespace) -> None:
+    # El 12/11 el agente le dijo a Dan que la pagina solo se abre con el boton de una propuesta y que vale
+    # 24 horas. El indice existe (GET /flow-approval/) y se entra con Slack sin ?p=.
+    out = json.loads(world.tools.get_approval_page({}))
+    assert out["data"]["url"] == "https://bridge.example.org/flow-approval/"
+    note = out["data"]["note"]
+    assert "Entrar con Slack" in note and "sin una propuesta" in note and "8 horas" in note
+    assert "24" not in note
+    # No le pregunta nada al bridge ni postea nada en Slack.
+    assert _Server.seen == []
+
+
+def test_the_approval_page_is_not_offered_when_the_instance_has_it_off(
+        world: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FLOW_APPROVAL_ENABLED", "false")
+    assert json.loads(world.tools.get_approval_page({})) == {"error": "approval_page_not_enabled"}
+    monkeypatch.setenv("FLOW_APPROVAL_ENABLED", "true")
+    for bad in ("http://bridge.example.org", "https://bridge.example.org/flow-approval", "https://u:p@bridge.example.org", ""):
+        monkeypatch.setenv("FLOW_APPROVAL_BASE_URL", bad)
+        assert json.loads(world.tools.get_approval_page({})) == {"error": "approval_page_not_enabled"}, bad
+
+
+def test_the_flow_button_says_the_proposal_expires_not_the_page(world: SimpleNamespace) -> None:
+    assert "La propuesta validada vale 24 horas" in world.button.MESSAGE_TEXT
+    assert "El botón vale 24 horas" not in world.button.MESSAGE_TEXT

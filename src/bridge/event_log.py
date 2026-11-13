@@ -122,6 +122,14 @@ LOGGED_INFO_EVENTS = frozenset(
         # el adjunto sin texto (bridge.app, E-315): el id del mensaje, los
         # tipos de adjunto y si fue el segundo seguido; nunca el archivo
         "chatwoot_inbound_attachment_without_text",
+        # la salida del agente que el validador rechazo (bridge.hermes,
+        # E-486): el intento, la regla y el numero de conversacion; nunca el
+        # texto de la persona ni el del modelo
+        "agent_output_invalid",
+        # el aviso a la persona al derivar (bridge.app, F-034 y E-486): el
+        # numero de conversacion y el estado o el motivo; nunca el texto
+        "handoff_notice_sent",
+        "handoff_notice_skipped",
     }
 )
 

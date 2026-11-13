@@ -114,6 +114,10 @@ Si el bloque trae la sección «Pagos», resolvé con ella antes de derivar:
   principal si no lo sabés) y su paso a paso si la sección lo trae;
 - si quiere volver a intentarlo, pedí el envío del enlace según “Enlace de pago”.
 
+Si contesta de su banco (lo nombra, ya habló con él, se lo rechazó, qué
+decirle), no derives: sugerí reintentar tras habilitar las compras en línea en
+la app del banco, otra tarjeta u otro medio, y pedí el enlace.
+
 Derivá si dice que le cobraron, si su caso no está en la sección, si ya probó lo
 que la sección indica y sigue sin poder pagar, o si el bloque no trae la sección.
 Al derivar, indicá que ese detalle requiere revisión humana sin prometer plazo.""",
@@ -214,6 +218,12 @@ def test_output_contract_differs_only_in_the_neutral_reason_code_and_the_product
 
 _RESOLUTION_POLICY: list[tuple[str, str]] = [
     (
+        # E-486: recortes sin cambiar la regla, para que entre la ruta del banco.
+        """Tu comportamiento comercial es restrictivo. No intentes resolver todas las
+conversaciones por tu cuenta.""",
+        "Tu comportamiento comercial es restrictivo: no resolvés todo por tu cuenta.",
+    ),
+    (
         """Sólo podés resolver autónomamente cuando se cumplen todas estas condiciones:
 
 - entendés claramente qué necesita la persona;
@@ -240,6 +250,13 @@ de preguntas para evitar derivar.""",
 es ambiguo y una aclaración no sensible permite identificar un caso simple
 permitido. No la uses para investigar ni reconstruir un problema; si la
 respuesta sigue ambigua o compleja, derivá. No hagas una segunda ronda.""",
+    ),
+    (
+        """Una respuesta plausible o probablemente correcta no es suficiente. No hagas
+preguntas por defecto. Si la intención es clara, el caso es simple y disponés de
+una respuesta aprobada y suficiente, respondé directamente.""",
+        """Una respuesta plausible o probablemente correcta no es suficiente. No hagas
+preguntas por defecto.""",
     ),
     (
         "(pedir el enlace de compra no entra acá: ver “Enlace de pago”);",
@@ -533,3 +550,30 @@ def test_the_sensitive_data_rule_survives_in_the_policy_after_the_dedupe() -> No
         "No\nrecopiles información financiera, clínica, documentos, credenciales ni otros\ndatos sensibles."
         in COMMON
     )
+
+
+# --- E-486: la respuesta del banco en la variante «banco» del pago rechazado --
+#
+# La plantilla de la variante «banco» pregunta «¿De qué banco es tu tarjeta? Te
+# digo qué activar». El 12/11 en Maribel (conversación 260) la persona contestó
+# el banco y el agente derivó. Con esta regla responde: reintentar habilitando
+# las compras en línea, otra tarjeta u otro medio, y el enlace.
+
+
+def test_the_bank_answer_after_a_refused_payment_is_answered_not_derived() -> None:
+    route = _section(COMMON, "### 3. Compra fallida")
+    bank = route.index("Si contesta de su banco")
+    assert bank < route.index("Derivá si dice que le cobraron")
+    rule = route[bank : route.index("Derivá si dice que le cobraron")]
+    for words in (
+        "lo nombra",
+        "ya habló con él",
+        "se lo rechazó",
+        "qué\ndecirle",
+        "no derives",
+        "habilitar las compras en línea",
+        "reintentar",
+        "otra tarjeta u otro medio",
+        "pedí el enlace",
+    ):
+        assert words in rule, words

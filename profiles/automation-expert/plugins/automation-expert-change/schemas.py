@@ -224,6 +224,16 @@ GET_TEMPLATE_REQUEST = {
     },
 }
 
+GET_APPROVAL_PAGE = {
+    "name": "get_approval_page",
+    "description": (
+        "El link de la página de aprobación de esta instancia, para pasárselo a la persona: ahí ve todos los "
+        "flujos, los pausa y carga su teléfono al grupo de prueba, sin una propuesta abierta. Entra con "
+        "«Entrar con Slack». Con approval_page_not_enabled, esta instancia no tiene la página."
+    ),
+    "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+}
+
 GET_FLOW_CHANGE = {
     "name": "get_flow_change",
     "description": "Relee una propuesta: su estado, sus ítems, su vista previa y sus últimos eventos. Solo lee.",
@@ -410,6 +420,31 @@ LIST_CAMPAIGNS = {
     "parameters": {
         "type": "object",
         "properties": {"estado": {"type": "string", "enum": ["abiertas", "todas"]}},
+        "additionalProperties": False,
+    },
+}
+
+# E-486 (8d): sumar a alguien al grupo de prueba de un flujo en cohorte.
+ADD_TO_TEST_GROUP = {
+    "name": "add_to_test_group",
+    "description": (
+        "Suma a una persona al grupo de prueba (cohorte) de un flujo nativo que está en cohorte. Solo agrega, "
+        "hasta 5 personas. Va por el número de conversación de Chatwoot o por el teléfono, uno de los dos: "
+        "usalo solo con el dato que te dio un aprobador; nunca pidas un teléfono primero. Con not_an_approver, "
+        "quien te habla no es aprobador: pasale el link de get_approval_page. Con cohort_tool_not_enabled, "
+        "esta instancia no lo tiene prendido. La respuesta nunca trae el teléfono: no lo repitas."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "product": {"type": "string", "description": "La clave del producto del flujo (product_ref)."},
+            "flow": {"type": "string", "description": "La clave del flujo (flow_key)."},
+            "conversation_id": {"type": "integer", "minimum": 1,
+                                "description": "El número de conversación de Chatwoot de la persona."},
+            "phone": {"type": "string", "maxLength": 32,
+                      "description": "El teléfono de la persona, con código de país."},
+        },
+        "required": ["product", "flow"],
         "additionalProperties": False,
     },
 }

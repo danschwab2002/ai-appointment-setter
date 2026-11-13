@@ -811,3 +811,42 @@ def test_the_summary_names_why_the_durable_layer_refused() -> None:
 
     assert "blocked_pending_handoff=1" in sweeper.last_scan_summary
     assert "not_reactivated" not in sweeper.last_scan_summary
+
+
+# --------------------------------------------------------------------------
+# E-486: el «no» claro y el pago declarado (solo con el freno prendido)
+
+
+def _with_last_inbound(text: str) -> list:
+    messages = _messages()
+    last = max(
+        (m for m in messages if m.get("message_type") == 0 and m.get("private") is False),
+        key=lambda m: m["id"],
+    )
+    last["content"] = text
+    return messages
+
+
+def test_a_clear_no_is_not_reactivated_with_the_stop() -> None:
+    from bridge.lead_decline import LEAD_DECLINED
+
+    messages = _with_last_inbound("Ya no quiero el curso, gracias")
+    assert _evaluate(messages=messages).candidate is not None
+    decision = _evaluate(messages=messages, stop_on_lead_decline=True)
+    assert decision.skip_reason == LEAD_DECLINED
+
+
+def test_a_recent_declared_payment_is_not_reactivated_with_the_stop() -> None:
+    from bridge.lead_decline import LEAD_DECLARED_PAYMENT
+
+    messages = _with_last_inbound("Ya pagué en OXXO")
+    decision = _evaluate(messages=messages, stop_on_lead_decline=True)
+    assert decision.skip_reason == LEAD_DECLARED_PAYMENT
+    # Pasadas las 72 h, vuelve a ser candidata.
+    later = _evaluate(
+        messages=messages,
+        stop_on_lead_decline=True,
+        now_epoch=NOW + 72 * 3600,
+        max_inbound_age_seconds=30 * 86_400,
+    )
+    assert later.skip_reason != LEAD_DECLARED_PAYMENT
