@@ -68,12 +68,14 @@ def _recommendation() -> CorrelationRecommendation:
     )
 
 
-def test_catalog_has_exactly_the_59_approved_event_codes() -> None:
+def test_catalog_has_exactly_the_61_approved_event_codes() -> None:
     # MOT-001 (flow-engine-v1, seccion 8): la divergencia del motor de flujos.
     # MOT-002 (flow-engine-v2, seccion 8): el motor no pudo arrancar un flujo.
     # HND-012 (handoff-wait-alerts-v1, E-309): la persona volvio a escribir en
     # una conversacion pausada.
-    assert len(EVENT_TEMPLATES) == 59
+    # IDL-001 y IDL-002 (identity-link-decider-v1, E-536): el correlador que
+    # decide solo, cada decision que ata o pregunta y cada envio.
+    assert len(EVENT_TEMPLATES) == 61
     assert set(EVENT_TEMPLATES) == {
         *(f"HND-{number:03d}" for number in range(1, 13)),
         *(f"COR-{number:03d}" for number in range(1, 16)),
@@ -86,6 +88,8 @@ def test_catalog_has_exactly_the_59_approved_event_codes() -> None:
         "REV-001",
         "MOT-001",
         "MOT-002",
+        "IDL-001",
+        "IDL-002",
     }
 
 

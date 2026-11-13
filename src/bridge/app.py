@@ -10,6 +10,7 @@ import logging
 import math
 import os
 import re
+import socket
 import tempfile
 import time
 import unicodedata
@@ -17,6 +18,7 @@ import uuid
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import asdict as dataclass_asdict, dataclass, fields as dataclass_fields
 from datetime import UTC, datetime, timedelta
+from datetime import time as dt_time
 from pathlib import Path
 from types import MappingProxyType
 from typing import AsyncGenerator, Awaitable, Callable, Iterable, Mapping, Protocol
@@ -237,6 +239,15 @@ from bridge.lead_first_name import (
     infer_and_record_first_name,
     resolve_greeting_name,
 )
+from bridge.identity_link import (
+    IdentityLinkClient,
+    IdentityLinkNotifier,
+    IdentityLinkWorker,
+    IdentityQuestionRound,
+    IdentityQuestionTemplate,
+    record_reply_if_answer,
+)
+from bridge.identity_link_store import IdentityLinkSupabaseStore
 from bridge.correlation_preresolution import (
     CorrelationPreresolutionClient,
     CorrelationPreresolutionWorker,
@@ -550,6 +561,12 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "flow_engine_campaign_entry_enabled",
     "slack_connector_projection_enabled",
     "correlation_preresolution_enabled",
+    # E-536 (identity-link-decider-v1): el correlador que decide solo. El modo
+    # (IDENTITY_LINK_MODE) es texto; la segunda llave es de la base
+    # (identity_link_controls). Por instancia, solo prenderlo.
+    "identity_link_model_only",
+    "identity_link_country_code_fix_enabled",
+    "identity_link_ask_enabled",
     # Transcribir un audio no depende del aliado: la key y el host de Chatwoot
     # ya son configuracion por runtime.
     "chatwoot_audio_transcription_enabled",
@@ -795,6 +812,18 @@ def _followup_send_hours_text(send_hours: tuple[int, int]) -> str:
     """El horario como se escribe en la variable: ``(9, 21)`` es ``09-21``."""
     start, end = send_hours
     return f"{start:02d}-{end:02d}"
+
+
+def _identity_link_ask_window(value: str) -> tuple[dt_time, dt_time]:
+    """``IDENTITY_LINK_ASK_WINDOW`` (HH:MM-HH:MM): la franja de la pregunta."""
+    match = re.fullmatch(r"([01][0-9]|2[0-3]):([0-5][0-9])-([01][0-9]|2[0-3]):([0-5][0-9])", value)
+    if match is None:
+        raise ValueError("IDENTITY_LINK_ASK_WINDOW must be HH:MM-HH:MM")
+    start = dt_time(int(match.group(1)), int(match.group(2)))
+    end = dt_time(int(match.group(3)), int(match.group(4)))
+    if end <= start:
+        raise ValueError("IDENTITY_LINK_ASK_WINDOW must end after it starts")
+    return start, end
 
 
 @dataclass(frozen=True)
@@ -1286,6 +1315,19 @@ class Settings:
     correlation_preresolution_prompt_version: str = "correlation-preresolution-v3"
     correlation_preresolution_worker_id: str | None = None
     correlation_preresolution_poll_interval_seconds: float = 5.0
+    # E-536 (identity-link-decider-v1): el correlador que decide solo. off: no
+    # lee ni decide; sombra: decide y registra, no ata; vivo: todo.
+    identity_link_mode: str = "off"
+    # D1: con IDENTITY_LINK_RULES_FIRST=false, R1 y R2 tambien pasan por el modelo.
+    identity_link_model_only: bool = False
+    identity_link_country_code_fix_enabled: bool = False
+    identity_link_ask_enabled: bool = False
+    identity_link_poll_interval_seconds: float = 15.0
+    identity_link_worker_id: str | None = None
+    # La franja de la pregunta (bloque B), en la zona de la instancia.
+    identity_link_ask_window: str = "09:00-21:00"
+    # La categoria con que Meta aprobo la plantilla de la pregunta.
+    identity_link_ask_template_category: str = "MARKETING"
     # La cadena de tres niveles del saludo (ver bridge.lead_first_name). Sola,
     # ya saluda por el primer nombre deterministico; con la inferencia prendida,
     # usa ademas lo que el modelo guardo al llegar el formulario.
@@ -2115,6 +2157,52 @@ class Settings:
         correlation_preresolution_poll_interval_seconds = float(
             os.getenv("CORRELATION_PRERESOLUTION_POLL_INTERVAL", "5.0")
         )
+        identity_link_mode = os.getenv("IDENTITY_LINK_MODE", "off").strip().lower() or "off"
+        if identity_link_mode not in {"off", "sombra", "vivo"}:
+            raise ValueError("IDENTITY_LINK_MODE must be off, sombra or vivo")
+        identity_link_model_only = not (
+            os.getenv("IDENTITY_LINK_RULES_FIRST", "true").lower() == "true"
+        )
+        identity_link_country_code_fix_enabled = (
+            os.getenv("IDENTITY_LINK_COUNTRY_CODE_FIX_ENABLED", "false").lower() == "true"
+        )
+        identity_link_ask_enabled = (
+            os.getenv("IDENTITY_LINK_ASK_ENABLED", "false").lower() == "true"
+        )
+        identity_link_poll_interval_seconds = float(
+            os.getenv("IDENTITY_LINK_POLL_INTERVAL", "15")
+        )
+        identity_link_worker_id = (
+            os.getenv("IDENTITY_LINK_WORKER_ID", "").strip()
+            or socket.gethostname()
+            or None
+        )
+        identity_link_ask_window = os.getenv(
+            "IDENTITY_LINK_ASK_WINDOW", "09:00-21:00"
+        ).strip()
+        _identity_link_ask_window(identity_link_ask_window)
+        identity_link_ask_template_category = os.getenv(
+            "IDENTITY_LINK_ASK_TEMPLATE_CATEGORY", "MARKETING"
+        ).strip().upper()
+        if identity_link_ask_template_category not in {"MARKETING", "UTILITY"}:
+            raise ValueError("IDENTITY_LINK_ASK_TEMPLATE_CATEGORY must be MARKETING or UTILITY")
+        if identity_link_mode != "off" and (
+            hermes_api_base_url is None
+            or hermes_api_key is None
+            or not correlation_preresolution_model_name
+            or identity_link_worker_id is None
+            or supabase_base_url is None
+            or supabase_service_role_key is None
+        ):
+            # El modelo del pre-resolutor (la misma conexion) y Supabase.
+            raise ValueError("identity_link_configuration_incomplete")
+        if identity_link_ask_enabled and identity_link_mode != "vivo":
+            raise ValueError("IDENTITY_LINK_ASK_ENABLED requires IDENTITY_LINK_MODE=vivo")
+        if (
+            not math.isfinite(identity_link_poll_interval_seconds)
+            or identity_link_poll_interval_seconds <= 0
+        ):
+            raise ValueError("invalid_identity_link_poll_interval")
         if correlation_preresolution_enabled and (
             hermes_api_base_url is None
             or hermes_api_key is None
@@ -2695,6 +2783,14 @@ class Settings:
             correlation_preresolution_poll_interval_seconds=(
                 correlation_preresolution_poll_interval_seconds
             ),
+            identity_link_mode=identity_link_mode,
+            identity_link_model_only=identity_link_model_only,
+            identity_link_country_code_fix_enabled=identity_link_country_code_fix_enabled,
+            identity_link_ask_enabled=identity_link_ask_enabled,
+            identity_link_poll_interval_seconds=identity_link_poll_interval_seconds,
+            identity_link_worker_id=identity_link_worker_id,
+            identity_link_ask_window=identity_link_ask_window,
+            identity_link_ask_template_category=identity_link_ask_template_category,
             lead_first_name_greeting_enabled=lead_first_name_greeting_enabled,
             lead_first_name_inference_enabled=lead_first_name_inference_enabled,
             lead_first_name_model_name=lead_first_name_model_name,
@@ -6451,6 +6547,90 @@ def create_app(
             runtime=flow_engine_runtime,
             producer=slack_runtime.producer if slack_runtime is not None else None,
         )
+    # E-536 (identity-link-decider-v1): el correlador que decide solo, la
+    # pregunta (bloque B) y los avisos de cada decision y cada envio al canal de
+    # la aliada (el mismo productor del conector de Slack que MOT-001/MOT-002).
+    identity_link_worker: IdentityLinkWorker | None = None
+    identity_link_notifier: IdentityLinkNotifier | None = None
+    identity_link_store: IdentityLinkSupabaseStore | None = None
+    if settings.identity_link_mode != "off":
+        if (
+            shared_supabase is None
+            or not portable_runtime
+            or settings.hermes_api_base_url is None
+            or settings.hermes_api_key is None
+            or not settings.correlation_preresolution_model_name
+            or settings.identity_link_worker_id is None
+        ):
+            raise ValueError("identity_link_configuration_incomplete")
+        identity_link_store = IdentityLinkSupabaseStore(shared_supabase)
+        identity_question_round: IdentityQuestionRound | None = None
+        if settings.identity_link_ask_enabled:
+            identity_template = (
+                settings.instance_manifest.templates.get("identidad")
+                if settings.instance_manifest is not None
+                else None
+            )
+            if (
+                identity_template is None
+                or not settings.dispatcher_approved_template_direct_enabled
+                or not isinstance(control_client, ChatwootClient)
+                or settings.chatwoot_inbox_id is None
+                or settings.instance_manifest is None
+            ):
+                raise ValueError(
+                    "IDENTITY_LINK_ASK_ENABLED requires [plantillas].identidad, the direct "
+                    "dispatcher and the Chatwoot control API"
+                )
+            ask_start, ask_end = _identity_link_ask_window(settings.identity_link_ask_window)
+            identity_question_round = IdentityQuestionRound(
+                store=identity_link_store,
+                sender=message_sender
+                or ChatwootMessageSender(
+                    chatwoot=control_client,
+                    inbox_id=settings.chatwoot_inbox_id,
+                    allowed_jid=settings.allowed_jid,
+                    dynamic_recipient_enabled=True,
+                    template=None,
+                    whatsapp_equivalence_enabled=True,
+                ),
+                template=IdentityQuestionTemplate(
+                    name=identity_template.name,
+                    language=identity_template.language,
+                    category=settings.identity_link_ask_template_category,
+                    parameters=identity_template.parameters,
+                ),
+                tenant_ref=settings.commercial_ally_config.tenant_ref,
+                funnel_ref=settings.commercial_ally_config.funnel_ref,
+                worker_id=settings.identity_link_worker_id,
+                brand=settings.instance_manifest.brand,
+                time_zone=settings.instance_manifest.time_zone,
+                window=(ask_start, ask_end),
+            )
+        identity_link_worker = IdentityLinkWorker(
+            store=identity_link_store,
+            model=IdentityLinkClient(
+                base_url=settings.hermes_api_base_url,
+                api_key=settings.hermes_api_key,
+                model_name=settings.correlation_preresolution_model_name,
+            ),
+            tenant_ref=settings.commercial_ally_config.tenant_ref,
+            funnel_ref=settings.commercial_ally_config.funnel_ref,
+            worker_id=settings.identity_link_worker_id,
+            mode=settings.identity_link_mode,
+            rules_first=not settings.identity_link_model_only,
+            country_code_fix_enabled=settings.identity_link_country_code_fix_enabled,
+            ask_enabled=settings.identity_link_ask_enabled,
+            poll_interval_seconds=settings.identity_link_poll_interval_seconds,
+            extra_round=identity_question_round,
+        )
+        identity_link_notifier = IdentityLinkNotifier(
+            store=identity_link_store,
+            producer=slack_runtime.producer if slack_runtime is not None else None,
+            tenant_ref=settings.commercial_ally_config.tenant_ref,
+            funnel_ref=settings.commercial_ally_config.funnel_ref,
+            poll_interval_seconds=settings.identity_link_poll_interval_seconds,
+        )
     if settings.hotmart_abandonment_timer_worker_enabled:
         if shared_supabase is None:
             raise ValueError(
@@ -6637,6 +6817,7 @@ def create_app(
             product_routes=commercial_ally_routes,
             flow_engine=flow_engine_runtime,
             purchase_agent_pause=purchase_agent_pause,
+            identity_link_bind=settings.identity_link_mode == "vivo",
             commercial_ally_config=(
                 settings.commercial_ally_config
                 if portable_dynamic_recipient
@@ -7030,6 +7211,10 @@ def create_app(
                 await human_handoff_projection_worker.start()
             if correlation_preresolution_worker is not None:
                 await correlation_preresolution_worker.start()
+            if identity_link_worker is not None:
+                await identity_link_worker.start()
+            if identity_link_notifier is not None:
+                await identity_link_notifier.start()
             if slack_projection_worker is not None:
                 if portable_runtime:
                     assert shared_supabase is not None
@@ -7095,6 +7280,8 @@ def create_app(
                 ("slack_projection", slack_projection_worker),
                 ("slack_handoff_projection", slack_handoff_projection_worker),
                 ("correlation_preresolution", correlation_preresolution_worker),
+                ("identity_link", identity_link_worker),
+                ("identity_link_notifier", identity_link_notifier),
                 ("dispatcher", durable_dispatcher),
                 ("recovery_coupon", recovery_coupon_worker),
                 ("hotmart_abandonment_timer", hotmart_abandonment_timer_worker),
@@ -7132,6 +7319,8 @@ def create_app(
     app.state.opt_out_projection_worker = opt_out_projection_worker
     app.state.human_handoff_projection_worker = human_handoff_projection_worker
     app.state.correlation_preresolution_worker = correlation_preresolution_worker
+    app.state.identity_link_worker = identity_link_worker
+    app.state.identity_link_notifier = identity_link_notifier
     app.state.slack_projection_worker = slack_projection_worker
     app.state.slack_handoff_projection_worker = slack_handoff_projection_worker
     app.state.chatwoot_inbox = chatwoot_inbox
@@ -8549,6 +8738,27 @@ def create_app(
                     auto_reply_conversation_id,
                 )
                 return
+        if identity_link_store is not None and settings.identity_link_ask_enabled:
+            # E-536 (bloque B): «Sí, fui yo» o «No más mensajes» a la pregunta del
+            # correlador. Falla blanda, y la conversacion sigue su camino de
+            # siempre: el agente con la «Sí», la baja de siempre con la otra.
+            answer_conversation = payload.get("conversation")
+            answer_conversation_id = (
+                answer_conversation.get("id")
+                if isinstance(answer_conversation, dict)
+                else None
+            )
+            if isinstance(answer_conversation_id, int) and not isinstance(
+                answer_conversation_id, bool
+            ):
+                await record_reply_if_answer(
+                    identity_link_store,
+                    tenant_ref=settings.commercial_ally_config.tenant_ref,
+                    funnel_ref=settings.commercial_ally_config.funnel_ref,
+                    conversation_id=answer_conversation_id,
+                    content=payload.get("content"),
+                    message_id=payload.get("id"),
+                )
         admission = None
         if settings.chatwoot_cut_b_admission_enabled:
             assert shared_supabase is not None
@@ -11390,6 +11600,11 @@ def create_app(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="correlation_preresolution_unhealthy",
             )
+        if identity_link_worker is not None and not identity_link_worker.healthy:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="identity_link_unhealthy",
+            )
         if slack_projection_worker is not None and slack_projection_worker.halted:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -11434,6 +11649,21 @@ def create_app(
             **commercial_ally_readiness,
             **instance_readiness,
         }
+        if identity_link_worker is not None:
+            # E-536: el modo del correlador que decide solo, si pregunta y si
+            # avisa al canal. Apagado, /ready no cambia.
+            commercial_ally_readiness = {
+                **commercial_ally_readiness,
+                "identity_link": identity_link_worker.mode,
+                "identity_link_ask": (
+                    "enabled" if settings.identity_link_ask_enabled else "disabled"
+                ),
+                "identity_link_alerts": (
+                    identity_link_notifier.alerts
+                    if identity_link_notifier is not None
+                    else "sin_slack"
+                ),
+            }
         if segment_catalog is not None:
             # Cada segmento como clave:vN:sha:estado (por_empezar, vigente,
             # vencido), calculado ahora. Solo con el flag: apagado, /ready no

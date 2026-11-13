@@ -166,7 +166,7 @@ def test_the_payment_failure_followup_reuses_the_last_touch_of_the_cart() -> Non
 def test_no_legacy_kind_is_outside_the_template_slots() -> None:
     assert TEMPLATE_SLOTS == (
         "precheckout", "carrito", "pago_fallido", "reactivacion", "descuento", "ficha",
-        "ficha_vence_manana", "ficha_vence_hoy",
+        "ficha_vence_manana", "ficha_vence_hoy", "identidad",
     )
     for exception in EXCEPTIONS_V1:
         assert exception.legacy_kinds and exception.legacy_kinds <= set(TEMPLATE_SLOTS), exception.name
