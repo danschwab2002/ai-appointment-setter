@@ -171,6 +171,66 @@ def test_red_or_yellow_or_blocked_or_no_reading_brakes_and_notifies() -> None:
         assert asyncio.run(sweep.sweep_once()).released == 0
 
 
+# La lectura de ATT1 que guardo meta_salud.py en /var/lib/meta-salud/estado.json el 13/11 14:43Z
+# (E-544, solo lectura; sin telefonos). Asi estan las dos aliadas desde el 30/10: LIMITED por el
+# portfolio sin verificar (y en ATT1 el nombre visible), con el limite en 100.000 y entregando.
+ATT1_2026_11_13 = {
+    "calidad": "GREEN", "limite": "TIER_100K", "estado_numero": "CONNECTED", "nombre_visible": "DECLINED",
+    "puede_enviar": "LIMITED",
+    "por_entidad": {"PHONE_NUMBER": "LIMITED", "WABA": "AVAILABLE", "BUSINESS": "LIMITED", "APP": "AVAILABLE"},
+    "avisos_meta": ["BUSINESS: The Business has not passed business verification.",
+                    "PHONE_NUMBER: Your display name has not been approved yet. Your message limit will increase "
+                    "after the display name is approved."],
+    "verificacion_portfolio": "not_verified",
+    "leido_en": GREEN["leido_en"],
+}
+
+
+def test_limited_with_a_high_limit_does_not_brake_e547() -> None:
+    # Con la regla vieja (BLOCKED o LIMITED frenan) esta lectura frenaba con meta_salud:limited.
+    assert fs.health_verdict(ATT1_2026_11_13, now=NOW).allows
+    opener, notifier = FakeOpener(), FakeNotifier()
+    sweep, store = sweeper(ATT1_2026_11_13, opener=opener, notifier=notifier)
+    report = asyncio.run(sweep.sweep_once())
+    assert (report.braked, report.released) == (0, 2)
+    assert notifier.notices == []
+
+
+def test_a_low_messaging_limit_brakes_and_notifies_e547() -> None:
+    for limit in ("TIER_250", "TIER_1K", "TIER_2K", " tier_2k "):
+        health = {**ATT1_2026_11_13, "limite": limit}
+        assert fs.health_verdict(health, now=NOW).brake_reason == fs.BRAKE_LOW_LIMIT, limit
+        opener, notifier = FakeOpener(), FakeNotifier()
+        sweep, store = sweeper(health, opener=opener, notifier=notifier)
+        report = asyncio.run(sweep.sweep_once())
+        assert (report.braked, report.released, opener.opened) == (1, 0, []), limit
+        assert notifier.notices == [fs.BRAKE_LOW_LIMIT]
+
+
+def test_a_missing_or_unknown_limit_does_not_brake_by_itself_e547() -> None:
+    for limit in (None, "?", "TIER_10K", "TIER_100K", "TIER_UNLIMITED", "UNLIMITED", 250):
+        health = {**GREEN, "puede_enviar": "AVAILABLE"}
+        if limit is not None:
+            health["limite"] = limit
+        assert fs.health_verdict(health, now=NOW).allows, limit
+
+
+def test_the_brakes_that_stay_still_win_over_a_high_limit_e547() -> None:
+    for change, reason in [
+        ({"calidad": "RED"}, "meta_salud:red"),
+        ({"calidad": "YELLOW"}, "meta_salud:yellow"),
+        ({"puede_enviar": "BLOCKED"}, "meta_salud:blocked"),
+        ({"leido_en": (NOW - timedelta(hours=27)).isoformat()}, fs.BRAKE_STALE),
+        ({"leido_en": None}, fs.BRAKE_NO_READING),
+        ({"calidad": "UNKNOWN"}, fs.BRAKE_NO_READING),
+        # Lo peor gana: bloqueado con limite bajo dice bloqueado.
+        ({"puede_enviar": "BLOCKED", "limite": "TIER_250"}, "meta_salud:blocked"),
+        ({"calidad": "YELLOW", "limite": "TIER_250"}, "meta_salud:yellow"),
+    ]:
+        verdict = fs.health_verdict({**ATT1_2026_11_13, **change}, now=NOW)
+        assert (verdict.allows, verdict.brake_reason) == (False, reason), change
+
+
 def test_a_notice_that_fails_does_not_undo_the_brake() -> None:
     class Broken:
         async def braked(self, flow_key: str, occurrence_id: str, reason: str) -> None:

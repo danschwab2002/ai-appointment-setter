@@ -12,8 +12,9 @@ Cada pasada (cada 60 s, del molde de ``native_silence.NativeSilenceSweepers``):
    (``flow_audience.select_members``) y la materializa en la base. La base es
    idempotente por (flujo, version, ocurrencia): un reinicio no la vuelve a armar.
 3. Antes de soltar a nadie mira la salud de Meta de la instancia (D8): rojo o
-   amarillo, una lectura que no se puede leer o vieja (mas de 26 h) frenan la
-   ocurrencia y avisan; una frenada no se suelta nunca mas.
+   amarillo, Meta en ``BLOCKED``, un limite de mensajeria bajo (2.000 o menos), una
+   lectura que no se puede leer o vieja (mas de 26 h) frenan la ocurrencia y avisan;
+   ``LIMITED`` no frena (E-547). Una frenada no se suelta nunca mas.
 4. Suelta a lo sumo ``ritmo.por_hora`` por hora (la base lleva la cuenta), le pasa
    cada persona al motor (``RunOpener``) para que abra su recorrido nativo, y le
    asienta a la base lo que contesto el motor. Si el motor no contesta, no asienta:
@@ -59,12 +60,23 @@ REFRESH_SECONDS = 60.0
 HEALTH_MAX_AGE = timedelta(hours=26)
 # DEFAULT_REVISAR_DAN (D8): rojo y amarillo frenan una difusion; los flujos por evento no se frenan.
 BRAKING_QUALITIES = frozenset({"RED", "YELLOW"})
-# Lo que frena ademas de la calidad: Meta dice que el numero no puede mandar.
-BRAKING_SEND_STATES = frozenset({"BLOCKED", "LIMITED"})
+# Lo que frena ademas de la calidad: Meta dice que el numero no puede mandar. ``LIMITED`` no frena
+# (E-547, decision de Dan del 13/11): Meta lo define como «cumple los requisitos para mandar, con
+# alguna limitacion», y las dos aliadas lo tienen desde el 30/10 por el portfolio sin verificar (y en
+# ATT1 el nombre visible) sin dejar de entregar. Lo que si pesa en una difusion es el cupo: eso lo
+# frena el limite de mensajeria bajo, abajo.
+BRAKING_SEND_STATES = frozenset({"BLOCKED"})
+# El limite de mensajeria del portfolio (``limite`` en la lectura, de
+# ``whatsapp_business_manager_messaging_limit``), contactos unicos fuera de la ventana de 24 h por dia.
+# Con 2.000 o menos, una audiencia puede comerse el cupo que comparten los flujos por evento y las
+# campanas. ``TIER_1K`` es un escalon viejo de Meta, mas bajo que ``TIER_2K``: frena igual. Sin el
+# campo, o con otro valor, no frena por esto (los otros frenos siguen).
+LOW_MESSAGING_LIMITS = frozenset({"TIER_250", "TIER_1K", "TIER_2K"})
 RELEASE_BATCH = 50
 
 BRAKE_NO_READING = "meta_salud:sin_lectura"
 BRAKE_STALE = "meta_salud:vieja"
+BRAKE_LOW_LIMIT = "meta_salud:limite_bajo"
 
 STATE_OFF = "apagado"
 STATE_OK = "ok"
@@ -96,7 +108,8 @@ class HealthVerdict:
 def health_verdict(reading: Mapping[str, Any] | None, *, now: datetime) -> HealthVerdict:
     """El veredicto de una lectura ``{"calidad": "GREEN|YELLOW|RED", "leido_en": iso}``. Fail-closed.
 
-    Con ``puede_enviar`` (la lectura de ``meta_salud.py``), ``BLOCKED`` o ``LIMITED`` frenan igual.
+    Con ``puede_enviar`` (la lectura de ``meta_salud.py``), ``BLOCKED`` frena; ``LIMITED`` no. Con
+    ``limite`` en ``TIER_250``, ``TIER_1K`` o ``TIER_2K`` frena por limite bajo; sin ``limite``, no.
     """
     if not isinstance(reading, Mapping):
         return HealthVerdict(False, BRAKE_NO_READING)
@@ -120,6 +133,9 @@ def health_verdict(reading: Mapping[str, Any] | None, *, now: datetime) -> Healt
     send = reading.get("puede_enviar")
     if isinstance(send, str) and send.strip().upper() in BRAKING_SEND_STATES:
         return HealthVerdict(False, f"meta_salud:{send.strip().lower()}")
+    limit = reading.get("limite")
+    if isinstance(limit, str) and limit.strip().upper() in LOW_MESSAGING_LIMITS:
+        return HealthVerdict(False, BRAKE_LOW_LIMIT)
     return HealthVerdict(True)
 
 
