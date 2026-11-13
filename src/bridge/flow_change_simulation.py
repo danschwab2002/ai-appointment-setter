@@ -298,6 +298,7 @@ def build_new_flow_simulation(counts: Any, items: Sequence[ProposalItem], *,
         touches = native_touches(item.definicion, people)
         if touches is not None:
             summary["toques"] = touches
+            _messages_at_most(summary, touches, people)
         sharing = _sharing_the_event(world, item.producto, trigger)
         if sharing:
             summary["comparte_el_evento_con"] = sharing
@@ -394,6 +395,16 @@ def native_touches(definition: object, people: int) -> list[dict[str, Any]] | No
                 row.update(llegan=None, cota=TOUCH_NO_BASIS, por_que=TOUCH_NEXT if ordinal > 1 else TOUCH_BRANCH)
             out.append(row)
     return out
+
+
+def _messages_at_most(summary: dict[str, Any], touches: Sequence[Mapping[str, Any]], people: int) -> None:
+    """Con varios toques, ``mensajes_si_fuera_para_todos`` es la cota de arriba: personas por toques del camino
+    mas largo, con ``mensajes_cota: como_maximo`` (correccion de la revision, 2026-11-13: antes decia las
+    personas, como si cada una recibiera un solo mensaje). Con un toque el resumen es el de antes.
+    """
+    most = max((row.get("toque") for row in touches if isinstance(row.get("toque"), int)), default=1)
+    summary["mensajes_si_fuera_para_todos"] = people * most
+    summary["mensajes_cota"] = TOUCH_AT_MOST
 
 
 def simulation_trigger(definition: object) -> str | None:
@@ -523,6 +534,8 @@ def build_native_flow_simulation(counts: Any, items: Sequence[ProposalItem], *,
             touches = native_touches(definition, people)
             if touches is not None:
                 summary["toques"] = touches
+                if "mensajes_si_fuera_para_todos" in summary:
+                    _messages_at_most(summary, touches, people)
         own = f"{flow.product_ref}/{flow.flow_key}"
         sharing = [entry for entry in _sharing_the_event(world, item.producto, trigger) if entry["flujo"] != own]
         if sharing:

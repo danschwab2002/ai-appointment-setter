@@ -102,6 +102,32 @@ def test_the_payment_failure_branches_say_each_path_and_have_no_basis_per_branch
     assert all(t["llegan"] is None for t in touches)
 
 
+def test_the_messages_if_it_were_for_everyone_are_an_upper_bound_with_several_touches() -> None:
+    # Correccion de la revision (2026-11-13): con tres toques decia las personas, como si cada una recibiera un
+    # mensaje. Ahora es la cota de arriba: personas por toques del camino mas largo, y lo dice.
+    people = MARIBEL_COUNTS["people"]
+    summary = build_new_flow_simulation(CART_COUNTS, [_new_item(CART)])["summary"]
+    assert summary["mensajes_si_fuera_para_todos"] == people * 3
+    assert summary["mensajes_cota"] == TOUCH_AT_MOST
+    # Las ramas del pago rechazado: dos envios por camino.
+    branched = build_new_flow_simulation(PAYMENT_COUNTS, [_new_item(PAYMENT_FAILURE_FULL, "maribel", "pago_fallido")])
+    assert branched["summary"]["mensajes_si_fuera_para_todos"] == people * 2
+    # Un toque: el resumen de antes, sin cota.
+    one = build_new_flow_simulation(CART_COUNTS, [_new_item(_one_touch(CART))])["summary"]
+    assert one["mensajes_si_fuera_para_todos"] == people and "mensajes_cota" not in one
+
+
+def test_switching_on_a_native_multitouch_flow_says_the_upper_bound_too() -> None:
+    people = MARIBEL_COUNTS["people"]
+    multi = _world(CART, product="att1", flow="carrito", flow_id=FLOW_ID, state="apagado")
+    [on] = parse_items([{"producto": "att1", "flujo": "carrito", "flow_id": FLOW_ID, "tipo": "prender"}])
+    summary = build_native_flow_simulation(CART_COUNTS, [on], world=multi)["summary"]
+    assert summary["mensajes_si_fuera_para_todos"] == people * 3 and summary["mensajes_cota"] == TOUCH_AT_MOST
+    single = _world(_one_touch(CART), product="att1", flow="carrito", flow_id=FLOW_ID, state="apagado")
+    plain = build_native_flow_simulation(CART_COUNTS, [on], world=single)["summary"]
+    assert plain["mensajes_si_fuera_para_todos"] == people and "mensajes_cota" not in plain
+
+
 def _world(definition: dict[str, Any], *, product: str, flow: str, flow_id: str, state: str = "cohorte") -> Any:
     return world_from_store({"flows": [{
         "flow_id": flow_id, "product_ref": product, "flow_key": flow, "state": state, "active_version": 1,
