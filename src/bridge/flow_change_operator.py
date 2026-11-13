@@ -26,7 +26,8 @@ La entrada de ``validar``::
     {"instance": {"tenant_ref", "ally_ref", "products": [...], "time_zone",
                   "segment_labels": [{"etiqueta", "estado"}]?,
                   "runtime": {"engine_enabled", "native_intent_enabled",
-                              "native_silence_sweeper", "cart_touches", "main_product"}?,
+                              "native_silence_sweeper", "cart_touches", "main_product",
+                              "native_multitouch_enabled"?}?,
                   "template_images": [<nombre de plantilla>]?},
      "store": {"flows": [{"flow_id", "product_ref", "flow_key", "state",
                           "active_version", "generation", "route_executor"?,
@@ -62,7 +63,7 @@ from .flow_definition import (
     loads_strict,
     parse_items,
 )
-from .flow_validator import FlowValidationInputError, validate
+from .flow_validator import FlowValidationInputError, NativeRuntime, validate
 
 __all__ = ["OperatorInputError", "main", "normalize_items", "validate_proposal", "world_from_store"]
 
@@ -105,10 +106,14 @@ def instance_from_input(value: object) -> InstanceView:
     # E-353: lo que ejecuta el bridge. Opcional: sin la clave (el comando del operador) no se sabe.
     raw_runtime = data.get("runtime")
     try:
-        runtime = None if raw_runtime is None else InstanceRuntime(
-            **{key: _mapping(raw_runtime, "operator_instance_invalid")[key] for key in (
+        fields = None if raw_runtime is None else {
+            key: _mapping(raw_runtime, "operator_instance_invalid")[key] for key in (
                 "engine_enabled", "native_intent_enabled", "native_silence_sweeper", "cart_touches",
-                "main_product")})
+                "main_product")}
+        # E-483: native_multitouch_enabled es opcional; sin la clave, el InstanceRuntime de antes (apagado).
+        runtime = None if fields is None else (
+            NativeRuntime(**fields, native_multitouch=raw_runtime["native_multitouch_enabled"])
+            if "native_multitouch_enabled" in raw_runtime else InstanceRuntime(**fields))
     except (KeyError, TypeError, ValueError) as error:
         raise OperatorInputError("operator_instance_invalid") from error
     # E-370: las plantillas con imagen de encabezado declarada. Opcional: sin la clave, ninguna.

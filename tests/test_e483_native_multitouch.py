@@ -155,3 +155,91 @@ def test_a_following_touch_the_base_would_not_open_closes_for_good(tmp_path: Pat
     assert _templates(chatwoot) == []
     [closed] = authority.finalizations
     assert closed["reason_code"] == FLOW_ENGINE_STEP_UNSUPPORTED
+
+
+# -- Con los toques siguientes apagados, el validador no publica en silencio ------------------------------
+
+
+def _multitouch_runtime(on: bool) -> Any:
+    from bridge.flow_validator import NativeRuntime
+
+    return NativeRuntime(engine_enabled=True, native_intent_enabled=True, native_silence_sweeper=True,
+                           cart_touches=True, main_product="att1", native_multitouch=on)
+
+
+def _new_cart_findings(runtime: Any, *, actor: str, pasos: list[Any] | None = None) -> set[str]:
+    """El primer contacto nuevo de tres toques (el molde del validador, sobre el mundo de ATT1)."""
+    import test_flow_validator as tfv
+    from bridge.flow_definition import InstanceView
+
+    definition = tfv._three_touch_form()
+    if pasos is not None:
+        definition["pasos"] = pasos
+    instance = None if runtime is None else InstanceView(
+        "lancemos", "att1", frozenset({"att1"}), "America/Mexico_City", runtime=runtime)
+    findings = tfv.run_new(definition, "primer_contacto", actor=actor,
+                           **({"instance": instance} if instance is not None else {}))
+    return {finding.code for finding in findings}
+
+
+def test_the_ae_cannot_publish_three_touches_while_the_bridge_sends_only_the_first() -> None:
+    # Antes de este cambio el validador lo aceptaba y salia solo el primero (el segundo cerraba con
+    # flow_engine_native_multitouch_disabled).
+    assert "native_multitouch_not_running" in _new_cart_findings(_multitouch_runtime(False),
+                                                                  actor="automation_expert")
+    assert "native_multitouch_not_running" not in _new_cart_findings(_multitouch_runtime(True),
+                                                                      actor="automation_expert")
+
+
+def tfv_step() -> dict[str, Any]:
+    import test_flow_validator as tfv
+
+    return copy.deepcopy(tfv.CONFIRMED_STEP)
+
+
+def test_one_touch_does_not_need_the_flag() -> None:
+    codes = _new_cart_findings(_multitouch_runtime(False), actor="automation_expert", pasos=[tfv_step()])
+    assert not {"native_multitouch_not_running", "native_multitouch_not_running_warning"} & codes
+
+
+def test_the_operator_is_warned_and_not_blocked() -> None:
+    codes = _new_cart_findings(_multitouch_runtime(False), actor="operador")
+    assert "native_multitouch_not_running_warning" in codes
+    assert "native_multitouch_not_running" not in codes
+
+
+def test_an_unknown_runtime_does_not_block() -> None:
+    assert not {"native_multitouch_not_running", "native_multitouch_not_running_warning"} & _new_cart_findings(
+        None, actor="automation_expert")
+
+
+def test_the_runtime_carries_the_flag_of_the_bridge_and_the_operator_input_defaults_it_off() -> None:
+    from bridge.app import Settings, instance_runtime_from
+    from bridge.flow_change_operator import instance_from_input
+
+    on = _multitouch_runtime(True)
+    assert on.to_json()["native_multitouch_enabled"] is True
+    base = {"tenant_ref": "lancemos", "ally_ref": "maribel", "products": ["maribel"],
+            "time_zone": "America/Mexico_City"}
+    assert instance_from_input({**base, "runtime": on.to_json()}).runtime == on
+    legacy_input = {key: value for key, value in on.to_json().items() if key != "native_multitouch_enabled"}
+    from bridge.flow_validator import runtime_runs_multitouch
+
+    assert runtime_runs_multitouch(instance_from_input({**base, "runtime": legacy_input}).runtime) is False
+    with pytest.raises(Exception):
+        instance_from_input({**base, "runtime": {**on.to_json(), "native_multitouch_enabled": "si"}})
+    assert Settings.__dataclass_fields__["flow_engine_native_multitouch_enabled"].default is False
+    assert "native_multitouch" in instance_runtime_from.__code__.co_names \
+        or "flow_engine_native_multitouch_enabled" in instance_runtime_from.__code__.co_names
+
+
+def test_with_the_flag_on_the_three_touch_form_publishes_clean_for_the_ae() -> None:
+    assert _new_cart_findings(_multitouch_runtime(True), actor="automation_expert") == set()
+
+
+def test_a_plain_instance_runtime_counts_as_multitouch_off() -> None:
+    from bridge.flow_definition import InstanceRuntime
+
+    plain = InstanceRuntime(engine_enabled=True, native_intent_enabled=True, native_silence_sweeper=True,
+                            cart_touches=True, main_product="att1")
+    assert "native_multitouch_not_running" in _new_cart_findings(plain, actor="automation_expert")

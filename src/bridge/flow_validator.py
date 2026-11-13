@@ -55,6 +55,7 @@ from .flow_definition import (
     CodeSpec,
     Finding,
     FlowWorld,
+    InstanceRuntime,
     InstanceView,
     ProposalItem,
     ProposalItemsInvalid,
@@ -688,6 +689,48 @@ NATIVE_TRIGGER_OTHER_PRODUCT = _spec(
     "El seguimiento nuevo por silencio corre solo en el producto principal de la cuenta: en este producto no mandaría ningún mensaje.",
     alternative="No se arregla cambiando los mensajes. Decile al dueño que hoy esto solo se puede publicar en el producto principal.",
 )
+@dataclass(frozen=True)
+class NativeRuntime(InstanceRuntime):
+    """``InstanceRuntime`` con los toques siguientes de un nativo de varios (E-483).
+
+    ``native_multitouch`` es ``FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED`` del bridge. Va aca y no como campo de
+    ``InstanceRuntime`` para no tocar ``flow_definition.py`` (lo reserva E-484); al integrar las dos ramas
+    se puede subir. Un ``InstanceRuntime`` a secas es «apagado», que es lo que corre si nadie lo prendio.
+    """
+
+    native_multitouch: bool = False
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not isinstance(self.native_multitouch, bool):
+            raise ValueError("instance_runtime_invalid")
+
+    def to_json(self) -> dict[str, Any]:
+        return {**super().to_json(), "native_multitouch_enabled": self.native_multitouch}
+
+
+def runtime_runs_multitouch(runtime: InstanceRuntime | None) -> bool:
+    """Si el bridge manda los toques siguientes de un nativo (E-483); un runtime sin el dato, no."""
+    return isinstance(runtime, NativeRuntime) and runtime.native_multitouch
+
+
+# E-483: un nativo de varios mensajes con FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED apagado. La base lo abre y
+# lo publica, pero el bridge cierra el segundo y el tercero sin mandarlos
+# (flow_engine_native_multitouch_disabled): sale solo el primero. Bloqueo para el AE, como los otros
+# cinco; al operador se le avisa (puede preparar el flujo antes de que se prenda).
+NATIVE_MULTITOUCH_NOT_RUNNING = _spec(
+    "native_multitouch_not_running", None, KIND_CYCLE,
+    "Esta cuenta todavía no manda más de un mensaje por flujo en el sistema nuevo: si se publica, le llegaría "
+    "solo el primero y los siguientes no saldrían.",
+    alternative="No se arregla cambiando la propuesta, salvo dejando un solo mensaje. Decile al dueño que el "
+                "equipo técnico tiene que prender los mensajes siguientes en su cuenta antes de publicar uno de "
+                "varios.",
+)
+NATIVE_MULTITOUCH_NOT_RUNNING_WARNING = _spec(
+    "native_multitouch_not_running_warning", None, KIND_WARNING,
+    "Esta cuenta todavía no manda más de un mensaje por flujo en el sistema nuevo: publicado así, sale solo el "
+    "primero hasta que se prenda FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED.",
+)
 TRIGGER_CHANGE_IS_ANOTHER_FLOW = _spec(
     "trigger_change_is_another_flow", None, KIND_CYCLE,
     "Un disparador distinto es otro flujo: otro evento, o un silencio con otro lo_ultimo.",
@@ -799,7 +842,8 @@ _VALIDATOR_CODES: tuple[CodeSpec, ...] = (
     NATIVE_CHANGE_EXITS, NATIVE_CHANGE_REPEAT_SILENCE, NATIVE_CHANGE_PRIORITY_SILENCE, NATIVE_CHANGE_PRIORITY_WINS,
     NATIVE_CHANGE_PRIORITY_REF, NATIVE_CHANGE_ENTRY, NATIVE_CHANGE_POOL, NATIVE_CHANGE_OTHER,
     CHANGE_WITHOUT_EFFECT_LEGACY_ROUTE, NATIVE_ENGINE_NOT_RUNNING, NATIVE_FIRST_CONTACT_NOT_RUNNING,
-    NATIVE_SILENCE_NOT_RUNNING, NATIVE_TRIGGER_OTHER_PRODUCT,
+    NATIVE_SILENCE_NOT_RUNNING, NATIVE_TRIGGER_OTHER_PRODUCT, NATIVE_MULTITOUCH_NOT_RUNNING,
+    NATIVE_MULTITOUCH_NOT_RUNNING_WARNING,
     ROLLBACK_TARGET_NOT_FOUND, ROLLBACK_TARGET_IS_ACTIVE, STATE_TRANSITION_INVALID,
     FLOW_HAS_NO_VERSION, EN_CURSO_NOT_SUPPORTED, CLIENT_PURCHASE_OK_MISSING,
     ALWAYS_WITH_MARKETING, RECOVERY_WITHOUT_CAP, SILENCE_WITHOUT_PURCHASE_EXIT,
@@ -1390,6 +1434,7 @@ class _Run:
           sin barredor es peor que no mandar: la barrera del legado (``blocked_native_flow``) le saca la
           conversacion al seguimiento de hoy.
         """
+        self._multitouch_without_effect()
         if self.actor != "automation_expert":
             return
         runtime = self.instance.runtime
@@ -1417,6 +1462,30 @@ class _Run:
                 self.blocks.append(NATIVE_SILENCE_NOT_RUNNING.at(at))
             elif trigger == NATIVE_SILENCE_TRIGGER and flow.product_ref != runtime.main_product:
                 self.blocks.append(NATIVE_TRIGGER_OTHER_PRODUCT.at(at))
+
+    def _multitouch_without_effect(self) -> None:
+        """Un nativo de varios mensajes con los toques siguientes apagados en el bridge (E-483).
+
+        La base publica hasta tres envios (20261112210000) y el bridge manda el segundo y el tercero solo con
+        ``FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED``; apagado, los cierra sin mandar. Mira lo mismo que
+        ``_without_effect`` (``nuevo``, ``version``, ``volver`` y ``prender``) y solo si la instancia dice lo
+        que corre: el AE no lo publica; al operador se le avisa. Con el motor apagado ya bloquea
+        ``native_engine_not_running``.
+        """
+        runtime = self.instance.runtime
+        if runtime is None or runtime_runs_multitouch(runtime) or not runtime.engine_enabled:
+            return
+        for index, (item, flow) in enumerate(zip(self.items, self.flows)):
+            if not flow.is_native or (item.tipo not in ("version", "volver", "prender") and not item.is_new_flow):
+                continue
+            definition = self.effective.get(flow.flow_id)
+            if not isinstance(definition, Mapping) or _max_sends(definition.get("pasos")) <= 1:
+                continue
+            at = finding_path((index,))
+            if self.actor == "automation_expert":
+                self.blocks.append(NATIVE_MULTITOUCH_NOT_RUNNING.at(at))
+            else:
+                self.warnings.append(NATIVE_MULTITOUCH_NOT_RUNNING_WARNING.at(at))
 
     def _switch_off(self, index: int, item: ProposalItem, flow: WorldFlow) -> None:
         if flow.state == "apagado":

@@ -301,6 +301,7 @@ from bridge.customer_status import (
 )
 from bridge.event_log import configure_bridge_event_log, hotmart_log_fields
 from bridge.flow_definition import InstanceRuntime
+from bridge.flow_validator import NativeRuntime
 from bridge.flow_engine_runtime import (
     DivergenceNotifier,
     FlowEngineRuntime,
@@ -3549,12 +3550,13 @@ def instance_runtime_from(
     """Lo que este bridge ejecuta de verdad (E-353), para que el AE no publique sin efecto."""
     if settings.instance_manifest is None:
         return None
-    return InstanceRuntime(
+    return NativeRuntime(
         engine_enabled=settings.flow_engine_enabled,
         native_intent_enabled=settings.flow_engine_native_intent_enabled,
         native_silence_sweeper=native_silence_sweeper,
         cart_touches=flow_engine_cart_touches_enabled(settings),
         main_product=settings.instance_manifest.funnel_ref,
+        native_multitouch=settings.flow_engine_native_multitouch_enabled,
     )
 
 

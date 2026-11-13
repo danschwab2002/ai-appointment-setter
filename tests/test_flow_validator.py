@@ -297,12 +297,23 @@ def _routed(executor: str | None) -> WorldFlow:
     return replace(live("carrito"), route_executor=executor)
 
 
-def _running(*, engine: bool = True, intent: bool = True, sweeper: bool = True, main: str = "att1") -> InstanceView:
+def _running(*, engine: bool = True, intent: bool = True, sweeper: bool = True, main: str = "att1",
+             multitouch: bool = True) -> InstanceView:
     return InstanceView("lancemos", "att1", frozenset({"att1", "att9"}) if main != "att1" else frozenset({"att1"}),
                         "America/Mexico_City",
-                        runtime=InstanceRuntime(engine_enabled=engine, native_intent_enabled=intent,
-                                                native_silence_sweeper=sweeper, cart_touches=True,
-                                                main_product=main))
+                        runtime=fv.NativeRuntime(engine_enabled=engine, native_intent_enabled=intent,
+                                                 native_silence_sweeper=sweeper, cart_touches=True,
+                                                 main_product=main, native_multitouch=multitouch))
+
+
+def _three_touch_form() -> dict[str, Any]:
+    """El primer contacto con tres mensajes y contesta (E-483): lo que el motor nativo abre."""
+    definition = _form()
+    send = copy.deepcopy(CONFIRMED_STEP)
+    definition["pasos"] = [copy.deepcopy(send), {"esperar": "24h"}, copy.deepcopy(send), {"esperar": "24h"},
+                           copy.deepcopy(send)]
+    definition["termina"] = {**definition.get("termina", {}), "si": ["compra", "contesta"], "vence": "4d"}
+    return definition
 
 
 def _form() -> dict[str, Any]:
@@ -750,6 +761,16 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
         lambda: run_new(_follow_up(), "seguimiento", instance=_running(main="att9")),
         lambda: run_new(_follow_up(), "seguimiento", instance=_running(main="att1")),
     ),
+    # E-483: varios mensajes con los toques siguientes apagados en el bridge.
+    "native_multitouch_not_running": (
+        lambda: run_new(_three_touch_form(), "primer_contacto", instance=_running(multitouch=False)),
+        lambda: run_new(_three_touch_form(), "primer_contacto", instance=_running()),
+    ),
+    "native_multitouch_not_running_warning": (
+        lambda: run_new(_three_touch_form(), "primer_contacto", actor="operador",
+                        instance=_running(multitouch=False)),
+        lambda: run_new(_three_touch_form(), "primer_contacto", actor="operador", instance=_running()),
+    ),
     "trigger_change_is_another_flow": (
         lambda: run(draft_of("carrito", lambda d: d["dispara"].update(evento="pago_fallido")),
                     in_world=world(live("carrito"))),
@@ -897,7 +918,7 @@ def test_each_code_has_a_positive_neighbour_that_does_not_produce_it(code: str) 
 def test_every_code_of_the_closed_catalog_has_its_cases() -> None:
     assert set(CASES) == fv.BLOCK_CODES | fv.WARNING_CODES
     assert not fv.BLOCK_CODES & fv.WARNING_CODES
-    assert len(fv.WARNING_CODES) == 7
+    assert len(fv.WARNING_CODES) == 8  # E-483: native_multitouch_not_running_warning
 
 
 def test_every_code_of_the_closed_catalog_is_produced_by_some_case() -> None:
@@ -982,7 +1003,7 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         "flow_already_registered", "new_flow_must_start_in_cohort", "prender_a_cohorte_needs_paused_native",
         "same_event_native_flows", "flow_key_reserved_for_legacy", "change_without_effect_legacy_route",
         "native_engine_not_running", "native_first_contact_not_running", "native_silence_not_running",
-        "native_trigger_other_product",
+        "native_trigger_other_product", "native_multitouch_not_running",
         "native_change_exits", "native_change_repeat_silence", "native_change_priority_silence",
         "native_change_priority_wins", "native_change_priority_ref", "native_change_entry", "native_change_pool",
         "native_change_other",
@@ -1641,6 +1662,8 @@ def test_always_does_not_warn_with_a_utility_template() -> None:
 WARNING_PATHS = {
     "always_with_marketing": "/0/definicion/horario",
     "empty_branch_with_le_gana_a": "/0/definicion/pasos/0",
+    # E-483: el item entero, como los bloqueos de lo que se publicaria sin efecto.
+    "native_multitouch_not_running_warning": "/0",
     "recovery_without_cap": "/0/definicion/topes",
     "same_trigger_unrelated": "/0/definicion/dispara",
     "silence_window_shorter_than_closed_gap": "/0/definicion/dispara/silencio",
