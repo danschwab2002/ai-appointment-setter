@@ -112,7 +112,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026110300050
   // La oferta de la campana en el link del agente (20261110000500, E-410).
   '20261110000500_campaign_offer_checkout_issuance_v1.sql',
   '20261111000100_close_recovery_case_without_pending_touch_v1.sql',
-  '20261111000200_pending_cancel_keeps_first_contact_v1.sql'])) {
+  '20261111000200_pending_cancel_keeps_first_contact_v1.sql',
+  // Los numeros del tablero (20261112200000, E-507): una lectura nueva.
+  '20261112200000_read_results_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de los rechazos de Meta`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(

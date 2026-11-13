@@ -10698,6 +10698,24 @@ def create_app(
                     for number in numbers
                 ]
 
+        # resultados/v1 (E-507): los numeros del tablero, en su modulo y detras
+        # de AUTOMATION_EXPERT_RESULTS_ENABLED (apagado: 404).
+        from bridge import results_read
+
+        results_read.register(
+            app,
+            supabase=expert_reader,
+            instance_ref=expert_manifest.tenant_ref,
+            time_zone=expert_manifest.time_zone,
+            require_token=require_automation_expert_token,
+            busy=automation_expert_busy,
+            slots=expert_slots,
+            failure=automation_expert_failure,
+            meta_access_token=settings.meta_templates_access_token,
+            meta_waba_id=settings.meta_waba_id,
+            graph_version=settings.meta_graph_api_version,
+        )
+
         @app.get("/internal/automation-expert/v1/flows")
         async def automation_expert_flows(
             authorization: str | None = Header(default=None, alias="Authorization"),

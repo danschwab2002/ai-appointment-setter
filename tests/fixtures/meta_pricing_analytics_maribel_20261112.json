@@ -1,0 +1,154 @@
+{
+ "_capture": {
+  "fecha": "2026-11-12",
+  "origen": "GET /v23.0/<waba>?fields=pricing_analytics.start(1794549600 - 3 dias).end(...).granularity(DAILY).dimensions([PRICING_CATEGORY,PRICING_TYPE,COUNTRY]) de la cuenta de WhatsApp de Maribel, leida adentro del VPS con meta_salud.py (E-507)",
+  "cambios": "el id de la cuenta se reemplazo por 100000000000001; los puntos son los que contesto Meta, sin datos de personas",
+  "desde": 1794204000,
+  "hasta": 1794463200,
+  "esperado_por_dia_cdmx": [
+   {
+    "fecha": "2026-11-09",
+    "plantillas_cobradas": 22,
+    "costo_usd": 0.689,
+    "marketing": 16,
+    "utilidad": 6,
+    "gratis": 8
+   },
+   {
+    "fecha": "2026-11-10",
+    "plantillas_cobradas": 14,
+    "costo_usd": 0.322,
+    "marketing": 7,
+    "utilidad": 7,
+    "gratis": 8
+   },
+   {
+    "fecha": "2026-11-11",
+    "plantillas_cobradas": 20,
+    "costo_usd": 0.5756,
+    "marketing": 13,
+    "utilidad": 7,
+    "gratis": 13
+   }
+  ]
+ },
+ "response": {
+  "id": "100000000000001",
+  "pricing_analytics": {
+   "data": [
+    {
+     "data_points": [
+      {
+       "start": 1794376800,
+       "end": 1794463200,
+       "country": "MX",
+       "pricing_type": "FREE_CUSTOMER_SERVICE",
+       "pricing_category": "SERVICE",
+       "volume": 13,
+       "cost": 0
+      },
+      {
+       "start": 1794376800,
+       "end": 1794463200,
+       "country": "MX",
+       "pricing_type": "REGULAR",
+       "pricing_category": "UTILITY",
+       "volume": 7,
+       "cost": 0.0595
+      },
+      {
+       "start": 1794376800,
+       "end": 1794463200,
+       "country": "MX",
+       "pricing_type": "REGULAR",
+       "pricing_category": "MARKETING",
+       "volume": 13,
+       "cost": 0.5161
+      },
+      {
+       "start": 1794290400,
+       "end": 1794376800,
+       "country": "MX",
+       "pricing_type": "REGULAR",
+       "pricing_category": "UTILITY",
+       "volume": 5,
+       "cost": 0.0425
+      },
+      {
+       "start": 1794290400,
+       "end": 1794376800,
+       "country": "MX",
+       "pricing_type": "REGULAR",
+       "pricing_category": "MARKETING",
+       "volume": 7,
+       "cost": 0.2779
+      },
+      {
+       "start": 1794290400,
+       "end": 1794376800,
+       "country": "CO",
+       "pricing_type": "FREE_CUSTOMER_SERVICE",
+       "pricing_category": "SERVICE",
+       "volume": 8,
+       "cost": 0
+      },
+      {
+       "start": 1794290400,
+       "end": 1794376800,
+       "country": "CO",
+       "pricing_type": "REGULAR",
+       "pricing_category": "UTILITY",
+       "volume": 2,
+       "cost": 0.0016
+      },
+      {
+       "start": 1794204000,
+       "end": 1794290400,
+       "country": "MX",
+       "pricing_type": "REGULAR",
+       "pricing_category": "UTILITY",
+       "volume": 5,
+       "cost": 0.0425
+      },
+      {
+       "start": 1794204000,
+       "end": 1794290400,
+       "country": "MX",
+       "pricing_type": "REGULAR",
+       "pricing_category": "MARKETING",
+       "volume": 15,
+       "cost": 0.5955
+      },
+      {
+       "start": 1794204000,
+       "end": 1794290400,
+       "country": "AR",
+       "pricing_type": "FREE_CUSTOMER_SERVICE",
+       "pricing_category": "SERVICE",
+       "volume": 8,
+       "cost": 0
+      },
+      {
+       "start": 1794204000,
+       "end": 1794290400,
+       "country": "AR",
+       "pricing_type": "REGULAR",
+       "pricing_category": "UTILITY",
+       "volume": 1,
+       "cost": 0.026
+      },
+      {
+       "start": 1794204000,
+       "end": 1794290400,
+       "country": "CA",
+       "pricing_type": "REGULAR",
+       "pricing_category": "MARKETING",
+       "volume": 1,
+       "cost": 0.025
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

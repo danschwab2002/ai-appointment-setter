@@ -168,6 +168,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261111000100",
         # Un pago pendiente que se cancela no clasifica la intencion (20261111000200, E-423).
         "20261111000200",
+        # Los numeros del tablero (20261112200000, E-507).
+        "20261112200000",
     ]
 
     sql = _sql()

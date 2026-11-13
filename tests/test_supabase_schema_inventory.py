@@ -477,7 +477,8 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # catalogo vivo y el comando del juez.
     # 20261109000100 (el sondeo de Meta y los avisos, E-361) suma sus tres.
     # 20261110000500 (la oferta de la campana en el link, E-410) suma su reserva.
-    assert len(allowlisted) == 208
+    # 20261112200000 (los numeros del tablero, E-507) suma su lectura.
+    assert len(allowlisted) == 209
     assert "mark_meta_account_hold_enabled_v1(bigint, timestamp with time zone, timestamp with time zone, integer)" in allowlisted
     assert "requeue_meta_account_hold_v1(bigint, bigint, bigint, timestamp with time zone)" in allowlisted
     assert "close_recovery_case_segment_coupon_v1(uuid, uuid, text, bigint, timestamp with time zone)" in allowlisted
@@ -2069,14 +2070,26 @@ def test_campaign_offer_checkout_issuance_fingerprint() -> None:
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
 
 
-def test_pending_cancel_keeps_first_contact_fingerprint_is_last() -> None:
+def test_read_results_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261112200000 (E-507): los numeros del tablero, solo service_role.
+    fingerprint = sql.split("'20261112200000'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261112200000_read_results_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",1,'read_results')")
+    assert "read_results_v1(timestamptz,timestamptz,text,text[],integer,integer)" in compact_fingerprint
+    assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
+
+
+def test_pending_cancel_keeps_first_contact_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261111000200 (E-423): la rama del correlador portable.
-    fingerprint = sql.split("'20261111000200'", 1)[1].split("select\n    version,", 1)[0]
+    fingerprint = sql.split("'20261111000200'", 1)[1].split("'20261112200000'", 1)[0].rsplit("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261111000200_pending_cancel_keeps_first_contact_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",1,'pending_cancel_keeps_first_contact')")
+    assert compact_fingerprint.endswith(",1,'pending_cancel_keeps_first_contact'")
     assert "_correlate_portable_hotmart_purchase_intent(uuid)" in compact_fingerprint
 
 

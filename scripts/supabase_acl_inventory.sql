@@ -231,7 +231,9 @@ expected_service_role(signature) as (
         ('public.claim_meta_template_notices_v1(jsonb, integer)'),
         ('public.finish_meta_template_notice_v1(jsonb, uuid, text, text, text)'),
         -- 20261110000500: la oferta de la campana en el link del agente (E-410).
-        ('public.reserve_portable_checkout_issuance_for_offer_v1(uuid, text, bigint, bigint, bigint, text, text, text, text, text, timestamp with time zone)')
+        ('public.reserve_portable_checkout_issuance_for_offer_v1(uuid, text, bigint, bigint, bigint, text, text, text, text, text, timestamp with time zone)'),
+        -- 20261112200000: los numeros del tablero (E-507).
+        ('public.read_results_v1(timestamp with time zone, timestamp with time zone, text, text[], integer, integer)')
 ),
 functions as (
     select
