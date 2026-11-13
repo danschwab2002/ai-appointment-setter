@@ -508,7 +508,8 @@ results.compra = { reevaluacion: cut.decision.decision, motivo: cut.decision.rea
   }
   let error = null;
   try {
-    await rpc('read_flow_engine_native_trigger_counts_v1', INSTANCE, A.funnel, 'ficha_impresa', since);
+    // ficha_impresa cuenta desde 20261113200000 (E-531); ficha_vencida es una salida, no un disparador.
+    await rpc('read_flow_engine_native_trigger_counts_v1', INSTANCE, A.funnel, 'ficha_vencida', since);
   } catch (caught) {
     error = caught;
   }

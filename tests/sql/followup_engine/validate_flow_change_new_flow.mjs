@@ -574,10 +574,10 @@ const outcomeFor = (rows) => one(rows.filter((row) => row.flow_id === WELCOME.fl
          !== JSON.stringify(['contract', 'events', 'people', 'product_ref', 'since', 'trigger', 'until'])) {
     fail('el conteo de la simulacion', counts);
   }
-  // El carrito cuenta desde 20261028000200 (E-161) y el pago rechazado desde 20261030000200 (E-207); la ficha
-  // sigue sin disparador nativo.
+  // El carrito cuenta desde 20261028000200 (E-161), el pago rechazado desde 20261030000200 (E-207) y la ficha
+  // impresa desde 20261113200000 (E-531); ficha_vencida es una salida, no un disparador.
   const otherTrigger = await errorOf(() => sql(`select public.read_flow_engine_native_trigger_counts_v1($1::jsonb, $2,
-    'ficha_impresa', now() - interval '1 day')`, [JSON.stringify(INSTANCE), A.funnel]));
+    'ficha_vencida', now() - interval '1 day')`, [JSON.stringify(INSTANCE), A.funnel]));
   const tooWide = await errorOf(() => sql(`select public.read_flow_engine_native_trigger_counts_v1($1::jsonb, $2,
     'compra', now() - interval '9 days')`, [JSON.stringify(INSTANCE), A.funnel]));
   if (otherTrigger?.message !== 'flow_engine_native_trigger_invalid' || tooWide?.message !== 'flow_engine_history_window_too_wide') {
