@@ -12,9 +12,24 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.38.1] - 2026-11-14
+
+Un parche sobre la 1.38.0, con 2 PR (#460 y #461) y sin migraciones. **Arregla `/ready` con los disparadores por audiencia prendidos** (#461, E-559): con `FLOW_AUDIENCE_TRIGGERS_ENABLED` en `true`, `/ready` contestaba 500 (`ResponseValidationError`, 6 `string_type`), porque el barredor de la audiencia devolvía sus contadores como números y `flow_audience_refused` como un diccionario, y `/ready` es `dict[str, str]`. Con el flag apagado no cambia nada de lo que corre. Suma además cuatro contratos del multiproducto (#460, E-553), solo documentación. Sin variables nuevas, sin campos nuevos en el manifiesto y sin cambios en los profiles. Solo cambia el Python del bridge (`flow_audience_sweeper.py` y `flow_audience_wiring.py`); el conector de Slack y la revisión diaria no cambian de código.
+
+### Corregido
+
+- **`/ready` contesta 200 con los disparadores por audiencia prendidos (#461, E-559).** Los contadores del barredor (`AudienceSweeper.readiness()`) salen como texto (`"0"` antes de la primera pasada) y `flow_audience_refused` sale como `clave=motivo, ...` ordenado por clave, o `none` si no hubo rechazos: la misma forma de `flow_engine_native_silence_refused`. `FlowAudience.readiness()` queda tipado `dict[str, str]`. La clave `flow_audience` no cambia. El contrato `flow-audience-trigger-v1` pasa a 0.4.1 con la sección «Claves de `/ready`». Un test nuevo pide `GET /ready` por HTTP con el flag prendido (antes ningún test pasaba por la validación de respuesta de FastAPI con el flag prendido).
+
 ### Agregado
 
-- **Los contratos del multiproducto (E-553, MP-01 del plan; decisiones D1-D8 de Dan del 13/11).** Cuatro contratos nuevos, escritos antes del código: [product-card-v1](docs/contracts/product-card-v1.md) (el conocimiento de un producto nuevo: mínimo obligatorio que el bridge valida, esqueleto recomendado que solo advierte y texto libre de hasta 5.500 bytes, con la regla de que todo monto del texto esté declarado en el mínimo; `relaciones.venta_cruzada` reservado y apagado), [conversation-focus-v1](docs/contracts/conversation-focus-v1.md) (el producto en foco: señales y precedencia, `product` como aviso del cambio, un solo reintento, pregunta fija ante oscilación, la medición A-0 antes de construirlo), [hotmart-unknown-offers-v1](docs/contracts/hotmart-unknown-offers-v1.md) (las ofertas huérfanas: los tres puntos de entrada, el registro sin datos personales, el aviso y el payload 72 h solo para reproceso) y [price-guard-v1](docs/contracts/price-guard-v1.md) (la guarda de precio, `off` o `bloquea` desde el día 1: qué es un monto, de dónde salen los permitidos, el reintento con corrección, la derivación con `price_not_in_catalog`, el aviso y la corrida en seco que se exige antes de prenderla). Solo documentación: no cambia el producto. **Qué hacer al actualizar:** nada.
+- **Los contratos del multiproducto (#460, E-553, MP-01 del plan; decisiones D1-D8 de Dan del 13/11).** Cuatro contratos nuevos, escritos antes del código: [product-card-v1](docs/contracts/product-card-v1.md) (el conocimiento de un producto nuevo: mínimo obligatorio que el bridge valida, esqueleto recomendado que solo advierte y texto libre de hasta 5.500 bytes, con la regla de que todo monto del texto esté declarado en el mínimo; `relaciones.venta_cruzada` reservado y apagado), [conversation-focus-v1](docs/contracts/conversation-focus-v1.md) (el producto en foco: señales y precedencia, `product` como aviso del cambio, un solo reintento, pregunta fija ante oscilación, la medición A-0 antes de construirlo), [hotmart-unknown-offers-v1](docs/contracts/hotmart-unknown-offers-v1.md) (las ofertas huérfanas: los tres puntos de entrada, el registro sin datos personales, el aviso y el payload 72 h solo para reproceso) y [price-guard-v1](docs/contracts/price-guard-v1.md) (la guarda de precio, `off` o `bloquea` desde el día 1: qué es un monto, de dónde salen los permitidos, el reintento con corrección, la derivación con `price_not_in_catalog`, el aviso y la corrida en seco que se exige antes de prenderla). Solo documentación: no cambia el producto. **Qué hacer al actualizar:** nada.
+
+### Qué hace quien actualiza
+
+- **Sin migraciones**, sin SQL nuevo, sin variables nuevas y sin campos nuevos en el manifiesto.
+- **Ningún profile cambia.**
+- **Las tres imágenes salen del tag**, como siempre. Solo el bridge cambia de código; el conector de Slack y la revisión diaria llevan la versión nueva sin cambios de código.
+- **`/ready`:** cambia `instance_product_version`. Con `FLOW_AUDIENCE_TRIGGERS_ENABLED` prendido, las claves `flow_audience_*` pasan a texto y la respuesta es 200; apagado, no cambia nada más.
 
 ## [1.38.0] - 2026-11-13
 
