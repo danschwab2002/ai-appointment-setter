@@ -91,7 +91,9 @@ const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Despues va el correlador que decide solo y su pregunta (20261114000100 y 20261114000150, E-536).
 if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261114000100_identity_link_decider_v1.sql',
-  '20261114000150_identity_link_question_v1.sql'])) {
+  '20261114000150_identity_link_question_v1.sql',
+    // Las ofertas huerfanas de Hotmart (20261114000300, E-565): dos tablas y dos RPC de service_role.
+    '20261114000300_hotmart_unknown_offers_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de E-536`, names.slice(position + 1));
 }
 

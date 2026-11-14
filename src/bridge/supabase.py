@@ -2855,6 +2855,66 @@ class SupabaseClient:
             raise SupabaseError(f"{operation}_invalid_event_id")
         return PurchaseAdmissionResult(outcome, webhook_event_id)
 
+    async def record_hotmart_unknown_offer(
+        self,
+        *,
+        tenant_ref: str,
+        offer: Any,
+    ) -> str:
+        """Anota una oferta huerfana de Hotmart (hotmart-unknown-offers-v1, E-565).
+
+        ``offer`` es un ``bridge.hotmart_unknown_offers.UnknownOffer``. Devuelve
+        ``inserted``, ``counted``, ``duplicate`` o ``not_hotmart`` (desde el
+        despachador, un caso que no abrio Hotmart: sin fila); otra forma falla.
+        """
+        operation = "hotmart_unknown_offer_record"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/record_hotmart_unknown_offer_v1",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": tenant_ref,
+                    "p_hotmart_product_id": offer.hotmart_product_id,
+                    "p_offer_code": offer.offer_code,
+                    "p_event_type": offer.event_type,
+                    "p_motivo": offer.motivo,
+                    "p_entrada": offer.entrada,
+                    "p_event_ref_sha256": offer.event_ref_sha256,
+                    "p_source_event_id": offer.source_event_id,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        outcome = rows[0].get("outcome")
+        if outcome not in {"inserted", "counted", "duplicate", "not_hotmart"}:
+            raise SupabaseError(f"{operation}_invalid_outcome")
+        return outcome
+
+    async def list_hotmart_unknown_offers(
+        self,
+        *,
+        tenant_ref: str,
+        only_open: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Las ofertas huerfanas de la instancia (las abiertas, por defecto)."""
+        operation = "hotmart_unknown_offer_list"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/list_hotmart_unknown_offers_v1",
+            content=json.dumps(
+                {"p_tenant_ref": tenant_ref, "p_solo_abiertas": only_open},
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        return _response_rows(response, operation=operation)
+
     async def admit_portable_hotmart_cart_abandonment(
         self,
         *,

@@ -283,6 +283,7 @@ def test_every_reviewed_event_is_a_hotmart_line_present_in_the_code() -> None:
             "followup_discount.py",
             "agent_campaigns.py",
             "hermes.py",
+            "hotmart_unknown_offers.py",
         )
     )
     for name in LOGGED_INFO_EVENTS:

@@ -338,6 +338,7 @@ def _dispatcher(
     gate_open: bool = True,
     greeting: bool = False,
     template: WhatsAppTemplateConfig = TEMPLATE,
+    unknown_offer_recorder: Any = None,
 ) -> DurableDispatcher:
     client = chatwoot.client()
     return DurableDispatcher(
@@ -346,6 +347,7 @@ def _dispatcher(
         chatwoot=client,
         chatwoot_account_id=ACCOUNT_ID,
         chatwoot_inbox_id=INBOX_ID,
+        unknown_offer_recorder=unknown_offer_recorder,
         sender=ChatwootMessageSender(
             chatwoot=client,
             inbox_id=INBOX_ID,
@@ -572,6 +574,60 @@ def test_an_offer_outside_the_binding_is_not_sent(tmp_path: Path) -> None:
     # E-432: el motivo propio y sin reintento (antes, pre_request_failed x4).
     assert authority.finalizations[-1]["reason_code"] == "recipient_offer_not_declared"
     assert authority.finalizations[-1]["next_attempt_at"] is None
+
+
+class _UnknownOffers:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.records: list[Any] = []
+
+    async def record_hotmart_unknown_offer(self, *, tenant_ref: str, offer: Any) -> str:
+        if self.fail:
+            raise SupabaseError("hotmart_unknown_offer_record_failed: HTTP 503")
+        self.records.append((tenant_ref, offer))
+        return "inserted"
+
+
+@pytest.mark.parametrize("fail", [False, True], ids=["registra", "el registro falla"])
+def test_an_offer_outside_the_binding_also_leaves_its_unknown_offer_row(
+    tmp_path: Path, fail: bool
+) -> None:
+    # E-565 (hotmart-unknown-offers-v1, punto 3): la misma oferta 83utgyow deja
+    # su fila; el envio no sale y el motivo es el mismo, aunque el registro falle.
+    from bridge.hotmart_unknown_offers import HotmartUnknownOfferRecorder
+
+    authority = _Authority(offer_code="83utgyow")
+    chatwoot = _Chatwoot()
+    store = _UnknownOffers(fail=fail)
+    recorder = HotmartUnknownOfferRecorder(store, tenant_ref=ALLY.tenant_ref)
+
+    with pytest.raises(SupabaseError, match="followup_recipient_not_allowlisted"):
+        _run(_dispatcher(authority, chatwoot, tmp_path, unknown_offer_recorder=recorder))
+
+    assert chatwoot.posts("/messages") == []
+    assert authority.finalizations[-1]["reason_code"] == "recipient_offer_not_declared"
+    assert authority.finalizations[-1]["next_attempt_at"] is None
+    if fail:
+        assert store.records == []
+        return
+    [(tenant_ref, offer)] = store.records
+    assert tenant_ref == ALLY.tenant_ref
+    assert (offer.entrada, offer.motivo, offer.offer_code) == ("despacho", "offer_not_declared", "83utgyow")
+    assert offer.hotmart_product_id == ALLY.hotmart_product_id
+    assert offer.event_type is None
+    assert offer.source_event_id == authority.context.source_event_id
+
+
+def test_a_declared_offer_never_touches_the_unknown_offers(tmp_path: Path) -> None:
+    store = _UnknownOffers()
+    from bridge.hotmart_unknown_offers import HotmartUnknownOfferRecorder
+
+    _run(_dispatcher(
+        _Authority(), _Chatwoot(), tmp_path,
+        unknown_offer_recorder=HotmartUnknownOfferRecorder(store, tenant_ref=ALLY.tenant_ref),
+    ))
+
+    assert store.records == []
 
 
 # -------------------------------------------------------------- the greeting

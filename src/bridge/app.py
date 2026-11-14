@@ -121,6 +121,7 @@ from bridge.handoff_link_note import (
     handoff_link_note_marker,
 )
 from bridge import price_guard as price_guard_module
+from bridge import hotmart_unknown_offers as unknown_offers_module
 from bridge import handoff_notice
 from bridge.handoff_notice import (
     HANDOFF_NOTICE_DECISION,
@@ -569,6 +570,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "identity_link_model_only",
     "identity_link_country_code_fix_enabled",
     "identity_link_ask_enabled",
+    # E-565 (hotmart-unknown-offers-v1): el registro de las ofertas huerfanas de
+    # Hotmart. No depende del aliado: el catalogo es el del manifiesto. Por
+    # instancia, solo prenderlo.
+    "hotmart_unknown_offers_enabled",
     # Transcribir un audio no depende del aliado: la key y el host de Chatwoot
     # ya son configuracion por runtime.
     "chatwoot_audio_transcription_enabled",
@@ -1063,6 +1068,10 @@ class Settings:
     # `off` (el default, y lo que queda sin la variable) el bridge no extrae
     # ningun monto y todo es byte a byte como antes.
     agent_price_guard_mode: str = price_guard_module.MODE_OFF
+    # E-565 (hotmart-unknown-offers-v1): HOTMART_UNKNOWN_OFFERS_ENABLED. Apagado
+    # (el default) el bridge no llama a ninguna RPC nueva, /ready no cambia y
+    # todo es byte a byte como antes.
+    hotmart_unknown_offers_enabled: bool = False
     # Los segmentos aprobados de [[agente.segmentos]], cargados al arrancar con
     # el flag prendido. None con el flag apagado.
     agent_segment_catalog: SegmentCatalog | None = None
@@ -2564,6 +2573,12 @@ class Settings:
             agent_customer_status_enabled=agent_customer_status_enabled,
             agent_segments_enabled=agent_segments_enabled,
             agent_price_guard_mode=agent_price_guard_mode,
+            hotmart_unknown_offers_enabled=(
+                os.getenv(unknown_offers_module.UNKNOWN_OFFERS_ENV, "false")
+                .strip()
+                .lower()
+                == "true"
+            ),
             agent_segment_catalog=agent_segment_catalog,
             agent_campaigns_enabled=(
                 os.getenv("AGENT_CAMPAIGNS_ENABLED", "false").strip().lower() == "true"
@@ -6030,6 +6045,16 @@ def create_app(
             base_url=settings.supabase_base_url,
             service_role_key=settings.supabase_service_role_key,
         )
+    # E-565 (hotmart-unknown-offers-v1): el registro de las ofertas huerfanas de
+    # Hotmart, desde los tres puntos de entrada (contrato §2). Apagado, None:
+    # ningun punto llama a la base y /ready no cambia.
+    unknown_offer_recorder = (
+        unknown_offers_module.HotmartUnknownOfferRecorder(
+            shared_supabase, tenant_ref=settings.commercial_ally_config.tenant_ref
+        )
+        if settings.hotmart_unknown_offers_enabled and shared_supabase is not None
+        else None
+    )
     # E-317 (campaign-inbound-entry-v1): la palabra clave y la pregunta de entrada de
     # las campanas. Sin el flag, None y el turno no lee nada nuevo.
     campaign_inbound = _campaign_inbound_entry_setup(
@@ -7047,6 +7072,8 @@ def create_app(
             ),
             product_routes=commercial_ally_routes,
             portable_recipient_enabled=portable_dynamic_recipient,
+            # E-565: la oferta que frena E-432 deja su fila (solo con el flag).
+            unknown_offer_recorder=unknown_offer_recorder,
             pilot_boundary=pilot_boundary,
             chatwoot_inbox_id=settings.chatwoot_inbox_id,
             human_handoff_admission_enabled=(
@@ -11751,6 +11778,25 @@ def create_app(
                     else "sin_slack"
                 ),
             }
+        if unknown_offer_recorder is not None:
+            # E-565 (hotmart-unknown-offers-v1 §5): cuantas ofertas huerfanas
+            # siguen abiertas, como "abiertas:<n>". No responde 503: el registro
+            # no atiende a nadie; si la lectura falla se publica "no_disponible".
+            # Apagado, /ready no cambia.
+            try:
+                unknown_open = await unknown_offer_recorder.open_count()
+            except Exception as exc:  # noqa: BLE001 - /ready publica, no cae
+                logger.warning(
+                    "hotmart_unknown_offers_ready_failed error_type=%s",
+                    type(exc).__name__,
+                )
+                unknown_offers_state = "no_disponible"
+            else:
+                unknown_offers_state = f"abiertas:{unknown_open}"
+            commercial_ally_readiness = {
+                **commercial_ally_readiness,
+                "hotmart_unknown_offers": unknown_offers_state,
+            }
         if segment_catalog is not None:
             # Cada segmento como clave:vN:sha:estado (por_empezar, vigente,
             # vencido), calculado ahora. Solo con el flag: apagado, /ready no
@@ -13699,6 +13745,13 @@ def create_app(
                 hotmart_route.offer_code or "-",
                 hotmart_route.reason,
             )
+            if unknown_offer_recorder is not None:
+                # E-565 (punto 1, sin_ruta): ademas de la linea, la fila.
+                await unknown_offer_recorder.record(
+                    unknown_offers_module.from_unrouted(
+                        hotmart_route, event_id=event_id, event_type=event_type
+                    )
+                )
             response.status_code = status.HTTP_200_OK
             return {"status": "ignored", "reason": "hotmart_event_unrouted"}
         event_config = hotmart_route.config
@@ -13747,6 +13800,20 @@ def create_app(
                     event_type,
                     capture_invalid,
                 )
+                if (
+                    unknown_offer_recorder is not None
+                    and event_type == EVENT_CART_ABANDONMENT
+                ):
+                    # E-565 (punto 2, parser_descarta): el carrito de otro
+                    # producto u oferta deja la fila; uno roto, no.
+                    await unknown_offer_recorder.record(
+                        unknown_offers_module.from_parser_rejection(
+                            payload,
+                            config=event_config,
+                            event_id=event_id,
+                            event_type=event_type,
+                        )
+                    )
                 response.status_code = status.HTTP_200_OK
                 return {"status": "ignored", "reason": capture_invalid}
             try:
@@ -14020,6 +14087,20 @@ def create_app(
                     ),
                 )
                 if parsed_purchase is None:
+                    if (
+                        unknown_offer_recorder is not None
+                        and settings.portable_hotmart_purchase_stop_enabled
+                    ):
+                        # E-565 (punto 2, parser_descarta): solo el parser con
+                        # el binding descarta por producto.
+                        await unknown_offer_recorder.record(
+                            unknown_offers_module.from_parser_rejection(
+                                payload,
+                                config=event_config,
+                                event_id=event_id,
+                                event_type=event_type,
+                            )
+                        )
                     response.status_code = status.HTTP_200_OK
                     return {
                         "status": "ignored",
@@ -14105,6 +14186,20 @@ def create_app(
                 ),
             )
             if parsed_abandonment is None:
+                if (
+                    unknown_offer_recorder is not None
+                    and settings.portable_hotmart_recovery_enabled
+                ):
+                    # E-565 (punto 2, parser_descarta): solo el parser con el
+                    # binding descarta por producto u oferta.
+                    await unknown_offer_recorder.record(
+                        unknown_offers_module.from_parser_rejection(
+                            payload,
+                            config=event_config,
+                            event_id=event_id,
+                            event_type=event_type,
+                        )
+                    )
                 response.status_code = status.HTTP_200_OK
                 return {
                     "status": "ignored",

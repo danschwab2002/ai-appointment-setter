@@ -190,6 +190,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         # El correlador que decide solo y su pregunta (20261114000100 y 20261114000150, E-536).
         "20261114000100",
         "20261114000150",
+        # Las ofertas huerfanas de Hotmart (20261114000300, E-565).
+        "20261114000300",
     ]
 
     sql = _sql()

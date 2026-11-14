@@ -484,7 +484,10 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261113200000 (la ficha nativa, E-528, C4) suma la lectura de la ficha.
     # 20261114000100 y 20261114000150 (el correlador que decide solo y su
     # pregunta, E-536) suman sus trece.
-    assert len(allowlisted) == 232
+    # 20261114000300 (las ofertas huerfanas de Hotmart, E-565) suma sus dos.
+    assert len(allowlisted) == 234
+    assert "record_hotmart_unknown_offer_v1(text, bigint, text, text, text, text, text, uuid)" in allowlisted
+    assert "list_hotmart_unknown_offers_v1(text, boolean)" in allowlisted
     assert "complete_identity_link_decision_v1(uuid, uuid, bigint, text, text, text, text, text, text, text[], text, text)" in allowlisted
     assert "record_identity_link_answer_v1(text, text, bigint, text, bigint)" in allowlisted
     assert "get_flow_engine_native_payment_slip_context_v1(uuid, text, bigint, timestamp with time zone)" in allowlisted
@@ -2297,16 +2300,30 @@ def test_schema_inventory_recognizes_the_native_version_guard_of_publish() -> No
     assert "position('flow_change_publish_native_version_guard'indefinition)>0" in compact
 
 
-def test_identity_link_fingerprints_are_last() -> None:
+def test_identity_link_fingerprints_go_before_the_unknown_offers() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # Las filas de 20261114000100 y 20261114000150 (E-536): la decision con RLS, los dos reemplazos con su marca
     # y las RPC de service_role; la cola de la pregunta y la respuesta.
     decider = sql.split("'20261114000100'", 1)[1].split("'20261114000150'", 1)[0].rsplit("union all", 1)[0]
-    question = sql.split("'20261114000150'", 1)[1].split("select\n    version,", 1)[0]
+    question = (
+        sql.split("'20261114000150'", 1)[1].split("'20261114000300'", 1)[0].rsplit("union all", 1)[0]
+    )
     compact_decider = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", decider))
     compact_question = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", question))
 
     assert compact_decider.endswith(",4,'identity_link_decider'")
     assert "complete_identity_link_decision_v1(uuid,uuid,bigint,text,text,text,text,text,text,text[],text,text)" in compact_decider
-    assert compact_question.endswith(",2,'identity_link_question')")
+    assert compact_question.endswith(",2,'identity_link_question'")
     assert "record_identity_link_answer_v1(text,text,bigint,text,bigint)" in compact_question
+
+
+def test_hotmart_unknown_offers_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261114000300 (E-565): las dos tablas con RLS y el registro de service_role.
+    unknown = sql.split("'20261114000300'", 1)[1].split("select\n    version,", 1)[0]
+    compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", unknown))
+
+    assert compact.endswith(",3,'hotmart_unknown_offers')")
+    assert "to_regclass('public.hotmart_unknown_offers')" in compact
+    assert "to_regclass('public.hotmart_unknown_offer_refs')" in compact
+    assert "record_hotmart_unknown_offer_v1(text,bigint,text,text,text,text,text,uuid)" in compact

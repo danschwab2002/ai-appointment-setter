@@ -263,7 +263,10 @@ expected_service_role(signature) as (
         ('public.claim_identity_link_question_v1(text, text, text, integer)'),
         ('public.start_identity_link_question_v1(uuid, uuid, bigint)'),
         ('public.finish_identity_link_question_v1(uuid, uuid, bigint, text, bigint, bigint, text)'),
-        ('public.record_identity_link_answer_v1(text, text, bigint, text, bigint)')
+        ('public.record_identity_link_answer_v1(text, text, bigint, text, bigint)'),
+        -- 20261114000300: las ofertas huerfanas de Hotmart (E-565).
+        ('public.record_hotmart_unknown_offer_v1(text, bigint, text, text, text, text, text, uuid)'),
+        ('public.list_hotmart_unknown_offers_v1(text, boolean)')
 ),
 functions as (
     select

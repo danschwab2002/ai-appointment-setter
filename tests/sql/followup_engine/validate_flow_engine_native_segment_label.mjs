@@ -46,7 +46,9 @@ const ONLY_CALLS = new Set(['20261108004100_flow_change_publish_native_version_g
   // La ficha de OXXO nativa (20261113200000, E-528, C4).
   '20261113200000_e528_native_payment_slip_v1.sql',
     // El correlador que decide solo y su pregunta (20261114000100 y 20261114000150, E-536).
-    '20261114000100_identity_link_decider_v1.sql', '20261114000150_identity_link_question_v1.sql']);
+    '20261114000100_identity_link_decider_v1.sql', '20261114000150_identity_link_question_v1.sql',
+    // Las ofertas huerfanas de Hotmart (20261114000300, E-565): dos tablas y dos RPC de service_role.
+    '20261114000300_hotmart_unknown_offers_v1.sql']);
 for (const name of names.slice(position + 1).filter((candidate) => !ONLY_CALLS.has(candidate))) {
   if (readFileSync(join(root, 'supabase/migrations', name), 'utf8').includes('_flow_engine_native_unsupported')) {
     fail(`${name} toca _flow_engine_native_unsupported: revisar esta prueba`);

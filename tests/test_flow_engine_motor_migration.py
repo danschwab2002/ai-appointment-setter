@@ -182,6 +182,8 @@ def test_it_is_one_transaction_and_comes_before_the_bridge_reads() -> None:
         # El correlador que decide solo y su pregunta (20261114000100 y 20261114000150, E-536).
         "20261114000100_identity_link_decider_v1.sql",
         "20261114000150_identity_link_question_v1.sql",
+        # Las ofertas huerfanas de Hotmart (20261114000300, E-565).
+        "20261114000300_hotmart_unknown_offers_v1.sql",
     ]
     later = (MIGRATIONS / names[position + 1]).read_text(encoding="utf-8")
     assert "create or replace" not in later.lower()

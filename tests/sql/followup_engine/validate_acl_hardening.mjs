@@ -327,7 +327,10 @@ const rows = await db.query(`
       ('claim_identity_link_question_v1(text,text,text,integer)'),
       ('start_identity_link_question_v1(uuid,uuid,bigint)'),
       ('finish_identity_link_question_v1(uuid,uuid,bigint,text,bigint,bigint,text)'),
-      ('record_identity_link_answer_v1(text,text,bigint,text,bigint)')
+      ('record_identity_link_answer_v1(text,text,bigint,text,bigint)'),
+      -- 20261114000300: las ofertas huerfanas de Hotmart (E-565).
+      ('record_hotmart_unknown_offer_v1(text,bigint,text,text,text,text,text,uuid)'),
+      ('list_hotmart_unknown_offers_v1(text,boolean)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -363,6 +366,7 @@ const result = rows.rows[0];
 // 20261112230000 (el tope por persona del nativo, E-483 C6) suma su arranque: 218.
 // 20261113200000 (la ficha nativa, E-528 C4) suma la lectura de la ficha: 219.
 // 20261114000100 y 20261114000150 (el correlador que decide solo y su pregunta, E-536) suman trece: 232.
+// 20261114000300 (las ofertas huerfanas de Hotmart, E-565) suma sus dos: 234.
 // Historical baseline guard was `result.expected_count !== 63`; the current
 // baseline is 68 RPCs, daily feedback adds fourteen, payment links add three,
 // the one-shot operator disposition adds one, and correlation event context
@@ -414,7 +418,7 @@ const result = rows.rows[0];
 // claim, settle and block the retry, and mark the 131026 notice.
 // The personal coupon of a native step (20261112210500, E-483, C2) adds the read of the bridge.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 232) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 234) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper
