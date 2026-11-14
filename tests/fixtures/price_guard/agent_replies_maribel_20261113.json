@@ -1,0 +1,1687 @@
+{
+ "_origen": "FIXTURE F2 de E-555, capturado el 2026-11-13 entre las 17:53 y las 17:56 UTC, en solo lectura: salientes del AgentBot sin plantilla de Chatwoot (bandeja 13, infra_chatwoot-db) con algun numero, todo el historial hasta la captura, cruzados con el turno de agent_turn_provenance de la misma conversacion. Anonimizado (nombre del lead <NOMBRE>, mails, corridas de 7+ digitos <NUM>, producto de Hotmart, sck, fbclid, cupon personal). Lo usa la guarda de precio (E-564, price-guard-v1): las respuestas que estaban bien no se bloquean.",
+ "instancia": "maribel",
+ "casos": [
+  {
+   "caso": "maribel-001",
+   "conversacion": 1,
+   "mensaje_chatwoot": 4472,
+   "enviado_en": "2026-10-27T12:21:23.921586+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "40"
+   ],
+   "respuesta": "El Protocolo Biohacking + es un programa en línea de Maribel Guardia sobre hábitos de bienestar: alimentación, rutinas, descanso y prácticas de biohacking, pensado sobre todo para mujeres desde los 40.",
+   "entrantes_previos": [
+    "Hola quiero info del prod porfa"
+   ],
+   "conocimiento_probable": "v4",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-27T12:21:17.904062+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "9d02029f9e0a3b75fa1e2dc3af23b646365aa510",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 5,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-002",
+   "conversacion": 1,
+   "mensaje_chatwoot": 4473,
+   "enviado_en": "2026-10-27T12:21:26.618344+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "MXN 1.397"
+   ],
+   "numeros_en_el_texto": [
+    "8",
+    "1.397"
+   ],
+   "respuesta": "Son 8 módulos en video y PDF, con guías, rutinas, una masterclass y acceso al Círculo Azul, la comunidad privada. El acceso es de por vida y cuesta MXN 1.397 con IVA incluido.",
+   "entrantes_previos": [
+    "Hola quiero info del prod porfa"
+   ],
+   "conocimiento_probable": "v4",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-27T12:21:17.904062+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "9d02029f9e0a3b75fa1e2dc3af23b646365aa510",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 5,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-003",
+   "conversacion": 1,
+   "mensaje_chatwoot": 4476,
+   "enviado_en": "2026-10-27T12:23:07.635206+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "MXN 1.397"
+   ],
+   "numeros_en_el_texto": [
+    "1.397"
+   ],
+   "respuesta": "Con gusto. El Protocolo Biohacking + cuesta MXN 1.397, con el IVA incluido. Con tarjeta de crédito también se puede pagar a meses. Te envío el enlace de la página de pago:\nhttps://pay.hotmart.com/<PRODUCTO>?off=u8ikyx78&checkoutMode=10&src=hermes&sck=<SCK>",
+   "entrantes_previos": [
+    "Hola quiero info del prod porfa"
+   ],
+   "conocimiento_probable": "v4",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-27T12:23:06.781608+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "9d02029f9e0a3b75fa1e2dc3af23b646365aa510",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 10,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-004",
+   "conversacion": 1,
+   "mensaje_chatwoot": 4485,
+   "enviado_en": "2026-10-27T12:29:15.101783+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "100%"
+   ],
+   "respuesta": "El Protocolo es un programa 100% en línea: no incluye clases presenciales ni consultas, y tampoco consulta ni seguimiento personal con Maribel.",
+   "entrantes_previos": [
+    "El protocolo incluye clases presenciales o consultas?"
+   ],
+   "conocimiento_probable": "v4",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-27T12:29:11.792549+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "9d02029f9e0a3b75fa1e2dc3af23b646365aa510",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 14,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-005",
+   "conversacion": 2,
+   "mensaje_chatwoot": 4529,
+   "enviado_en": "2026-10-27T17:17:36.799934+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%",
+    "10"
+   ],
+   "respuesta": "¡Hola! Soy del equipo de El Protocolo. Tienes disponible un 10% de descuento para ingresar a El Protocolo Biohacking +. Escribe en el campo del cupón de la página de pago el código PROTOCOLO10+ tal cual, con el signo «+» al final y sin espacios, y verás el descuento en el total antes de pagar. Aquí te envío el enlace para retomar tu compra:\nhttps://pay.hotmart.com/<PRODUCTO>?off=u8ikyx78&checkoutMode=10&src=hermes&sck=<SCK>",
+   "entrantes_previos": [
+    "Retomar proceso"
+   ],
+   "conocimiento_probable": "v4",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-27T17:17:35.513631+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "dc728170a9d44e305b8ca8627f0721e8b00dd6d9",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-006",
+   "conversacion": 2,
+   "mensaje_chatwoot": 4557,
+   "enviado_en": "2026-10-27T22:22:02.733616+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10",
+    "10%"
+   ],
+   "respuesta": "Con gusto. Te recordamos el código PROTOCOLO10+, con el signo «+» al final y sin espacios, para tu 10% de descuento en el campo del cupón; el enlace ya lo trae aplicado. Aquí está el enlace para completar tu compra de El Protocolo Biohacking +:\nhttps://pay.hotmart.com/<PRODUCTO>?off=u8ikyx78&checkoutMode=10&src=hermes&sck=<SCK>&offDiscount=PROTOCOLO10%2B",
+   "entrantes_previos": [
+    "quiero comprar, pásame el link"
+   ],
+   "conocimiento_probable": "v5",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-27T22:22:01.020089+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "2a7fc518fefd46e59f05ada899b59159a4122110",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 4,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-007",
+   "conversacion": 2,
+   "mensaje_chatwoot": 4570,
+   "enviado_en": "2026-10-27T22:24:26.461536+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%"
+   ],
+   "respuesta": "Sí, el enlace ya trae el 10% de descuento aplicado: lo verás reflejado en el total antes de pagar. Aquí te lo envío para completar tu compra de El Protocolo Biohacking +:\nhttps://pay.hotmart.com/<PRODUCTO>?off=u8ikyx78&checkoutMode=10&src=hermes&sck=<SCK>&offDiscount=PROTOCOLO10%2B",
+   "entrantes_previos": [
+    "Ya trae el descuento?"
+   ],
+   "conocimiento_probable": "v5",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-27T22:24:25.208879+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "2a7fc518fefd46e59f05ada899b59159a4122110",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 6,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-008",
+   "conversacion": 4,
+   "mensaje_chatwoot": 4576,
+   "enviado_en": "2026-10-27T23:48:23.301683+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%",
+    "10"
+   ],
+   "respuesta": "¡Con gusto, <NOMBRE>! Retomamos tu inscripción a El Protocolo Biohacking+. Tienes disponible un 10% de descuento: usa el código PROTOCOLO10+ (con el signo «+» al final y sin espacios) en el campo del cupón de la página de pago. El enlace que te envío ya lo trae aplicado, así que el descuento se ve en el total antes de pagar:\nhttps://pay.hotmart.com/<PRODUCTO>?off=u8ikyx78&checkoutMode=10&src=hermes&sck=<SCK>&offDiscount=PROTOCOLO10%2B",
+   "entrantes_previos": [
+    "Retomar proceso"
+   ],
+   "conocimiento_probable": "v6",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-27T23:48:21.954855+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "2a7fc518fefd46e59f05ada899b59159a4122110",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 6,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-009",
+   "conversacion": 11,
+   "mensaje_chatwoot": 4665,
+   "enviado_en": "2026-10-28T15:33:21.269825+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%",
+    "10"
+   ],
+   "respuesta": "¡Hola! Qué bien que quieras retomar tu inscripción. Tienes disponible un 10% de descuento para ingresar a El Protocolo: usa el código PROTOCOLO10+ en el campo del cupón de la página de pago, y el enlace que te envío ya lo trae aplicado. El descuento se ve en el total antes de pagar:\nhttps://pay.hotmart.com/<PRODUCTO>?off=u8ikyx78&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>&offDiscount=PROTOCOLO10%2B",
+   "entrantes_previos": [
+    "Retomar proceso"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-28T15:33:20.032047+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "c342cf6749c1ab79fe8d9bb9e814cd10e74b7823",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-010",
+   "conversacion": 9,
+   "mensaje_chatwoot": 4670,
+   "enviado_en": "2026-10-28T16:14:15.589606+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%",
+    "10"
+   ],
+   "respuesta": "¡Con gusto! Tienes un 10% de descuento disponible para ingresar a El Protocolo. Usa el código PROTOCOLO10+ en el campo del cupón de la página de pago. Aquí te envío el enlace, que ya trae el descuento aplicado: lo ves en el total antes de pagar. Como mencionaste que pagarás en OXXO, al confirmar la compra elige OXXO entre los métodos de pago y la página te dará una ficha con el número de referencia para pagar en tienda. 🌸\nhttps://pay.hotmart.com/<PRODUCTO>?off=u8ikyx78&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>&offDiscount=PROTOCOLO10%2B",
+   "entrantes_previos": [
+    "Retomar proceso",
+    "Retomar proceso",
+    "Hola, voy a hacer el pago en OXXO. Muchas gracias. 🌸"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-28T16:14:14.420787+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "c342cf6749c1ab79fe8d9bb9e814cd10e74b7823",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 4,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-011",
+   "conversacion": 20,
+   "mensaje_chatwoot": 4755,
+   "enviado_en": "2026-10-29T16:35:00.011163+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%",
+    "10"
+   ],
+   "respuesta": "Hola, soy del equipo de El Protocolo. Para retomar tu compra tienes un 10% de descuento: usa el código PROTOCOLO10+ (con el signo + al final, sin espacios) en el campo del cupón de la página de pago. Te envío el enlace, que ya trae el descuento aplicado: lo verás reflejado en el total antes de pagar:\nhttps://pay.hotmart.com/<PRODUCTO>?off=u8ikyx78&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>&offDiscount=PROTOCOLO10%2B",
+   "entrantes_previos": [
+    "Retomar proceso"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-29T16:34:58.664067+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "702c5a12b9e8b739288d48ee03545cf45e99bfb4",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-012",
+   "conversacion": 27,
+   "mensaje_chatwoot": 4793,
+   "enviado_en": "2026-10-29T22:44:25.198932+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%",
+    "10"
+   ],
+   "respuesta": "¡Hola! Con gusto te ayudo a retomar tu compra. Tienes disponible un 10% de descuento para ingresar a El Protocolo Biohacking +, con el código PROTOCOLO10+. Te envío el enlace de pago, que ya lo trae aplicado: el descuento se ve en el total antes de pagar:\nhttps://pay.hotmart.com/<PRODUCTO>?off=u8ikyx78&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>&offDiscount=PROTOCOLO10%2B",
+   "entrantes_previos": [
+    "Retomar proceso"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-29T22:44:24.370653+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "702c5a12b9e8b739288d48ee03545cf45e99bfb4",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-013",
+   "conversacion": 26,
+   "mensaje_chatwoot": 4804,
+   "enviado_en": "2026-10-30T00:11:14.980571+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace para retomar tu compra: ya trae tu 10% de descuento aplicado y lo verás en el total antes de pagar.\nhttps://pay.hotmart.com/<PRODUCTO>?off=u8ikyx78&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>&offDiscount=PROTOCOLO10%2B",
+   "entrantes_previos": [
+    "Retomar proceso"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-30T00:11:13.789698+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "a7bffb734a97de29e65caf64dfa9940fefef0723",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-014",
+   "conversacion": 24,
+   "mensaje_chatwoot": 4810,
+   "enviado_en": "2026-10-30T01:27:40.101641+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace de El Protocolo Biohacking + con tu 10% de descuento ya aplicado: lo verás en el total antes de pagar.\nhttps://pay.hotmart.com/<PRODUCTO>?off=u8ikyx78&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>&offDiscount=PROTOCOLO10%2B",
+   "entrantes_previos": [
+    "Retomar proceso"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-30T01:27:38.718575+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "a7bffb734a97de29e65caf64dfa9940fefef0723",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-015",
+   "conversacion": 40,
+   "mensaje_chatwoot": 4885,
+   "enviado_en": "2026-10-30T21:54:18.749195+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace de tu compra: ya trae tu 10% de descuento aplicado y lo ves en el total antes de pagar.\nhttps://pay.hotmart.com/<PRODUCTO>?off=u8ikyx78&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>&offDiscount=PROTOCOLO10%2B",
+   "entrantes_previos": [
+    "Retomar proceso"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-30T21:54:17.467989+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "7bb65aa905e446f97c99e64f9d6ab649c3072703",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-016",
+   "conversacion": 51,
+   "mensaje_chatwoot": 4954,
+   "enviado_en": "2026-10-31T15:11:16.546943+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10 %"
+   ],
+   "respuesta": "Hola <NOMBRE>, soy del equipo de El Protocolo. Revisamos tu caso y el pago no pasó porque el banco no aprobó la tarjeta en ese momento. Puedes habilitar las compras en línea en la app de tu banco o llamarles, e intentarlo una vez más con esa tarjeta, o pagar con otra tarjeta u otro medio (en México: OXXO, transferencia SPEI o Mercado Pago). Aquí te envío el enlace de la oferta, con tu 10 % de descuento ya aplicado, lo ves en el total antes de pagar:\nhttps://pay.hotmart.com/<PRODUCTO>?off=u8ikyx78&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>&offDiscount=PROTOCOLO10%2B",
+   "entrantes_previos": [
+    "Retomar proceso"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-31T15:11:15.309692+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "7bb65aa905e446f97c99e64f9d6ab649c3072703",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action",
+     "recent_payment_failure"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-017",
+   "conversacion": 51,
+   "mensaje_chatwoot": 5004,
+   "enviado_en": "2026-10-31T21:47:13.623273+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10 %"
+   ],
+   "respuesta": "Hola <NOMBRE>, soy del equipo de El Protocolo. El pago no pasó porque el banco no aprobó tu tarjeta en ese momento: antes de reintentar con ella, habilita las compras en línea en la app de tu banco o llámales, o usa otra tarjeta u otro medio (OXXO, transferencia SPEI o Mercado Pago). Aquí te envío el enlace de la oferta, con tu 10 % de descuento ya aplicado, lo ves en el total antes de pagar:\nhttps://pay.hotmart.com/<PRODUCTO>?off=u8ikyx78&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>&offDiscount=PROTOCOLO10%2B",
+   "entrantes_previos": [
+    "Retomar proceso"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-31T21:47:12.701671+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "150fd940b0ea7c3d27e63ef9cd1f8e4578fc604a",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action",
+     "recent_payment_failure"
+    ],
+    "segments": [],
+    "message_count": 5,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-018",
+   "conversacion": 62,
+   "mensaje_chatwoot": 5069,
+   "enviado_en": "2026-11-01T15:46:28.518784+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%"
+   ],
+   "respuesta": "Si quieres retomar tu compra, con gusto te envío el enlace con tu 10% de descuento ya aplicado.",
+   "entrantes_previos": [
+    "¡Hola! Me da gusto saludarte 😉¿Cuál es tu nombre?"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-01T15:46:23.193648+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "150fd940b0ea7c3d27e63ef9cd1f8e4578fc604a",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-019",
+   "conversacion": 59,
+   "mensaje_chatwoot": 5082,
+   "enviado_en": "2026-11-01T16:18:55.424209+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%"
+   ],
+   "respuesta": "¡Con gusto, <NOMBRE>! Aquí te envío el enlace para retomar tu compra: ya trae tu 10% de descuento aplicado y lo ves en el total antes de pagar:\nhttps://pay.hotmart.com/<PRODUCTO>?off=u8ikyx78&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>&offDiscount=PROTOCOLO10%2B",
+   "entrantes_previos": [
+    "Retomar proceso"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-01T16:18:54.443246+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "150fd940b0ea7c3d27e63ef9cd1f8e4578fc604a",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-020",
+   "conversacion": 72,
+   "mensaje_chatwoot": 5095,
+   "enviado_en": "2026-11-01T17:07:39.271920+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%",
+    "10"
+   ],
+   "respuesta": "¡Sí, <NOMBRE> del <NOMBRE>! Tu enlace de inscripción ya trae el 10% de descuento aplicado: lo ves reflejado en el total antes de pagar. Si lo necesitas escribir a mano, el código es PROTOCOLO10+, con el signo «+» al final y sin espacios, en el campo del cupón de la página de pago. Aquí te envío el enlace para retomar tu compra:\nhttps://pay.hotmart.com/<PRODUCTO>?off=u8ikyx78&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>&offDiscount=PROTOCOLO10%2B",
+   "entrantes_previos": [
+    "Hay algun codigo de descuento?"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-01T17:07:38.251374+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "150fd940b0ea7c3d27e63ef9cd1f8e4578fc604a",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-021",
+   "conversacion": 72,
+   "mensaje_chatwoot": 5100,
+   "enviado_en": "2026-11-01T17:33:41.876923+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%"
+   ],
+   "respuesta": "¡Perfecto, <NOMBRE> del <NOMBRE>! Aquí te envío de nuevo el enlace, con tu 10% de descuento ya aplicado, para que completes tu inscripción:\nhttps://pay.hotmart.com/<PRODUCTO>?off=u8ikyx78&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>&offDiscount=PROTOCOLO10%2B",
+   "entrantes_previos": [
+    "Muy bien, ahorita termino el registro, gracias"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-01T17:33:40.448913+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "150fd940b0ea7c3d27e63ef9cd1f8e4578fc604a",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 4,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-022",
+   "conversacion": 86,
+   "mensaje_chatwoot": 5164,
+   "enviado_en": "2026-11-02T15:18:47.861139+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%"
+   ],
+   "respuesta": "¡Con gusto, <NOMBRE>! Te envío el enlace de El Protocolo Biohacking +, ya con tu 10% de descuento aplicado: lo verás reflejado en el total antes de pagar.\nhttps://pay.hotmart.com/<PRODUCTO>?off=u8ikyx78&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>&offDiscount=PROTOCOLO10%2B",
+   "entrantes_previos": [
+    "Retomar proceso"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-02T15:18:46.749567+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "dd3c7da9f3eb78b8f65107b744515dd4ddf119a2",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-023",
+   "conversacion": 89,
+   "mensaje_chatwoot": 5200,
+   "enviado_en": "2026-11-02T16:54:51.196328+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%"
+   ],
+   "respuesta": "Con gusto te ayudo a retomar tu compra. Te envío el enlace de la oferta: ya trae tu 10% de descuento aplicado y lo verás en el total antes de pagar:\nhttps://pay.hotmart.com/<PRODUCTO>?off=u8ikyx78&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>&offDiscount=PROTOCOLO10%2B",
+   "entrantes_previos": [
+    "Retomar proceso"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-02T16:54:50.020843+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "dd3c7da9f3eb78b8f65107b744515dd4ddf119a2",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-024",
+   "conversacion": 84,
+   "mensaje_chatwoot": 5204,
+   "enviado_en": "2026-11-02T17:05:20.560770+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "MXN 1.397"
+   ],
+   "numeros_en_el_texto": [
+    "1.397",
+    "10 %"
+   ],
+   "respuesta": "Es un solo programa: El Protocolo Biohacking +, creado por Maribel Guardia junto con Vanessa Navarro como cocreadora, y cuesta MXN 1.397 con el IVA incluido. El descuento del 10 % aplica a ese programa y el enlace ya lo trae aplicado: lo ves en el total antes de pagar.\nhttps://pay.hotmart.com/<PRODUCTO>?off=u8ikyx78&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>&offDiscount=PROTOCOLO10%2B",
+   "entrantes_previos": [
+    "De cual me estás ofreciendo el descuento",
+    "Vi que por Maribel Guardia tiene un precio y atraves de Vanessa Navarro otro",
+    "Hola Gracias"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-02T17:05:19.193471+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "dd3c7da9f3eb78b8f65107b744515dd4ddf119a2",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 4,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-025",
+   "conversacion": 91,
+   "mensaje_chatwoot": 5216,
+   "enviado_en": "2026-11-02T19:14:52.331029+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%"
+   ],
+   "respuesta": "¡Hola <NOMBRE>! Con gusto te ayudo a retomar tu compra de El Protocolo Biohacking +. Aquí te envío el enlace de pago con tu 10% de descuento ya aplicado, lo verás reflejado en el total antes de pagar.\nhttps://pay.hotmart.com/<PRODUCTO>?off=u8ikyx78&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>&offDiscount=PROTOCOLO10%2B",
+   "entrantes_previos": [
+    "Retomar proceso"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-02T19:14:50.510098+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "a8fce4565689a48d996920a09cae7cf0dcb6aca2",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-026",
+   "conversacion": 100,
+   "mensaje_chatwoot": 5270,
+   "enviado_en": "2026-11-03T13:11:55.140507+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "40"
+   ],
+   "respuesta": "Con gusto te comparto la información: El Protocolo Biohacking + es el programa en línea de Maribel Guardia sobre hábitos de bienestar, pensado sobre todo para mujeres desde los 40.",
+   "entrantes_previos": [
+    "Hola, me interesa tener más información de El Protocolo y tengo dudas"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-03T13:11:49.35956+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v5",
+    "bridge_release": "1b0dcfd90250e1b6829d76f90ec1f2acae654a2b",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 1,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-027",
+   "conversacion": 101,
+   "mensaje_chatwoot": 5315,
+   "enviado_en": "2026-11-03T15:03:22.424198+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10 %"
+   ],
+   "respuesta": "¡Listo! Te envío el enlace para retomar tu compra de El Protocolo Biohacking +, con tu 10 % de descuento ya aplicado: lo ves en el total antes de pagar.",
+   "entrantes_previos": [
+    "Retomar proceso"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-03T15:03:19.351117+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v5",
+    "bridge_release": "1b0dcfd90250e1b6829d76f90ec1f2acae654a2b",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-028",
+   "conversacion": 111,
+   "mensaje_chatwoot": 5328,
+   "enviado_en": "2026-11-03T16:12:43.744789+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10 %"
+   ],
+   "respuesta": "Con gusto retomamos tu compra. Te envío el enlace de El Protocolo Biohacking +: ya trae tu 10 % de descuento aplicado y lo ves en el total antes de pagar.",
+   "entrantes_previos": [
+    "Retomar proceso"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-03T16:12:42.405035+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v5",
+    "bridge_release": "11c80e62653c45356fe585980d6d526a5f221785",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-029",
+   "conversacion": 112,
+   "mensaje_chatwoot": 5330,
+   "enviado_en": "2026-11-03T16:13:02.402641+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%"
+   ],
+   "respuesta": "¡Con gusto, <NOMBRE>! Te envío el enlace para retomar tu compra: ya trae tu 10% de descuento aplicado y lo puedes ver en el total antes de pagar:",
+   "entrantes_previos": [
+    "Retomar proceso"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-03T16:13:00.489463+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v5",
+    "bridge_release": "11c80e62653c45356fe585980d6d526a5f221785",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-030",
+   "conversacion": 106,
+   "mensaje_chatwoot": 5367,
+   "enviado_en": "2026-11-03T16:52:00.932216+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace para retomar tu compra: ya trae tu 10% de descuento aplicado y lo ves en el total antes de pagar.",
+   "entrantes_previos": [
+    "Retomar proceso"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-03T16:51:58.913393+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v5",
+    "bridge_release": "11c80e62653c45356fe585980d6d526a5f221785",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-031",
+   "conversacion": 116,
+   "mensaje_chatwoot": 5743,
+   "enviado_en": "2026-11-04T02:42:16.446565+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%"
+   ],
+   "respuesta": "Aquí te envío el enlace de la oferta, que ya trae tu 10% de descuento aplicado y lo ves en el total antes de pagar:",
+   "entrantes_previos": [
+    "Retomar proceso"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-04T02:42:06.470581+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v5",
+    "bridge_release": "11c80e62653c45356fe585980d6d526a5f221785",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action",
+     "recent_payment_failure"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-032",
+   "conversacion": 162,
+   "mensaje_chatwoot": 6060,
+   "enviado_en": "2026-11-07T15:45:21.065315+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "40"
+   ],
+   "respuesta": "Hola, un gusto. Soy del equipo de El Protocolo, con gusto te contamos. Es un programa en línea de Maribel Guardia sobre hábitos de bienestar (alimentación, rutinas, descanso y otras prácticas de biohacking), pensado sobre todo para mujeres desde los 40. ¿Qué duda tienes?",
+   "entrantes_previos": [
+    "Hola, me interesa tener más información de El Protocolo y tengo dudas"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-07T15:45:13.650355+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v6",
+    "bridge_release": "e26f9a855b8496115c8dd05522b371fa2864a266",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 1,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-033",
+   "conversacion": 167,
+   "mensaje_chatwoot": 6112,
+   "enviado_en": "2026-11-07T20:10:02.552631+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%"
+   ],
+   "respuesta": "¡Listo! Te envío el enlace de tu compra: ya trae tu 10% de descuento aplicado y lo verás en el total antes de pagar.",
+   "entrantes_previos": [
+    "Retomar proceso"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-07T20:09:59.821733+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v6",
+    "bridge_release": "e26f9a855b8496115c8dd05522b371fa2864a266",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-034",
+   "conversacion": 170,
+   "mensaje_chatwoot": 6134,
+   "enviado_en": "2026-11-07T23:55:49.327363+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "40"
+   ],
+   "respuesta": "pensado sobre todo para mujeres desde los 40.",
+   "entrantes_previos": [
+    "Hola, quiero más información sobre los programas de Vanessa Navarro"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-07T23:55:42.948176+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v6",
+    "bridge_release": "e26f9a855b8496115c8dd05522b371fa2864a266",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 1,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-035",
+   "conversacion": 170,
+   "mensaje_chatwoot": 6137,
+   "enviado_en": "2026-11-08T00:17:19.557855+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "MXN 1,397"
+   ],
+   "numeros_en_el_texto": [
+    "1,397",
+    "8"
+   ],
+   "respuesta": "¡Perfecto! El Protocolo Biohacking + cuesta MXN 1,397 con IVA incluido. Incluye 8 módulos en video y PDF (epigenética y biohacking, envejecimiento celular, bienestar hormonal, alimentación epigenética, actividad física, bienestar mental, entorno y conexión, y mentalidad biohacker), las Rutinas de sincronización, el Mapa de activación celular, la masterclass «Epigenética femenina avanzada», un kit de implementación, un PDF de dietas y rutinas, y el acceso al Círculo Azul, la comunidad privada en Facebook.",
+   "entrantes_previos": [
+    "si por favor"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-08T00:17:14.356859+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v6",
+    "bridge_release": "e26f9a855b8496115c8dd05522b371fa2864a266",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 5,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-036",
+   "conversacion": 201,
+   "mensaje_chatwoot": 6337,
+   "enviado_en": "2026-11-09T13:41:24.237319+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "0911"
+   ],
+   "respuesta": "Es la prueba interna número 0911 de El Protocolo.",
+   "entrantes_previos": [
+    "Quiero comprar, ¿me pasas el enlace?",
+    "¿Qué es esta prueba?",
+    "Hola, prueba interna xq0911"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [
+    "prueba-interna-2026-11-09@r4"
+   ],
+   "turno": {
+    "occurred_at": "2026-11-09T13:41:17.923354+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v6",
+    "bridge_release": "343dab3dfaf6fde77cf071c57b65e648b1d1a106",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action",
+     "recent_payment_failure",
+     "segments"
+    ],
+    "segments": [
+     {
+      "key": "prueba-interna-2026-11-09",
+      "sha256": "b416e5014da574101aadd82da174ee7cfb8a3e7d9841600ad83b7bbeaccfbf90",
+      "version": 1,
+      "agent_replies_before": 0
+     }
+    ],
+    "message_count": 3,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-037",
+   "conversacion": 201,
+   "mensaje_chatwoot": 6338,
+   "enviado_en": "2026-11-09T13:41:27.184883+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10 %",
+    "10"
+   ],
+   "respuesta": "Con gusto te envío el enlace de compra: ya viene con el 10 % de PROTOCOLO10 aplicado y lo ves en el total antes de pagar.",
+   "entrantes_previos": [
+    "Quiero comprar, ¿me pasas el enlace?",
+    "¿Qué es esta prueba?",
+    "Hola, prueba interna xq0911"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [
+    "prueba-interna-2026-11-09@r4"
+   ],
+   "turno": {
+    "occurred_at": "2026-11-09T13:41:17.923354+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v6",
+    "bridge_release": "343dab3dfaf6fde77cf071c57b65e648b1d1a106",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action",
+     "recent_payment_failure",
+     "segments"
+    ],
+    "segments": [
+     {
+      "key": "prueba-interna-2026-11-09",
+      "sha256": "b416e5014da574101aadd82da174ee7cfb8a3e7d9841600ad83b7bbeaccfbf90",
+      "version": 1,
+      "agent_replies_before": 0
+     }
+    ],
+    "message_count": 3,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-038",
+   "conversacion": 222,
+   "mensaje_chatwoot": 6445,
+   "enviado_en": "2026-11-10T13:16:08.834592+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "40"
+   ],
+   "respuesta": "Hola, un gusto. El programa en el que participa Vanessa Navarro es El Protocolo Biohacking+, de Maribel Guardia, con Vanessa como cocreadora: un programa en línea sobre hábitos de bienestar (alimentación, rutinas, descanso y otras prácticas de biohacking), pensado sobre todo para mujeres desde los 40.",
+   "entrantes_previos": [
+    "Hola, quiero más información sobre los programas de Vanessa Navarro"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [
+    "prueba-interna-2026-11-09@r4"
+   ],
+   "turno": {
+    "occurred_at": "2026-11-10T13:16:03.095662+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v6",
+    "bridge_release": "a2fb26c66a332cf6d100e58285bfe4617eed2a2d",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 1,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-039",
+   "conversacion": 222,
+   "mensaje_chatwoot": 6446,
+   "enviado_en": "2026-11-10T13:16:13.636635+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "MXN 1.397"
+   ],
+   "numeros_en_el_texto": [
+    "1.397",
+    "7"
+   ],
+   "respuesta": "Cuesta MXN 1.397 con el IVA incluido, tiene 7 días de garantía y acceso de por vida.",
+   "entrantes_previos": [
+    "Hola, quiero más información sobre los programas de Vanessa Navarro"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [
+    "prueba-interna-2026-11-09@r4"
+   ],
+   "turno": {
+    "occurred_at": "2026-11-10T13:16:03.095662+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v6",
+    "bridge_release": "a2fb26c66a332cf6d100e58285bfe4617eed2a2d",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 1,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-040",
+   "conversacion": 222,
+   "mensaje_chatwoot": 6450,
+   "enviado_en": "2026-11-10T13:20:12.588429+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "MXN 1.397"
+   ],
+   "numeros_en_el_texto": [
+    "1.397"
+   ],
+   "respuesta": "El precio es MXN 1.397, con el IVA incluido.",
+   "entrantes_previos": [
+    "Cuanto es en pesos colombianos"
+   ],
+   "conocimiento_probable": "v8",
+   "campanas_vigentes": [
+    "prueba-interna-2026-11-09@r4"
+   ],
+   "turno": {
+    "occurred_at": "2026-11-10T13:20:03.36071+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v6",
+    "bridge_release": "a2fb26c66a332cf6d100e58285bfe4617eed2a2d",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 6,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-041",
+   "conversacion": 248,
+   "mensaje_chatwoot": 6555,
+   "enviado_en": "2026-11-11T16:16:43.812947+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%"
+   ],
+   "respuesta": "¡Con gusto, <NOMBRE>! Te envío el enlace para retomar tu inscripción: ya trae tu 10% de descuento aplicado y lo verás en el total antes de pagar.",
+   "entrantes_previos": [
+    "Retomar proceso"
+   ],
+   "conocimiento_probable": "v9",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-11T16:16:42.63504+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v6",
+    "bridge_release": "7ca8bbb4831b278dde3dc40d3631927dce0101f8",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-042",
+   "conversacion": 249,
+   "mensaje_chatwoot": 6559,
+   "enviado_en": "2026-11-11T16:17:29.828567+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "MXN 1.397"
+   ],
+   "numeros_en_el_texto": [
+    "1.397",
+    "3",
+    "6",
+    "9",
+    "12"
+   ],
+   "respuesta": "El precio es MXN 1.397, con el IVA incluido, y con tarjeta de crédito también puedes pagar a 3, 6, 9 o 12 meses.",
+   "entrantes_previos": [
+    "Como funciona y precio"
+   ],
+   "conocimiento_probable": "v9",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-11T16:17:22.387539+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v6",
+    "bridge_release": "7ca8bbb4831b278dde3dc40d3631927dce0101f8",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 4,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-043",
+   "conversacion": 76,
+   "mensaje_chatwoot": 6610,
+   "enviado_en": "2026-11-12T11:48:51.778357+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%"
+   ],
+   "respuesta": "Te envío el enlace de El Protocolo Biohacking +, que ya trae tu 10% de descuento aplicado: lo vas a ver en el total antes de pagar.",
+   "entrantes_previos": [
+    "Retomar proceso"
+   ],
+   "conocimiento_probable": "v9",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-12T11:48:45.845227+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v6",
+    "bridge_release": "7ca8bbb4831b278dde3dc40d3631927dce0101f8",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-044",
+   "conversacion": 268,
+   "mensaje_chatwoot": 6650,
+   "enviado_en": "2026-11-12T19:39:05.467422+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "15"
+   ],
+   "respuesta": "Sí, <NOMBRE>: puedes pagar la ficha en OXXO hasta el domingo 15 de noviembre, mostrándola desde tu celular.",
+   "entrantes_previos": [
+    "El domingo me aceptan?"
+   ],
+   "conocimiento_probable": "v9",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-12T19:38:59.36653+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v6",
+    "bridge_release": "29bd91c333dbb9334363ef7d99a05bc78dead969",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-045",
+   "conversacion": 277,
+   "mensaje_chatwoot": 6735,
+   "enviado_en": "2026-11-13T15:02:00.830017+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10 %"
+   ],
+   "respuesta": "¡Con gusto, <NOMBRE>! Te envío el enlace para retomar tu compra: ya trae tu 10 % de descuento aplicado, y lo ves en el total antes de pagar:",
+   "entrantes_previos": [
+    "Retomar proceso"
+   ],
+   "conocimiento_probable": "v9",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-13T15:01:59.345966+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v6",
+    "bridge_release": "29bd91c333dbb9334363ef7d99a05bc78dead969",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "maribel-046",
+   "conversacion": 281,
+   "mensaje_chatwoot": 6741,
+   "enviado_en": "2026-11-13T16:01:21.047700+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10%"
+   ],
+   "respuesta": "Te escribimos del equipo de El Protocolo. Si quieres retomar tu compra, tu enlace ya trae el 10% de descuento aplicado. Cuéntame, ¿qué duda tienes para ayudarte?",
+   "entrantes_previos": [
+    "¡Gracias por tu mensaje! 🤍\nEn este momento estoy fuera de atención, pero en cuanto esté disponible te respondo con gusto 😊💚",
+    "¡Hola! ✨\nGracias por escribir a <NEGOCIO>\nSoy <NOMBRE> 🙋🏻‍♀️\nEstoy aquí para ayudarte a elegir lo mejor para tu bienestar 💚\nCuéntame, ¿qué estás buscando?"
+   ],
+   "conocimiento_probable": "v9",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-13T16:01:20.1306+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v6",
+    "bridge_release": "5ff22aaaabd9c87a5a633329691bb57e1a862928",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 3,
+    "known_fields_present": []
+   }
+  }
+ ]
+}

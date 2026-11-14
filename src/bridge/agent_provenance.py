@@ -144,15 +144,21 @@ def build_turn(
     model_requested: str,
     model_answered: str | None,
     segments: tuple[dict[str, object], ...] = (),
+    price_guard: dict[str, object] | None = None,
 ) -> AgentTurn:
     """``segments``: clave, version y sha256 de cada segmento que fue como `system`.
 
     Solo cuando hubo alguno: sin segmentos, `context_added` es el de siempre.
+    ``price_guard`` (E-564, price-guard-v1 §5): el modo, los montos bloqueados
+    por intento y el resultado. Solo con la guarda prendida; son montos de
+    catalogo, nunca texto de la persona ni el reply bloqueado.
     """
     digest = context_digest(context)
     added = context_added(context)
     if segments:
         added["segments"] = [dict(segment) for segment in segments]
+    if price_guard is not None:
+        added["price_guard"] = price_guard
     return AgentTurn(
         external_conversation_id=external_conversation_id(context),
         turn_digest=turn_digest(

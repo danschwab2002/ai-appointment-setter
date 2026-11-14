@@ -1,0 +1,187 @@
+{
+ "_origen": "FIXTURE F2 de E-555, capturado el 2026-11-13 17:53-17:56 UTC en solo lectura: la revision actual de cada fila de agent_campaigns de ATT1 (setter-att1_att1-db) y Maribel (maribel_db), con su draft. El anonimizador reemplazo las fechas de desde/hasta y el sufijo de una clave por <NUM>; las fechas reales estan en valid_from y valid_until de la fila.",
+ "att1": [
+  {
+   "campaign_key": "black-november-2026",
+   "revision": 3,
+   "status": "publicada",
+   "segment_version": 1,
+   "label": "black-november",
+   "purpose": "Campaña Black November de Alimenta Tu Tiroides para ATT1: oferta de Hotmart wmkq4ba9 a USD 47 con Bono Black de regalo, del 12/11 al 30/11. Corrige incluye: todo el programa base sin la membresía, más el bono.",
+   "valid_from": "2026-11-12T17:00:00+00:00",
+   "valid_until": "2026-12-01T06:00:00+00:00",
+   "approved_at": "2026-11-12T19:43:00.127839+00:00",
+   "paused_at": null,
+   "closed_at": null,
+   "close_reason": null,
+   "created_at": "2026-11-12T16:37:55.786612+00:00",
+   "draft": {
+    "clave": "black-november-2026",
+    "desde": "<NUM>T11:00:00-06:00",
+    "hasta": "<NUM>T00:00:00-06:00",
+    "nombre": "Black November de Alimenta Tu Tiroides",
+    "oferta": {
+     "medios": [
+      "Los de siempre"
+     ],
+     "moneda": "USD",
+     "precio": "47",
+     "incluye": [
+      "Todo lo del programa base de Alimenta Tu Tiroides (los menús, las clases y lo demás del programa), sin la membresía",
+      "Regalo: Bono Black «Recetario de Temporada para una Tiroides en Equilibrio» (módulo dentro del mismo curso, no se compra aparte)"
+     ],
+     "garantia": "La de siempre",
+     "producto": "alimenta-tu-tiroides",
+     "reemplaza": [
+      "incluye"
+     ],
+     "codigo_oferta": "wmkq4ba9"
+    },
+    "etiqueta": "black-november",
+    "instruccion": "Al entrar, el agente le habla del Black de Alimenta Tu Tiroides. Cuando la persona quiere comprar, le manda el link de la oferta del Black (wmkq4ba9), no el de la oferta normal. La fecha de cierre solo se menciona si la persona pregunta.",
+    "asesoramiento": [
+     "Hablarle del Black de Alimenta Tu Tiroides a quien entra por la palabra clave o por la oferta del Black (su carrito o su compra).",
+     "Cuando quiera comprar, mandarle el link de la oferta del Black (wmkq4ba9), nunca el de la oferta normal.",
+     "Si preguntan por la fecha de cierre: vale hasta el 30 de noviembre a las 23:59, hora de Ciudad de México.",
+     "Si preguntan si el Black se suma con el 10 % del carrito: no se suma; derivar a una persona.",
+     "Si la persona ya compró Alimenta Tu Tiroides: no prometerle el bono; derivar a una persona.",
+     "Al resto de la gente, atenderla como siempre."
+    ],
+    "no_confirmado": [
+     "Qué recetas trae el Recetario de Temporada y cuántas.",
+     "Si la oferta Black se extiende después del 30 de noviembre."
+    ],
+    "macro_etiqueta": 15,
+    "palabras_clave": [
+     "Hola, quiero saber más del Black de Alimenta tu Tiroides"
+    ],
+    "se_puede_decir": [
+     "El precio: USD 47.",
+     "El regalo: el Bono Black «Recetario de Temporada para una Tiroides en Equilibrio», un módulo dentro del mismo curso que no se compra aparte.",
+     "La garantía es la de siempre: 7 días de Hotmart, la misma de siempre.",
+     "Los medios de pago son los de siempre, sin meses sin intereses.",
+     "Cuando quiere comprar, se le manda el link de la oferta del Black (wmkq4ba9), no el de la oferta normal."
+    ],
+    "promesas_prohibidas": [
+     "Citar el precio tachado de USD 97 o cualquier porcentaje de ahorro.",
+     "Usar urgencia; la fecha de cierre solo se dice si preguntan.",
+     "Prometer resultados, membresía o consulta con la Dra. Nina.",
+     "Prometer el Bono Black a quien ya compró Alimenta Tu Tiroides (se deriva).",
+     "Decir que el Black se suma con el 10 % del carrito (no se suma; se deriva)."
+    ]
+   }
+  }
+ ],
+ "maribel": [
+  {
+   "campaign_key": "prueba-interna-2026-11-09",
+   "revision": 4,
+   "status": "publicada",
+   "segment_version": 1,
+   "label": "prueba-interna",
+   "purpose": "Prueba interna del equipo del 9 al 10/11 para verificar el bloque de campaña con el teléfono de prueba",
+   "valid_from": "2026-11-09T13:00:00+00:00",
+   "valid_until": "2026-11-10T18:00:00+00:00",
+   "approved_at": "2026-11-09T13:22:46.974072+00:00",
+   "paused_at": null,
+   "closed_at": null,
+   "close_reason": null,
+   "created_at": "2026-11-09T12:34:46.763496+00:00",
+   "draft": {
+    "clave": "prueba-interna-<NUM>",
+    "desde": "<NUM>T07:00:00-06:00",
+    "hasta": "<NUM>T12:00:00-06:00",
+    "nombre": "Prueba interna del equipo",
+    "oferta": {
+     "cupon": "PROTOCOLO10",
+     "moneda": "MXN",
+     "precio": "1397",
+     "garantia": "7 días",
+     "producto": "el-protocolo-biohacking-plus"
+    },
+    "etiqueta": "prueba-interna",
+    "asesoramiento": [
+     "Esto es una prueba interna del equipo: quien escribe con la palabra clave es del equipo.",
+     "Si te pregunta por la prueba, dile que es la prueba interna número 0911 de El Protocolo.",
+     "La prueba no tiene ningún caso: ante cualquier consulta del cuerpo o la salud, sigues la regla del conocimiento base.",
+     "Quien ya es clienta: esta campaña no le aplica; sigues la regla del conocimiento base para clientas y no le vendes.",
+     "La palabra clave es exactamente «prueba interna xq0911» y tiene que estar en el primer mensaje de la conversación."
+    ],
+    "macro_etiqueta": 14,
+    "palabras_clave": [
+     "prueba interna xq0911"
+    ],
+    "se_puede_decir": [
+     "Si el sistema confirma que el enlace trae el cupón aplicado, se puede decir que tiene el 10 % de PROTOCOLO10; si no lo confirma, no se dice.",
+     "El cupón PROTOCOLO10 ya existe en Hotmart y solo dentro de esta prueba reemplaza a PROTOCOLO10+; es el mismo 10 %."
+    ],
+    "preguntas_del_alta": [
+     {
+      "fuente": "Dan, 09/11",
+      "pregunta": "¿Cuál es la vigencia de la prueba?",
+      "respuesta": "Desde el 9/11 a las 07:00 hasta el 10/11 a las 12:00, hora de Ciudad de México; al terminar se pausa. Es un dato interno: el agente no la dice aunque se la pregunten; la promesa prohibida manda sobre esta respuesta."
+     },
+     {
+      "fuente": "Dan, 09/11",
+      "pregunta": "¿Qué producto se ofrece?",
+      "respuesta": "El Protocolo Biohacking +, el único."
+     },
+     {
+      "fuente": "Dan, 09/11",
+      "pregunta": "¿Cuál es el precio?",
+      "respuesta": "MXN 1397. En esta campaña no existe un precio de referencia ni tachado."
+     },
+     {
+      "fuente": "Dan, 09/11",
+      "pregunta": "¿Cómo se obtiene?",
+      "respuesta": "Con el cupón PROTOCOLO10 en el enlace, cuando el sistema confirma que está aplicado."
+     },
+     {
+      "fuente": "Dan, 09/11",
+      "pregunta": "¿Qué incluye?",
+      "respuesta": "Lo mismo que el conocimiento base, sin bonos adicionales."
+     },
+     {
+      "fuente": "Dan, 09/11",
+      "pregunta": "¿La garantía cambia?",
+      "respuesta": "No cambia, sigue siendo de 7 días, y se puede mencionar normalmente."
+     },
+     {
+      "fuente": "Dan, 09/11",
+      "pregunta": "¿Qué medios de pago?",
+      "respuesta": "No hay meses sin intereses. Los medios son los del conocimiento base, que incluyen meses con intereses."
+     },
+     {
+      "fuente": "Dan, 09/11",
+      "pregunta": "¿Se suma al cupón del carrito?",
+      "respuesta": "PROTOCOLO10+ sigue vigente en Hotmart para todo lo demás. Solo dentro de esta prueba, el enlace usa PROTOCOLO10 en lugar de PROTOCOLO10+, y es el mismo 10 %. No se suman."
+     },
+     {
+      "fuente": "Dan, 09/11",
+      "pregunta": "¿Hay clientas en la prueba?",
+      "respuesta": "No hay: solo escribe el teléfono de prueba del equipo. A quien ya es clienta, la campaña no le aplica y el agente sigue la regla del conocimiento base, sin venderle."
+     },
+     {
+      "fuente": "Dan, 09/11",
+      "pregunta": "¿Qué pasa después de que termina?",
+      "respuesta": "Nada de la prueba: sin el bloque no hay campaña."
+     },
+     {
+      "fuente": "Dan, 09/11",
+      "pregunta": "¿Hay asesoramiento real?",
+      "respuesta": "Ninguno real: es una prueba interna. Ante cualquier consulta del cuerpo o la salud, el agente sigue la regla del conocimiento base."
+     },
+     {
+      "fuente": "Dan, 09/11",
+      "pregunta": "¿Quién entra en la prueba?",
+      "respuesta": "Solo quien escribe exactamente la palabra clave «prueba interna xq0911» en el primer mensaje de la conversación; ningún flujo pone la etiqueta y no hay pregunta de entrada."
+     }
+    ],
+    "promesas_prohibidas": [
+     "No digas hasta cuándo vale la prueba ni uses plazo, vencimiento o urgencia sobre la duración de la prueba. La garantía de 7 días se puede mencionar normalmente.",
+     "No muestres ni menciones un precio anterior o tachado."
+    ]
+   }
+  }
+ ]
+}
