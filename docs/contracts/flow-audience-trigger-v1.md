@@ -1,6 +1,6 @@
 # flow-audience-trigger-v1: el disparo por audiencia (fecha, cada, manual)
 
-Versión 0.4.0 (propuesta, E-484 sobre E-483, 13/11/2026; freno de salud de E-547). Extiende `setter-flujo/v1` (`flow-definition-v1.md`) y el ciclo (`flow-change-cycle-v1.md`). Diseño: hito H6 del mapa «el AE maneja todos los flujos» (vault, `coordinacion/etapa-1/mapa-ae-todos-los-flujos.md` §2), decisiones D6, D7, D8 y D10.
+Versión 0.4.1 (propuesta, E-484 sobre E-483, 13/11/2026; freno de salud de E-547; claves de `/ready` de E-559). Extiende `setter-flujo/v1` (`flow-definition-v1.md`) y el ciclo (`flow-change-cycle-v1.md`). Diseño: hito H6 del mapa «el AE maneja todos los flujos» (vault, `coordinacion/etapa-1/mapa-ae-todos-los-flujos.md` §2), decisiones D6, D7, D8 y D10.
 
 Los valores marcados **DEFAULT_REVISAR_DAN** son los del mapa y los tiene que revisar Dan antes de prender nada.
 
@@ -52,9 +52,14 @@ entra:
 - `FLOW_AUDIENCE_TRIGGERS_ENABLED` (default `false`): sin él el barredor no lee, no materializa ni suelta nada, y la página `/flow-approval/envios` no existe. Prendido exige `FLOW_AUDIENCE_META_HEALTH_PATH` y el manifiesto; sin el motor nativo (`FLOW_ENGINE_ENABLED`) o sin `FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED` (sin él la base rechazaría a cada persona con 22023) arma y frena pero no suelta (`/ready`: `flow_audience: sin_motor`).
 - `FLOW_AUDIENCE_META_HEALTH_PATH`, `FLOW_AUDIENCE_META_HEALTH_KEY`: la lectura de la salud (arriba).
 
+### Claves de `/ready` (con el flag prendido)
+
+`/ready` es `dict[str, str]`: todo valor es texto, como el resto de las claves. Salen de lo que el barredor ya tiene en memoria (ninguna da 503 ni lee la base): `flow_audience` (`ok`, `sin_motor`, `failing`), los contadores de la última pasada como entero en texto (`flow_audience_last_materialized`, `flow_audience_last_braked`, `flow_audience_last_released`, `flow_audience_last_retry`, `flow_audience_waiting_for_engine`; `"0"` antes de la primera pasada) y `flow_audience_refused`, `clave=motivo` separados por `, ` y ordenados por clave, o `none` (la forma de `flow_engine_native_silence_refused`).
+
 ## Historial
 
 - 0.1.0 (12/11/2026, E-484): forma, reglas 2 y 3, la base y el barredor detrás del flag. Sin E2E.
 - 0.2.0 (12/11/2026, E-484): la página de confirmación con la sesión del aprobador, el asiento y la re-entrega, la repetición, la audiencia posible desde la base y Chatwoot, la lectura de `meta_salud.py`, el aviso `SYS-007` y la admisión nativa por evento `audiencia` (la base del motor tiene que aceptarla al integrar E-483). Sin E2E.
 - 0.3.0 (13/11/2026, E-484 sobre E-483): la migración pasa a `20261112220000` (después de las de E-483); el opener pasa `audience=True` a la admisión de `flow-engine-v2` §34 y se arma solo con `FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED`; con ese flag el validador abre fecha, cada y manual. Escrito al construirlo, antes del merge: no afirma nada desplegado. Prueba de punta a punta en PGlite: `validate_flow_audience_native_e2e.mjs`.
 - 0.4.0 (13/11/2026, E-547): `LIMITED` deja de frenar; frena el límite de mensajería bajo (`meta_salud:limite_bajo`, `TIER_250`, `TIER_1K` o `TIER_2K`). El resto de los frenos de salud no cambia. Escrito antes del merge: no afirma nada desplegado.
+- 0.4.1 (14/11/2026, E-559): las claves de `/ready` pasan a texto. Con enteros y un objeto, FastAPI rechazaba la respuesta y `/ready` daba 500 con el flag prendido. Escrito antes del merge: no afirma nada desplegado.

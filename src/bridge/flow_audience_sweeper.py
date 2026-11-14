@@ -278,16 +278,26 @@ class AudienceSweeper:
         self._stopped = asyncio.Event()
         self._lock = asyncio.Lock()
 
-    def readiness(self) -> dict[str, object]:
+    def readiness(self) -> dict[str, str]:
+        """Las claves de /ready, de lo que ya esta en memoria: ninguna da 503 ni lee la base.
+
+        Todo valor es texto: /ready es ``dict[str, str]`` y FastAPI valida la respuesta, asi que un
+        contador ``int`` o el ``dict`` de rechazos tumbaban /ready con 500 al prender el flag (E-559,
+        Maribel 14/11 01:20Z). Los contadores van como ``str(n)`` y los rechazos como
+        ``clave=motivo, ...`` o ``none``, la misma forma de ``flow_engine_native_silence_refused``.
+        """
         report = self._last
+        refused = {} if report is None else report.refused
         return {
             "flow_audience": self._state,
-            "flow_audience_last_materialized": 0 if report is None else report.materialized,
-            "flow_audience_last_braked": 0 if report is None else report.braked,
-            "flow_audience_last_released": 0 if report is None else report.released,
-            "flow_audience_last_retry": 0 if report is None else report.retry,
-            "flow_audience_waiting_for_engine": 0 if report is None else report.waiting_for_engine,
-            "flow_audience_refused": {} if report is None else dict(report.refused),
+            "flow_audience_last_materialized": str(0 if report is None else report.materialized),
+            "flow_audience_last_braked": str(0 if report is None else report.braked),
+            "flow_audience_last_released": str(0 if report is None else report.released),
+            "flow_audience_last_retry": str(0 if report is None else report.retry),
+            "flow_audience_waiting_for_engine": str(0 if report is None else report.waiting_for_engine),
+            "flow_audience_refused": ", ".join(
+                f"{key}={reason}" for key, reason in sorted(refused.items())
+            ) or "none",
         }
 
     async def _materialize(self, flow: AudienceFlow, spec: AudienceSpec, occurrence: Occurrence, *,

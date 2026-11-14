@@ -270,6 +270,19 @@ def test_a_definition_the_sweeper_cannot_read_is_refused_by_name() -> None:
     assert report.refused == {"difusion": "permiso"} and store.calls == []
 
 
+def test_readiness_is_all_text_after_a_sweep_that_refused_e559() -> None:
+    """E-559: /ready es ``dict[str, str]``; tras un barrido con contadores y rechazos, todo es texto."""
+    sweep, _ = sweeper(GREEN, opener=None)
+    assert sweep.readiness()["flow_audience_refused"] == "none"
+    asyncio.run(sweep.sweep_once())
+    sweep._last.refused.update({"viejo": "flujo_no_corre", "difusion": "permiso"})  # noqa: SLF001
+    ready = sweep.readiness()
+    assert all(isinstance(value, str) for value in ready.values()), ready
+    assert ready["flow_audience_last_materialized"] == "1"
+    assert ready["flow_audience_waiting_for_engine"] == "1"
+    assert ready["flow_audience_refused"] == "difusion=permiso, viejo=flujo_no_corre"
+
+
 def test_a_source_that_fails_refuses_that_flow_and_materializes_nothing() -> None:
     class Failing:
         async def candidates(self, flow: fs.AudienceFlow, spec: fa.AudienceSpec) -> list[fa.Candidate]:

@@ -93,7 +93,7 @@ class FlowAudience:
     async def stop(self) -> None:
         await self.sweeper.stop()
 
-    def readiness(self) -> dict[str, object]:
+    def readiness(self) -> dict[str, str]:
         return self.sweeper.readiness()
 
 
