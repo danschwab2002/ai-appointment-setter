@@ -249,6 +249,23 @@ Una ficha que no matchea ninguna fila habilitada queda `ignored` con `payment_sl
 
 Un mensaje que nombra un término junto con una acción se deriva a una persona sin pasar por el agente.
 
+## `[guarda_precio]`, opcional (E-564)
+
+Los montos legítimos que el agente dice y no están en ningún texto que recibe (`docs/contracts/price-guard-v1.md` §8). Solo los lee la guarda de precio, con `AGENT_PRICE_GUARD_MODE=bloquea`; no tocan el conocimiento firmado.
+
+```toml
+[guarda_precio]
+montos_extra = [
+  { monto = "47", moneda = "USD", que_es = "precio Black en dólares" },
+]
+```
+
+| Campo | Qué es | Si está mal |
+|---|---|---|
+| `montos_extra[].monto` | Decimal mayor que 0, en texto (`"47"`) o entero | No carga |
+| `montos_extra[].moneda` | Código ISO 4217 en mayúsculas (`USD`, `MXN`) | No carga |
+| `montos_extra[].que_es` | Qué es ese monto, para quien revisa | No carga si está vacío |
+
 ## `[slack]` y `[revision_diaria]`, opcionales
 
 | Campo | Qué es |

@@ -18,6 +18,16 @@ import httpx
 
 from bridge.agent_provenance import AgentTurn, build_turn, external_conversation_id
 from bridge.campaign_inbound_entry import CAMPAIGN_ANSWER_KEY
+from bridge.price_guard import (
+    OUTCOME_HANDOFF,
+    OUTCOME_PASSED,
+    OUTCOME_RETRIED_OK,
+    PRICE_NOT_IN_CATALOG,
+    Amount,
+    PriceGuard,
+    correction_detail,
+    provenance_entry,
+)
 
 
 _CAPTURED_FIELDS = {
@@ -60,8 +70,10 @@ logger = logging.getLogger(__name__)
 # resultados `failed` que derivan. `chatwoot_history_not_configured` no esta:
 # no es una falla del agente sino de la instalacion, y derivar no la arregla.
 AGENT_TURN_FAILED_REASON_CODE = "agent_turn_failed"
+# E-564 (price-guard-v1 §4): la guarda de precio bloqueo los dos intentos. Solo
+# aparece con AGENT_PRICE_GUARD_MODE=bloquea; deriva con su propio motivo.
 _AGENT_TURN_FAILURES_THAT_HAND_OFF = frozenset(
-    {"invalid_agent_output", "hermes_unavailable"}
+    {"invalid_agent_output", "hermes_unavailable", PRICE_NOT_IN_CATALOG}
 )
 
 
@@ -370,8 +382,21 @@ _RETRY_CORRECTIONS = {
 }
 
 
-def retry_correction(rule: str, proposal: object = None) -> str:
-    """El mensaje corto que corrige el segundo intento (E-486)."""
+def retry_correction(
+    rule: str, proposal: object = None, *, price_detail: str | None = None
+) -> str:
+    """El mensaje corto que corrige el segundo intento (E-486).
+
+    ``price_detail`` (E-564, price-guard-v1 §4): lo que dijo la guarda de
+    precio en el mismo intento. Si fue la unica regla, es el detalle; si el
+    intento ademas rompio otra regla, la correccion las dice juntas. Sin el,
+    el mensaje es el de siempre.
+    """
+    if rule == PRICE_NOT_IN_CATALOG and price_detail:
+        return (
+            f"Tu respuesta anterior no se pudo usar: {price_detail} "
+            "Devolve solo el objeto JSON."
+        )
     if rule == "reply_too_long" and isinstance(proposal, dict):
         reply = proposal.get("reply")
         size = len(reply) if isinstance(reply, str) else 0
@@ -383,12 +408,19 @@ def retry_correction(rule: str, proposal: object = None) -> str:
         detail = f"`reply` supera los {MAX_REPLY_CHARS} caracteres. Acortalo."
     else:
         detail = _RETRY_CORRECTIONS.get(rule, "no cumplia el formato.")
+    if price_detail:
+        detail = f"{detail} Ademas, {price_detail}"
     return (
         f"Tu respuesta anterior no se pudo usar: {detail} "
         "Devolve solo el objeto JSON."
     )
 
 
+
+
+def _guard_kwargs(record: dict[str, object] | None) -> dict[str, object]:
+    """La clave de la guarda para `_record_turn`, solo si hay algo que anotar."""
+    return {"price_guard": record} if record is not None else {}
 
 
 class TurnProvenanceRecorder(Protocol):
@@ -440,8 +472,13 @@ class HermesShadowProcessor:
         system_prompt: str | None = None,
         product_keys: tuple[str, ...] = (),
         campaign_answers: bool = False,
+        price_guard: PriceGuard | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
+        # E-564 (price-guard-v1): con AGENT_PRICE_GUARD_MODE=bloquea, la guarda
+        # de precio de la instancia. None (el flag en off), el procesador no
+        # extrae nada y todo es byte a byte como antes.
+        self._price_guard = price_guard
         # E-317 (campaign-inbound-entry-v1): con la entrada a las campanas prendida, la
         # salida puede traer `campana_respuesta` ("si" | "no"). Se saca de la
         # propuesta antes de validarla y se guarda aparte: la propuesta queda con
@@ -513,6 +550,33 @@ class HermesShadowProcessor:
             return None
         reason = result.get("reason")
         return reason if isinstance(reason, str) else None
+
+    def get_price_guard_link_request(
+        self, *, delivery_id: str
+    ) -> dict[str, str | None] | None:
+        """Si el turno derivo por la guarda de precio y el agente pedia el link.
+
+        Devuelve ``{"product": <clave o None>}``: el link no salio (solo sale
+        junto con una respuesta que se entrega) y la nota de la derivacion se
+        lo dice al equipo (price-guard-v1 §4). None en cualquier otro caso.
+        """
+        digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
+        try:
+            result = json.loads(
+                (self._shadow_dir / f"{digest}.json").read_text(encoding="utf-8")
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return None
+        if (
+            not isinstance(result, dict)
+            or result.get("delivery_id_hash") != digest
+            or result.get("status") != "failed"
+            or result.get("reason") != PRICE_NOT_IN_CATALOG
+            or result.get("payment_link_requested") is not True
+        ):
+            return None
+        product = result.get("payment_link_product")
+        return {"product": product if isinstance(product, str) else None}
 
     @property
     def accepts_campaign_answers(self) -> bool:
@@ -618,6 +682,7 @@ class HermesShadowProcessor:
         outcome: str,
         model_answered: str | None,
         extra_system: tuple[ExtraSystemBlock, ...] = (),
+        price_guard: dict[str, object] | None = None,
     ) -> None:
         """Deja el rastro del turno. Nunca rompe el turno."""
         if self._provenance_recorder is None:
@@ -656,6 +721,7 @@ class HermesShadowProcessor:
                         }
                         for block in extra_system
                     ),
+                    **({"price_guard": price_guard} if price_guard is not None else {}),
                 )
             )
         except Exception:  # noqa: BLE001 - la propuesta manda
@@ -675,6 +741,27 @@ class HermesShadowProcessor:
         # E-486: la regla que rompio el intento anterior. El reintento la
         # lleva como un mensaje corto, en vez de repetir el mismo pedido.
         correction: str | None = None
+        # E-564 (price-guard-v1 §3): los montos permitidos de este turno, de los
+        # mismos textos que recibe el modelo. Solo con la guarda prendida.
+        guard = self._price_guard
+        allowed: frozenset[Amount] = (
+            guard.allowed_for_turn(
+                texts=(self._system_prompt,),
+                context=context,
+                blocks=extra_system,
+            )
+            if guard is not None
+            else frozenset()
+        )
+        guard_attempts: list[dict[str, object]] = []
+        last_rule: str | None = None
+        last_proposal: object = None
+
+        def guard_record(outcome: str) -> dict[str, object] | None:
+            if guard is None or not guard_attempts:
+                return None
+            return provenance_entry(guard_attempts, outcome)
+
         for attempt in range(1, _MAX_PROPOSAL_ATTEMPTS + 1):
             try:
                 async with httpx.AsyncClient(
@@ -734,6 +821,7 @@ class HermesShadowProcessor:
                     outcome="failed",
                     model_answered=None,
                     extra_system=extra_system,
+                    **_guard_kwargs(guard_record(OUTCOME_HANDOFF)),
                 )
                 return
 
@@ -773,6 +861,40 @@ class HermesShadowProcessor:
             if isinstance(proposal, dict):
                 proposal = normalize_proposal(proposal, self._product_keys)
             rule = proposal_rejection_reason(proposal, self._product_keys)
+            # E-564 (price-guard-v1 §4): la guarda mira el `reply` del intento.
+            # No mira el de una derivacion: al derivar el bridge no manda el
+            # reply (F-033) y cambiarle el motivo perderia, por ejemplo, el
+            # aviso de seguridad (D1 del PR).
+            blocked: tuple[Amount, ...] = ()
+            if guard is not None:
+                # Un intento que la guarda no miro (una derivacion, o una
+                # salida que no es un objeto) se anota como `skipped`: no es
+                # «evaluado y limpio».
+                checked = (
+                    isinstance(proposal, dict)
+                    and proposal.get("decision") != "handoff"
+                )
+                if checked and isinstance(proposal, dict):
+                    blocked = guard.blocked(proposal.get("reply"), allowed)
+                guard_attempts.append(
+                    {
+                        "attempt": attempt,
+                        "blocked": [amount.as_json() for amount in blocked],
+                        **({} if checked else {"skipped": True}),
+                    }
+                )
+                if blocked:
+                    blocked_conversation = external_conversation_id(context)
+                    logger.info(
+                        "agent_price_guard_blocked attempt=%d conversation=%s amounts=%d",
+                        attempt,
+                        blocked_conversation
+                        if blocked_conversation is not None
+                        else "-",
+                        len(blocked),
+                    )
+                    if rule is None:
+                        rule = PRICE_NOT_IN_CATALOG
             if rule is None and isinstance(proposal, dict):
                 completed: dict[str, object] = {
                     "status": "completed",
@@ -796,6 +918,13 @@ class HermesShadowProcessor:
                     outcome="completed",
                     model_answered=model_answered,
                     extra_system=extra_system,
+                    **_guard_kwargs(
+                        guard_record(
+                            OUTCOME_RETRIED_OK
+                            if any(entry["blocked"] for entry in guard_attempts)
+                            else OUTCOME_PASSED
+                        )
+                    ),
                 )
                 return
 
@@ -807,18 +936,38 @@ class HermesShadowProcessor:
                 rule,
                 conversation if conversation is not None else "-",
             )
-            correction = retry_correction(rule or "not_json", proposal)
+            correction = retry_correction(
+                rule or "not_json",
+                proposal,
+                **(
+                    {"price_detail": correction_detail(blocked, allowed)}
+                    if blocked
+                    else {}
+                ),
+            )
+            last_rule = rule
+            last_proposal = proposal
 
+        failure: dict[str, object] = {
+            "status": "failed",
+            "delivery_id_hash": digest,
+            "reason": "invalid_agent_output",
+        }
+        if last_rule == PRICE_NOT_IN_CATALOG and isinstance(last_proposal, dict):
+            # Manda la regla del ultimo intento (price-guard-v1 §4.4): la guarda
+            # bloqueo una propuesta valida en su forma. Si pedia el link, el
+            # link no sale y la nota de la derivacion lo dice.
+            failure["reason"] = PRICE_NOT_IN_CATALOG
+            if last_proposal.get("decision") == "send_payment_link":
+                failure["payment_link_requested"] = True
+                link_product = payment_link_product(
+                    last_proposal, tuple(sorted(self._product_keys))
+                )
+                if link_product is not None:
+                    failure["payment_link_product"] = link_product
         self._persist_result(
             digest=digest,
-            result=self._attempted(
-                {
-                    "status": "failed",
-                    "delivery_id_hash": digest,
-                    "reason": "invalid_agent_output",
-                },
-                attempt=_MAX_PROPOSAL_ATTEMPTS,
-            ),
+            result=self._attempted(failure, attempt=_MAX_PROPOSAL_ATTEMPTS),
         )
         await self._record_turn(
             delivery_id=delivery_id,
@@ -827,6 +976,7 @@ class HermesShadowProcessor:
             outcome="failed",
             model_answered=model_answered,
             extra_system=extra_system,
+            **_guard_kwargs(guard_record(OUTCOME_HANDOFF)),
         )
 
     @staticmethod

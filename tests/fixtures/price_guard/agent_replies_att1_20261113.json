@@ -1,0 +1,3043 @@
+{
+ "_origen": "FIXTURE F2 de E-555, capturado el 2026-11-13 entre las 17:53 y las 17:56 UTC, en solo lectura: salientes del AgentBot sin plantilla de Chatwoot (bandeja 11, infra_chatwoot-db) con algun numero, todo el historial hasta la captura, cruzados con el turno de agent_turn_provenance de la misma conversacion. Anonimizado (nombre del lead <NOMBRE>, mails, corridas de 7+ digitos <NUM>, producto de Hotmart, sck, fbclid, cupon personal). Lo usa la guarda de precio (E-564, price-guard-v1): las respuestas que estaban bien no se bloquean.",
+ "instancia": "att1",
+ "casos": [
+  {
+   "caso": "att1-001",
+   "conversacion": 1,
+   "mensaje_chatwoot": 2647,
+   "enviado_en": "2026-10-05T11:37:51.171413+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Hola, un gusto saludarte. Soy el asistente virtual del equipo de la Dra. Nina. Con gusto te contamos: Alimenta Tu Tiroides es el protocolo de alimentación para la tiroides que creó la Dra. Nina Garza, pensado para mujeres con hipotiroidismo y Hashimoto. El programa cuesta USD 47 y se accede por la plataforma de Hotmart. Si quieres inscribirte, pídemos el enlace y te lo enviamos.",
+   "entrantes_previos": [
+    "Hola, quiero info del curso",
+    "Hola, quiero info del curso",
+    "Hola"
+   ],
+   "conocimiento_probable": "v1",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-05T11:37:50.058451+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v1",
+    "bridge_release": "100da653e1997d6aea5871ccdf5344e424168634",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 4,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-002",
+   "conversacion": 1,
+   "mensaje_chatwoot": 2649,
+   "enviado_en": "2026-10-05T11:41:59.343623+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto. Te envío el enlace para inscribirte en Alimenta Tu Tiroides, con su precio confirmado de USD 47:\nhttps://pay.hotmart.com/<PRODUCTO>?off=gopi6lh7&checkoutMode=10&src=hermes&sck=<SCK>",
+   "entrantes_previos": [
+    "dale pasamelo"
+   ],
+   "conocimiento_probable": "v1",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-05T11:41:57.814107+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v1",
+    "bridge_release": "100da653e1997d6aea5871ccdf5344e424168634",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 6,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-003",
+   "conversacion": 1,
+   "mensaje_chatwoot": 2668,
+   "enviado_en": "2026-10-05T17:30:19.311935+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto. Te envío el enlace para inscribirte en Alimenta Tu Tiroides, con su precio confirmado de USD 47:\nhttps://pay.hotmart.com/<PRODUCTO>?off=gopi6lh7&checkoutMode=10&src=hermes&sck=<SCK>",
+   "entrantes_previos": [
+    "Me envías un nuevo link?"
+   ],
+   "conocimiento_probable": "v1",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-05T17:30:17.560184+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v1",
+    "bridge_release": "ea037022a9de9f2563a93fbb4fdc17b507a15b7f",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 13,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-004",
+   "conversacion": 4,
+   "mensaje_chatwoot": 2722,
+   "enviado_en": "2026-10-08T15:59:44.331933+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace de Alimenta Tu Tiroides (USD 47) para que retomes tu inscripción:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v1",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-08T15:59:40.837504+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v1",
+    "bridge_release": "9d76a2ba5653629c043199a207801bcb25846445",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-005",
+   "conversacion": 11,
+   "mensaje_chatwoot": 2747,
+   "enviado_en": "2026-10-09T15:04:40.165002+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Alimenta Tu Tiroides cuesta USD 47. Si quieres, te envío el enlace para inscribirte.",
+   "entrantes_previos": [
+    "Que costo tiene",
+    "Hola buenos días"
+   ],
+   "conocimiento_probable": "v1",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-09T15:04:38.226927+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v1",
+    "bridge_release": "9d76a2ba5653629c043199a207801bcb25846445",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 5,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-006",
+   "conversacion": 21,
+   "mensaje_chatwoot": 2766,
+   "enviado_en": "2026-10-09T16:30:58.728851+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace de Alimenta Tu Tiroides (USD 47) para que retomes tu inscripción:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v1",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-09T16:30:57.224488+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v1",
+    "bridge_release": "9d76a2ba5653629c043199a207801bcb25846445",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-007",
+   "conversacion": 36,
+   "mensaje_chatwoot": 2809,
+   "enviado_en": "2026-10-10T15:15:44.524418+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Te envío el enlace de Alimenta Tu Tiroides (USD 47) para que retomes tu compra:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v2",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-10T15:15:42.576795+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v1",
+    "bridge_release": "9d76a2ba5653629c043199a207801bcb25846445",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-008",
+   "conversacion": 36,
+   "mensaje_chatwoot": 2813,
+   "enviado_en": "2026-10-10T15:52:10.171346+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Es una sola compra: al adquirir Alimenta Tu Tiroides (USD 47) recibes por correo el acceso a la plataforma de Hotmart, donde está todo el material: la guía con los grupos de alimentos esenciales para la tiroides, recetas fáciles, menús listos para preparar, opciones prácticas para cuando no hay tiempo de cocinar y estrategias para evitar los alimentos que empeoran los síntomas. ¿Te envío el enlace para completar tu compra?",
+   "entrantes_previos": [
+    "Solamente es comprando el libro?"
+   ],
+   "conocimiento_probable": "v2",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-10T15:52:07.109238+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v1",
+    "bridge_release": "9d76a2ba5653629c043199a207801bcb25846445",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 4,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-009",
+   "conversacion": 51,
+   "mensaje_chatwoot": 2823,
+   "enviado_en": "2026-10-10T18:16:08.888594+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Te envío el enlace de Alimenta Tu Tiroides, el protocolo de alimentación de la Dra. Nina Garza, a USD 47. Aquí lo tienes:\nhttps://pay.hotmart.com/<PRODUCTO>?off=bmaztyhg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v2",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-10T18:16:07.767625+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v1",
+    "bridge_release": "9d76a2ba5653629c043199a207801bcb25846445",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-010",
+   "conversacion": 46,
+   "mensaje_chatwoot": 2852,
+   "enviado_en": "2026-10-10T23:51:52.573775+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace para retomar tu inscripción en Alimenta Tu Tiroides (USD 47):\nhttps://pay.hotmart.com/<PRODUCTO>?off=bmaztyhg&checkoutMode=10&src=hermes&sck=<SCK>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v2",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-10T23:51:51.258132+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v1",
+    "bridge_release": "9d76a2ba5653629c043199a207801bcb25846445",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-011",
+   "conversacion": 64,
+   "mensaje_chatwoot": 2870,
+   "enviado_en": "2026-10-11T15:01:45.063532+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Te envío el enlace de Alimenta Tu Tiroides (USD 47) para que retomes tu compra:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v2",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-11T15:01:44.046247+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v1",
+    "bridge_release": "9d76a2ba5653629c043199a207801bcb25846445",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-012",
+   "conversacion": 75,
+   "mensaje_chatwoot": 2884,
+   "enviado_en": "2026-10-11T16:25:45.017933+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace para retomar tu compra de Alimenta Tu Tiroides (USD 47):\nhttps://pay.hotmart.com/<PRODUCTO>?off=bmaztyhg&checkoutMode=10&src=hermes&sck=<SCK>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v2",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-11T16:25:43.924402+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v1",
+    "bridge_release": "9d76a2ba5653629c043199a207801bcb25846445",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-013",
+   "conversacion": 87,
+   "mensaje_chatwoot": 2909,
+   "enviado_en": "2026-10-11T22:05:35.866849+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Te envío el enlace de Alimenta Tu Tiroides (USD 47) para que puedas intentar la compra de nuevo:\nhttps://pay.hotmart.com/<PRODUCTO>?off=bmaztyhg&checkoutMode=10&src=hermes&sck=<SCK>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v2",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-11T22:05:34.336499+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v1",
+    "bridge_release": "3ae9335eff125fe5f8c95191e40e33c178d8b4ba",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-014",
+   "conversacion": 88,
+   "mensaje_chatwoot": 2910,
+   "enviado_en": "2026-10-11T22:05:52.546536+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace de Alimenta Tu Tiroides (USD 47):\nhttps://pay.hotmart.com/<PRODUCTO>?off=bmaztyhg&checkoutMode=10&src=hermes&sck=<SCK>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v2",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-11T22:05:49.726055+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v1",
+    "bridge_release": "3ae9335eff125fe5f8c95191e40e33c178d8b4ba",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-015",
+   "conversacion": 91,
+   "mensaje_chatwoot": 2924,
+   "enviado_en": "2026-10-11T23:54:07.096846+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace de Alimenta Tu Tiroides (USD 47) para que retomes tu compra:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v2",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-11T23:54:05.803674+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v1",
+    "bridge_release": "3ae9335eff125fe5f8c95191e40e33c178d8b4ba",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-016",
+   "conversacion": 95,
+   "mensaje_chatwoot": 2935,
+   "enviado_en": "2026-10-12T02:12:59.974936+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Te envío el enlace de Alimenta Tu Tiroides (USD 47) para que retomes tu inscripción:\nhttps://pay.hotmart.com/<PRODUCTO>?off=bmaztyhg&checkoutMode=10&src=hermes&sck=<SCK>",
+   "entrantes_previos": [
+    "Envíame el enlace",
+    "Es un recetario?",
+    "Necesito ayuda"
+   ],
+   "conocimiento_probable": "v2",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-12T02:12:58.089952+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v1",
+    "bridge_release": "3ae9335eff125fe5f8c95191e40e33c178d8b4ba",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 5,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-017",
+   "conversacion": 107,
+   "mensaje_chatwoot": 2966,
+   "enviado_en": "2026-10-12T15:03:10.614086+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace para retomar tu inscripción a Alimenta Tu Tiroides (USD 47):\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v2",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-12T15:03:07.273558+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v1",
+    "bridge_release": "3ae9335eff125fe5f8c95191e40e33c178d8b4ba",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-018",
+   "conversacion": 120,
+   "mensaje_chatwoot": 2971,
+   "enviado_en": "2026-10-12T15:04:42.250039+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace de Alimenta Tu Tiroides, con precio de USD 47:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace",
+    "Hola! Buen día"
+   ],
+   "conocimiento_probable": "v2",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-12T15:04:39.869356+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v1",
+    "bridge_release": "3ae9335eff125fe5f8c95191e40e33c178d8b4ba",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 3,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-019",
+   "conversacion": 123,
+   "mensaje_chatwoot": 2992,
+   "enviado_en": "2026-10-12T15:16:51.920210+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace para retomar tu inscripción a Alimenta Tu Tiroides (USD 47):\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v2",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-12T15:16:49.61581+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v1",
+    "bridge_release": "3ae9335eff125fe5f8c95191e40e33c178d8b4ba",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-020",
+   "conversacion": 96,
+   "mensaje_chatwoot": 2995,
+   "enviado_en": "2026-10-12T15:18:39.935258+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Te entendemos, <NOMBRE>. Alimenta Tu Tiroides es un programa de pago: cuesta USD 47, no es gratis. Pero si no tienes tarjeta, en México puedes pagar en efectivo en OXXO: Hotmart te da una ficha para pagar en la tienda y el acceso te llega por correo cuando se confirma el pago.",
+   "entrantes_previos": [
+    "Y pues ya mejor me quedo fuera",
+    "Si es que decía gratis y después me pidieron tarjeta y no tengo"
+   ],
+   "conocimiento_probable": "v2",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-12T15:18:36.744935+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v1",
+    "bridge_release": "3ae9335eff125fe5f8c95191e40e33c178d8b4ba",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 3,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-021",
+   "conversacion": 96,
+   "mensaje_chatwoot": 3000,
+   "enviado_en": "2026-10-12T15:20:23.289670+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "El programa sigue disponible cuando tú decidas: el precio es USD 47 y puedes pagarlo en efectivo en OXXO cuando tengas el monto.",
+   "entrantes_previos": [
+    "Tal vez más adelante",
+    "Ok. Pero no tengo dinero por ahora",
+    "Y pues ya mejor me quedo fuera"
+   ],
+   "conocimiento_probable": "v2",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-12T15:20:12.685084+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v1",
+    "bridge_release": "3ae9335eff125fe5f8c95191e40e33c178d8b4ba",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 7,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-022",
+   "conversacion": 121,
+   "mensaje_chatwoot": 3005,
+   "enviado_en": "2026-10-12T15:48:20.672908+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Te envío el enlace de Alimenta Tu Tiroides (USD 47) para que retomes tu compra:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v2",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-12T15:48:19.344969+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v1",
+    "bridge_release": "3ae9335eff125fe5f8c95191e40e33c178d8b4ba",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-023",
+   "conversacion": 131,
+   "mensaje_chatwoot": 3112,
+   "enviado_en": "2026-10-12T18:03:57.008628+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Te envío el enlace para retomar tu inscripción en Alimenta Tu Tiroides (USD 47):\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v2",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-12T18:03:55.5465+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "690f8558cd30d24dce0772645b493be361470d2b",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-024",
+   "conversacion": 142,
+   "mensaje_chatwoot": 3187,
+   "enviado_en": "2026-10-13T16:41:33.654144+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí tienes el enlace para retomar tu inscripción en Alimenta Tu Tiroides (USD 47):\nhttps://pay.hotmart.com/<PRODUCTO>?off=bmaztyhg&checkoutMode=10&src=hermes&sck=<SCK>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v5",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-13T16:41:31.430611+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "5723806034d54969b2b6673926020f947a9771e9",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-025",
+   "conversacion": 163,
+   "mensaje_chatwoot": 3207,
+   "enviado_en": "2026-10-13T18:22:45.094505+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto. Aquí tienes el enlace de Alimenta Tu Tiroides, el protocolo de alimentación para la tiroides de la Dra. Nina Garza, por USD 47:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v5",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-13T18:22:43.059322+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "5723806034d54969b2b6673926020f947a9771e9",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 1,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-026",
+   "conversacion": 148,
+   "mensaje_chatwoot": 3210,
+   "enviado_en": "2026-10-13T18:42:36.677563+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace para que retomes tu inscripción a Alimenta Tu Tiroides (USD 47):\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v5",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-13T18:42:34.594425+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "5723806034d54969b2b6673926020f947a9771e9",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-027",
+   "conversacion": 144,
+   "mensaje_chatwoot": 3238,
+   "enviado_en": "2026-10-13T20:06:03.586949+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Alimenta Tu Tiroides cuesta USD 47.",
+   "entrantes_previos": [
+    "Cuánto es lo costo?",
+    "Muchas gracias"
+   ],
+   "conocimiento_probable": "v5",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-13T20:05:59.108048+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "5723806034d54969b2b6673926020f947a9771e9",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 9,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-028",
+   "conversacion": 170,
+   "mensaje_chatwoot": 3260,
+   "enviado_en": "2026-10-13T22:42:13.609313+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace para retomar tu inscripción a Alimenta Tu Tiroides (USD 47):\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v5",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-13T22:42:11.669114+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "5723806034d54969b2b6673926020f947a9771e9",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-029",
+   "conversacion": 175,
+   "mensaje_chatwoot": 3301,
+   "enviado_en": "2026-10-14T16:45:56.351353+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Gracias por contarnos, <NOMBRE>. Si el intento anterior no se completó, puedes hacer uno nuevo con toda tranquilidad: te envío el enlace de Alimenta Tu Tiroides (USD 47). Al confirmar la compra, elige OXXO como forma de pago y la página te dará una ficha para pagar en la tienda.\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Según yo hice bien el procedimiento pero al momento de pedir el enlace por Oxxo ya no me dejó",
+    "Necesito ayuda"
+   ],
+   "conocimiento_probable": "v5",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-14T16:45:51.699721+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "5723806034d54969b2b6673926020f947a9771e9",
+    "release_ordinal": null,
+    "model_answered": "att1-agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 4,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-030",
+   "conversacion": 187,
+   "mensaje_chatwoot": 3308,
+   "enviado_en": "2026-10-14T18:11:31.991761+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47",
+    "7"
+   ],
+   "respuesta": "Cuesta USD 47 y tiene la garantía de 7 días de Hotmart.",
+   "entrantes_previos": [
+    "Ingrese para más información y luego luego me manda a pagar y no sé ni de qué se trata en su totalidad"
+   ],
+   "conocimiento_probable": "v5",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-14T18:11:14.848628+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "5723806034d54969b2b6673926020f947a9771e9",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-031",
+   "conversacion": 148,
+   "mensaje_chatwoot": 3347,
+   "enviado_en": "2026-10-14T22:31:51.779583+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10"
+   ],
+   "respuesta": "Solo toca el botón «Usar mi descuento» de nuestro mensaje, o escribe el código TIROIDES10 en la página de pago.",
+   "entrantes_previos": [
+    "Puedo usarlo mañana?"
+   ],
+   "conocimiento_probable": "v5",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-14T22:31:25.315187+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "5723806034d54969b2b6673926020f947a9771e9",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 5,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-032",
+   "conversacion": 148,
+   "mensaje_chatwoot": 3351,
+   "enviado_en": "2026-10-14T23:02:50.111483+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10"
+   ],
+   "respuesta": "Cuando quieras usar tu descuento, toca el botón «Usar mi descuento» o escribe el código TIROIDES10 en la página de pago.",
+   "entrantes_previos": [
+    "Gracias"
+   ],
+   "conocimiento_probable": "v5",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-14T23:02:41.566176+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "5723806034d54969b2b6673926020f947a9771e9",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 8,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-033",
+   "conversacion": 198,
+   "mensaje_chatwoot": 3354,
+   "enviado_en": "2026-10-15T00:00:13.509104+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace para retomar tu inscripción a Alimenta Tu Tiroides (USD 47):\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v5",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-15T00:00:05.720218+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "5723806034d54969b2b6673926020f947a9771e9",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-034",
+   "conversacion": 213,
+   "mensaje_chatwoot": 3410,
+   "enviado_en": "2026-10-16T15:14:59.105245+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace de Alimenta Tu Tiroides (USD 47) para que retomes tu compra:\nhttps://pay.hotmart.com/<PRODUCTO>?off=bmaztyhg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-16T15:14:50.161027+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "1b83191f7e7758950500eba85b663bdfeafaa9a3",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-035",
+   "conversacion": 217,
+   "mensaje_chatwoot": 3437,
+   "enviado_en": "2026-10-16T19:15:23.212176+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace de Alimenta Tu Tiroides (USD 47) para que retomes tu compra:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-16T19:15:20.120923+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "1b83191f7e7758950500eba85b663bdfeafaa9a3",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-036",
+   "conversacion": 245,
+   "mensaje_chatwoot": 3485,
+   "enviado_en": "2026-10-16T22:54:00.575179+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Puedo ver tu caso: el pago no pasó porque el banco no aprobó la transacción. Antes de reintentar con esa tarjeta, te conviene habilitar las compras en línea desde la app de tu banco o consultarlo con el banco; si prefieres, puedes usar otra tarjeta o PayPal. Cuando quieras, aquí tienes el enlace para inscribirte en Alimenta Tu Tiroides (USD 47):\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>",
+   "entrantes_previos": [
+    "Envíame el enlace",
+    "Hoy ya no puedo",
+    "Me encantaría..pero HORTMART es lo peor. Asi que queres mañana a la noche me anoto . Gracias"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-16T22:53:55.255642+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "956848bd9878eb44c4bf6e73105e55a0752de0d4",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action",
+     "recent_payment_failure"
+    ],
+    "segments": [],
+    "message_count": 4,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-037",
+   "conversacion": 248,
+   "mensaje_chatwoot": 3502,
+   "enviado_en": "2026-10-16T23:46:28.569713+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí tienes el enlace de Alimenta Tu Tiroides (USD 47) para retomar tu compra:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-16T23:46:24.822644+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "956848bd9878eb44c4bf6e73105e55a0752de0d4",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-038",
+   "conversacion": 143,
+   "mensaje_chatwoot": 3525,
+   "enviado_en": "2026-10-17T13:56:53.080817+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Te envío el enlace de Alimenta Tu Tiroides (USD 47) para que retomes tu compra:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-17T13:56:50.485022+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "956848bd9878eb44c4bf6e73105e55a0752de0d4",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-039",
+   "conversacion": 289,
+   "mensaje_chatwoot": 3560,
+   "enviado_en": "2026-10-17T15:03:39.580511+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace de Alimenta Tu Tiroides (USD 47):\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-17T15:03:37.424422+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "956848bd9878eb44c4bf6e73105e55a0752de0d4",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-040",
+   "conversacion": 283,
+   "mensaje_chatwoot": 3562,
+   "enviado_en": "2026-10-17T15:04:13.555884+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Te envío el enlace de Alimenta Tu Tiroides (USD 47) para que retomes tu compra:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-17T15:04:10.813387+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "956848bd9878eb44c4bf6e73105e55a0752de0d4",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-041",
+   "conversacion": 284,
+   "mensaje_chatwoot": 3573,
+   "enviado_en": "2026-10-17T15:14:59.963348+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Te envío el enlace de Alimenta Tu Tiroides (USD 47) para que retomes tu compra:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-17T15:14:57.572351+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "956848bd9878eb44c4bf6e73105e55a0752de0d4",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-042",
+   "conversacion": 267,
+   "mensaje_chatwoot": 3596,
+   "enviado_en": "2026-10-17T16:23:11.460709+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto te lo aclaro, <NOMBRE>. Alimenta Tu Tiroides cuesta USD 47 e incluye una guía con los grupos de alimentos esenciales para la tiroides, recetas fáciles, menús listos para preparar que puedes adaptar a tu estilo de vida, opciones prácticas para cuando no hay tiempo de cocinar y estrategias para evitar los alimentos que empeoran los síntomas.",
+   "entrantes_previos": [
+    "Si iba a comprarlo pero al final no entendí qué es lo que incluye. Porque lo dice al final de la presentación pero cuando uno va a pagar no son claros con lo que se va a pagar.",
+    "Hola gracias."
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-17T16:23:08.122449+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "956848bd9878eb44c4bf6e73105e55a0752de0d4",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 4,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-043",
+   "conversacion": 305,
+   "mensaje_chatwoot": 3640,
+   "enviado_en": "2026-10-17T22:53:58.904043+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace de Alimenta Tu Tiroides (USD 47) para que retomes tu compra:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-17T22:53:56.171991+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "87657a847f7e53c5c18ec01808b4ebc596f9484b",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-044",
+   "conversacion": 308,
+   "mensaje_chatwoot": 3646,
+   "enviado_en": "2026-10-18T00:10:37.692077+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47",
+    "7"
+   ],
+   "respuesta": "Cuesta USD 47 y tiene garantía de 7 días por Hotmart.",
+   "entrantes_previos": [
+    "Quería información y costos del plan"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-18T00:10:19.304007+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "87657a847f7e53c5c18ec01808b4ebc596f9484b",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-045",
+   "conversacion": 314,
+   "mensaje_chatwoot": 3673,
+   "enviado_en": "2026-10-18T15:11:15.909679+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace de Alimenta Tu Tiroides, el protocolo de alimentación para la tiroides de la Dra. Nina Garza, a USD 47:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-18T15:11:14.253574+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "87657a847f7e53c5c18ec01808b4ebc596f9484b",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-046",
+   "conversacion": 319,
+   "mensaje_chatwoot": 3684,
+   "enviado_en": "2026-10-18T16:28:30.655457+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace de Alimenta Tu Tiroides (USD 47) para que continúes cuando quieras:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-18T16:28:28.727914+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v2",
+    "bridge_release": "87657a847f7e53c5c18ec01808b4ebc596f9484b",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-047",
+   "conversacion": 323,
+   "mensaje_chatwoot": 3693,
+   "enviado_en": "2026-10-19T01:41:53.995662+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí tienes el enlace para retomar tu compra de Alimenta Tu Tiroides (USD 47):\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-19T01:41:51.695565+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "447e08fb21ee85d141e1de3ecd0892e22add006e",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-048",
+   "conversacion": 331,
+   "mensaje_chatwoot": 3713,
+   "enviado_en": "2026-10-19T15:06:14.089942+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Te envío el enlace de Alimenta Tu Tiroides para que retomes tu inscripción. El precio es USD 47:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-19T15:06:12.28492+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "9269142924f9c27385677ee67f9cd8aadc3db3c2",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-049",
+   "conversacion": 343,
+   "mensaje_chatwoot": 3730,
+   "enviado_en": "2026-10-19T16:00:29.043948+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "¡Perfecto! Aquí te va el enlace de Alimenta Tu Tiroides (USD 47) para completar tu inscripción:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Si",
+    "Y la plata forma hay que descargala y se puede entrar cuando uno quiera"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-19T16:00:25.316398+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "9269142924f9c27385677ee67f9cd8aadc3db3c2",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 12,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-050",
+   "conversacion": 328,
+   "mensaje_chatwoot": 3742,
+   "enviado_en": "2026-10-19T20:47:45.101195+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace de Alimenta Tu Tiroides (USD 47) para que continues cuando quieras:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-19T20:47:43.766219+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "f710188844a7b0d01d16ecf07456032448e73154",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-051",
+   "conversacion": 194,
+   "mensaje_chatwoot": 3772,
+   "enviado_en": "2026-10-20T03:45:24.306898+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí tienes el enlace de Alimenta Tu Tiroides (USD 47) para retomar tu compra:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-20T03:45:22.670019+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "f710188844a7b0d01d16ecf07456032448e73154",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-052",
+   "conversacion": 388,
+   "mensaje_chatwoot": 3820,
+   "enviado_en": "2026-10-20T19:20:18.170326+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Te cuento: el precio de Alimenta Tu Tiroides es USD 47, y no es un plan personalizado para tu caso.",
+   "entrantes_previos": [
+    "Más bien que si es necesario saber si se hace un plan personal",
+    "No se los costos"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-20T19:20:10.992865+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "6ba2d3e1065ba12d7cedb1d7c9ebebd533122557",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 3,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-053",
+   "conversacion": 388,
+   "mensaje_chatwoot": 3822,
+   "enviado_en": "2026-10-20T19:20:24.349381+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10 %"
+   ],
+   "respuesta": "Si quieres, te envío el enlace para inscribirte (y ahí se aplica tu 10 % con el botón «Usar mi descuento»).",
+   "entrantes_previos": [
+    "Más bien que si es necesario saber si se hace un plan personal",
+    "No se los costos"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-20T19:20:10.992865+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "6ba2d3e1065ba12d7cedb1d7c9ebebd533122557",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 3,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-054",
+   "conversacion": 413,
+   "mensaje_chatwoot": 3878,
+   "enviado_en": "2026-10-21T15:10:53.219841+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10 %",
+    "10"
+   ],
+   "respuesta": "Recuerda que el 10 % se aplica con el botón «Usar mi descuento» de nuestro mensaje o, si no funciona, con el código TIROIDES10 en la página de pago.",
+   "entrantes_previos": [
+    "Hola, muchas gracias… todo bien explicado más tarde lo compro con el descuento gracias"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-21T15:10:45.927507+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "b163669f57bfdafbac6cb19d82dd357c83c3c1e8",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-055",
+   "conversacion": 416,
+   "mensaje_chatwoot": 3905,
+   "enviado_en": "2026-10-21T16:53:14.771623+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "10 %",
+    "47",
+    "10"
+   ],
+   "respuesta": "Queremos comentarte que tenemos un 10 % de descuento reservado para ti sobre los USD 47: puedes usarlo tocando el botón «Usar mi descuento» de nuestro mensaje anterior, o con el código TIROIDES10 en la página de pago. No tiene fecha límite, así que puedes tomarlo cuando realmente puedas.",
+   "entrantes_previos": [
+    "Hola la verdad he gastado muchísimo en especialistas, fue tal mi crisis tiroidea que acabe en el hospital, la verdad aunque sea poco lo que debo pagar, no los tengo, agradezco tu apoyo y atención. Lindo día!!"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-21T16:53:07.893091+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "b163669f57bfdafbac6cb19d82dd357c83c3c1e8",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-056",
+   "conversacion": 416,
+   "mensaje_chatwoot": 3908,
+   "enviado_en": "2026-10-21T16:54:55.359173+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10 %",
+    "10"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>, aquí te lo envío. Recuerda que tu 10 % de descuento se aplica tocando el botón «Usar mi descuento» de nuestro mensaje anterior, o con el código TIROIDES10 en la página de pago:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Si por favor,te lo agradezco mucho",
+    "Hola la verdad he gastado muchísimo en especialistas, fue tal mi crisis tiroidea que acabe en el hospital, la verdad aunque sea poco lo que debo pagar, no los tengo, agradezco tu apoyo y atención. Lindo día!!"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-21T16:54:53.806221+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "b163669f57bfdafbac6cb19d82dd357c83c3c1e8",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 6,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-057",
+   "conversacion": 339,
+   "mensaje_chatwoot": 4134,
+   "enviado_en": "2026-10-23T15:00:32.632580+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto. Aquí te envío el enlace para retomar tu acceso a Alimenta Tu Tiroides (USD 47):\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-23T15:00:30.708835+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "48c69e8993404a115c8e678808efa2feb054893e",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-058",
+   "conversacion": 435,
+   "mensaje_chatwoot": 4171,
+   "enviado_en": "2026-10-23T15:11:42.819623+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10 %",
+    "10"
+   ],
+   "respuesta": "¡Claro, <NOMBRE>! Aquí te envío el enlace de Alimenta Tu Tiroides. Tu 10 % de descuento lo aplicas tocando el botón «Usar mi descuento» de nuestro mensaje, o escribiendo el código TIROIDES10 en el campo del cupón de la página de pago. El total con el descuento te lo muestra esa página:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Cuánto sería con el 10%",
+    "Quiero mi 10 %"
+   ],
+   "conocimiento_probable": "v7",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-23T15:11:41.283415+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "48c69e8993404a115c8e678808efa2feb054893e",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 4,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-059",
+   "conversacion": 490,
+   "mensaje_chatwoot": 4281,
+   "enviado_en": "2026-10-25T02:57:21.348341+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10 %",
+    "10"
+   ],
+   "respuesta": "Claro que sí, <NOMBRE>, con gusto. Recuerda que tienes tu 10 % de descuento disponible con el botón «Usar mi descuento» o el código TIROIDES10.",
+   "entrantes_previos": [
+    "Necesito hacer una pregunta antes de comprar el programa."
+   ],
+   "conocimiento_probable": "v12",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-25T02:57:18.812416+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "48c69e8993404a115c8e678808efa2feb054893e",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-060",
+   "conversacion": 471,
+   "mensaje_chatwoot": 4349,
+   "enviado_en": "2026-10-25T19:34:48.067576+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "7",
+    "10 %",
+    "10"
+   ],
+   "respuesta": "Te entiendo, <NOMBRE>, esa duda es muy común. Lo que puede ayudarte: el programa tiene 7 días de garantía de Hotmart, así que si lo revisas y sientes que no es para ti, puedes pedir el reembolso dentro de ese plazo. Es un curso en línea a tu ritmo, con clases en video, guías de alimentación, tres menús con sus recetarios y listas del súper, y el acceso es para siempre. Te envío el enlace para inscribirte, y recuerda que tu 10 % de descuento se aplica con el botón «Usar mi descuento» o con el código TIROIDES10 en la página de pago:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "El creer que será algo más que no funcionará 😢"
+   ],
+   "conocimiento_probable": "v12",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-25T19:34:46.804238+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "9482d893c46ad431bda32e9338117ca7aea95e8c",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 3,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-061",
+   "conversacion": 530,
+   "mensaje_chatwoot": 4425,
+   "enviado_en": "2026-10-26T17:22:09.472396+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10 %"
+   ],
+   "respuesta": "Te escribimos porque tu inscripción quedó en el último paso: tu descuento del 10 % sigue disponible, sin apuro.",
+   "entrantes_previos": [
+    "Gusto en saludarlos",
+    "Si soy yo <NOMBRE>",
+    "Así es"
+   ],
+   "conocimiento_probable": "v12",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-26T17:22:03.148804+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "16314a967e515b2a69bf315af8b42615f6bb9d62",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 8,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-062",
+   "conversacion": 530,
+   "mensaje_chatwoot": 4430,
+   "enviado_en": "2026-10-26T17:29:16.039812+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "3",
+    "6",
+    "9",
+    "10 %",
+    "10"
+   ],
+   "respuesta": "Te entiendo, <NOMBRE>, y no hay apuro. Mientras tanto te cuento que en México puedes pagar sin usar tu saldo de una sola vez: en efectivo en OXXO, por transferencia SPEI o a meses con tarjeta de crédito (3, 6 o 9 meses). Además, tienes tu 10 % de descuento disponible: se aplica con el botón «Usar mi descuento» o con el código TIROIDES10 en la página de pago. Te dejo el enlace para que lo tengas a mano cuando te depositen:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "A penas me van a depositar",
+    "Que en mi saldo no me alcanza"
+   ],
+   "conocimiento_probable": "v12",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-26T17:29:14.579031+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "16314a967e515b2a69bf315af8b42615f6bb9d62",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 13,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-063",
+   "conversacion": 530,
+   "mensaje_chatwoot": 4433,
+   "enviado_en": "2026-10-26T17:31:45.495983+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10 %",
+    "10"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. El enlace queda ahí para cuando te depositen, y tu 10 % se aplica con el botón «Usar mi descuento» o con el código TIROIDES10 en la página de pago.",
+   "entrantes_previos": [
+    "Perfecto"
+   ],
+   "conocimiento_probable": "v12",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-26T17:31:42.196399+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "16314a967e515b2a69bf315af8b42615f6bb9d62",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 15,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-064",
+   "conversacion": 517,
+   "mensaje_chatwoot": 4464,
+   "enviado_en": "2026-10-27T03:05:34.103723+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10 %",
+    "3",
+    "6",
+    "9",
+    "10"
+   ],
+   "respuesta": "Te entiendo, <NOMBRE>, gracias por contarme. Te cuento algo bueno: tu 10 % de descuento sigue vigente y no vence, así que lo puedes usar cuando estés lista. Además, si te sirve no pagar todo de una vez, con tarjeta de crédito en México puedes pagar a 3, 6 o 9 meses, o en efectivo en OXXO. Te dejo el enlace de la oferta para cuando quieras usarlo: el descuento se aplica tocando el botón «Usar mi descuento» de nuestro mensaje, o escribiendo el código TIROIDES10 en la página de pago.\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Me interesa, pero por ahora no puedo cubrir el pago, necesito esperar uno o dos meses, me interesa el descuento"
+   ],
+   "conocimiento_probable": "v12",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-27T03:05:31.686806+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "9d02029f9e0a3b75fa1e2dc3af23b646365aa510",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 3,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-065",
+   "conversacion": 541,
+   "mensaje_chatwoot": 4513,
+   "enviado_en": "2026-10-27T15:01:01.170529+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10 %",
+    "10"
+   ],
+   "respuesta": "Si te interesa retomar tu inscripción (te quedó pendiente ayer), con gusto te envío el enlace y te recuerdo tu 10 % de descuento con el botón «Usar mi descuento» o el código TIROIDES10.",
+   "entrantes_previos": [
+    "Gracias por tu mensaje a <NEGOCIO>, ¿cómo te podemos ayudar?"
+   ],
+   "conocimiento_probable": "v12",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-27T15:00:55.785192+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "dc728170a9d44e305b8ca8627f0721e8b00dd6d9",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-066",
+   "conversacion": 546,
+   "mensaje_chatwoot": 4545,
+   "enviado_en": "2026-10-27T20:55:39.685495+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10 %"
+   ],
+   "respuesta": "Perfecto, <NOMBRE>. Aquí queda tu cupón del 10 %, sin vencer:",
+   "entrantes_previos": [
+    "Okk"
+   ],
+   "conocimiento_probable": "v12",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-27T20:55:37.507346+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "dc728170a9d44e305b8ca8627f0721e8b00dd6d9",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 8,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-067",
+   "conversacion": 546,
+   "mensaje_chatwoot": 4546,
+   "enviado_en": "2026-10-27T20:55:42.434704+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10"
+   ],
+   "respuesta": "cuando quieras usarlo, toca el botón «Usar mi descuento» de nuestro mensaje o escribe el código TIROIDES10 en la página de pago.",
+   "entrantes_previos": [
+    "Okk"
+   ],
+   "conocimiento_probable": "v12",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-27T20:55:37.507346+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "dc728170a9d44e305b8ca8627f0721e8b00dd6d9",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 8,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-068",
+   "conversacion": 548,
+   "mensaje_chatwoot": 4573,
+   "enviado_en": "2026-10-27T22:31:40.638381+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "3",
+    "6",
+    "9"
+   ],
+   "respuesta": "Te entiendo, y gracias por decírmelo. Te comento que no hace falta pagar todo hoy: con tarjeta de crédito puedes pagar a 3, 6 o 9 meses, y también hay opciones en efectivo en OXXO o por transferencia SPEI. Te envío el enlace de Alimenta Tu Tiroides para que veas las opciones de pago:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Gracias, pero no puedo cubrir el costo."
+   ],
+   "conocimiento_probable": "v12",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-27T22:31:39.263918+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "dc728170a9d44e305b8ca8627f0721e8b00dd6d9",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 1,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-069",
+   "conversacion": 491,
+   "mensaje_chatwoot": 4651,
+   "enviado_en": "2026-10-28T15:05:03.954514+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "3",
+    "6",
+    "9",
+    "10 %",
+    "10"
+   ],
+   "respuesta": "Te entiendo, <NOMBRE>, gracias por contarme. Si te sirve, se puede pagar a meses con tarjeta de crédito (3, 6 o 9), o sin tarjeta en efectivo en OXXO o por transferencia SPEI. Y tu 10 % de descuento se aplica con el botón «Usar mi descuento» de nuestro mensaje, o con el código TIROIDES10 en la página de pago. Te envío el enlace de la oferta:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Mil gracias pero si es ahorita muy caro para mi saludos"
+   ],
+   "conocimiento_probable": "v12",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-28T15:05:00.414509+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "dc728170a9d44e305b8ca8627f0721e8b00dd6d9",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 4,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-070",
+   "conversacion": 564,
+   "mensaje_chatwoot": 4700,
+   "enviado_en": "2026-10-28T20:52:47.703588+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Aquí te envío el enlace de Alimenta Tu Tiroides (USD 47) para que continues cuando quieras:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Envíame el enlace"
+   ],
+   "conocimiento_probable": "v12",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-28T20:52:46.74874+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "dc728170a9d44e305b8ca8627f0721e8b00dd6d9",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-071",
+   "conversacion": 589,
+   "mensaje_chatwoot": 4822,
+   "enviado_en": "2026-10-30T03:03:19.785479+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47",
+    "7",
+    "10 %",
+    "10"
+   ],
+   "respuesta": "Con gusto, <NOMBRE>. Alimenta Tu Tiroides es un curso online en el área de miembros de Hotmart, con clases en video, tres menús con sus recetarios y listas del súper, y bonus como la masterclass para leer etiquetas y el e-book Desinflamación Express. Cuesta USD 47 y tiene la garantía de 7 días de Hotmart. Te recuerdo que tu 10 % de descuento se aplica con el botón «Usar mi descuento» de nuestro mensaje, o con el código TIROIDES10 en la página de pago. Aquí va el enlace de la oferta:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Gracias, quisiera una consulta personalizada y estoy viendo opciones pero si me puede enviar el enlace para tomarlo en cuenta se lo agradezco."
+   ],
+   "conocimiento_probable": "v12",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-10-30T03:03:18.478648+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "dc728170a9d44e305b8ca8627f0721e8b00dd6d9",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 7,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-072",
+   "conversacion": 631,
+   "mensaje_chatwoot": 5079,
+   "enviado_en": "2026-11-01T16:12:56.097450+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47",
+    "3",
+    "6",
+    "9",
+    "10 %",
+    "10"
+   ],
+   "respuesta": "Te escribo del equipo de la Dra. Nina. Con gusto, <NOMBRE>: Alimenta Tu Tiroides cuesta USD 47. Con tarjeta de crédito puedes pagar a meses (en México a 3, 6 o 9; en otros países puede haber más opciones) y también tienes medios sin tarjeta según tu país. Recuerda que tu 10 % de descuento se aplica tocando el botón «Usar mi descuento» de nuestro mensaje o con el código TIROIDES10 en la página de pago. Te dejo el enlace para que lo tengas a mano cuando estés lista a fin de mes:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Hola buenos días es muy interesante su plan sólo quería saber el valor y hasta cuánto por qué el motivo en estos momentos es el pago y tendría disponibilidad del dinero es para fin de este mes ya en estos momentos tengo unos compromisos pendientes"
+   ],
+   "conocimiento_probable": "v12",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-01T16:12:54.992876+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "23fbd002da4a998daad2eabb7a76d8fff1ec42f0",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-073",
+   "conversacion": 629,
+   "mensaje_chatwoot": 5178,
+   "enviado_en": "2026-11-02T16:00:14.673735+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47",
+    "10 %",
+    "10"
+   ],
+   "respuesta": "¡Claro que sí, <NOMBRE>! El precio de Alimenta Tu Tiroides es USD 47, y tu 10 % de descuento se aplica sobre ese precio: el valor final exacto te lo muestra la página de pago. Te envío el enlace de la oferta. Para que el descuento quede aplicado, toca el botón «Usar mi descuento» de nuestro mensaje o escribe el código TIROIDES10 en el campo del cupón de la página de pago.\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Cuánto es el valor final a pagar considerando el 10%?",
+    "Quiero mi 10 %"
+   ],
+   "conocimiento_probable": "v12",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-02T16:00:11.108905+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "dd3c7da9f3eb78b8f65107b744515dd4ddf119a2",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 4,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-074",
+   "conversacion": 629,
+   "mensaje_chatwoot": 5180,
+   "enviado_en": "2026-11-02T16:02:32.883842+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47",
+    "10 %",
+    "10"
+   ],
+   "respuesta": "Sí, <NOMBRE>: es un solo pago de USD 47 y el acceso al programa es para siempre, no hay cobros después. El 10 % se aplica con el botón «Usar mi descuento» de nuestro mensaje o con el código TIROIDES10 en la página de pago; el monto final exacto te lo muestra ahí. Te envío el enlace de la oferta.\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "El pago es uno solo y obtengo el beneficio.. no más verdad ?"
+   ],
+   "conocimiento_probable": "v12",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-02T16:02:31.681521+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "dd3c7da9f3eb78b8f65107b744515dd4ddf119a2",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 6,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-075",
+   "conversacion": 642,
+   "mensaje_chatwoot": 5190,
+   "enviado_en": "2026-11-02T16:22:17.841745+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10 %",
+    "10"
+   ],
+   "respuesta": "¡Hola, <NOMBRE>! Te escribo del equipo de la Dra. Nina. Con gusto te envío el enlace de Alimenta Tu Tiroides. Tu 10 % de descuento se aplica tocando el botón «Usar mi descuento» de nuestro mensaje, o escribiendo el código TIROIDES10 en el campo del cupón de la página de pago, porque el enlace solo no lo trae aplicado. Y desde Perú puedes pagar con tarjeta, PayPal, Yape o PagoEfectivo:\nhttps://pay.hotmart.com/<PRODUCTO>?off=2uafw5bg&checkoutMode=10&src=hermes&sck=<SCK>&fbclid=<FBCLID>",
+   "entrantes_previos": [
+    "Pero soy de Perú",
+    "Quiero mi 10 %"
+   ],
+   "conocimiento_probable": "v12",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-02T16:22:16.778684+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "dd3c7da9f3eb78b8f65107b744515dd4ddf119a2",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 4,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-076",
+   "conversacion": 656,
+   "mensaje_chatwoot": 5225,
+   "enviado_en": "2026-11-02T21:00:53.186456+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10 %",
+    "1",
+    "2",
+    "12"
+   ],
+   "respuesta": "Y recuerda que tu 10 % de descuento está aplicado con el botón «Usar mi descuento», o escribiendo el código ATT1CUPON<NUM> en el campo del cupón; vale hasta mañana a las 2:12 p. m.",
+   "entrantes_previos": [
+    "Gracias mi economía no alcanza."
+   ],
+   "conocimiento_probable": "v14",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-02T21:00:46.435745+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v4",
+    "bridge_release": "a8fce4565689a48d996920a09cae7cf0dcb6aca2",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action",
+     "recovery_coupon"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-077",
+   "conversacion": 691,
+   "mensaje_chatwoot": 5904,
+   "enviado_en": "2026-11-05T19:33:19.839343+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "26"
+   ],
+   "respuesta": "Veo que Alimenta Tu Tiroides ya lo tienes desde el 26 de octubre, y tu acceso sigue igual, sin vencimiento. La Promo Zorzal es solo para quien todavía no tiene el programa, y la Guía Zorzal de colaciones no se suma a compras anteriores.",
+   "entrantes_previos": [
+    "Hola, quiero la promo zorzal"
+   ],
+   "conocimiento_probable": "v15",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-05T19:33:13.126825+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v6",
+    "bridge_release": "a13114bc89696ec82646952f2a039cc86da72ac9",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "customer_status",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action",
+     "segments"
+    ],
+    "segments": [
+     {
+      "key": "prueba-bn-sintetico",
+      "sha256": "a94fb76f933ff9960de59826b57c1fe9ce4db214c21941aabb9ed7c030118fa8",
+      "version": 1,
+      "agent_replies_before": 0
+     }
+    ],
+    "message_count": 1,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-078",
+   "conversacion": 698,
+   "mensaje_chatwoot": 5985,
+   "enviado_en": "2026-11-06T15:03:50.032797+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10 %",
+    "1"
+   ],
+   "respuesta": "Te envío el enlace de la oferta; tu 10 % se aplica con el botón «Usar mi descuento» o escribiendo el código ATT1CUPON<NUM> en el campo del cupón de la página de pago:",
+   "entrantes_previos": [
+    "Entender que contiene no entendí bien el contenido"
+   ],
+   "conocimiento_probable": "v15",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-06T15:03:34.574525+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v6",
+    "bridge_release": "a13114bc89696ec82646952f2a039cc86da72ac9",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action",
+     "recovery_coupon"
+    ],
+    "segments": [],
+    "message_count": 2,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-079",
+   "conversacion": 698,
+   "mensaje_chatwoot": 5989,
+   "enviado_en": "2026-11-06T15:09:15.531064+00:00",
+   "clase": "numeros_sin_moneda",
+   "montos_detectados_en_la_captura": [],
+   "numeros_en_el_texto": [
+    "10 %",
+    "1"
+   ],
+   "respuesta": "Te envío el enlace de nuevo: tu 10 % se aplica con el botón «Usar mi descuento» o escribiendo el código ATT1CUPON<NUM> en el campo del cupón de la página de pago:",
+   "entrantes_previos": [
+    "Vi que tenían pagos a 9 meses?"
+   ],
+   "conocimiento_probable": "v15",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-06T15:09:07.43118+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v6",
+    "bridge_release": "a13114bc89696ec82646952f2a039cc86da72ac9",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action",
+     "recovery_coupon"
+    ],
+    "segments": [],
+    "message_count": 6,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-080",
+   "conversacion": 712,
+   "mensaje_chatwoot": 6252,
+   "enviado_en": "2026-11-08T16:51:00.175956+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47",
+    "7",
+    "10 %"
+   ],
+   "respuesta": "Te escribo del equipo de la Dra. Nina. Alimenta tu Tiroides cuesta USD 47, es el programa en línea con clases en video, menús, recetarios y acceso para siempre, con 7 días de garantía de Hotmart. Ya te reactivé el 10 % de descuento: en unos minutos te llega un mensaje nuestro con su botón para pagar. Aquí te envío el enlace de la oferta:",
+   "entrantes_previos": [
+    "Precio"
+   ],
+   "conocimiento_probable": "v15",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-08T16:50:54.179795+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v6",
+    "bridge_release": "19f9af67f98d4eace147dd7f7589dd21dd65797b",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action",
+     "recovery_coupon"
+    ],
+    "segments": [],
+    "message_count": 3,
+    "known_fields_present": []
+   }
+  },
+  {
+   "caso": "att1-081",
+   "conversacion": 726,
+   "mensaje_chatwoot": 6275,
+   "enviado_en": "2026-11-08T18:42:11.795712+00:00",
+   "clase": "con_monto",
+   "montos_detectados_en_la_captura": [
+    "USD 47"
+   ],
+   "numeros_en_el_texto": [
+    "47"
+   ],
+   "respuesta": "Te escribo del equipo de la Dra. Nina. El precio de Alimenta Tu Tiroides es USD 47; en la página de pago puedes ver la conversión a tu moneda y los medios de pago disponibles. Aquí te envío el enlace para inscribirte:",
+   "entrantes_previos": [
+    "Cuanto es el monto con descuento"
+   ],
+   "conocimiento_probable": "v15",
+   "campanas_vigentes": [],
+   "turno": {
+    "occurred_at": "2026-11-08T18:42:07.057654+00:00",
+    "outcome": "completed",
+    "context_builder_version": "shadow-context-v6",
+    "bridge_release": "19f9af67f98d4eace147dd7f7589dd21dd65797b",
+    "release_ordinal": null,
+    "model_answered": "agente-comercial",
+    "context_keys": [
+     "conversation_ref",
+     "human_handoff_confirmed",
+     "known_fields",
+     "messages",
+     "payment_link_action"
+    ],
+    "segments": [],
+    "message_count": 1,
+    "known_fields_present": []
+   }
+  }
+ ]
+}

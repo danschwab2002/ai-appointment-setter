@@ -100,3 +100,21 @@ montos_extra = [
 ## 11. Errores y códigos
 
 `price_guard_configuration_invalid` (arranque), `price_not_in_catalog` (regla del intento y `reason_code` de la derivación), `agent_price_guard_blocked` (log).
+
+## 12. Lo que fijó MP-04 al construirla (E-564, 2026-11-14)
+
+Propuesta escrita junto con el código; la evidencia de que funciona queda para `docs/operations/` tras la corrida en seco (MP-24) y la subida que prenda el modo.
+
+- **Código:** `src/bridge/price_guard.py` (el extractor `extract_amounts`, los permitidos `PriceGuard.allowed_for_turn`, la comparación `PriceGuard.blocked`, la corrección `correction_detail`), `src/bridge/hermes.py` (la regla `price_not_in_catalog` en el bucle de intentos, `retry_correction(..., price_detail=...)`), `src/bridge/agent_provenance.py` (`price_guard` en `context_added`, sin migración: la columna es `jsonb`) y `src/bridge/app.py` (el modo, la guarda armada desde el manifiesto, la derivación y la nota).
+- **El reply de una derivación no se mira.** Al derivar el bridge no manda el `reply` (F-033); bloquearlo solo costaría un llamado y le pisaría al agente su `reason_code` (por ejemplo, el aviso de seguridad de `safety_risk`). Se aparta de §4 («todas las decisiones»), a propósito.
+- **Las secciones `## Promesas prohibidas` y `## No confirmado` de un texto no dan permitidos.** La campaña Black de ATT1 (r3, capturada el 13/11) dice «Citar el precio tachado de USD 97» entre sus promesas prohibidas: leída entera, dejaba pasar USD 97.
+- **Una cuota sin moneda de menos de 10 no es un monto** («2x1», «4 x 4»).
+- **El contexto del turno** (§3.2) cuenta sin `messages` ni `known_fields`: lo que dijo la persona y lo que el agente capturó de ella no se permite.
+- **El resultado `failed` del procesador** lleva `reason = "price_not_in_catalog"` cuando el último intento lo bloqueó la guarda (con un formato inválido en el último intento, manda el formato: `invalid_agent_output`), y `payment_link_requested` / `payment_link_product` si la propuesta pedía el link.
+- **La nota del link que no salió** es una nota privada de Chatwoot con texto fijo, una por derivación, con el marcador `[supportmagician-guarda-precio:<handoff_request_id>]`. La nota de derivación de siempre muestra el motivo como código (`price_not_in_catalog`): una frase en `inbound_handoff_reason_sentence` necesita una migración y no va en este encargo.
+- **`outcome`:** `passed` si ningún intento tuvo un bloqueo, `retried_ok` si un intento se bloqueó y el segundo se entregó, `handoff` si el turno terminó sin respuesta (por la guarda, por el formato o porque Hermes no contestó, después de al menos un intento evaluado).
+- **La corrección** nombra los montos con miles con punto y decimales con coma (`MXN 1.204,31`), hasta 12 permitidos; sin ningún permitido dice «no escribas ningun monto».
+- **Formas que lee además del §2:** el código pegado al signo (`USD$97`, `MXN$1,397`, `COL$`, `U$S`, `1397 $MXN`), `dls`/`dlls`, `1397$`, y el código escrito después de un `$` (`$1,397 USD` es USD, no `$`).
+- **Lo que no es un monto, además:** un «N x M» o «N meses de M» seguido de una unidad que no es plata (minutos, días, meses, cuotas, sesiones…), el total de cuotas («1 de 12 cuotas»), un año como cuota sin moneda («3 meses de 2026»), y «12 de 166» sin «cuotas», «meses», «pagos» o «mensualidad» a 40 caracteres.
+- **Lo que no lee (límite conocido):** miles con espacio (`$1 397`), «100 mil pesos», «1,5 millones». No se leen como monto, así que tampoco se bloquean.
+- **Un intento que la guarda no miró** (una derivación, una salida que no es un objeto) va en `attempts` con `"skipped": true`.

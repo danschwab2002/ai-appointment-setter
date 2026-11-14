@@ -175,6 +175,8 @@ _TOP_KEYS_OPTIONAL = {
     "ficha",
     "campanas",
     "atencion",
+    # E-564 (price-guard-v1 §8): montos legitimos que no estan en ningun texto.
+    "guarda_precio",
 }
 
 # La etiqueta de Chatwoot de un producto. Chatwoot pasa el titulo a minusculas y
@@ -420,6 +422,9 @@ class InstanceManifest:
     # [atencion] (E-486): cuando atiende el equipo, para el aviso al derivar.
     # None = no esta declarado: rige el horario de por defecto de las aliadas.
     attention: ServiceHours | None = None
+    # [guarda_precio].montos_extra (E-564, price-guard-v1 §8): montos legitimos
+    # que el agente dice y no estan en ningun texto del turno. Vacio = ninguno.
+    price_guard_extra_amounts: tuple[PriceGuardExtraAmount, ...] = ()
 
     @property
     def service_hours(self) -> ServiceHours:
@@ -768,6 +773,7 @@ class InstanceManifest:
         )
         campaigns = _campaigns(payload.get("campanas"), agent_segments, all_offers)
         attention = _attention(payload.get("atencion"), time_zone)
+        price_guard_extra_amounts = _price_guard_extra_amounts(payload.get("guarda_precio"))
 
         manifest = cls(
             product_version=product_version,
@@ -809,6 +815,7 @@ class InstanceManifest:
             agent_segments=agent_segments,
             campaigns=campaigns,
             attention=attention,
+            price_guard_extra_amounts=price_guard_extra_amounts,
         )
         for flow, enabled in manifest.flows.items():
             blockers = manifest.flow_blockers(flow)
@@ -1127,6 +1134,49 @@ def _hotmart(
 
 
 _HOUR_MINUTE = re.compile(r"([01][0-9]|2[0-3]):([0-5][0-9])")
+
+
+@dataclass(frozen=True)
+class PriceGuardExtraAmount:
+    """Un monto de ``[guarda_precio].montos_extra`` (price-guard-v1 §8)."""
+
+    value: Decimal
+    currency: str
+    description: str
+
+
+def _price_guard_extra_amounts(value: object) -> tuple[PriceGuardExtraAmount, ...]:
+    """``[guarda_precio]``: ``montos_extra = [{ monto, moneda, que_es }]``.
+
+    ``monto`` decimal mayor que 0 (texto o entero, como ``hotmart.precio``),
+    ``moneda`` ISO 4217 en mayusculas, ``que_es`` no vacio. No toca el
+    conocimiento firmado (D3 del multiproducto).
+    """
+    if value is None:
+        return ()
+    if not isinstance(value, Mapping):
+        raise ManifestError("guarda_precio debe ser una tabla")
+    _exact_keys("guarda_precio", value, set(), {"montos_extra"})
+    raw = value.get("montos_extra", [])
+    if not isinstance(raw, list):
+        raise ManifestError("guarda_precio.montos_extra debe ser una lista de tablas")
+    amounts: list[PriceGuardExtraAmount] = []
+    for index, item in enumerate(raw):
+        where = f"guarda_precio.montos_extra[{index}]"
+        if not isinstance(item, Mapping):
+            raise ManifestError(f"{where} debe ser una tabla")
+        _exact_keys(where, item, {"monto", "moneda", "que_es"})
+        currency = _str(item, "moneda", f"{where}.moneda")
+        if _CURRENCY.fullmatch(currency) is None:
+            raise ManifestError(f"{where}.moneda debe ser un codigo ISO 4217 (USD, MXN)")
+        amounts.append(
+            PriceGuardExtraAmount(
+                value=_price(item.get("monto"), f"{where}.monto"),
+                currency=currency,
+                description=_str(item, "que_es", f"{where}.que_es"),
+            )
+        )
+    return tuple(amounts)
 
 
 def _attention(value: object, time_zone: str) -> ServiceHours | None:

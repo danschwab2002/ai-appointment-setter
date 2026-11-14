@@ -1827,12 +1827,14 @@ class ChatwootClient:
             raise ValueError("private note body must contain 1 to 1800 characters")
         if (
             # La nota de un paso nativo, la del link al derivar (F-034, D8) o
-            # la de la compra que pausa al agente (E-100).
+            # la de la compra que pausa al agente (E-100), o la del link que
+            # no salio por la guarda de precio (E-564, price-guard-v1 §4).
             not idempotency_marker.startswith(
                 (
                     "[supportmagician-flujo:",
                     "[supportmagician-derivacion-link:",
                     "[supportmagician-compra-pausa:",
+                    "[supportmagician-guarda-precio:",
                 )
             )
             or not idempotency_marker.endswith("]")

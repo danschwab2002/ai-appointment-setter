@@ -120,6 +120,7 @@ from bridge.handoff_link_note import (
     handoff_link_note_body,
     handoff_link_note_marker,
 )
+from bridge import price_guard as price_guard_module
 from bridge import handoff_notice
 from bridge.handoff_notice import (
     HANDOFF_NOTICE_DECISION,
@@ -1058,6 +1059,10 @@ class Settings:
     # `system` aparte despues del base. Apagado, el pedido a Hermes es el de
     # siempre, byte a byte.
     agent_segments_enabled: bool = False
+    # E-564 (price-guard-v1): AGENT_PRICE_GUARD_MODE, `off` o `bloquea`. En
+    # `off` (el default, y lo que queda sin la variable) el bridge no extrae
+    # ningun monto y todo es byte a byte como antes.
+    agent_price_guard_mode: str = price_guard_module.MODE_OFF
     # Los segmentos aprobados de [[agente.segmentos]], cargados al arrancar con
     # el flag prendido. None con el flag apagado.
     agent_segment_catalog: SegmentCatalog | None = None
@@ -1810,6 +1815,11 @@ class Settings:
             os.getenv("AGENT_SEGMENTS_ENABLED", "false").strip().lower() == "true"
         )
         agent_segment_catalog: SegmentCatalog | None = None
+        # E-564: otro valor que off o bloquea no arranca
+        # (price_guard_configuration_invalid).
+        agent_price_guard_mode = price_guard_module.parse_mode(
+            os.getenv(price_guard_module.PRICE_GUARD_MODE_ENV)
+        )
         if agent_segments_enabled:
             # Los segmentos van despues del conocimiento base y se miden contra
             # el: sin manifiesto o sin conocimiento no hay donde apilarlos.
@@ -2553,6 +2563,7 @@ class Settings:
             recovery_coupon_by_reply_enabled=recovery_coupon_by_reply_enabled,
             agent_customer_status_enabled=agent_customer_status_enabled,
             agent_segments_enabled=agent_segments_enabled,
+            agent_price_guard_mode=agent_price_guard_mode,
             agent_segment_catalog=agent_segment_catalog,
             agent_campaigns_enabled=(
                 os.getenv("AGENT_CAMPAIGNS_ENABLED", "false").strip().lower() == "true"
@@ -9346,6 +9357,43 @@ def create_app(
                 "yes" if link.coupon_code is not None else "no",
             )
 
+        # E-564 (price-guard-v1 §4): la nota para el equipo cuando el agente
+        # pedia el link y la guarda no dejo salir la respuesta. Solo se arma
+        # con AGENT_PRICE_GUARD_MODE=bloquea; None, no hay nota.
+        price_guard_link_note_body: str | None = None
+
+        async def write_price_guard_link_note(handoff: object) -> None:
+            # Como la nota del link (F-034): privada, una por derivacion, y
+            # nunca frena la derivacion: todo error va al log.
+            handoff_request_id = getattr(handoff, "handoff_request_id", None)
+            if (
+                control_client is None
+                or price_guard_link_note_body is None
+                or settings.chatwoot_inbox_id is None
+                or not isinstance(conversation_id, int)
+                or isinstance(conversation_id, bool)
+                or not isinstance(handoff_request_id, str)
+            ):
+                logger.warning("price_guard_link_note_skipped reason=not_configured")
+                return
+            try:
+                await control_client.ensure_marked_private_note(
+                    conversation_id=conversation_id,
+                    expected_inbox_id=settings.chatwoot_inbox_id,
+                    note_body=price_guard_link_note_body,
+                    idempotency_marker=price_guard_module.link_note_marker(
+                        handoff_request_id
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001 - la derivacion sigue
+                logger.warning(
+                    "price_guard_link_note_not_sent conversation=%s error_type=%s",
+                    conversation_id,
+                    type(exc).__name__,
+                )
+                return
+            logger.info("price_guard_link_note_sent conversation=%s", conversation_id)
+
         async def request_current_inbound_handoff(
             proposal: dict[str, object],
         ) -> None:
@@ -9425,6 +9473,8 @@ def create_app(
                 ) from exc
             if settings.handoff_link_note_enabled:
                 await write_handoff_link_note(handoff)
+            if price_guard_link_note_body is not None:
+                await write_price_guard_link_note(handoff)
 
         if must_scan_canonical_history:
             assert context is not None
@@ -9518,8 +9568,29 @@ def create_app(
                 "decision": "handoff",
                 "reply": "",
                 "qualification_status": "needs_human",
-                "reason_code": AGENT_TURN_FAILED_REASON_CODE,
+                # E-564 (price-guard-v1 §4): la guarda bloqueo los dos
+                # intentos y deriva con su propio motivo.
+                "reason_code": (
+                    price_guard_module.PRICE_NOT_IN_CATALOG
+                    if failure_reason == price_guard_module.PRICE_NOT_IN_CATALOG
+                    else AGENT_TURN_FAILED_REASON_CODE
+                ),
             }
+            if failure_reason == price_guard_module.PRICE_NOT_IN_CATALOG:
+                link_reader = getattr(
+                    shadow_processor, "get_price_guard_link_request", None
+                )
+                link_request = (
+                    link_reader(delivery_id=delivery_id)
+                    if link_reader is not None
+                    else None
+                )
+                if link_request is not None:
+                    price_guard_link_note_body = price_guard_module.link_note_body(
+                        price_guard_link_product_name(
+                            settings, link_request.get("product")
+                        )
+                    )
 
         message_id = payload.get("id")
         conversation = payload.get("conversation")
@@ -14201,8 +14272,48 @@ def build_app() -> FastAPI:
                 if settings.campaign_inbound_entry_enabled
                 else {}
             ),
+            # E-564: la guarda de precio, solo en `bloquea`. En `off` el
+            # procesador se arma como siempre.
+            **price_guard_processor_kwargs(settings),
         )
     return create_app(settings, shadow_processor=shadow_processor)
+
+
+def price_guard_processor_kwargs(settings: Settings) -> dict[str, object]:
+    """La guarda de precio para el procesador (price-guard-v1), o nada en `off`.
+
+    Los montos fijos salen del manifiesto (el precio del principal y de cada
+    producto, y `[guarda_precio] montos_extra`). Sin manifiesto (Johanna) solo
+    cuentan los textos del turno.
+    """
+    if settings.agent_price_guard_mode != price_guard_module.MODE_BLOCK:
+        return {}
+    if settings.instance_manifest is None:
+        return {"price_guard": price_guard_module.PriceGuard()}
+    return {
+        "price_guard": price_guard_module.guard_from_manifest(
+            settings.instance_manifest
+        )
+    }
+
+
+def price_guard_link_product_name(
+    settings: Settings, product_ref: str | None
+) -> str | None:
+    """El nombre del producto del link que no salio, para la nota del equipo."""
+    manifest = settings.instance_manifest
+    if manifest is None:
+        return None
+    if product_ref is None or (
+        manifest.products and product_ref == manifest.products[0].key
+    ):
+        return manifest.product_name.strip() or None
+    for product in manifest.products[1:]:
+        if product.key == product_ref and product.commerce is not None:
+            return product.commerce.product_name.strip() or None
+    # Una clave que no es de ningun producto con Hotmart: mejor sin nombre que
+    # con el del principal.
+    return None
 
 
 def _contact_wrote_after(
