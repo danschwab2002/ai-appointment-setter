@@ -19,7 +19,8 @@ Tres piezas, todas puras:
 3. La **comparacion** (`PriceGuard.blocked`): los montos del `reply` que no
    estan en los permitidos, con la misma moneda. Un monto con `$` sin codigo
    pasa si el numero esta permitido en cualquier moneda; un permitido con `$`
-   vale para cualquier moneda (D5 del arnes A-0).
+   vale para cualquier moneda (D5 del arnes A-0). «$1,397 USD» es USD: el
+   codigo despues del signo manda.
 
 Con `AGENT_PRICE_GUARD_MODE=off` (o ausente) el bridge no arma la guarda y
 nada de este modulo corre: el pedido a Hermes y la propuesta son byte a byte
@@ -93,43 +94,57 @@ _ISO_CODES = (
     "PYG",
 )
 _ISO = "|".join(_ISO_CODES)
-# Antes del numero: codigo, US$, MX$, € o $.
-_BEFORE = rf"(?:{_ISO}|US\$|MX\$|€|\$)"
-# Despues del numero: codigo, € o una palabra de moneda.
+# Antes del numero: codigo (tambien pegado a «$»: USD$, MXN$), US$, U$S, MX$,
+# COL$, € o $. Los largos primero, para que «USD$» no se lea como «USD».
+_BEFORE = rf"(?:(?:{_ISO})\s?\$|U\$S|US\$|MX\$|COL\$|{_ISO}|€|\$)"
+# Despues del numero: codigo, «$MXN», €, $ o una palabra de moneda.
 _AFTER = (
-    rf"(?:{_ISO}|€|"
+    rf"(?:\$\s?(?:{_ISO})|{_ISO}|€|\$|dlls?|dls|"
     r"pesos?\s+mexicanos?|pesos?\s+colombianos?|pesos?\s+argentinos?|"
     r"pesos?\s+chilenos?|pesos?|d[óo]lares|d[óo]lar|euros?|soles)"
 )
 # Un numero con separadores de miles (1,397 · 1.397.000 · 1.204,31) o sin
 # ellos (47 · 1397.50).
 _NUMBER = r"\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?"
+# Despues del numero: que no siga otro digito (ni tras un separador ni tras
+# un espacio, «$1 397»), ni un porcentaje. Sin esto el motor retrocede y
+# parte el numero («$1397.505» se leia $1397).
+_NUMBER_END = r"(?![.,]?\d)(?!\s\d{3}(?!\d))(?!\s?%)"
+# Las unidades que dicen que un «N x M» o «N meses de M» no es un precio.
+_NOT_MONEY_AFTER = (
+    r"(?!\s*(?:min\b|minutos?|segundos?|horas?|h\b|d[ií]as?|semanas?|meses|mes\b|"
+    r"a[ñn]os?|cuotas|pagos|mensualidades|personas|clases|m[óo]dulos|sesiones))"
+)
 
 _RE_BEFORE = re.compile(
-    rf"(?<![A-Za-z0-9])({_BEFORE})\s?({_NUMBER})(?![\d.,]*\s?%)(?![\d])",
+    rf"(?<![A-Za-z0-9])({_BEFORE})\s?({_NUMBER}){_NUMBER_END}"
+    rf"(?:\s?({_ISO})(?![A-Za-z]))?",
     re.IGNORECASE,
 )
 _RE_AFTER = re.compile(
-    rf"(?<![\w.,$€])({_NUMBER})\s?({_AFTER})(?![A-Za-z])",
+    rf"(?<![\w.,$€])(?<!\d\s)({_NUMBER})\s?({_AFTER})(?![A-Za-z])",
     re.IGNORECASE,
 )
 # Cuotas con moneda o sin ella: «12 cuotas de $166», «12 pagos de 166 USD»,
 # «12x 166», «12 meses de 166». El monto es la cuota, no el numero de cuotas.
 _RE_INSTALLMENT = re.compile(
     rf"(?<![\w.,])\d{{1,2}}\s*(?:x|cuotas\s+de|pagos\s+de|meses\s+de|"
-    rf"mensualidades\s+de)\s*({_BEFORE})?\s?({_NUMBER})"
-    rf"(?:\s?({_AFTER})(?![A-Za-z]))?(?![\d.,]*\s?%)(?![\d])",
+    rf"mensualidades\s+de)\s*({_BEFORE})?\s?({_NUMBER}){_NUMBER_END}"
+    rf"(?:\s?({_AFTER})(?![A-Za-z]))?{_NOT_MONEY_AFTER}",
     re.IGNORECASE,
 )
 # «12 de 166»: solo si cerca dice cuotas, meses, pagos o mensualidades (si no,
-# «15 de noviembre» o «8 de 10» serian montos).
+# «15 de noviembre» o «8 de 10» serian montos). «1 de 12 cuotas» es el total
+# de cuotas, no un monto: lo descarta _NOT_MONEY_AFTER.
 _RE_INSTALLMENT_BARE = re.compile(
-    rf"(?<![\w.,])\d{{1,2}}\s+de\s+({_BEFORE})?\s?({_NUMBER})(?![\d.,]*\s?%)(?![\d])",
+    rf"(?<![\w.,])\d{{1,2}}\s+de\s+({_BEFORE})?\s?({_NUMBER}){_NUMBER_END}{_NOT_MONEY_AFTER}",
     re.IGNORECASE,
 )
 _RE_INSTALLMENT_CONTEXT = re.compile(r"cuota|meses|pagos|mensualidad", re.IGNORECASE)
-# Una cuota sin moneda escrita por debajo de esto no cuenta (D3 del PR).
+# Una cuota sin moneda escrita por debajo de esto no cuenta (D3 del PR), y un
+# año («los primeros 3 meses de 2026») tampoco.
 _MIN_BARE_INSTALLMENT = Decimal(10)
+_YEARS = (Decimal(1990), Decimal(2100))
 
 ANY_CURRENCY = "$"
 
@@ -203,15 +218,21 @@ def parse_number(text: str) -> Decimal | None:
 
 
 def _currency(token: str | None) -> str:
-    text = re.sub(r"\s+", " ", (token or "").strip().lower())
+    text = re.sub(r"\s+", "", (token or "").strip().lower())
     if not text or text in ("$", "peso", "pesos"):
         return ANY_CURRENCY
-    if text == "us$" or text.startswith("d"):
+    if text in ("us$", "u$s") or text.startswith("d"):
         return "USD"
     if text == "mx$" or "mexican" in text:
         return "MXN"
-    if "colombian" in text:
+    if text == "col$" or "colombian" in text:
         return "COP"
+    if len(text) == 4 and text.endswith("$"):
+        # USD$, MXN$: el codigo pegado al signo.
+        return text[:3].upper()
+    if len(text) == 4 and text.startswith("$"):
+        # $MXN despues del numero.
+        return text[1:].upper()
     if "argentin" in text:
         return "ARS"
     if "chilen" in text:
@@ -239,13 +260,19 @@ def extract_amounts(text: str | None) -> frozenset[Amount]:
         value = parse_number(number)
         if value is None:
             return
-        if installment and currency is None and value < _MIN_BARE_INSTALLMENT:
-            # «2x1», «4 x 4»: una cuota sin moneda de un digito no es un precio.
+        if installment and currency is None and (
+            value < _MIN_BARE_INSTALLMENT or _YEARS[0] <= value <= _YEARS[1]
+        ):
+            # «2x1», «4 x 4», «3 meses de 2026»: no es un precio.
             return
         found.add(Amount(currency=_currency(currency), value=value))
 
     for match in _RE_BEFORE.finditer(text):
-        add(match.group(2), match.group(1))
+        # «$1,397 USD»: el codigo despues del numero manda sobre un «$» suelto.
+        symbol = match.group(1)
+        if symbol == "$" and match.group(3):
+            symbol = match.group(3)
+        add(match.group(2), symbol)
     for match in _RE_AFTER.finditer(text):
         add(match.group(1), match.group(2))
     for match in _RE_INSTALLMENT.finditer(text):

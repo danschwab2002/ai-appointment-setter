@@ -14304,10 +14304,16 @@ def price_guard_link_product_name(
     manifest = settings.instance_manifest
     if manifest is None:
         return None
+    if product_ref is None or (
+        manifest.products and product_ref == manifest.products[0].key
+    ):
+        return manifest.product_name.strip() or None
     for product in manifest.products[1:]:
         if product.key == product_ref and product.commerce is not None:
             return product.commerce.product_name.strip() or None
-    return manifest.product_name.strip() or None
+    # Una clave que no es de ningun producto con Hotmart: mejor sin nombre que
+    # con el del principal.
+    return None
 
 
 def _contact_wrote_after(

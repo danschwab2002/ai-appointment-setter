@@ -28,7 +28,15 @@ from bridge.app import Settings, create_app
 from bridge.commercial_knowledge import CommercialKnowledge
 from bridge.hermes import HermesShadowProcessor, retry_correction
 from bridge.instance_manifest import InstanceManifest
-from bridge.price_guard import PRICE_GUARD_LINK_NOTE_MARKER_PREFIX, guard_from_manifest
+from bridge.price_guard import (
+    PRICE_GUARD_LINK_NOTE_MARKER_PREFIX,
+    PriceGuard,
+    guard_from_manifest,
+    link_note_body,
+    link_note_marker,
+)
+from bridge.chatwoot import ChatwootClient
+from test_price_guard import _black_campaign_block
 from test_webhook import (
     StubChatwootClient,
     StubInboundCommercialSupabase,
@@ -78,12 +86,17 @@ def _proposal(reply: str, decision: str = "ask_question", reason: str = "commerc
 
 
 class _Hermes:
-    def __init__(self, answers: list[str]) -> None:
+    """El api_server falso: cada respuesta es el contenido del modelo, o None = 503."""
+
+    def __init__(self, answers: list[str | None]) -> None:
         self.answers = list(answers)
         self.requests: list[dict[str, object]] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(json.loads(request.content))
+        if self.answers[0] is None:
+            self.answers.pop(0)
+            return httpx.Response(503, json={"error": "down"})
         return httpx.Response(
             200,
             json={
@@ -296,7 +309,11 @@ def test_a_handoff_reply_is_not_guarded(tmp_path: Path) -> None:
 
     assert len(hermes.requests) == 1
     assert _result(tmp_path)["proposal"]["reason_code"] == "commercial_exception"  # type: ignore[index]
-    assert recorder.turns[0].context_added["price_guard"]["outcome"] == "passed"  # type: ignore[index]
+    assert recorder.turns[0].context_added["price_guard"] == {
+        "mode": "bloquea",
+        "attempts": [{"attempt": 1, "blocked": [], "skipped": True}],
+        "outcome": "passed",
+    }
 
 
 def test_two_rules_in_one_attempt_go_together_in_the_correction(tmp_path: Path) -> None:
@@ -321,6 +338,59 @@ def test_a_format_failure_after_a_block_derives_as_a_failed_turn(tmp_path: Path)
     _run(processor)
 
     assert processor.get_failure_reason(delivery_id="turno-71") == "invalid_agent_output"
+
+
+def test_a_block_after_a_format_failure_derives_with_price_not_in_catalog(tmp_path: Path) -> None:
+    """Al reves del anterior: el ultimo intento lo bloqueo la guarda (§4.4)."""
+    hermes = _Hermes(["no es un objeto", _proposal(BAD_PRICE_REPLY)])
+    recorder = _Recorder()
+    processor = _processor(tmp_path, hermes, guard=True, recorder=recorder)
+
+    _run(processor)
+
+    assert processor.get_failure_reason(delivery_id="turno-71") == "price_not_in_catalog"
+    assert recorder.turns[0].context_added["price_guard"] == {
+        "mode": "bloquea",
+        "attempts": [
+            {"attempt": 1, "blocked": [], "skipped": True},
+            {"attempt": 2, "blocked": [{"monto": "97", "moneda": "USD"}]},
+        ],
+        "outcome": "handoff",
+    }
+
+
+def test_hermes_down_after_a_block_keeps_its_reason(tmp_path: Path) -> None:
+    hermes = _Hermes([_proposal(BAD_PRICE_REPLY), None])
+    recorder = _Recorder()
+    processor = _processor(tmp_path, hermes, guard=True, recorder=recorder)
+
+    _run(processor)
+
+    assert processor.get_failure_reason(delivery_id="turno-71") == "hermes_unavailable"
+    assert recorder.turns[0].context_added["price_guard"]["outcome"] == "handoff"  # type: ignore[index]
+
+
+def test_the_campaign_price_is_allowed_inside_the_turn(tmp_path: Path) -> None:
+    """La oferta Black de ATT1 (fixture de la base) como `system` del turno."""
+    block = _black_campaign_block()
+    reply = "El Black de Alimenta Tu Tiroides cuesta USD 47."
+    hermes = _Hermes([_proposal(reply)])
+    processor = HermesShadowProcessor(
+        base_url="https://hermes.example.test/v1",
+        api_key="test-hermes-key",
+        model_name="agente-comercial",
+        shadow_dir=tmp_path / "shadow",
+        transport=httpx.MockTransport(hermes),
+        # Sin el conocimiento base: el USD 47 sale solo de la campana.
+        price_guard=PriceGuard(),
+    )
+
+    asyncio.run(
+        processor.run(delivery_id="turno-71", context=dict(CONTEXT), extra_system=(block,))
+    )
+
+    assert len(hermes.requests) == 1
+    assert _result(tmp_path)["proposal"]["reply"] == reply  # type: ignore[index]
 
 
 def test_the_correction_without_the_guard_is_the_one_of_always() -> None:
@@ -475,3 +545,52 @@ def test_the_product_of_the_note_is_named_from_the_manifest() -> None:
         Settings(webhook_secret="s", allowed_jid=None, capture_dir=Path("."), max_age_seconds=300),  # type: ignore[call-arg]
         None,
     ) is None
+
+
+def test_the_real_client_accepts_the_marker_of_the_note() -> None:
+    """La allowlist de marcadores de `ensure_marked_private_note` (chatwoot.py)."""
+    posted: list[dict[str, object]] = []
+    messages: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # La forma de las respuestas de Chatwoot de test_handoff_link_note.py.
+        path = request.url.path
+        if request.method == "GET" and path.endswith(f"/conversations/{CONVERSATION_ID}"):
+            return httpx.Response(200, json={"id": CONVERSATION_ID, "inbox_id": 9})
+        if request.method == "GET" and path.endswith("/messages"):
+            if "before" in request.url.params:
+                return httpx.Response(200, json={"payload": []})
+            return httpx.Response(200, json={"payload": list(messages)})
+        body = json.loads(request.content)
+        posted.append(body)
+        created = {
+            "id": 99001,
+            "conversation_id": CONVERSATION_ID,
+            "inbox_id": 9,
+            "message_type": 1,
+            "private": body["private"],
+            "content": body["content"],
+        }
+        messages.append(created)
+        return httpx.Response(200, json=created)
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example",
+        account_id=1,
+        access_token="token",
+        transport=httpx.MockTransport(handler),
+    )
+    body = link_note_body("Alimenta Tu Tiroides")
+    marker = link_note_marker(HANDOFF_REQUEST_ID)
+    for _ in range(2):
+        assert asyncio.run(
+            client.ensure_marked_private_note(
+                conversation_id=CONVERSATION_ID,
+                expected_inbox_id=9,
+                note_body=body,
+                idempotency_marker=marker,
+            )
+        )
+    [post] = posted
+    assert post["private"] is True
+    assert post["content"] == f"{body}\n\n{marker}"

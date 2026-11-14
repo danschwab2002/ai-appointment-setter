@@ -94,6 +94,16 @@ def _guard_and_allowed(instance: str) -> tuple[PriceGuard, frozenset[Amount]]:
         ("12 de 166 en cuotas", ["$ 166"]),
         ("12x 166", ["$ 166"]),
         ("12 pagos de 166 USD", ["USD 166"]),
+        # Las formas de Mexico con el codigo pegado al signo, y el codigo despues
+        # de un «$» (revision del PR: se escapaban).
+        ("USD$97", ["USD 97"]),
+        ("MXN$1,397", ["MXN 1.397"]),
+        ("COL$ 100.000", ["COP 100.000"]),
+        ("U$S 97", ["USD 97"]),
+        ("1397 $MXN", ["MXN 1.397"]),
+        ("97 dls", ["USD 97"]),
+        ("1397$", ["$ 1.397"]),
+        ("Son $1,397 USD", ["USD 1.397"]),
     ],
 )
 def test_the_extractor_reads_amounts_with_their_currency(text: str, expected: list[str]) -> None:
@@ -115,6 +125,17 @@ def test_the_extractor_reads_amounts_with_their_currency(text: str, expected: li
         "la prueba interna número 0911",
         "promo 2x1",
         "a las 10:30",
+        # Unidades que no son plata, y el total de cuotas (revision del PR).
+        "sesiones de 1x 60 minutos",
+        "4x 30 días de acceso",
+        "3 x 15 minutos",
+        "12 pagos de 30 días",
+        "los primeros 3 meses de 2026",
+        "pagaste 1 de 12 cuotas",
+        "Llevas 5 de 12 mensualidades",
+        "el módulo 4 de 12 cuotas",
+        # Un numero que no se puede leer entero no se parte: «$1397.505» no es $1397.
+        "$1397.505",
     ],
 )
 def test_numbers_without_currency_are_not_amounts(text: str) -> None:
@@ -324,3 +345,10 @@ def test_the_correction_names_only_catalog_amounts() -> None:
     assert correction_detail((Amount("USD", Decimal("97")),), frozenset()) == (
         "el monto USD 97 no esta en lo que te pasamos; no escribas ningun monto."
     )
+
+
+def test_a_code_after_the_dollar_sign_keeps_its_currency() -> None:
+    """«$1,397 USD» con el precio en MXN: es otra moneda y no pasa (§3)."""
+    allowed = frozenset({Amount("MXN", Decimal("1397"))})
+    assert _labels(PriceGuard.blocked("Son $1,397 USD", allowed)) == ["USD 1.397"]
+    assert PriceGuard.blocked("Son $1,397", allowed) == ()

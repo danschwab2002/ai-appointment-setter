@@ -867,12 +867,20 @@ class HermesShadowProcessor:
             # aviso de seguridad (D1 del PR).
             blocked: tuple[Amount, ...] = ()
             if guard is not None:
-                if isinstance(proposal, dict) and proposal.get("decision") != "handoff":
+                # Un intento que la guarda no miro (una derivacion, o una
+                # salida que no es un objeto) se anota como `skipped`: no es
+                # «evaluado y limpio».
+                checked = (
+                    isinstance(proposal, dict)
+                    and proposal.get("decision") != "handoff"
+                )
+                if checked and isinstance(proposal, dict):
                     blocked = guard.blocked(proposal.get("reply"), allowed)
                 guard_attempts.append(
                     {
                         "attempt": attempt,
                         "blocked": [amount.as_json() for amount in blocked],
+                        **({} if checked else {"skipped": True}),
                     }
                 )
                 if blocked:
