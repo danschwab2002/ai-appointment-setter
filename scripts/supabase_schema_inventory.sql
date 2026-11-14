@@ -7368,6 +7368,36 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'identity_link_question'
+    union all
+    select
+        '20261114000300',
+        '20261114000300_hotmart_unknown_offers_v1.sql',
+        -- Las ofertas huerfanas de Hotmart (E-565): el registro con RLS ...
+        (
+            select count(*) = 1
+            from pg_class
+            where oid = to_regclass('public.hotmart_unknown_offers')
+              and relrowsecurity
+        )::int
+        -- ... el conteo idempotente con RLS ...
+        + (
+            select count(*) = 1
+            from pg_class
+            where oid = to_regclass('public.hotmart_unknown_offer_refs')
+              and relrowsecurity
+        )::int
+        -- ... y el registro, solo de service_role y security definer.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.record_hotmart_unknown_offer_v1(text,bigint,text,text,text,text,text,uuid)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        3,
+        'hotmart_unknown_offers'
 )
 select
     version,

@@ -153,6 +153,7 @@ from bridge.lead_decline import (
 from bridge.payment_slip_reminders import PAYMENT_SLIP_DUE_DAY_STEP, PAYMENT_SLIP_STEPS
 from bridge.phones import equivalent_whatsapp_phones, whatsapp_phone_region
 from bridge.product_routes import HotmartUnrouted, ProductRoute, ProductRoutes
+from bridge.hotmart_unknown_offers import HotmartUnknownOfferRecorder, for_dispatch
 from bridge.recovery_agent import (
     FollowupHandoffSuggestion,
     FollowupMessageProposal,
@@ -469,6 +470,17 @@ def _is_authorized_followup_recipient(
 
 
 RECIPIENT_OFFER_NOT_DECLARED = "recipient_offer_not_declared"
+
+
+def _declared_configs(
+    commercial_ally_config: CommercialAllyConfig,
+    product_routes: ProductRoutes | None,
+) -> list[CommercialAllyConfig]:
+    """The principal and, with several products, the others (E-432, E-565)."""
+    configs = [commercial_ally_config]
+    if product_routes is not None and len(product_routes) > 1:
+        configs.extend(route.config for route in product_routes if not route.principal)
+    return configs
 
 
 def _recipient_offer_not_declared(
@@ -985,6 +997,7 @@ class DurableDispatcher:
         purchase_pause_after_native_welcome: PurchaseAgentPause | None = None,
         native_segment_labels: NativeSegmentLabels | None = None,
         segment_catalog: object | None = None,
+        unknown_offer_recorder: HotmartUnknownOfferRecorder | None = None,
     ) -> None:
         if payment_failure_followup is not None and (
             not approved_template_direct or payment_failure_variants is None
@@ -1097,6 +1110,9 @@ class DurableDispatcher:
         self._allowed_jid = allowed_jid
         self._commercial_ally_config = commercial_ally_config
         self._dispatch_product_routes = product_routes
+        # E-565 (hotmart-unknown-offers-v1, punto 3): con el registro prendido,
+        # la oferta que frena E-432 deja su fila. None: nada cambia.
+        self._unknown_offer_recorder = unknown_offer_recorder
         self._portable_recipient_enabled = portable_recipient_enabled
         self._pilot_boundary = pilot_boundary
         self._human_handoff_admission_enabled = human_handoff_admission_enabled
@@ -1216,6 +1232,28 @@ class DurableDispatcher:
                 action.lease_generation,
             )
         return actions
+
+    async def _record_undeclared_offer(
+        self, execution_context: FollowupExecutionContext
+    ) -> None:
+        """La fila de la oferta que E-432 freno (contrato §2, punto 3).
+
+        Despues de finalizar el intento: el registro nunca cambia que el envio
+        no sale ni con que motivo. El recorder no deja subir ninguna falla.
+        """
+        assert self._unknown_offer_recorder is not None
+        assert self._commercial_ally_config is not None
+        assert execution_context.offer_code is not None
+        await self._unknown_offer_recorder.record(
+            for_dispatch(
+                offer_code=execution_context.offer_code,
+                product_name=execution_context.product_name,
+                configs=_declared_configs(
+                    self._commercial_ally_config, self._dispatch_product_routes
+                ),
+                source_event_id=execution_context.source_event_id,
+            )
+        )
 
     async def _finalize_pre_request_failure(
         self,
@@ -3238,6 +3276,10 @@ class DurableDispatcher:
                                         reason_code=RECIPIENT_OFFER_NOT_DECLARED,
                                         retryable=False,
                                     )
+                                    if self._unknown_offer_recorder is not None:
+                                        await self._record_undeclared_offer(
+                                            execution_context
+                                        )
                                 else:
                                     await self._finalize_pre_request_failure(
                                         action=action,

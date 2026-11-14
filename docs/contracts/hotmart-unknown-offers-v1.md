@@ -83,3 +83,18 @@ Para que la bienvenida, el carrito o el pago rechazado salgan tarde pero salgan,
 - **D4 (Dan, 2026-11-13):** el aviso desde el día 1, en la misma subida que la guarda de precio.
 - **D5 (Dan, 2026-11-13, el default):** el payload del evento huérfano, 72 h y solo para reproceso.
 - **Default de este contrato:** los tres puntos de entrada registran en la misma tabla, con su `entrada`; un payload roto no es una oferta huérfana; el aviso es uno por oferta.
+
+## 9. Lo que fijó la construcción (MP-02, E-565, propuesta)
+
+Escrito con el código del registro, antes de cualquier despliegue; la evidencia de que funciona queda para `docs/operations/` después de prenderlo.
+
+- **La migración** es `20261114000300_hotmart_unknown_offers_v1.sql`. Suma una segunda tabla, `hotmart_unknown_offer_refs` (la fila del registro y el hash del evento ya contado, sin nada más), que es lo que hace idempotente el conteo de §4. Las dos tablas tienen RLS y ningún privilegio para los roles de la API.
+- **La firma de `record_hotmart_unknown_offer_v1`** suma un último parámetro opcional, `p_source_event_id uuid`: desde el despachador (`entrada = despacho`) el bridge no sabe el tipo de evento de Hotmart, así que manda `p_event_type = null` y la base lo lee de `webhook_events.event_type` del evento que abrió el caso (el tipo y el origen). Si el caso lo abrió un formulario o una audiencia (`webhook_events.source` distinto de `hotmart`), no deja fila y devuelve `not_hotmart`. Devuelve `offer_id`, `outcome` (`inserted`, `counted`, `duplicate` o `not_hotmart`) y `conteo`.
+- **El hash del evento:** `sha256("hotmart_event:<id del evento de Hotmart>")` en los puntos 1 y 2, y `sha256("source_event:<id de webhook_events>")` en el 3: un caso con varios toques frenados cuenta una sola vez.
+- **`tenant_ref`** es el `tenant_ref` del binding principal de la instancia (hoy `lancemos` en las tres; cada instancia tiene su base).
+- **Una fila resuelta vuelve a abrirse** (`resuelta_en = null`) con un evento nuevo; un reintento de un evento ya contado no la reabre.
+- **`/ready`** publica `"hotmart_unknown_offers": "abiertas:<n>"` (el cuerpo de `/ready` es de textos). Si la lectura falla publica `"no_disponible"`, sin 503: el registro no atiende a nadie.
+- **En el punto 2,** el carrito se registra solo cuando el bridge lo leyó con el binding (`PORTABLE_HOTMART_RECOVERY_ENABLED`, o el modo de solo guardar) y la compra solo con `PORTABLE_HOTMART_PURCHASE_STOP_ENABLED`: sin el binding, el parser no descarta por producto y el descarte es siempre de forma. El pago fallido y la ficha quedan afuera de este punto, como en §2.
+- **El código de oferta** que no tiene la forma de un código de Hotmart (letras y números, hasta 40) se guarda como null.
+- **El `motivo` de una fila es el del último evento contado:** la clave no lo incluye, así que si el catálogo de la instancia cambia (por ejemplo, se declara el producto pero no la oferta), la fila pasa de `product_not_declared` a `offer_not_declared` sin abrir otra.
+- **`list_hotmart_unknown_offers_v1` devuelve hasta 500 filas**, la más reciente primero; `/ready` cuenta lo que devuelve.

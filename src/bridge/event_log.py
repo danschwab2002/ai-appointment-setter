@@ -41,6 +41,9 @@ LOGGED_INFO_EVENTS = frozenset(
         "hotmart_listen_only_captured",
         "hotmart_event_late",
         "hotmart_payment_slip_admitted",
+        # las ofertas huerfanas (bridge.hotmart_unknown_offers, E-565): la
+        # entrada, el motivo, el producto y la oferta de Hotmart; nada personal
+        "hotmart_unknown_offer_recorded",
         # el worker (bridge.worker)
         "hotmart_event_not_planned",
         "hotmart_purchase_processed",
