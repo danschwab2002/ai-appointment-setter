@@ -83,6 +83,7 @@ from bridge.segment_knowledge import (
     SEGMENT_CONTEXT_KEY,
     SegmentCatalog,
     TurnSegment,
+    knowledge_product_names,
     load_segment_catalog,
 )
 from bridge.instance_manifest import (
@@ -3103,12 +3104,17 @@ def agent_products_context(settings: "Settings") -> list[dict[str, str]]:
     La clave de [[productos]] del manifiesto y el nombre con el que el producto
     aparece en el conocimiento («# Producto: ...»). Vacio sin productos
     declarados: la entrada es la de siempre.
+
+    E-563 (MP-05): con un conocimiento de una sola capa, el principal va con el
+    nombre de su oferta; un producto sin seccion, con el ``product_name`` de su
+    Hotmart. Sin esto la lista quedaba vacia y, con dos productos, el agente no
+    tenia la clave para pedir ningun link (``link_without_product``).
     """
     manifest = settings.instance_manifest
     knowledge = settings.commercial_knowledge
     if manifest is None or not manifest.products or knowledge is None:
         return []
-    names = {product.key: product.offer_name for product in knowledge.products}
+    names = knowledge_product_names(manifest, knowledge)
     return [
         {"key": product.key, "name": names[product.key]}
         for product in manifest.products
@@ -3506,6 +3512,16 @@ def _validate_instance_manifest_gates(settings: Settings) -> None:
         )
         if products_error is not None:
             raise ValueError(f"instance products: {products_error}")
+        # E-563: un producto sin seccion arranca; el agente sabe de el solo lo que
+        # le diga una campana vigente que lo nombre.
+        without_knowledge = manifest.products_without_knowledge(
+            tuple(product.key for product in knowledge.products)
+        )
+        if without_knowledge:
+            logger.warning(
+                "instance_products_without_knowledge products=%s",
+                ",".join(without_knowledge),
+            )
     blocked = sorted(
         f"{flag}->{flow}"
         for flag, flow in _FLAG_REQUIRED_FLOW.items()

@@ -1,6 +1,6 @@
 # Contrato: conocimiento comercial por instancia v1
 
-- **Fecha:** 2026-09-28. Enmendado el 2026-10-16: la forma de varios productos y el tope de 32.000 bytes.
+- **Fecha:** 2026-09-28. Enmendado el 2026-10-16: la forma de varios productos y el tope de 32.000 bytes. Enmendado el 2026-11-14 (E-563, MP-05 del multiproducto): con `[[productos]]` en el manifiesto, la forma de un solo producto cuenta como la del principal.
 - **Diseño:** [setter-producto-instalable-v1.md §4.4](../design/setter-producto-instalable-v1.md), [ADR-0021](../decisions/0021-setter-producto-instalable.md) decisión 6
 - **Código:** `src/bridge/commercial_knowledge.py`
 
@@ -42,6 +42,19 @@ Una aliada puede vender más de un producto por el mismo número, como ATT1 y AT
 | `[[productos]]` (al menos uno) | `clave` (slug en minúsculas, única), `oferta` y `contenido` (como arriba) | `no_confirmado`, `promesas_prohibidas` (`items`, no vacía) y `[[productos.faq]]`: lo que es solo de ese producto |
 
 Con `[[productos]]`, `[oferta]` y `[contenido]` no van arriba. Dos productos no comparten la clave ni el nombre de la oferta, que titula su sección. La clave es la que nombra al producto en el resto de la instancia.
+
+### El conocimiento y los `[[productos]]` del manifiesto (desde 2026-11-14, E-563)
+
+Con `[[productos]]` en el manifiesto de la instancia ([referencia](../referencia-manifiesto.md)), el bridge ata los productos del manifiesto con las secciones del conocimiento por la clave:
+
+| El conocimiento | Qué pasa |
+|---|---|
+| De un solo producto (`[oferta]` arriba, sin `[[productos]]`) | Es el del **producto principal** (el primero de `[[productos]]` del manifiesto). Los demás productos no tienen sección. Es la forma del v9 de Maribel, que no tiene lugar para otra sección. |
+| Por producto, con la sección del principal | Los productos que no son el principal pueden no tener sección. |
+| Por producto, sin la sección del principal | **El bridge no arranca** (`validate`: «el conocimiento no tiene la seccion del producto principal»). |
+| Con la sección de un producto que el manifiesto no declara | **El bridge no arranca** («el conocimiento tiene productos que el manifiesto no declara»). |
+
+Un producto sin sección no tiene conocimiento propio: el agente recibe solo su clave y su nombre en `products` (el `product_name` de su Hotmart, [commercial-ally-runtime-v1](commercial-ally-runtime-v1.md)) y lo que le diga una campaña vigente que lo nombre en `oferta.producto` ([agent-campaigns-v1](agent-campaigns-v1.md)). `validate` lo avisa por producto y el bridge lo deja en el log al arrancar (`instance_products_without_knowledge`). El conocimiento no cambia: se renderiza igual, con el mismo `sha256`. Sin `[[productos]]` en el manifiesto, nada de esto se mira (ATT1 y Maribel de un solo producto).
 
 ### La sección de pagos
 

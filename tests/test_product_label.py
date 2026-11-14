@@ -193,13 +193,13 @@ def test_the_knowledge_must_separate_the_products_of_the_manifest() -> None:
     )
 
     assert manifest.knowledge_products_error(_keys(_by_product("att1"))) is None
-    assert "no tiene secciones por producto" in (
-        manifest.knowledge_products_error(_keys(single)) or ""
-    )
-    assert "(att1) no son los del conocimiento (att2)" in (
+    # E-563 (MP-05): un conocimiento de una sola capa es el del principal.
+    assert manifest.knowledge_products_error(_keys(single)) is None
+    assert manifest.products_without_knowledge(_keys(single)) == ()
+    assert "productos que el manifiesto no declara (att2)" in (
         manifest.knowledge_products_error(_keys(_by_product("att2"))) or ""
     )
-    assert "(att1) no son los del conocimiento (att1, att2)" in (
+    assert "productos que el manifiesto no declara (att2)" in (
         manifest.knowledge_products_error(_keys(_by_product("att1", "att2"))) or ""
     )
 
@@ -226,7 +226,7 @@ def test_validate_without_productos_reports_as_before() -> None:
     assert "productos" not in report["manifiesto"]
 
 
-def test_validate_lists_the_products_and_refuses_a_knowledge_that_does_not_separate_them(
+def test_validate_lists_the_products_and_takes_a_single_layer_knowledge_as_the_principal(
     att1_copy: Path,
 ) -> None:
     _append_products(
@@ -239,11 +239,10 @@ def test_validate_lists_the_products_and_refuses_a_knowledge_that_does_not_separ
     assert report["manifiesto"]["productos"] == [
         {"clave": "att1", "etiqueta": "att1", "macro_etiqueta": 7}
     ]
-    assert report["valida"] is False
-    assert any(
-        "no tiene secciones por producto: el bridge no arranca" in error
-        for error in report["errores"]
-    )
+    # E-563 (MP-05): el conocimiento de una sola capa de ATT1 cuenta como el del
+    # principal: antes esto era «no tiene secciones por producto: el bridge no arranca».
+    assert report["valida"] is True
+    assert not any("conocimiento" in error for error in report["errores"])
 
 
 # ------------------------------------------------------- el cliente de Chatwoot
@@ -619,12 +618,20 @@ def test_the_label_requires_chatwoot_control(tmp_path: Path) -> None:
 def test_the_bridge_does_not_start_with_a_knowledge_that_does_not_separate_the_products(
     tmp_path: Path,
 ) -> None:
+    # E-563 (MP-05): un conocimiento de una sola capa ya no frena el arranque (es el
+    # del principal); lo que frena es una seccion de un producto que no esta declarado.
     single = CommercialKnowledge.from_toml_file(
         ATT1 / "conocimiento" / "knowledge-v1.toml", require_approved=False
     )
-    settings = _bridge_settings(_labeled_manifest(), tmp_path, commercial_knowledge=single)
+    assert create_app(
+        _bridge_settings(_labeled_manifest(), tmp_path, commercial_knowledge=single),
+        chatwoot_client=_client(_Chatwoot()),
+    ) is not None
+    settings = _bridge_settings(
+        _labeled_manifest(), tmp_path, commercial_knowledge=_by_product("att1", "att2")
+    )
 
-    with pytest.raises(ValueError, match="instance products: .*no tiene secciones"):
+    with pytest.raises(ValueError, match="instance products: .*no declara \\(att2\\)"):
         create_app(settings, chatwoot_client=_client(_Chatwoot()))
 
     two_layers = _by_product("att1")

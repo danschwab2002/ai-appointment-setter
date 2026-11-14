@@ -177,7 +177,10 @@ pasa a `shadow-context-v2`.
 Solo con `[[productos]]` en el manifiesto ([referencia](../referencia-manifiesto.md)),
 y sin flag propio: sin productos declarados nada de esto existe. Cada turno lleva
 `products`, la `key` de cada producto y el `name` con el que aparece en el
-conocimiento (`# Producto: …`), y `person_activity` si el móvil de quien escribe
+conocimiento (`# Producto: …`); desde E-563 (MP-05), con un conocimiento de una
+sola capa el principal va con el nombre de su `[oferta]`, y un producto sin
+sección en el conocimiento, con el `product_name` de su `[productos.hotmart]`. Y
+`person_activity` si el móvil de quien escribe
 hizo algo en el funnel en los últimos 30 días: una lista, de lo más viejo a lo más
 nuevo, de `{activity, product, at}`. `activity` es `form` (cada envío del
 formulario), `cart`, `payment_rejected`, `payment_slip_printed`,

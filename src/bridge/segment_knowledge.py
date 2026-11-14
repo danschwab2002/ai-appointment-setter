@@ -556,6 +556,35 @@ def verificar_chequeo(
         raise SegmentError(f"chequeo del alta: {exc}") from exc
 
 
+def knowledge_product_names(
+    manifest: InstanceManifest | None, base: CommercialKnowledge
+) -> dict[str, str]:
+    """Clave -> nombre de cada producto que una campana o un segmento puede nombrar.
+
+    Los de las secciones del conocimiento base, con el nombre de su oferta. Sin
+    ``[[productos]]`` en el manifiesto, solo esos: lo de siempre.
+
+    Con ``[[productos]]`` (E-563, MP-05): un conocimiento de una sola capa es el
+    del principal, que se nombra con su oferta; un producto sin seccion se nombra
+    con el ``product_name`` de su Hotmart en el manifiesto. Asi una campana con
+    ``oferta.producto`` de ese producto se valida y se renderiza con su nombre, y
+    no con el del principal.
+    """
+
+    names = {
+        product.key: product.offer_name for product in base.products if product.key is not None
+    }
+    if manifest is None or not manifest.products:
+        return names
+    principal = manifest.products[0]
+    if not base.by_product and base.products:
+        names.setdefault(principal.key, base.products[0].offer_name)
+    for product in manifest.products[1:]:
+        if product.key not in names and product.commerce is not None:
+            names[product.key] = product.commerce.product_name
+    return names
+
+
 def load_declared_segment(
     declaration: AgentSegment,
     *,
@@ -576,9 +605,7 @@ def load_declared_segment(
 
     path = instance_dir / declaration.knowledge_path
     where = f"agente.segmentos '{declaration.key}'"
-    product_names = {
-        product.key: product.offer_name for product in base.products if product.key is not None
-    }
+    product_names = knowledge_product_names(manifest, base)
     try:
         try:
             raw = tomllib.loads(path.read_text(encoding="utf-8"))

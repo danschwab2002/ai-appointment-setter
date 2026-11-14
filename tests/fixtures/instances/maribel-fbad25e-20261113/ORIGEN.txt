@@ -1,0 +1,14 @@
+Copia de solo lectura de danschwab2002/setter-instancia-maribel en el commit fbad25eed3dafe3ef72e628acd37ceb63997cc75
+(main del 2026-11-13 17:59Z), bajada por la API de GitHub el 2026-11-14 (UTC) para las pruebas del multiproducto con la
+forma de Maribel (E-563, MP-05 y MP-06 del plan de implementacion del multiproducto; carril A de Forever Young).
+
+Archivos sin tocar:
+- instancia.toml: el manifiesto vivo (ultimo commit que lo toco: 64130e8, 2026-11-13 17:57Z), sha256 494fe538b174...
+  Sin [[productos]]: las pruebas se los suman en una copia temporal. Ningun campo es secreto (lo dice su cabecera).
+- conocimiento/knowledge-v9.toml: el conocimiento firmado por Dan Schwab el 2026-11-11 (commit 5be931b), de una sola
+  capa ([oferta] arriba, ninguna seccion de producto), 62.515 bytes, sha256 b358a0419e99..., render de 30.300 bytes.
+  Es el fixture F3 de E-555 (capturado el 2026-11-13 17:53-17:56Z), identico byte a byte al de origin/main de la instancia.
+
+Ninguno trae datos personales: nombres publicos del negocio, IDs publicos de productos y plantillas de Meta, codigos de
+oferta y el canal de Slack de la instancia. El segundo producto que suman las pruebas (forever-young) es SINTETICO:
+su ID de Hotmart, su hotlink y su oferta son inventados (el combo real todavia no existe; lo crea Danitza).
