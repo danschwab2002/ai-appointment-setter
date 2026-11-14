@@ -62,6 +62,7 @@ from .segment_knowledge import (
     SegmentKnowledge,
     SegmentSelection,
     build_catalog,
+    knowledge_product_names,
 )
 
 __all__ = [
@@ -336,7 +337,9 @@ class CampaignContext:
 
     @property
     def product_names(self) -> dict[str, str]:
-        return {product.key: product.offer_name for product in self.base.products if product.key is not None}
+        # E-563: con [[productos]], tambien el principal de un conocimiento de una capa y
+        # los productos sin seccion (por su product_name de Hotmart).
+        return knowledge_product_names(self.manifest, self.base)
 
     @property
     def others(self) -> list[dict[str, Any]]:

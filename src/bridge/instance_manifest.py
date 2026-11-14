@@ -283,8 +283,10 @@ class Product:
     """Un producto de la aliada (``[[productos]]``).
 
     ``key`` es la misma ``clave`` que la seccion del producto en el conocimiento:
-    con productos en el manifiesto, el bridge no arranca si el conocimiento no
-    separa los mismos (``knowledge_products_error``).
+    con productos en el manifiesto, el bridge no arranca si el conocimiento trae
+    la seccion de un producto que no esta aca o le falta la del principal
+    (``knowledge_products_error``). Un conocimiento de una sola capa es el del
+    principal (E-563).
 
     ``chatwoot_label`` es la etiqueta que el bridge le suma a cada conversacion del
     producto, ejecutando el macro ``chatwoot_label_macro_id``. Va por un macro y no
@@ -453,23 +455,51 @@ class InstanceManifest:
         ``knowledge_keys`` son las claves de las secciones de producto del
         conocimiento (``None`` en uno de una sola capa). Sin ``[[productos]]`` no
         hay nada que atar.
+
+        E-563 (MP-05, carril A): un conocimiento de una sola capa es el del
+        producto principal, y un producto que no es el principal puede no tener
+        seccion (lo nombra una campana vigente en ``oferta.producto``; lo dice
+        ``products_without_knowledge``). Lo que sigue frenando el arranque: una
+        seccion de un producto que el manifiesto no declara, y un conocimiento
+        por producto sin la seccion del principal.
         """
 
         if not self.products:
             return None
-        declared = sorted(product.key for product in self.products)
         if any(key is None for key in knowledge_keys):
-            return (
-                "el manifiesto declara [[productos]] y el conocimiento no tiene "
-                "secciones por producto"
-            )
+            # La forma de un solo producto: es el principal.
+            return None
+        declared = {product.key for product in self.products}
         found = sorted(key for key in knowledge_keys if key is not None)
-        if found != declared:
+        undeclared = [key for key in found if key not in declared]
+        if undeclared:
             return (
-                f"los productos del manifiesto ({', '.join(declared)}) no son los "
-                f"del conocimiento ({', '.join(found)})"
+                f"el conocimiento tiene productos que el manifiesto no declara "
+                f"({', '.join(undeclared)})"
+            )
+        principal = self.products[0].key
+        if principal not in found:
+            return (
+                f"el conocimiento no tiene la seccion del producto principal ({principal})"
             )
         return None
+
+    def products_without_knowledge(
+        self, knowledge_keys: tuple[str | None, ...]
+    ) -> tuple[str, ...]:
+        """Los productos de ``[[productos]]`` sin seccion en el conocimiento (E-563).
+
+        Nunca el principal: un conocimiento de una sola capa es el suyo. Del
+        resto, el agente sabe solo la clave y el nombre (``products``) y lo que
+        le diga una campana vigente que lo nombre. Vacio sin ``[[productos]]``.
+        """
+
+        if not self.products:
+            return ()
+        found = {key for key in knowledge_keys if key is not None}
+        return tuple(
+            product.key for product in self.products[1:] if product.key not in found
+        )
 
     @property
     def ghl_adapter_risk(self) -> str | None:

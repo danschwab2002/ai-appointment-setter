@@ -153,6 +153,14 @@ def validate_instance(directory: Path, *, now: datetime | None = None) -> dict[s
     )
     if products_error is not None:
         report["errores"].append(f"{products_error}: el bridge no arranca")
+    for product_key in manifest.products_without_knowledge(
+        tuple(product.key for product in knowledge.products)
+    ):
+        # E-563: arranca, pero el agente sabe de el solo lo que diga una campana vigente.
+        report["avisos"].append(
+            f"el producto '{product_key}' no tiene seccion en el conocimiento: el agente "
+            "sabe de el solo lo que le diga una campana vigente que lo nombre en oferta.producto"
+        )
     if not knowledge.approved:
         report["avisos"].append(
             "el conocimiento esta en borrador: el agente no puede responder hasta que se apruebe"

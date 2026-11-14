@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -28,6 +30,9 @@ from test_product_routing import ATT1_TOML, _event, _manifest, _routes
 from test_product_routing import _payload as _routing_payload
 from test_product_routing import _Statuses as _BaseStatuses
 from test_flow_engine_native_payment_failure import _refusal
+from test_multi_product_single_layer_knowledge import FY_HOTLINK, FY_ID, FY_LABEL, FY_OFFER, FY_OTHER
+from test_multi_product_single_layer_knowledge import MARIBEL as MARIBEL_DIR
+from test_multi_product_single_layer_knowledge import PRODUCTS as MARIBEL_PRODUCTS
 
 import bridge.messaging as messaging_module
 from bridge import worker as worker_module
@@ -35,7 +40,7 @@ from bridge.flow_engine_runtime import READ_FAILING, READ_OK, READ_PENDING
 from bridge.followup_discount import OTHER_PRODUCT_CONVERSATION, evaluate_followup_candidate
 from bridge.hotmart import EVENT_CART_ABANDONMENT, EVENT_PURCHASE_CANCELED
 from bridge.instance_manifest import InstanceManifest
-from bridge.product_routes import followup_product_labels
+from bridge.product_routes import ProductRoutes, followup_product_labels
 from bridge.resolution import ResolutionError, resolve_event
 from bridge.supabase import FollowupExecutionContext
 from bridge.worker import ResolutionWorker
@@ -498,4 +503,170 @@ def test_provision_refuses_one_hotmart_product_split_by_offer() -> None:
     manifest = InstanceManifest.from_mapping(payload)
 
     with pytest.raises(SystemExit, match="mismo producto de Hotmart"):
+        build_sql(manifest, "x")
+
+
+# -- La forma de Maribel: el v9 de una capa y forever-young (E-563, MP-06) -----------------
+#
+# El carril A de Forever Young con la forma real de Maribel: el manifiesto vivo y el v9 firmado
+# (tests/fixtures/instances/maribel-fbad25e-20261113, ver su ORIGEN.txt) mas [[productos]] con el
+# principal (maribel, la clave de sus flujos publicados) y forever-young, SINTETICO (ID, hotlink,
+# ofertas y landings inventados). Los eventos: la compra capturada de Maribel (29/10) y el carrito
+# capturado de ATT1, con el producto y la oferta cambiados (derivados, como los de arriba).
+
+_FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _maribel_two(*, principal_label: bool = False) -> InstanceManifest:
+    text = (MARIBEL_DIR / "instancia.toml").read_text(encoding="utf-8") + MARIBEL_PRODUCTS
+    if principal_label:
+        text = text.replace(
+            'clave = "maribel"\n', 'clave = "maribel"\netiqueta = "el-protocolo"\nmacro_etiqueta = 9900\n', 1
+        )
+    return InstanceManifest.from_mapping(tomllib.loads(text))
+
+
+def _maribel_purchase(**changes: object) -> dict:
+    payload = json.loads(
+        (_FIXTURES / "hotmart_purchase_approved_maribel_20261029.json").read_text(encoding="utf-8")
+    )["payload"]
+    if "product_id" in changes:
+        payload["data"]["product"]["id"] = changes["product_id"]
+        payload["data"]["purchase"]["offer"]["code"] = changes["offer"]
+        payload["id"] = f"{payload['id']}-derivado"
+    return payload
+
+
+class _MaribelFlows(_Flows):
+    def wants(self, product_ref: str, trigger: str) -> bool:
+        return self.on and product_ref == "forever-young" and trigger == self.trigger
+
+
+def _maribel_worker(native_on: bool, trigger: str = "carrito") -> tuple[ResolutionWorker, _Statuses]:
+    supabase = _Statuses()
+    manifest = _maribel_two()
+    config = manifest.to_commercial_ally_config()
+    worker = ResolutionWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        product_routes=ProductRoutes.build(config, manifest),
+        commercial_ally_config=config,
+        flow_engine=SimpleNamespace(native_flows=_MaribelFlows(native_on, trigger)),  # type: ignore[arg-type]
+        policy_key="p",
+        policy_version=1,
+        pilot_boundary=SimpleNamespace(),  # type: ignore[arg-type]
+    )
+    return worker, supabase
+
+
+def test_maribel_the_captured_purchase_goes_to_the_principal_and_forever_young_to_its_route() -> None:
+    manifest = _maribel_two()
+    routes = ProductRoutes.build(manifest.to_commercial_ally_config(), manifest)
+
+    assert routes.for_hotmart(_maribel_purchase()) is routes.principal
+    young = routes.for_hotmart(_maribel_purchase(product_id=FY_ID, offer=FY_OFFER))
+    assert young is not None and young.principal is False
+    assert young.config.funnel_ref == "forever-young"
+    assert young.config.product_hotlink == FY_HOTLINK
+    # Un producto que Maribel no declara sigue sin ruta.
+    unrouted = routes.for_hotmart(_maribel_purchase(product_id=FY_ID + 1, offer=FY_OFFER))
+    assert getattr(unrouted, "reason", None) == "product_not_declared"
+
+
+def test_maribel_a_cart_of_forever_young_with_its_native_flow_goes_native_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[dict[str, Any]] = []
+
+    async def resolve(**kwargs: Any) -> object:
+        captured.append(kwargs)
+        return SimpleNamespace(event_id=kwargs["webhook_event_id"])
+
+    monkeypatch.setattr(worker_module, "resolve_event", resolve)
+    worker, supabase = _maribel_worker(native_on=True)
+    cart = _event("carrito_2uafw5bg", product_id=FY_ID, offer=FY_OFFER)
+
+    asyncio.run(worker._process_one({"id": "e1", "payload": cart, "event_type": cart["event"]}))
+
+    assert supabase.updates == []
+    [call] = captured
+    assert call["native_only"] is True
+    assert call["commercial_ally_config"].funnel_ref == "forever-young"
+    assert call["native_cart_product_ref"] == "forever-young"
+
+
+def test_maribel_without_its_native_flow_forever_young_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    called: list[object] = []
+
+    async def resolve(**kwargs: object) -> object:
+        called.append(kwargs)
+        return SimpleNamespace(event_id=kwargs["webhook_event_id"])
+
+    monkeypatch.setattr(worker_module, "resolve_event", resolve)
+    worker, supabase = _maribel_worker(native_on=False)
+    cart = _event("carrito_2uafw5bg", product_id=FY_ID, offer=FY_OTHER)
+
+    asyncio.run(worker._process_one({"id": "e1", "payload": cart, "event_type": cart["event"]}))
+
+    assert called == []
+    assert supabase.updates == [{"event_id": "e1", "status": "ignored", "error": "product_without_recovery_flows"}]
+
+
+def test_maribel_the_cart_of_el_protocolo_stays_with_the_principal(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[dict[str, Any]] = []
+
+    async def resolve(**kwargs: Any) -> object:
+        captured.append(kwargs)
+        return SimpleNamespace(event_id=kwargs["webhook_event_id"])
+
+    monkeypatch.setattr(worker_module, "resolve_event", resolve)
+    worker, _ = _maribel_worker(native_on=True)
+    # El carrito capturado de ATT1 con el producto y la oferta por defecto de Maribel (derivado).
+    cart = _event("carrito_2uafw5bg", product_id=8443991, offer="u8ikyx78")
+
+    asyncio.run(worker._process_one({"id": "e1", "payload": cart, "event_type": cart["event"]}))
+
+    [call] = captured
+    assert "native_only" not in call  # el principal, como hoy
+    assert call["commercial_ally_config"].funnel_ref == "maribel"
+
+
+def test_maribel_the_provision_sql_seeds_only_forever_young() -> None:
+    manifest = _maribel_two()
+    second = manifest.to_commercial_ally_configs()[1]
+
+    sql = build_sql(manifest, "quien-prueba")
+
+    assert second.funnel_ref == "forever-young" and second.product_hotlink == FY_HOTLINK
+    assert f"'{second.funnel_ref}'" in sql and FY_HOTLINK in sql
+    assert "'u8ikyx78'" not in sql  # las ofertas del principal ya estan sembradas
+    assert sql.count("insert into public.checkout_offer_catalog") == 1 + len(second.additional_offer_codes)
+    assert f"'{FY_OFFER}'" in sql and f"'{FY_OTHER}'" in sql
+
+
+def test_maribel_the_followup_of_the_principal_skips_only_forever_young_conversations() -> None:
+    # Sin etiqueta del principal, toda conversacion con la de forever-young se saltea; con
+    # la del principal, solo las que no la tienen. Por eso la PR de la instancia la declara.
+    assert followup_product_labels(_maribel_two()) == (frozenset({FY_LABEL}), None)
+    assert followup_product_labels(_maribel_two(principal_label=True)) == (frozenset({FY_LABEL}), "el-protocolo")
+    for labels, own, skipped in (
+        ([FY_LABEL], None, True),
+        ([FY_LABEL, "el-protocolo"], None, True),
+        ([FY_LABEL, "el-protocolo"], "el-protocolo", False),
+        (["el-protocolo"], "el-protocolo", False),
+    ):
+        decision = evaluate_followup_candidate(
+            _silent_conversation(labels), [], expected_inbox_id=11, now_epoch=1_800_000_000,
+            other_product_labels=frozenset({FY_LABEL}), own_product_label=own,
+        )
+        assert (decision.skip_reason == OTHER_PRODUCT_CONVERSATION) is skipped, (labels, own)
+
+
+def test_maribel_without_products_nothing_of_this_applies() -> None:
+    manifest = InstanceManifest.from_toml_file(MARIBEL_DIR / "instancia.toml")
+    routes = ProductRoutes.build(manifest.to_commercial_ally_config(), manifest)
+
+    assert manifest.products == ()
+    assert followup_product_labels(manifest) == (frozenset(), None)
+    assert routes.for_hotmart(_maribel_purchase()) is routes.principal
+    with pytest.raises(SystemExit):
         build_sql(manifest, "x")

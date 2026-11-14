@@ -1,0 +1,293 @@
+# Manifiesto de la instancia maribel del setter.
+# Referencia de cada campo: docs/referencia-manifiesto.md del repo del producto
+# (danschwab2002/ai-appointment-setter). Ningun campo de este archivo es secreto.
+#
+# Cada <COMPLETAR: ...> dice que va y de donde se mide (docs/instalar.md del producto, paso 2: todo
+# se mide en la fuente, no se pregunta de memoria). Un marcador no carga a proposito: mientras quede
+# uno, `validate` falla y verificar.py lo nombra. Cada valor que se completa lleva al lado, en un
+# comentario, de donde salio y la fecha (como en conocimiento/knowledge-fuentes.md).
+#
+# Los nombres del producto no cambian con la instancia: tenant_ref = "lancemos" es el tenant del
+# portfolio de las aliadas (el mismo en todas), y las variables LANCEMOS_PILOT_* de despliegue/ son
+# nombres del codigo.
+
+schema = "setter-instancia/v2"
+producto = "v1.38.0"   # el tag del producto que se instala (E-325: todo lo nuevo apagado; antes v1.37.0, la vuelta atras)
+
+# Solo lo que ya llega de verdad (instalar.md, paso 3). "intencion" va si los formularios de la
+# landing entran por el adaptador de GHL ([adaptadores.ghl], abajo) o por /webhooks/lead.
+eventos = ["carrito", "pago_fallido", "compra", "entrante", "intencion", "ficha_impresa"]   # intencion: el formulario «VSL Maribel» por el adaptador de GHL (E-131, 2026-10-26); entra cuando Dan crea en GHL el workflow que lo manda al bridge
+# "ficha_impresa" (E-195): la ficha de pago en efectivo de Hotmart (PURCHASE_BILLET_PRINTED). Ya llega de verdad: 3
+# fichas de OXXO entre el 29/10 18:20Z y el 30/10 02:54Z (reporte E-189, solo lectura). Declararla no cambia nada: el
+# webhook la sigue guardando (la acepta porque el pago rechazado esta prendido) y el worker la sigue dejando failed con
+# unsupported_persisted_event_type hasta que se cargue PORTABLE_HOTMART_PAYMENT_SLIP_ENABLED en el archivo del bridge.
+
+[instancia]
+tenant_ref = "lancemos"
+ally_ref = "maribel"
+funnel_ref = "maribel"
+binding_version = 2   # v2 (E-131): del inbox 12, la bandeja provisoria, al inbox de WhatsApp del numero. La publica scripts/publish_inbox_binding_version.py del producto (despliegue/camino-a-produccion.md, «El numero: el binding v2»)
+marca = "El Protocolo"   # PROVISIONAL: la marca del sitio (www.elprotocolo.net, title «El Protocolo de Juventud Epigenetica») y del checkout; medido 2026-10-23 (E-041). Se confirma en la llamada de arranque
+zona_horaria = "America/Mexico_City"   # PROVISIONAL: el checkout cobra en MXN y el pedido a Marcela del 23/10 pide un chip de Mexico; medido 2026-10-23 (E-041). Se confirma con el pais de los carritos
+
+[hotmart]
+# Todo se mide en la landing publicada y en el checkout publico (pay.hotmart.com/<hotlink>).
+product_id = 8443991   # el principal de la central Infinity INC; confirmado por E-043 y aprobado por Dan el 2026-10-23 23:35Z (reportes/E-043.md). Fuera: el viejo 7556706, el order bump 8451764 y el upsell 7596407
+hotlink = "F107441770M"   # el boton de ads-a arma pay.hotmart.com/F107441770M (buildCheckoutUrl, plan del 2x2 del 21/10) y abre el checkout real; medido 2026-10-23 (E-041)
+product_name = "El Protocolo Biohacking +"   # confirmado por E-043 y aprobado por Dan el 2026-10-23 23:35Z (reportes/E-043.md). La API de Hotmart lo devuelve con un espacio al final; el bridge recorta (hotmart._str hace strip) y la base compara con btrim, asi que va sin el espacio. El data.product.name del webhook no esta medido: se mira con la primera compra
+moneda = "MXN"   # el checkout F107441770M?off=u8ikyx78, «Total de MXN 1.204,31»; medido 2026-10-23 (E-041)
+precio = "1397"   # MXN 1.397, el precio de la oferta u8ikyx78 (265 de 368 ventas en 30 dias; el resto son totales en cuotas); confirmado por E-043 y aprobado por Dan el 2026-10-23 23:35Z (reportes/E-043.md)
+
+# Una por landing (instalar.md, paso 2). Exactamente una lleva por_defecto = true. Una oferta que
+# ninguna landing usa no va. Una oferta de la recuperacion de otra plataforma (GHL) queda afuera a
+# proposito: el lead vuelve a la oferta que vio.
+[[hotmart.ofertas]]
+codigo = "u8ikyx78"   # la oferta de la pauta (/epma/evg/vsl/ads -> ads-a), 85 % de las ventas del principal; confirmado por E-043 y aprobado por Dan el 2026-10-23 23:35Z (reportes/E-043.md)
+site = "elprotocolo"
+landing_id = "epma-vsl-ads-a"
+url = "https://www.elprotocolo.net/epma/evg/vsl/ads-a"   # 200; /epma/evg/vsl sin version da 404; medido 2026-10-23 (E-041)
+origen = "pauta"   # pauta, organico u otro
+por_defecto = true
+
+# Las tres de abajo se suman a la instancia que ya corre con scripts/add_instance_offers.py del producto
+# (v1.21.0, E-163; README, «Sumar las ofertas de org-a, ret/ads-a1 y ret/ads-a2»). Mismo producto, mismo
+# precio: MXN 1.204,31 sin IVA en el checkout (= MXN 1.397 con IVA), como u8ikyx78; medido en el
+# __NUXT_DATA__ publico de pay.hotmart.com/F107441770M?off=<codigo> el 2026-10-28 (E-163). Se agregan al
+# final y en este orden: el script solo suma, y frena si una oferta de la base cambia de lugar.
+[[hotmart.ofertas]]
+codigo = "mmliigg5"   # la organica org-a: window.HOTMART_OFFER = "mmliigg5" en la pagina publicada (200), con el formulario MazKMboXGJHzkoINIcsC; sin upsell; PROTOCOLO10+ aplica; medido 2026-10-28 (E-163)
+site = "elprotocolo"
+landing_id = "epma-vsl-org-a"
+url = "https://www.elprotocolo.net/epma/evg/vsl/org-a"
+origen = "organico"
+
+[[hotmart.ofertas]]
+codigo = "s4y32uzp"   # /epma/evg/ret/ads-a1 (200): HOTMART_OFFER y el link directo off=s4y32uzp, sin formulario; medido 2026-10-28 (E-164, E-163)
+site = "elprotocolo"
+landing_id = "epma-ret-ads-a1"
+url = "https://www.elprotocolo.net/epma/evg/ret/ads-a1"
+origen = "pauta"   # PARA REVISAR: «ret» se lee como retargeting; no esta medido en Meta
+
+[[hotmart.ofertas]]
+codigo = "o11h7tn3"   # /epma/evg/ret/ads-a2 (200): HOTMART_OFFER y el link directo off=o11h7tn3, sin formulario; medido 2026-10-28 (E-164, E-163)
+site = "elprotocolo"
+landing_id = "epma-ret-ads-a2"
+url = "https://www.elprotocolo.net/epma/evg/ret/ads-a2"
+origen = "pauta"   # PARA REVISAR: como la de arriba
+
+# Quedan afuera, pendientes (E-164, E-163): i5fyy4jf (/epma/evg/vsl/org-ausd, USD 69) y 3cmdmamp
+# (/epma/evg/vsl/ads-aprueba, USD 5), del mismo producto pero con otro precio y otra moneda: el binding
+# tiene un solo precio y una sola moneda, y el manifiesto no declara precio por oferta. Y las landings
+# ads-a-b, ads-a-c, ads-a-d y ads-a-control, que usan u8ikyx78 con otra URL: el manifiesto lleva una
+# landing por oferta. Lo que falta para cada una, en el README.
+
+[chatwoot]
+# Settings -> Inboxes (el ID esta en la URL del inbox) y Settings -> Teams, sin comillas.
+account_id = 3   # la cuenta «Maribel» del Chatwoot del VPS, creada el 2026-10-23 22:45Z con rails runner (E-041, OK de Dan, opcion A)
+inbox_id = 13   # binding v2 (E-131): el inbox «Maribel WhatsApp», Channel::Whatsapp, cuenta 3, creado por Dan el 2026-10-26 (medido en solo lectura). Antes: 12, la bandeja API «Maribel provisoria (API)», creada el 2026-10-23 22:45Z (E-041)
+equipo_derivacion = 3   # el team «maribel - revisión humana», vacio, creada el 2026-10-23 22:45Z con rails runner (E-041, OK de Dan, opcion A)
+
+# El canal de las tarjetas del conector de la instancia (HND-001 de cada derivacion, MOT-001/MOT-002 del motor,
+# COR-* con «Revisar caso»): #feed-chatwoot-elprotocolo-maribel, en el workspace Lancemos (TNTLBQ72T). Publica
+# la app «maribel Setter» (A0CCQ1A0DFW, bot U0CCL4W0V5Y), creada e invitada por Dan el 2026-10-27 (E-145).
+# El bridge no lo lee: lo guarda el conector (SLACK_TENANT_CHANNELS_JSON, que arma generar.py desde aca).
+# Las alertas van a otro canal ([alertas].canal de despliegue.toml), con otra app. El dia 0 fue sin Slack
+# (decision de Dan, 2026-10-23): hasta este canal, las derivaciones iban solo al team de Chatwoot, y siguen
+# yendo ahi tambien.
+[slack]
+canal = "C0CCM98HWL9"
+
+[inbound]
+scope_key = "maribel-inbound"
+scope_version = 2   # la v2 la publica el binding v2 (copia de la v1 con el inbox nuevo); la v1 queda con el 12
+
+[consentimiento]
+# La etiqueta del texto de consentimiento que ve la persona en el formulario. El texto y donde se
+# midio van en consentimiento/maribel-whatsapp-contact-v1.md. Si el texto cambia, cambia la version.
+copy_version = "maribel-whatsapp-contact-v1"
+# El permiso de WhatsApp de la aliada para los flujos con permiso de compra (F-151, desde la v1.26.0 del producto: un
+# bridge anterior no carga el manifiesto con esta clave, por eso entra en el mismo PR que sube a la v1.26.0; lo traia el
+# #46 de E-265, que queda reemplazado). El Automation Expert lo lee en list_flows (client_ok) y lo copia a cada flujo
+# nuevo en vez de preguntarlo. Valor dado por Dan el 2026-11-01.
+ok_del_cliente = { quien = "los clientes de Maribel al llenar el formulario de la landing", medio = "checkbox de consentimiento de WhatsApp del formulario de la landing", fecha = "2026-09-01" }
+
+[plantillas]
+# Una por plantilla APROBADA en Meta, con el nombre y el idioma exactos (una aprobada en otro idioma
+# es otra plantilla). Una que todavia no esta aprobada se deja comentada: su flujo no se puede
+# prender y validate lo avisa. El juego por defecto, con sus textos y su categoria, esta en
+# plantillas/README.md, y de ahi sale cada linea de abajo.
+# precheckout: el carrito de GHL como primer contacto tras el formulario (decision de Dan del 2026-10-25), copiada
+# en el vault (productos/soporte-infoproductores/documentacion/plantillas-meta-maribel.json, E-097). Se mergea
+# recien con la plantilla APROBADA en Meta en la WABA del numero (E-130): el nombre y el idioma, los exactos.
+precheckout = { nombre = "maribel_retomar_proceso_01", idioma = "es_MX", parametros = ["nombre", "producto"] }
+# carrito: el carrito de Hotmart (maribel-recuperacion) con la MISMA plantilla del primer contacto, ya APROBADA en Meta
+# como MARKETING (id 2485253711966773): su texto es el del carrito de GHL. Decision de Dan del 2026-10-27 (E-140, E-142).
+carrito = { nombre = "maribel_retomar_proceso_01", idioma = "es_MX", parametros = ["nombre", "producto"] }
+# pago_fallido: el pago rechazado de Hotmart (PURCHASE_CANCELED, en el mismo scope maribel-recuperacion) con la MISMA
+# plantilla, ya APROBADA como MARKETING: su texto («Tu inscripcion no se proceso», el 10 % y «Retomar proceso») le
+# calza a quien intento pagar. Va con la categoria comun (WABA_TEMPLATE_CATEGORY=MARKETING), sin
+# WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY. Pedido de Dan del 2026-10-27 (E-153). GHL de Maribel no tiene este flujo.
+pago_fallido = { nombre = "maribel_retomar_proceso_01", idioma = "es_MX", parametros = ["nombre", "producto"] }
+# E-378 (decision de Dan del 2026-11-09): A1, A2 y Z del carrito y las variantes y el seguimiento del pago rechazado NO
+# se declaran aca: el producto no tiene lugar para ellas en [plantillas] (son del runtime, como en la primera
+# instancia). Sus nombres estan en FIJAS de despliegue/secretos/generar.py y sus flags, apagados. Con los flags en
+# false, carrito y pago_fallido siguen saliendo con la linea de arriba.
+# reactivacion = { nombre = "maribel_reactivacion_01", idioma = "<COMPLETAR: es_MX...>" }
+# descuento: el seguimiento con cupon (CONVERSATION_FOLLOWUP_ENABLED): a quien conversa, recibe la respuesta del agente
+# y se queda callado entre 24 y 72 h sin comprar, una vez. APROBADA en Meta como MARKETING el 2026-10-28 14:23Z, en la
+# WABA del inbox 13: {{1}} el nombre, {{2}} el producto y un solo boton de URL, https://pay.hotmart.com/{{1}}, que lleva
+# el cupon CUPON de generar.py (offDiscount). Su texto esta en el vault (documentacion/plantillas-meta-maribel.json,
+# letra «descuento»). Sin parametros: el seguimiento arma sus variables en su codigo (docs/referencia-manifiesto.md).
+# Desde E-343 (2026-11-07) es la _02 (id 1881009843262535, APPROVED, MARKETING, es_MX, medida el 2026-11-06): el
+# mismo cuerpo, las mismas variables y el mismo boton de URL que la _01, y despues la respuesta rapida «No más
+# mensajes» (decision de Dan del 2026-11-02: toda plantilla de marketing la lleva). Dos botones, en este orden: el
+# checkout (posicion 0, la del parametro que manda el bridge) y la baja. La acepta parse_followup_template desde el
+# producto v1.27.0 (E-272, PR #397); con el orden al reves la rechaza (followup_template_checkout_button_not_first).
+# generar.py toma el nombre de esta linea. La _01 sigue aprobada en Meta y no se borra hasta que la _02 salga bien.
+descuento = { nombre = "maribel_seguimiento_descuento_02", idioma = "es_MX" }
+# ficha y ficha_vence_hoy: C1 y C3 de la ficha de OXXO (E-195, M11; diseno en el reporte E-189). APROBADAS en Meta como
+# UTILITY, es_MX, en la WABA del inbox 13: subidas por API el 2026-11-02 22:00Z (ids 1812613503340771 y
+# 5718925444999327), APPROVED medido por la coordinadora el 2026-11-04 ~14:50Z (meta_plantillas.py listar --instancia
+# maribel; definiciones en evidencia/2026-11-04-plantillas-ficha.txt). E-330 las declara y pone [flujos].ficha = true.
+# Declararlas no manda nada: generar.py escribe con ellas WABA_PAYMENT_SLIP_TEMPLATE_* y
+# WABA_PAYMENT_SLIP_DUE_DAY_TEMPLATE_* (FICHA_CATEGORIAS, UTILITY), y la ficha sale recien con
+# PORTABLE_HOTMART_PAYMENT_SLIP_ENABLED=true en el archivo del bridge, maribel-ficha v1 publicada y armada y el redeploy
+# (README, «La ficha de OXXO», tramos A y B). Los textos y los botones, en plantillas/README.md («La ficha de OXXO»).
+# Los parametros van escritos porque el orden de C3 no es el de C1 (la tienda va antes del producto):
+#   C1 maribel_ficha_efectivo_01, UTILITY: {{1}} nombre, {{2}} producto, {{3}} tienda, {{4}} vencimiento («domingo 1 de
+#      noviembre»). Botones: URL «Ver mi ficha» = boton_prefijo + {{1}} de la fila de Mexico de [[ficha.medios]], y la
+#      respuesta rapida «No mas mensajes». Con el flag, el bridge no arranca si WABA_PAYMENT_SLIP_TEMPLATE_NAME no es
+#      este nombre (lo escribe generar.py desde esta linea).
+#   C3 maribel_ficha_vence_hoy_01, UTILITY: {{1}} nombre, {{2}} tienda, {{3}} producto. Los mismos dos botones. Sale el
+#      dia del vencimiento desde las 09:00 de CDMX (el segundo paso de maribel-ficha-dos-toques v1).
+#   C2 (ficha_vence_manana) no va (D2 del reporte E-189): generar.py frena si se declara. Es la misma forma que corre
+#      en la primera instancia desde la v3 de su ficha (C1 y C3; su C2 queda declarada sin ningun paso que la use).
+ficha = { nombre = "maribel_ficha_efectivo_01", idioma = "es_MX", parametros = ["nombre", "producto", "tienda", "vencimiento"] }
+ficha_vence_hoy = { nombre = "maribel_ficha_vence_hoy_01", idioma = "es_MX", parametros = ["nombre", "tienda", "producto"] }
+
+[agente]
+# El profile del agente comercial en el Hermes propio de la instancia (el servicio hermes del stack,
+# instalado desde hermes.toml). Tiene que ser el HERMES_MODEL_NAME del bridge, o no arranca.
+modelo = "agente-comercial"
+conocimiento = "conocimiento/knowledge-v9.toml"   # v9 (E-418, 10/11): la v8 mas los medios y la moneda de cada pais, los meses solo en Mexico y «salvo una campana vigente»; firmada por Dan Schwab el 2026-11-11. La v8 queda como historia (y es la vuelta atras: este renglon con knowledge-v8.toml)
+# antes:   # v8 (E-186, 29/10): la v7 mas coupon_applied (pide el producto v1.22.0 con PAYMENT_LINK_COUPON_RECOVERY_ONLY=true) y la presentacion una sola vez. Firmada por Dan Schwab el 2026-10-29
+# antes:   # v7 (28/10): la v6 mas el seguimiento con cupon; firmada por Dan Schwab el 2026-10-28. La v7 queda como historia (y es la vuelta atras: este renglon con knowledge-v7.toml y producto = "v1.21.0")
+# antes:   # v6 (E-153, 2026-10-27): la v5 mas una regla para quien toca «Retomar proceso» despues de un pago rechazado. Sin firmar: la firma la pone Dan. La v5 (firmada por Dan el 2026-10-27) queda como historia
+
+[flujos]
+# Todos en false (instalar.md, paso 3). Se prenden de a uno al final, cada uno con su PR, su flag en
+# el archivo del bridge y su prueba controlada (despliegue/camino-a-produccion.md). El manifiesto es
+# el techo: un flag prendido con su flujo en false no arranca. inbound = true exige el conocimiento
+# aprobado.
+inbound = true   # E-131: el entrante, con el conocimiento v4 aprobado (la firma 1). Sus flags van a mano en el archivo del bridge (cabecera de generar.py, «Entrante»)
+precheckout = true   # E-131: el primer contacto tras el formulario (maribel-primer-contacto). Exige la aceptacion del riesgo de [adaptadores.ghl]; sus flags van a mano (cabecera de generar.py)
+carrito = true   # E-142: la recuperacion v2 (el carrito de Hotmart), primero en cohorte (maribel-recuperacion v3). Su flag va a mano: PORTABLE_HOTMART_RECOVERY_ENABLED (cabecera de generar.py)
+pago_fallido = true   # E-153: el pago rechazado (B1 sin variantes: un mensaje, con el scope y la politica del carrito, espera 0). Su flag va a mano: PORTABLE_HOTMART_PAYMENT_FAILURE_ENABLED (cabecera de generar.py). Exige la aceptacion del riesgo de [adaptadores.ghl], ya firmada
+reactivacion = false
+descuento = true   # el seguimiento con cupon (PROTOCOLO10 en el boton). Su flag va a mano: CONVERSATION_FOLLOWUP_ENABLED, primero con CONVERSATION_FOLLOWUP_ONLY_PHONE y _MIN_AGE_SECONDS=900 (README, «El seguimiento con cupon»). No pasa por META_FINAL_EFFECT_ENABLED ni por la frontera del piloto
+ficha = true   # E-330 (antes false, E-195): la ficha de OXXO (C1 y C3), con sus dos plantillas APROBADAS en Meta el 2026-11-04 y declaradas en [plantillas]. Volver atras: false (y las dos lineas de [plantillas] se pueden dejar). Prenderla aca no manda nada: hace falta PORTABLE_HOTMART_PAYMENT_SLIP_ENABLED en el archivo del bridge y maribel-ficha v1 publicada y armada (README, «La ficha de OXXO»). Usa la intencion como permiso, asi que tambien exige la aceptacion del riesgo de [adaptadores.ghl], ya firmada
+
+# La ficha de pago en efectivo (E-195, producto v1.11.0 o mas nuevo): que medio en que pais tiene una ficha a la que se
+# le escribe. Solo Mexico: las 11 fichas de Maribel medidas el 2026-10-30 (3 impresas, 6 vencidas, 2 pagadas; reporte
+# E-189, solo lectura) son CASHPAYMENT de MX en MXN, con la referencia (billet_barcode) de 34 digitos y el vencimiento
+# AAAAMMDD en los digitos 19 a 26 (en las 11, el dia de generada en CDMX mas 3), y billet_url siempre con la base de
+# boton_prefijo (mas 48 hexadecimales). Es la misma fila que corre en la primera instancia desde el 2026-10-19. La tienda
+# es OXXO (la base del boton es la de OXXO). Otro medio u otro pais queda ignored con payment_slip_method_not_enabled.
+# Un pais nuevo es otra fila, medida, y una plantilla con su base. Sin el flag las filas no se usan.
+[[ficha.medios]]
+medio = "CASHPAYMENT"
+pais = "MX"
+tienda = "OXXO"
+zona_horaria = "America/Mexico_City"
+referencia_largo = 34
+vencimiento_digitos = [19, 26]
+vencimiento_dias_si_falta = 3
+boton_prefijo = "https://customer-local-latam.ebanx.com/print/oxxo?hash="
+habilitada = true
+
+# PARA REVISAR (D9 de E-195, default de la corrida sin Dan): el pais que elige el bridge es el del checkout
+# (data.purchase.checkout_country.iso), no el de la tienda. De las 11 fichas medidas, 2 son de OXXO, en MXN y de la
+# oferta u8ikyx78, con el checkout en otro pais: una impresa (la del 30/10 02:54Z, de una persona que lleno el
+# formulario dos minutos antes) con US, y una vencida con BR. Con la fila de MX sola esas quedan ignored
+# (payment_slip_method_not_enabled): no reciben C1 y el primer contacto del formulario no se cancela. Estas dos filas
+# son la de Mexico con otro pais (misma tienda, misma base del boton, misma regla del vencimiento, que E-189 verifico en
+# las 11). Para sacarlas: habilitada = false en cada una, sin borrar la fila.
+[[ficha.medios]]
+medio = "CASHPAYMENT"
+pais = "US"
+tienda = "OXXO"
+zona_horaria = "America/Mexico_City"
+referencia_largo = 34
+vencimiento_digitos = [19, 26]
+vencimiento_dias_si_falta = 3
+boton_prefijo = "https://customer-local-latam.ebanx.com/print/oxxo?hash="
+habilitada = true
+
+[[ficha.medios]]
+medio = "CASHPAYMENT"
+pais = "BR"
+tienda = "OXXO"
+zona_horaria = "America/Mexico_City"
+referencia_largo = 34
+vencimiento_digitos = [19, 26]
+vencimiento_dias_si_falta = 3
+boton_prefijo = "https://customer-local-latam.ebanx.com/print/oxxo?hash="
+habilitada = true
+
+[guardas]
+# Si un mensaje nombra uno de estos terminos junto con una accion, el bridge deriva a una persona sin
+# pasar por el agente. Son raices ("levotiroxin" cubre levotiroxina). No dejar acciones_sensibles
+# vacia: con una lista vacia la guarda encuentra cualquier palabra y deriva todos los mensajes.
+# PROVISIONAL (E-041): raices genericas de salud (medicamentos, suplementos, hormonas); se revisan en la llamada y con el conocimiento.
+terminos_sensibles = ["medicacion", "medicamento", "farmaco", "pastilla", "suplement", "hormon"]
+acciones_sensibles = ["dejar", "suspender", "interrumpir"]
+
+[adaptadores.ghl]
+# Si los formularios de la landing son de GHL (manual de recursos, secciones 8 y 9). Para usarla:
+# "intencion" en eventos, y cada formulario se lista SOLO despues de verificar que muestra la
+# aclaracion de consentimiento.copy_version (listarlo afirma whatsapp_contact = true para cada envio).
+# MazKMboXGJHzkoINIcsC  «VSL Maribel», el modal «Ultimo paso» de ads-a (epma-vsl-ads-a). Medido en su
+#                       widget publico el 2026-10-26 a las 22:33Z (E-131): arriba de Enviar, sin casilla,
+#                       la frase de Lancemos del 03/10 («... conforme a la Politica de Privacidad de este
+#                       sitio.»), con nombre completo, telefono y correo obligatorios; la politica
+#                       enlazada (/politica-de-privacidad) nombra WhatsApp. El texto byte a byte esta en
+#                       consentimiento/maribel-whatsapp-contact-v1.md. El mismo formulario esta en la
+#                       organica org-a (la oferta mmliigg5, desde E-163): es el mismo formulario de GHL,
+#                       con el mismo widget y la misma aclaracion. PARA REVISAR: en org-a se verifico el
+#                       id del formulario en la pagina publicada (2026-10-28), no el texto renderizado.
+#                       Hasta que la base tenga mmliigg5 (README), un envio desde org-a da 422
+#                       ghl_landing_unknown.
+formularios = ["MazKMboXGJHzkoINIcsC"]
+#
+# La aceptacion del riesgo del adaptador: las tres o ninguna, escritas A MANO por quien decide por la
+# instancia, en un PR propio (mergearlo es la firma). Ningun codigo las escribe. Sin ellas, con esta
+# seccion, el bridge no arranca con precheckout ni pago_fallido en true, ni con un scope del piloto de
+# audiencia con consentimiento y la frontera prendida. El marcador entre < y > no carga.
+# LA FIRMA (E-131): este PR la trae. Las dos primeras lineas las escribe A MANO quien decide,
+# reemplazando el marcador entero (con los < >): su nombre, y la fecha del dia en que firma, sin
+# comillas (por ejemplo 2026-10-27). La tercera es el nombre del contrato que se acepta y no se
+# cambia. Mientras quede un marcador, validate falla. Firmar confirma tambien, para Maribel, el riesgo
+# del texto del formulario (consentimiento/maribel-whatsapp-contact-v1.md, «El riesgo que queda»).
+riesgo_aceptado_por = "Dan Schwab"
+riesgo_aceptado_el  = 2026-10-26
+riesgo_contrato     = "ghl-precheckout-adapter-v1"
+
+[revision_diaria]
+# La revision diaria (despliegue/revision-diaria/; README, «La revision diaria de Maribel»). Los cuatro los decidio
+# Dan el 2026-10-28 (E-167): Dan, Juan, Marcela y Mariana, los mismos de la revision de la primera instancia. Forma
+# "reviewer_ref:SLACK_USER_ID": el reviewer_ref en minusculas (el mismo de cada persona en las otras instancias,
+# asi el feedback que baja al vault los junta) y el ID U... del workspace de [revision_diaria].slack_team_id de
+# despliegue.toml (Lancemos). Cada uno entra a la pagina con su usuario de Slack y es responsable del borrado del
+# lote a las 72 h. El bridge no los lee: los toma despliegue/revision-diaria/generar-revision.py para
+# DAILY_FEEDBACK_REVIEWERS_JSON (el producto exige exactamente cuatro), y el servicio los escribe en la base al
+# arrancar. Sumar o cambiar a alguien no le abre los lotes ya confirmados.
+# Los ID van como marcador A PROPOSITO: los completa Dan con
+#   python3 despliegue/revision-diaria/completar-revision.py revisores <ID de Dan> <ID de Juan> <ID de Marcela> <ID de Mariana>
+# que rechaza un marcador, un ID sin la forma U... y uno repetido. Mientras quede uno, verificar.py da error y
+# generar-revision.py frena (validate del producto no mira [revision_diaria]).
+revisores = [
+  "dan-schwab:U0BQRS38SNM",
+  "juan-martitegui:U0AUVULG326",
+  "marcela-pineda:UNKC76SSV",
+  "mariana-marin:U055VSY5C2D",
+]
