@@ -231,6 +231,41 @@ def test_with_the_flag_on_the_page_exists(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert app.state.flow_audience.readiness()["flow_audience"] == fs.STATE_NO_ENGINE
 
 
+def test_with_the_flag_on_ready_answers_200_with_every_value_as_text_e559(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """E-559: /ready por HTTP con el flag prendido, como en Maribel el 14/11 01:20Z.
+
+    El dato real (log del bridge de Maribel tras prender FLOW_AUDIENCE_TRIGGERS_ENABLED):
+    ``ResponseValidationError`` con seis errores ``string_type`` en ``flow_audience_last_*``,
+    ``flow_audience_waiting_for_engine`` (``input: 0``) y ``flow_audience_refused`` (``input: {}``),
+    o sea el estado de un barredor recien arrancado. El test viejo de arriba llamaba a
+    ``readiness()`` directo y nunca pasaba por la validacion de la respuesta de FastAPI.
+    """
+    class _ReadySupabase(_NoSupabase):
+        """Solo lo que /ready lee de la base; el resto sigue fallando la prueba."""
+
+        async def resolve_commercial_ally_runtime_binding(self, config: object) -> object:
+            return config
+
+    monkeypatch.setenv(fs.FLAG, "true")
+    monkeypatch.setenv(fs.HEALTH_PATH_VARIABLE, str(tmp_path / "estado.json"))
+    app = create_app(_settings(), supabase_client=_ReadySupabase(),  # type: ignore[arg-type]
+                     chatwoot_client=FakeChatwoot())  # type: ignore[arg-type]
+    response = TestClient(app, base_url=ORIGIN).get("/ready")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert {key: body[key] for key in body if key.startswith("flow_audience")} == {
+        "flow_audience": fs.STATE_NO_ENGINE,
+        "flow_audience_last_materialized": "0",
+        "flow_audience_last_braked": "0",
+        "flow_audience_last_released": "0",
+        "flow_audience_last_retry": "0",
+        "flow_audience_waiting_for_engine": "0",
+        "flow_audience_refused": "none",
+    }
+    assert all(isinstance(value, str) for value in body.values())
+
+
 def test_a_brake_by_a_low_limit_reads_in_plain_words_e547() -> None:
     row = {"occurrence_id": OCCURRENCE, "flow_key": "black_manual", "form": "manual", "state": "frenada",
            "member_count": 137, "per_hour": 200, "omitted_by_reason": {}, "materialized_at": "2026-12-01T15:00:00Z",
