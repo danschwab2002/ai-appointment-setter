@@ -7398,6 +7398,41 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'hotmart_unknown_offers'
+    union all
+    select
+        '20261115000100',
+        '20261115000100_agent_products_v1.sql',
+        -- El producto que suma el Automation Expert como dato (E-569, product-card-v1):
+        -- las dos tablas, con RLS y sin lectura para la API ...
+        (
+            select count(*) = 2
+            from pg_class c
+            where c.oid in (to_regclass('public.agent_products'), to_regclass('public.agent_product_events'))
+              and c.relrowsecurity
+              and not has_table_privilege('anon', c.oid, 'SELECT')
+              and not has_table_privilege('authenticated', c.oid, 'SELECT')
+        )::int
+        -- ... una sola version publicada por producto ...
+        + (
+            select count(*) = 1
+            from pg_indexes
+            where schemaname = 'public'
+              and indexname = 'agent_products_one_live_per_key'
+              and indexdef like '%status = ''publicada''%'
+        )::int
+        -- ... y proponer solo con el rol del agente, nunca con service_role.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.save_agent_product_draft_v1(jsonb,uuid,integer,jsonb,text,jsonb,text,text)')
+              and prosecdef
+              and case when to_regrole('automation_expert_change') is null then true
+                       else has_function_privilege('automation_expert_change', oid, 'EXECUTE') end
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+        )::int,
+        3,
+        'agent_products'
 )
 select
     version,

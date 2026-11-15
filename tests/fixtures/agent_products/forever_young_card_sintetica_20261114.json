@@ -1,0 +1,47 @@
+{
+  "_capture": {
+    "fecha": "2026-11-14",
+    "origen": "Ficha sintetica de Forever Young del arnes A-0 (E-554, cabecera rehecha en E-561: vault del OS, coordinacion/etapa-1/multiproducto-a0/entradas/ficha-forever-young-sintetica.md), escrita en la forma de product-card-v1: el texto libre son sus secciones tal cual; el minimo, su cabecera.",
+    "sintetico": "El ID de Hotmart, el hotlink y la oferta son los SINTETICOS de tests/test_multi_product_single_layer_knowledge.py (E-563). El precio USD 199 y las cuotas 3 x USD 69 son inventados para el arnes: el precio real no se dice antes del en vivo (doc de Marcela). Los alias salen de la decision A-0 de Dan del 2026-11-14 («forever young», «black forever young»; «fy» queda afuera por el minimo de 3 caracteres de product-card-v1 §2.1, E-570) mas «black de ana lucia», el ejemplo de §2.1.",
+    "sin_datos_personales": "Sin telefonos, mails ni URLs de pago."
+  },
+  "card": {
+    "clave": "forever-young",
+    "nombre": "Black Forever Young",
+    "alias": [
+      "forever young",
+      "black forever young",
+      "black de ana lucia"
+    ],
+    "hotmart": {
+      "producto_id": 9000019,
+      "hotlink": "X000FOREVERYOUNGPRUEBA"
+    },
+    "ofertas": [
+      {
+        "codigo": "fyprueba1",
+        "precio": "199",
+        "moneda": "USD",
+        "por_defecto": true,
+        "otros_montos": [
+          {
+            "monto": "69",
+            "moneda": "USD",
+            "que_es": "cada uno de 3 pagos con tarjeta"
+          }
+        ]
+      }
+    ],
+    "no_se_puede_prometer": [
+      "un resultado físico o de edad",
+      "que El Protocolo baja de precio por Forever Young",
+      "que el agente es Ana Lucía, Maribel o Vanessa"
+    ],
+    "relaciones": {
+      "incluye_productos": [],
+      "no_se_vende_si_tiene": [],
+      "venta_cruzada": []
+    },
+    "texto_libre": "## Qué es\n\nLa Black Forever Young es un evento en vivo de Ana Lucía, el 19 de noviembre a las 11:00 de Miami (10:00 de Ciudad de México), con una oferta especial que se abre ese día. La comunidad de El Protocolo también está invitada.\n\n## Para quién es\n\nPara mujeres que quieren sumar hábitos de longevidad a su rutina, sean o no alumnas de El Protocolo.\n\n## Qué incluye\n\nEl acceso al en vivo de 2 horas, la grabación por 30 días y una guía en PDF de rutinas de longevidad. Lo que incluye la oferta del día se cuenta en el en vivo.\n\n## Precio y cómo se paga\n\nUSD 199, o 3 pagos de USD 69 con tarjeta. Se paga en la página de pago de Hotmart; el enlace lo envía el sistema.\n\n## Garantía\n\n7 días desde la compra.\n\n## Preguntas frecuentes\n\n- ¿Me sirve el cupón de El Protocolo? No: el cupón es solo de El Protocolo. Si insiste, eso requiere una revisión.\n- ¿Dónde me registro gratis al en vivo? En la página del evento, desde donde vio el anuncio.\n\n## Qué hacer si ya es alumna\n\nSi es alumna de El Protocolo, puede comprar Forever Young igual: son productos distintos.\n\n## Tono\n\nEl mismo del equipo de El Protocolo: cercano, sin urgencia ni promesas."
+  }
+}

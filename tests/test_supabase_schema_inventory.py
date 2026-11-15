@@ -2317,13 +2317,27 @@ def test_identity_link_fingerprints_go_before_the_unknown_offers() -> None:
     assert "record_identity_link_answer_v1(text,text,bigint,text,bigint)" in compact_question
 
 
-def test_hotmart_unknown_offers_fingerprint_is_last() -> None:
+def test_hotmart_unknown_offers_fingerprint_goes_before_the_agent_products() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261114000300 (E-565): las dos tablas con RLS y el registro de service_role.
-    unknown = sql.split("'20261114000300'", 1)[1].split("select\n    version,", 1)[0]
+    unknown = sql.split("'20261114000300'", 1)[1].split("'20261115000100'", 1)[0].rsplit("union all", 1)[0]
     compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", unknown))
 
-    assert compact.endswith(",3,'hotmart_unknown_offers')")
+    assert compact.endswith(",3,'hotmart_unknown_offers'")
     assert "to_regclass('public.hotmart_unknown_offers')" in compact
     assert "to_regclass('public.hotmart_unknown_offer_refs')" in compact
     assert "record_hotmart_unknown_offer_v1(text,bigint,text,text,text,text,text,uuid)" in compact
+
+
+def test_agent_products_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261115000100 (E-569): las dos tablas con RLS, la unica publicada por producto y proponer
+    # solo con el rol del agente.
+    products = sql.split("'20261115000100'", 1)[1].split("select\n    version,", 1)[0]
+    compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", products))
+
+    assert compact.endswith(",3,'agent_products')")
+    assert "to_regclass('public.agent_products')" in compact
+    assert "to_regclass('public.agent_product_events')" in compact
+    assert "indexname='agent_products_one_live_per_key'" in compact
+    assert "save_agent_product_draft_v1(jsonb,uuid,integer,jsonb,text,jsonb,text,text)" in compact

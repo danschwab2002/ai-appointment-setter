@@ -332,6 +332,15 @@ for (const payload of CANCELED) {
   // re-telefoneada al mismo movil, por la admision real.
   const buyer = '525500000099';
   await admitFailure(withPhone(first, buyer, 'then-bought'));
+  // E-576: el rechazo va un minuto antes de la compra. En PGlite now() tiene
+  // resolucion de milisegundo, y la funcion pide approved.received_at >
+  // failure.received_at (estricto): admitidos en dos consultas seguidas, los
+  // dos caian a veces en el mismo milisegundo y el test daba rojo 1 de cada
+  // ~10 corridas. En produccion la compra llega despues del rechazo.
+  await db.query(`
+    update public.webhook_events set received_at = received_at - interval '1 minute'
+    where external_event_id = $1
+  `, [`${first.id}-then-bought`]);
   if ((await recent(buyer)).length !== 1) throw new Error('the failure before the purchase is missing');
   const purchase = withPhone(CASH[0], `521${buyer.slice(2)}`, 'bought');
   const bought = await admitPurchase(purchase);

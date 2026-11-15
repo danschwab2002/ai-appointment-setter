@@ -80,7 +80,8 @@ const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.end
 const position = names.indexOf(A_MIGRATION);
 if (position < 0 || names[position + 1] !== B_MIGRATION) fail(`faltan las migraciones ${A_MIGRATION} y ${B_MIGRATION}`);
 // Despues va solo la de las ofertas huerfanas de Hotmart (20261114000300, E-565), que no toca el correlador.
-if (JSON.stringify(names.slice(position + 2)) !== JSON.stringify(['20261114000300_hotmart_unknown_offers_v1.sql'])) fail('despues de la pregunta va solo la de E-565', names.slice(position + 2));
+// Y la del producto que suma el AE (20261115000100, E-569), que tampoco lo toca.
+if (JSON.stringify(names.slice(position + 2)) !== JSON.stringify(['20261114000300_hotmart_unknown_offers_v1.sql', '20261115000100_agent_products_v1.sql'])) fail('despues de la pregunta van solo la de E-565 y la de E-569', names.slice(position + 2));
 const readMigration = (name) => readFileSync(join(root, 'supabase/migrations', name), 'utf8')
   .replace(/create extension if not exists pgcrypto;/gi, '-- pgcrypto is built into PGlite');
 
