@@ -772,6 +772,14 @@ class LiveSegmentCatalog:
             try:
                 await self._notify(str(row.get("campaign_key")), reason)
             except Exception as error:  # noqa: BLE001 - el aviso no cambia lo que se sirve
+                if type(error).__name__ == "ConnectorSemanticConflict" and str(error) == "connector_semantic_conflict":
+                    # E-572: el id del aviso sale de la campana y el motivo, pero la hora es la
+                    # del arranque. Despues de un reinicio el conector ya lo tiene, con otra
+                    # hora, y contesta 409: el aviso ya salio una vez, como pide el contrato.
+                    # Un tenant que no calza (connector_tenant_mismatch) sigue siendo una falla.
+                    logger.info("agent_campaign_notice_already_admitted key=%s reason=%s",
+                                row.get("campaign_key"), reason)
+                    continue
                 logger.warning("agent_campaign_notice_failed error=%s", type(error).__name__)
 
     async def start(self) -> None:
