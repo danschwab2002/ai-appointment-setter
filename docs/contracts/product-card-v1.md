@@ -1,10 +1,10 @@
 # Contrato: el conocimiento de un producto nuevo (product-card-v1)
 
 - **Estado:** escrito antes del código (MP-01 del plan de multiproducto, E-553, 2026-11-13). Describe la interfaz que van a construir MP-07, MP-11, MP-17, MP-18 y MP-20; no dice que nada esté construido, desplegado ni activado.
-- **Contrato:** `product-card-v1`, versión `0.1.0` (propuesta).
+- **Contrato:** `product-card-v1`, versión `0.2.0` (propuesta). La 0.2.0 suma `alias[]` al mínimo (decisión de Dan del 2026-11-14 sobre la medición A-0, §9); historial en §11.
 - **Diseño:** «Multiproducto: el plan de implementación» (vault del OS, `coordinacion/etapa-1/multiproducto-plan-de-implementacion.md` §1.1-§1.3, E-551 reescrito en E-552), sobre el veredicto «C como esqueleto, con tres piezas de B y dos de A» (`multiproducto-comparacion.md` §3). Decisiones de Dan del 2026-11-13, D1-D8 (`decisiones/2026-11-13-multiproducto-decisiones-d1-d8.md`), resumidas en §9.
 - **Depende de:** `price-guard-v1` (el extractor de montos valida el texto libre, §4), `commercial-knowledge-v1` (el conocimiento del principal, que no cambia), `agent-campaigns-v1` (el molde: borrador del AE, validación, página, lectura en vivo).
-- **Código que lo va a implementar:** `src/bridge/agent_products.py` (validar, MP-07), `src/bridge/product_card.py` (render, MP-11), la migración de `agent_products` (MP-07) y la publicación con siembra (MP-08). Flag: `AGENT_PRODUCTS_ENABLED`, apagado por defecto; apagado, el bridge no llama a ninguna RPC de productos y todo sale byte a byte como hoy.
+- **Código que lo va a implementar:** `src/bridge/agent_products.py` (validar, MP-07, alias incluidos), `src/bridge/product_card.py` (render, MP-11), la migración de `agent_products` (MP-07) y la publicación con siembra (MP-08). Flag: `AGENT_PRODUCTS_ENABLED`, apagado por defecto; apagado, el bridge no llama a ninguna RPC de productos y todo sale byte a byte como hoy.
 
 ## 1. Qué es
 
@@ -16,7 +16,7 @@ El conocimiento de un producto que **no** es el principal de la instancia, para 
 2. **El esqueleto recomendado** (§3): secciones sugeridas del texto libre. La validación solo **advierte**.
 3. **El texto libre** (§4): el conocimiento en markdown, con tope de bytes y la regla del precio.
 
-La pregunta para decidir si algo entra al mínimo es una sola: ¿lo lee el código para rutear, cobrar, cortar casos o la guarda? Si no, va al texto libre.
+La pregunta para decidir si algo entra al mínimo es una sola: ¿lo lee el código para rutear, cobrar, cortar casos, elegir el producto en foco o la guarda? Si no, va al texto libre.
 
 **Lo que no cubre:** el conocimiento del principal de ATT1 y de Maribel (D3: queda en su archivo firmado, `commercial-knowledge-v1`), los formularios de GHL por producto (D8: siguen en `[adaptadores.ghl]` del manifiesto, por PR) y el pack de varios productos de Hotmart con checkouts separados (un pack se vende como un producto de Hotmart).
 
@@ -28,6 +28,7 @@ Un objeto JSON (`minimo`). El bridge rechaza la propuesta con el código de la c
 |---|---|---|---|---|
 | `clave` | slug del producto (`forever-young`) | el foco (`conversation-focus-v1`), la etiqueta `cliente:<clave>`, `oferta.producto` de campañas, `producto:` de flujos; el `funnel_ref` se deriva de ella | `^[a-z0-9]+(-[a-z0-9]+)*$`, hasta 40 caracteres; única en la instancia; distinta de la clave del principal y de las de `[[productos]]` del manifiesto; no es una reservada (`principal`, `todos`, `ninguno`) | `product_key_invalid`, `product_key_taken` |
 | `nombre` | cómo se llama el producto para la clienta | render, índice de productos, `product_names` de segmentos y campañas, link | texto no vacío, hasta 80 caracteres | `product_name_invalid` |
+| `alias[]` | las palabras o frases con que la persona nombra el producto sin decir su nombre completo (`"forever young"`, `"black de ana lucia"`, `"el taller del 19"`) | la preselección por alias del foco (`conversation-focus-v1` §4) | §2.1: al menos uno, hasta 12; cada uno de 3 a 60 caracteres; sin duplicados normalizados; ninguno igual, normalizado, a un alias de otro producto de la instancia | `aliases_missing`, `alias_invalid`, `alias_duplicate`, `alias_taken` |
 | `hotmart.producto_id` | ID del producto en Hotmart | `for_hotmart` (rutea compra, carrito, pago rechazado y ficha) | entero positivo; no es el de otro producto de la instancia (base, manifiesto o principal) | `hotmart_product_invalid`, `hotmart_product_taken` |
 | `hotmart.hotlink` | el código del checkout de Hotmart | `send_payment_link` y la reserva del link | `[A-Za-z0-9]{4,32}`, el mismo de `_HOTLINK` del manifiesto (`src/bridge/instance_manifest.py:52`); el link lo arma solo el sistema | `hotlink_invalid` |
 | `ofertas[]` | cada oferta que el recuperador atiende | link, catálogo de ofertas de la siembra (MP-08), guarda de precio, sincronización (MP-17) | al menos una | `offers_missing` |
@@ -41,6 +42,28 @@ Un objeto JSON (`minimo`). El bridge rechaza la propuesta con el código de la c
 | `texto_libre` | el conocimiento en markdown | render (MP-11) | §4 | §4 |
 
 Lo que **no** está en el mínimo, a propósito: qué incluye el producto, la garantía, el precio por país como tabla, las preguntas frecuentes, el tono. Todo eso va al texto libre. Un producto que no encaja en una forma fija (un evento de un día, un pack, una membresía) escribe lo suyo sin pelear con campos.
+
+### 2.1 Los alias
+
+Entraron al mínimo el 2026-11-14 (0.2.0) porque los lee el código: el resolvedor del foco (`conversation-focus-v1` §4) los busca en el último mensaje de la persona para cargar el conocimiento del producto antes de llamar al modelo. La medición A-0 del 2026-11-14 (§9) mostró que el agente marca bien el cambio de producto cuando la persona lo nombra por su nombre o su clave (28 de 30) y falla cuando no (7 de 15: «lo de Ana Lucía del 19»); con el índice de la 0.1.0, que es solo clave y nombre, el sistema no tiene cómo reconocer esos casos.
+
+**La normalización** (la misma que usa `conversation-focus-v1` §4 para leer el mensaje): minúsculas; sin acentos ni diéresis (NFKD y fuera las marcas); todo lo que no es letra ni dígito pasa a espacio (guiones, puntos, comillas, signos); espacios repetidos a uno; sin espacios en los bordes. `«Black de Ana Lucía»` y `black-de-ana-lucia` quedan iguales: `black de ana lucia`.
+
+**Validación, todas con rechazo:**
+
+| Regla | Error |
+|---|---|
+| `alias` es una lista con al menos 1 y hasta 12 elementos | `aliases_missing` (vacía o ausente), `alias_invalid` (no es lista o tiene más de 12) |
+| Cada elemento es texto de 3 a 60 caracteres antes de normalizar, sin saltos de línea ni caracteres de control, y normalizado tiene al menos 3 caracteres y alguna letra | `alias_invalid` |
+| Sin dos alias iguales una vez normalizados | `alias_duplicate` |
+| Ningún alias normalizado es igual a un alias de **otro** producto de la instancia: los declarados de otro producto de la base (en cualquier estado salvo `descartada`) y los implícitos (el `nombre` y la `clave` normalizados) de otro producto de la base, de `[[productos]]` del manifiesto y del principal | `alias_taken` |
+| Ningún alias es una clave reservada (`principal`, `todos`, `ninguno`) | `alias_invalid` |
+
+**Los implícitos:** el `nombre` y la `clave` del propio producto, normalizados, son alias aunque no estén en la lista; repetirlos en `alias` no es error (se cuentan una vez). La colisión se compara por igualdad exacta del texto normalizado: que un alias contenga a otro («protocolo» y «protocolo black») no es colisión; lo resuelve la regla del más largo de `conversation-focus-v1` §4.
+
+**El principal y los de `[[productos]]` del manifiesto** no declaran alias en v1: sus alias son los implícitos (el nombre del manifiesto y la clave). Declararlos en el manifiesto sería un campo nuevo de `instance-runtime-v2`, fuera de este contrato.
+
+**Lo que no hacen:** los alias no se renderizan para el agente (§6), no entran al índice de productos y no van a la etiqueta de Chatwoot. Son datos del resolvedor. Un alias no es un dato personal y no lleva montos: pasa por el filtro de datos personales y secretos del texto libre (§4) con los mismos códigos (`free_text_personal_data`, `free_text_secret`).
 
 **Lo que se deriva y no se escribe:** el `funnel_ref` (de la clave), la etiqueta de Chatwoot `cliente:<clave>` y la del producto, y el binding de la base (lo siembra la publicación, MP-08, con el precio y la moneda de la oferta por defecto; el resto de las ofertas, una fila por oferta en el catálogo).
 
@@ -106,6 +129,7 @@ Una campaña viva **por producto**, no por instancia (D6): MP-08 cambia el índi
 {
   "clave": "forever-young",
   "nombre": "Black Pack Forever Young",
+  "alias": ["forever young", "black de ana lucia", "el taller del 19"],
   "hotmart": {"producto_id": 1234567, "hotlink": "X00000000Y"},
   "ofertas": [
     {
@@ -131,7 +155,7 @@ Una campaña viva **por producto**, no por instancia (D6): MP-08 cambia el índi
 }
 ```
 
-El ID, el hotlink y el código de oferta son inventados: el ejemplo no describe ningún producto dado de alta. Si el texto libre dijera «USD 149», la propuesta no validaría (`free_text_amount_not_declared:149 USD`). Si no tuviera `## Garantía`, validaría con la advertencia `skeleton_section_missing:garantia`.
+El ID, el hotlink y el código de oferta son inventados: el ejemplo no describe ningún producto dado de alta. Si el texto libre dijera «USD 149», la propuesta no validaría (`free_text_amount_not_declared:149 USD`). Si no tuviera `## Garantía`, validaría con la advertencia `skeleton_section_missing:garantia`. Con `"alias": []` no validaría (`aliases_missing`); con `"Forever-Young"` y `"forever young"` juntos, tampoco (`alias_duplicate`); con `"el protocolo"`, tampoco, en una instancia cuyo principal tenga la clave `el-protocolo` (`alias_taken`: es un implícito del principal).
 
 ## 9. Las decisiones que este contrato toma (Dan, 2026-11-13)
 
@@ -144,10 +168,17 @@ El ID, el hotlink y el código de oferta son inventados: el ejemplo no describe 
 - **D7:** venta cruzada apagada, con el lugar reservado (§5).
 - **D8:** formularios de GHL por producto, afuera.
 
+**Dan, 2026-11-14, sobre la medición A-0** (decisión «Multiproducto: el producto en foco lo decide el sistema, con alias declarados», vault del OS, `decisiones/2026-11-14-multiproducto-a0-el-foco-lo-decide-el-sistema.md`): los alias entran al mínimo (§2.1), porque el índice de la 0.1.0 es clave y nombre y el agente falla justo cuando la persona no nombra el producto (7 de 15 en A-0). La cifra completa está en `conversation-focus-v1` §8.
+
 ## 10. Errores y advertencias
 
-Rechazo: `product_key_invalid`, `product_key_taken`, `product_name_invalid`, `hotmart_product_invalid`, `hotmart_product_taken`, `hotlink_invalid`, `offers_missing`, `offer_code_invalid`, `offer_code_taken`, `offer_price_invalid`, `offer_currency_invalid`, `default_offer_count`, `other_amount_invalid`, `promises_missing`, `promise_invalid`, `relation_unknown_product`, `relation_cycle`, `free_text_empty`, `free_text_too_long`, `free_text_personal_data`, `free_text_secret`, `free_text_payment_url`, `free_text_amount_not_declared:<monto> <moneda>`, `render_too_long`.
+Rechazo: `product_key_invalid`, `product_key_taken`, `product_name_invalid`, `aliases_missing`, `alias_invalid`, `alias_duplicate`, `alias_taken`, `hotmart_product_invalid`, `hotmart_product_taken`, `hotlink_invalid`, `offers_missing`, `offer_code_invalid`, `offer_code_taken`, `offer_price_invalid`, `offer_currency_invalid`, `default_offer_count`, `other_amount_invalid`, `promises_missing`, `promise_invalid`, `relation_unknown_product`, `relation_cycle`, `free_text_empty`, `free_text_too_long`, `free_text_personal_data`, `free_text_secret`, `free_text_payment_url`, `free_text_amount_not_declared:<monto> <moneda>`, `render_too_long`.
 
 Advertencia (no rechaza): `skeleton_section_missing:<seccion>`.
 
-Los códigos son nombres fijos; ninguno lleva texto del usuario salvo el monto y la moneda de `free_text_amount_not_declared`, que salen del propio texto libre y no son datos personales.
+Los códigos son nombres fijos; ninguno lleva texto del usuario salvo el monto y la moneda de `free_text_amount_not_declared`, que salen del propio texto libre y no son datos personales. `alias_taken` y `alias_duplicate` no nombran el alias ni el otro producto: la página de aprobación (MP-20) los muestra al lado de la lista.
+
+## 11. Historial
+
+- 0.1.0 (2026-11-13, E-553, #460): mínimo obligatorio, esqueleto, texto libre, relaciones, render y ciclo de vida. Escrito antes del código: no afirma nada construido.
+- 0.2.0 (2026-11-14, E-570): `alias[]` entra al mínimo (§2.1) con la normalización, sus cuatro errores y la colisión entre productos, por la decisión de Dan del 2026-11-14 sobre A-0 (§9). Escrito antes del código (lo construye MP-07, E-569): no afirma nada construido.

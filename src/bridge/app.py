@@ -99,7 +99,7 @@ from bridge.product_label import ProductLabeler
 from bridge.product_routes import HotmartUnrouted, ProductRoute, ProductRoutes, followup_product_labels
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
 from bridge.payment_link_coupon import coupon_applied_in_context, mark_payment_link_coupon, mark_segment_link_coupon, segment_cart_discount_brake, segment_coupon_fits_product, segment_coupon_for_labels, segment_link_coupon, segment_link_offer, SegmentOfferLink, validate_payment_link_coupon_code  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
-from bridge.filtering import EventDecision, classify_chatwoot_event
+from bridge.filtering import EventDecision, LabelRemoval, classify_chatwoot_event, classify_chatwoot_label_removal
 from bridge.agent_provenance import AgentTurn, CONTEXT_BUILDER_VERSION
 from bridge.hermes import AGENT_TURN_FAILED_REASON_CODE, HermesShadowProcessor, agent_turn_failure_to_hand_off, payment_link_product  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
 from bridge.hotmart import (
@@ -358,6 +358,9 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # Levantar la pausa no depende del aliado: lo unico especifico es el id del
     # macro de Chatwoot, que ya es configuracion por runtime.
     "conversation_resume_enabled",
+    # E-571: la misma reanudacion, disparada por el conversation_updated que
+    # saca la etiqueta; no depende del aliado.
+    "chatwoot_label_removal_resume_enabled",
     # Reactivar tampoco depende del aliado: lo especifico es el nombre de la
     # plantilla aprobada, que ya es configuracion por runtime.
     "conversation_reactivation_enabled",
@@ -863,6 +866,11 @@ class Settings:
     # el paso etiquetar de un flujo nativo. Sin el, el paso deja solo la nota.
     chatwoot_client_label_macro_id: int | None = None
     conversation_resume_enabled: bool = False
+    # E-571 (parte 2 de E-539): el conversation_updated que saca la etiqueta
+    # automation_paused (a mano o con el macro de reanudacion) reanuda en el
+    # momento, con las reglas de la reanudacion. Exige ademas
+    # conversation_resume_enabled y la admision durable (cut B).
+    chatwoot_label_removal_resume_enabled: bool = False
     conversation_resume_quiet_seconds: int = 28800
     conversation_resume_max: int = 3
     conversation_reactivation_enabled: bool = False
@@ -1955,6 +1963,12 @@ class Settings:
             os.environ.get("CONVERSATION_RESUME_ENABLED", "false").lower()
             == "true"
         )
+        chatwoot_label_removal_resume_enabled = (
+            os.environ.get("CHATWOOT_LABEL_REMOVAL_RESUME_ENABLED", "false")
+            .strip()
+            .lower()
+            == "true"
+        )
         conversation_resume_quiet_seconds = int(
             os.environ.get("CONVERSATION_RESUME_QUIET_SECONDS", "28800")
         )
@@ -2315,6 +2329,9 @@ class Settings:
             chatwoot_resume_macro_id=chatwoot_resume_macro_id,
             chatwoot_client_label_macro_id=chatwoot_client_label_macro_id,
             conversation_resume_enabled=conversation_resume_enabled,
+            chatwoot_label_removal_resume_enabled=(
+                chatwoot_label_removal_resume_enabled
+            ),
             conversation_resume_quiet_seconds=conversation_resume_quiet_seconds,
             conversation_resume_max=conversation_resume_max,
             conversation_reactivation_enabled=conversation_reactivation_enabled,
@@ -3002,11 +3019,12 @@ def _is_conversation_label_change(
     ``webhook_data`` de la conversacion (``id``, ``inbox_id``, ``labels``,
     ``meta``...) mas ``changed_attributes``: una lista de
     ``{atributo: {previous_value, current_value}}``, y ``label_list`` es uno de
-    los atributos que disparan el evento. El bridge todavia no lo procesa: lo
-    captura para construir la sincronizacion de la etiqueta que toca una
-    persona sobre un payload real, no sobre uno supuesto. Hoy la cuenta solo
-    suscribe ``message_created``; al suscribir ``conversation_updated`` el
-    primer cambio de etiqueta queda en ``CAPTURE_DIR``.
+    los atributos que disparan el evento. Los webhooks de las cuentas 1, 2 y 3
+    suscriben ``message_created`` y ``conversation_updated`` (E-539, 13/11).
+    Con ``CHATWOOT_LABEL_REMOVAL_RESUME_ENABLED`` el que saca
+    ``automation_paused`` se procesa (``classify_chatwoot_label_removal``);
+    el resto de los cambios de etiqueta, y todos con el flag apagado, solo se
+    capturan en ``CAPTURE_DIR``.
     """
     if inbox_id is None or payload.get("event") != "conversation_updated":
         return False
@@ -3294,15 +3312,25 @@ def _normalize_chatwoot_history(
     return normalized
 
 
+class LabelRemovalResumeTransientError(RuntimeError):
+    """E-571: la reanudacion por etiqueta sacada no pudo leer o escribir.
+
+    No es ``RetryableChatwootWorkError`` a proposito: el worker la reintenta
+    con el tope de 8 intentos, no sin limite.
+    """
+
+
 async def _resume_paused_conversation(
     *,
     control_client: ChatwootClient,
     supabase: object,
     settings: "Settings",
     conversation_id: int,
-    message_id: int,
+    message_id: int | None = None,
     expected_jid: str | None = None,
     durable_pause_recorded: bool = False,
+    command_key: str | None = None,
+    label_removal_only: bool = False,
 ) -> bool:
     """Levanta la pausa de una conversacion que el equipo dejo de atender.
 
@@ -3329,12 +3357,26 @@ async def _resume_paused_conversation(
     a mano desde Chatwoot para que el agente vuelva a contestar, y esa
     decision se respeta sin medir el silencio del equipo y sin ejecutar el
     macro. Sin esto, la conversacion quedaba pausada en Supabase para siempre:
-    el bridge solo recibe ``message_created``, asi que el cambio de etiqueta
-    no le llega (2026-09-25 18:18 UTC, conversacion 173, fixture
+    hasta E-571 el bridge solo procesaba ``message_created``, asi que el
+    cambio de etiqueta no le llegaba (2026-09-25 18:18 UTC, conversacion 173,
+    fixture
     ``chatwoot_paused_lead_label_removed_by_human_inbox_9_conv_173_20260925.json``).
+
+    ``label_removal_only`` es el camino del ``conversation_updated`` que saca
+    la etiqueta (E-571): solo reanuda si la etiqueta sigue afuera al leer la
+    conversacion, y nunca cae al camino del silencio del equipo (ese lo
+    dispara solo un mensaje de la persona). Su ``command_key`` sale de la
+    entrega de Chatwoot, porque no hay mensaje que la ancle. En ese modo una
+    falla de red con Chatwoot o una falla de Supabase no se traga: levanta
+    ``LabelRemovalResumeTransientError`` para que el worker reintente la
+    entrega (acotado); la clave por entrega hace seguro el reintento.
     """
     if settings.chatwoot_inbox_id is None:
         return False
+    if command_key is None:
+        if message_id is None:
+            return False
+        command_key = f"resume:{conversation_id}:{message_id}"
     try:
         snapshot = await control_client.get_canonical_conversation_snapshot(
             conversation_id=conversation_id,
@@ -3342,7 +3384,13 @@ async def _resume_paused_conversation(
             anchor_message_id=None,
             expected_jid=expected_jid,
         )
-    except (ChatwootProtocolError, httpx.HTTPError):
+    except httpx.HTTPError as exc:
+        if label_removal_only:
+            raise LabelRemovalResumeTransientError(
+                "chatwoot_label_removal_resume_snapshot_failed"
+            ) from exc
+        return False
+    except ChatwootProtocolError:
         return False
     if snapshot.status != "open" or not snapshot.can_reply:
         return False
@@ -3351,6 +3399,10 @@ async def _resume_paused_conversation(
     if "automation_opted_out" in snapshot.labels:
         return False
     label_removed_by_person = "automation_paused" not in snapshot.labels
+    if label_removal_only and not label_removed_by_person:
+        # La etiqueta volvio (o nunca salio): no hay decision de una persona
+        # que respetar, y el silencio del equipo no se mide desde aca.
+        return False
     if label_removed_by_person and not durable_pause_recorded:
         # Sin etiqueta y sin pausa durable no hay nada que levantar.
         return False
@@ -3399,12 +3451,16 @@ async def _resume_paused_conversation(
     try:
         result = await supabase.resume_paused_conversation(
             external_conversation_id=conversation_id,
-            command_key=f"resume:{conversation_id}:{message_id}",
+            command_key=command_key,
             reason_code=reason_code,
             quiet_seconds=quiet_seconds,
             max_resumes=settings.conversation_resume_max,
         )
-    except SupabaseError:
+    except SupabaseError as exc:
+        if label_removal_only:
+            raise LabelRemovalResumeTransientError(
+                "chatwoot_label_removal_resume_rpc_failed"
+            ) from exc
         return False
     if not result.resumed:
         logger.info("conversation_resume_skipped outcome=%s", result.outcome)
@@ -8471,6 +8527,69 @@ def create_app(
             ),
         )
 
+    def label_removal_to_resume(payload: dict[str, object]) -> LabelRemoval | None:
+        """E-571: el ``conversation_updated`` que saca la pausa y se procesa.
+
+        Con el flag apagado (default) devuelve None siempre y el evento sigue
+        el camino de hoy (solo captura). Prendido, exige lo mismo que la
+        reanudacion por mensaje entrante: CONVERSATION_RESUME_ENABLED, la
+        admision durable (cut B), el cliente de control y Supabase.
+        """
+        if not (
+            settings.chatwoot_label_removal_resume_enabled
+            and settings.conversation_resume_enabled
+            and settings.chatwoot_cut_b_admission_enabled
+            and isinstance(control_client, ChatwootClient)
+            and shared_supabase is not None
+            and chatwoot_inbox is not None
+        ):
+            return None
+        return classify_chatwoot_label_removal(
+            payload,
+            label="automation_paused",
+            expected_inbox_id=settings.chatwoot_inbox_id,
+            expected_account_id=settings.chatwoot_account_id,
+            allowed_jid=settings.allowed_jid,
+            allow_any_scoped_sender=(
+                settings.chatwoot_scoped_inbound_senders_enabled
+            ),
+        )
+
+    async def resume_after_label_removal(
+        delivery_id: str, removal: LabelRemoval
+    ) -> None:
+        # La clave de idempotencia sale de la entrega: un reintento de la
+        # misma entrega da 'replayed' y no reanuda dos veces. Hex de sha256
+        # para cumplir el formato de la RPC (^[a-z0-9:_-]{1,200}$).
+        delivery_digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
+        if settings.conversation_resume_enabled and isinstance(
+            control_client, ChatwootClient
+        ):
+            # D-2 del PR: sin una lectura de la pausa durable (sin migracion
+            # no hay RPC de lectura por conversacion), la RPC es la que
+            # decide: con la conversacion ya admisible da 'already_active',
+            # sin caso 'not_found', y con una derivacion sin atender
+            # 'blocked_pending_handoff'. La parte (1) de E-539 suma ahi la
+            # guarda de "solo si estaba pausada".
+            resumed = await _resume_paused_conversation(
+                control_client=control_client,
+                supabase=shared_supabase,
+                settings=settings,
+                conversation_id=removal.conversation_id,
+                expected_jid=removal.sender_jid,
+                durable_pause_recorded=True,
+                command_key=(
+                    f"resume:{removal.conversation_id}:label:"
+                    f"{delivery_digest[:32]}"
+                ),
+                label_removal_only=True,
+            )
+            logger.info(
+                "chatwoot_label_removal_resume conversation=%s resumed=%s",
+                removal.conversation_id,
+                resumed,
+            )
+
     async def process_chatwoot_work(
         delivery_id: str,
         payload: dict[str, object],
@@ -8533,6 +8652,11 @@ def create_app(
                         "human_handoff_attendance_failed conversation=%s",
                         conversation_id,
                     )
+            return
+        if decision.reason == "unsupported_event":
+            removal = label_removal_to_resume(payload)
+            if removal is not None:
+                await resume_after_label_removal(delivery_id, removal)
             return
         if decision.reason == "invalid_message_id":
             raise RuntimeError("chatwoot_invalid_message_id")
@@ -12171,6 +12295,33 @@ def create_app(
             if admitted:
                 return {
                     "status": "accepted",
+                    "delivery_id": x_chatwoot_delivery,
+                }
+            response.status_code = status.HTTP_200_OK
+            return {
+                "status": "duplicate",
+                "delivery_id": x_chatwoot_delivery,
+            }
+        if (
+            decision.reason == "unsupported_event"
+            and label_removal_to_resume(payload) is not None
+        ):
+            # E-571: una persona saco automation_paused (a mano o con el
+            # macro). Va al trabajo durable con la entrega como clave, para
+            # reanudar en el momento sin esperar el proximo mensaje.
+            assert chatwoot_inbox is not None
+            _capture_payload(
+                capture_dir=settings.capture_dir,
+                delivery_id=x_chatwoot_delivery,
+                payload=payload,
+            )
+            if chatwoot_inbox.admit(
+                delivery_id=x_chatwoot_delivery,
+                payload=payload,
+            ):
+                return {
+                    "status": "accepted",
+                    "reason": "conversation_label_removal",
                     "delivery_id": x_chatwoot_delivery,
                 }
             response.status_code = status.HTTP_200_OK
