@@ -177,6 +177,7 @@ from bridge.opt_out_confirmation import (
 from bridge import automation_expert_chatwoot, flow_approval, flow_change_api
 from bridge import template_approval, template_request, template_request_api
 from bridge import agent_campaign_api, agent_campaigns, campaign_approval
+from bridge import agent_product_api
 from bridge import flow_audience_page
 from bridge.flow_audience_wiring import FlowAudience, build_flow_audience
 from bridge.meta_templates import MetaTemplatesClient
@@ -451,6 +452,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # oferta leen tambien las campanas del AE. Exige AGENT_CAMPAIGNS_ENABLED;
     # cada camino sigue detras de su flag. Por instancia, solo prenderlo.
     "agent_campaign_label_paths_enabled",
+    # E-569 (product-card-v1, MP-07): el producto que suma el Automation
+    # Expert, como dato (proponer, validar, listar). Portable: por instancia,
+    # solo prenderlo; apagado no existen las rutas ni se llama a la base.
+    "agent_products_enabled",
     "hotmart_purchase_worker_enabled",
     "lead_precheckout_enabled",
     # El adaptador de GHL traduce el formulario a lead.precheckout y lo manda
@@ -1095,6 +1100,11 @@ class Settings:
     # tres caminos de la etiqueta leen la fuente viva (manifiesto mas campanas
     # del AE). Apagado, las fuentes fijas de hoy.
     agent_campaign_label_paths_enabled: bool = False
+    # E-569 (bridge/agent_product_api.py, contrato product-card-v1, MP-07):
+    # AGENT_PRODUCTS_ENABLED. Con el flag existen las rutas del AE para
+    # proponer, validar, obtener y listar productos. Apagado (el default) no
+    # existen y el bridge no llama a ninguna RPC de productos.
+    agent_products_enabled: bool = False
     precheckout_form_enabled: bool = False
     precheckout_form_token: str | None = None
     precheckout_max_age_seconds: int = 300
@@ -2603,6 +2613,10 @@ class Settings:
             agent_campaign_offer_link_enabled=agent_campaign_offer_link_enabled,
             agent_campaign_label_paths_enabled=(
                 os.getenv("AGENT_CAMPAIGN_LABEL_PATHS_ENABLED", "false").strip().lower()
+                == "true"
+            ),
+            agent_products_enabled=(
+                os.getenv(agent_product_api.AGENT_PRODUCTS_ENV, "false").strip().lower()
                 == "true"
             ),
             precheckout_form_enabled=precheckout_form_enabled,
@@ -5162,6 +5176,7 @@ def create_app(
     automation_expert_chatwoot_client: automation_expert_chatwoot.ScopedChatwoot | None = None,
     template_request_store: template_request_api.TemplateRequestStore | None = None,
     agent_campaign_store: agent_campaign_api.CampaignStore | None = None,
+    agent_product_store: agent_product_api.ProductStore | None = None,
     flow_approval_store: flow_approval.ApprovalStore | None = None,
     flow_approval_oidc: flow_approval.SlackIdTokenClient | None = None,
     meta_templates_client: MetaTemplatesClient | None = None,
@@ -5609,6 +5624,8 @@ def create_app(
     template_request_api.check_settings(settings)
     # E-355: las campanas exigen las rutas del agente, la pagina y la entrada.
     agent_campaign_api.check_settings(settings)
+    # E-569: los productos del AE exigen sus rutas y el manifiesto.
+    agent_product_api.check_settings(settings)
     pilot_fields = (
         (settings.pilot_scope_key, "LANCEMOS_PILOT_SCOPE_KEY"),
         (settings.pilot_scope_version, "LANCEMOS_PILOT_SCOPE_VERSION"),
@@ -11076,6 +11093,18 @@ def create_app(
                 chatwoot=control_client,
                 context=agent_campaigns_context,
                 approval_origin=settings.flow_approval_base_url or "",
+            )
+        if settings.agent_products_enabled:
+            # E-569 (product-card-v1, MP-07): el agente propone y valida un
+            # producto; nunca lo publica (MP-08).
+            agent_product_api.register_agent_product_routes(
+                app,
+                token=settings.automation_expert_change_token,
+                store=agent_product_store or agent_product_api.ProductStore(
+                    base_url=settings.supabase_base_url or "",
+                    db_key=settings.automation_expert_change_db_key or "",
+                ),
+                manifest=change_manifest,
             )
 
     if settings.automation_expert_chatwoot_enabled:
