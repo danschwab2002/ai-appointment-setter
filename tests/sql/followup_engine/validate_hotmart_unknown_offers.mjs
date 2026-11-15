@@ -56,7 +56,8 @@ const results = {};
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`${MIGRATION} no esta en la cadena`);
-if (position !== names.length - 1) fail(`${MIGRATION} tiene que ser la ultima`, names.slice(position + 1));
+// Despues va solo la del producto que suma el AE (20261115000100, E-569), que no toca este registro.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261115000100_agent_products_v1.sql'])) fail(`despues de ${MIGRATION} va solo la de E-569`, names.slice(position + 1));
 const apply = async (file) => db.exec(readFileSync(file, 'utf8').replace(
   /create extension if not exists pgcrypto;/gi,
   '-- pgcrypto is built into PGlite',

@@ -135,10 +135,13 @@ const executable = (await db.query(`select p.proname || '(' || oidvectortypes(p.
 require(JSON.stringify(executable) === JSON.stringify([
   // Las cuatro de las campanas del Automation Expert (20261108005000, E-355), en su orden alfabetico.
   'get_agent_campaign_v1(jsonb, uuid)',
+  // Las cuatro del producto del Automation Expert (20261115000100, E-569), en su orden alfabetico.
+  'get_agent_product_v1(jsonb, uuid)',
   'get_flow_change_proposal_v1(jsonb, uuid)',
   // Las cuatro de las solicitudes de plantilla (20261102000200, E-268, template-request-v1).
   'get_meta_template_request_v1(jsonb, uuid)',
   'list_agent_campaigns_v1(jsonb, boolean, integer)',
+  'list_agent_products_v1(jsonb, boolean, integer)',
   'list_flow_changes_v1(jsonb, boolean, integer)',
   'list_meta_template_requests_v1(jsonb, boolean, integer)',
   'read_flow_engine_history_v1(jsonb, text, timestamp with time zone)',
@@ -146,9 +149,11 @@ require(JSON.stringify(executable) === JSON.stringify([
   'read_flow_engine_v1(jsonb, text)',
   'read_flow_store_v1(jsonb)',
   'record_agent_campaign_validation_v1(jsonb, uuid, integer, jsonb, jsonb, jsonb, text)',
+  'record_agent_product_validation_v1(jsonb, uuid, integer, jsonb, jsonb, jsonb, text)',
   'record_flow_change_validation_v1(jsonb, uuid, integer, jsonb, jsonb, jsonb, jsonb, text)',
   'record_meta_template_request_validation_v1(jsonb, uuid, integer, jsonb, jsonb, jsonb, jsonb, text)',
   'save_agent_campaign_draft_v1(jsonb, uuid, integer, jsonb, text, text)',
+  'save_agent_product_draft_v1(jsonb, uuid, integer, jsonb, text, jsonb, text, text)',
   'save_flow_change_draft_v1(jsonb, uuid, integer, jsonb, jsonb, text, text)',
   'save_meta_template_request_draft_v1(jsonb, uuid, integer, jsonb, text, uuid, text, text)',
   // El guardado con el hilo de Slack (20261109000100, E-361).
