@@ -1,0 +1,49 @@
+{
+  "_origen": {
+    "clase": "sintetico segun doc, no capturado",
+    "fuente": "https://developers.hotmart.com/docs/en/v1/product/product-offers/",
+    "leido_en": "2026-11-15T01:50Z (pagina publica de la documentacion de Hotmart, sin sesion ni credenciales; los ejemplos se copiaron tal cual del bloque 'Response' de la pagina, archivo code_examples/v1/product/product-offers-response.md del sitio)",
+    "endpoint": "GET https://developers.hotmart.com/products/api/v1/products/:ucode/offers",
+    "por_que_no_es_captura": "este encargo (E-574) no usa credenciales ni llama a la API real de Hotmart; la captura real (con las credenciales de lectura de una instancia, adentro de su contenedor) queda como deuda del PR, F6 del plan de multiproducto",
+    "aviso": "Los IDs, ucodes, codigos de oferta y el hotlink A00000000A son los de ejemplo de la documentacion, no de una instancia. No reemplaza a la captura real."
+  },
+  "respuestas": {
+    "200": {
+      "items": [
+        {
+          "is_currency_conversion_enabled": true,
+          "is_main_offer": true,
+          "is_smart_recovery_enabled": false,
+          "price": {
+            "value": 10,
+            "currency_code": "BRL"
+          },
+          "code": "02mhofjd",
+          "description": "",
+          "name": "",
+          "payment_mode": "PAY_IN_FULL",
+          "direct_offer_link_for_creator": "https://pay.hotmart.com/A00000000A?off=02mhofjd"
+        }
+      ],
+      "page_info": {
+        "next_page_token": "eyJwYWdlIjoyLCJzaXplIjoxOH0=",
+        "prev_page_token": null,
+        "results_per_page": 1
+      }
+    },
+    "400": {
+      "error_uri": "https://developers.hotmart.com/docs/en/start/http-response-codes/",
+      "error": "internal_error",
+      "error_description": "It was not possible to get the offers for this product. Verify the parameters and try again."
+    },
+    "401": {
+      "error": "invalid_token",
+      "error_description": "The Token has expired on Fri Feb 07 18:48:26 UTC 2020."
+    },
+    "500": {
+      "error_uri": "https://developers.hotmart.com/docs/pt-BR/start/http-response-codes/",
+      "error_description": "An unexpected internal error occurred and the request could not be completed.",
+      "error": "internal_server_error"
+    }
+  }
+}
