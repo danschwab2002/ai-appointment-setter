@@ -1,0 +1,75 @@
+{
+  "_origen": {
+    "clase": "sintetico segun doc, no capturado",
+    "fuente": "https://developers.hotmart.com/docs/en/v1/product/product-list/",
+    "leido_en": "2026-11-15T01:50Z (pagina publica de la documentacion de Hotmart, sin sesion ni credenciales; los ejemplos se copiaron tal cual del bloque 'Response' de la pagina, archivo code_examples/v1/product/product-list-response.md del sitio)",
+    "endpoint": "GET https://developers.hotmart.com/products/api/v1/products",
+    "por_que_no_es_captura": "este encargo (E-574) no usa credenciales ni llama a la API real de Hotmart; la captura real (con las credenciales de lectura de una instancia, adentro de su contenedor) queda como deuda del PR, F6 del plan de multiproducto",
+    "aviso": "Los IDs, ucodes, codigos de oferta y el hotlink A00000000A son los de ejemplo de la documentacion, no de una instancia. No reemplaza a la captura real."
+  },
+  "respuestas": {
+    "200": {
+      "items": [
+        {
+          "id": 698441,
+          "name": "Product A",
+          "ucode": "f2b3be1f-313f-4a2d-b5b7-1c39d67dd3ee",
+          "status": "DRAFT",
+          "created_at": 1586459699000,
+          "format": "EBOOK",
+          "is_subscription": false,
+          "warranty_period": 7
+        },
+        {
+          "id": 1117869,
+          "name": "Product B",
+          "ucode": "26a97448-2ac2-458d-9e03-bcc01e82bdd8",
+          "status": "DRAFT",
+          "created_at": 1603816477000,
+          "format": "ONLINE_COURSE",
+          "is_subscription": true,
+          "warranty_period": 15
+        },
+        {
+          "id": 486869,
+          "name": "Product C",
+          "ucode": "6505e7ed-ff32-4d1a-8baa-62958d5c790a",
+          "status": "CHANGES_PENDING_ON_PRODUCT",
+          "created_at": 1569933453000,
+          "format": "ETICKET",
+          "is_subscription": false,
+          "warranty_period": 7
+        },
+        {
+          "id": 4319408,
+          "name": "Product D",
+          "ucode": "e211d636-dd19-4411-9397-ab3428e966a2",
+          "status": "DRAFT",
+          "created_at": 1721077570000,
+          "format": "BUNDLE",
+          "is_subscription": true,
+          "warranty_period": 7
+        }
+      ],
+      "page_info": {
+        "next_page_token": "eyJyb3dzIjo1LCJwYWdlIjozfQ==",
+        "prev_page_token": "eyJyb3dzIjo1LCJwYWdlIjoxfQ==",
+        "results_per_page": 4
+      }
+    },
+    "400": {
+      "error": "invalid_parameter",
+      "error_description": "The request was unacceptable, often due to a misconfigured parameter.",
+      "error_uri": "https://developers.hotmart.com/docs/pt-BR/start/http-response-codes/"
+    },
+    "401": {
+      "error": "invalid_token",
+      "error_description": "The Token has expired on Fri Feb 07 18:48:26 UTC 2020."
+    },
+    "500": {
+      "error_uri": "https://developers.hotmart.com/docs/pt-BR/start/http-response-codes/",
+      "error_description": "An unexpected internal error occurred and the request could not be completed.",
+      "error": "internal_server_error"
+    }
+  }
+}
