@@ -1,6 +1,6 @@
 name: automation-expert-read
-version: "0.3.0"
-description: Lectura de los flujos, su dibujo, la historia de un lead y las guías del agente (automation-expert-read-v1). Solo lee.
+version: "0.4.0"
+description: Lectura de los flujos, su dibujo, la historia de un lead, el resumen de resultados y las guías del agente (automation-expert-read-v1). Solo lee.
 author: ai-appointment-setter
 provides_tools:
   - list_flows
@@ -8,6 +8,7 @@ provides_tools:
   - draw_flow
   - skill_view
   - read_library
+  - results_summary
 provides_hooks:
   - pre_gateway_dispatch
   - pre_tool_call

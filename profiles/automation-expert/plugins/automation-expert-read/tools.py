@@ -53,7 +53,15 @@ _BRIDGE_ERRORS = frozenset({
     "automation_expert_read_unavailable",
     "automation_expert_response_too_large",
     "automation_expert_busy",
+    # E-573: los 422 del resumen de resultados (automation-expert-results-v1).
+    "dias_invalid",
+    "window_conflict",
+    "desde_invalid",
+    "hasta_invalid",
+    "window_empty",
+    "window_too_long",
 })
+_DAY_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
 
 class _NoRedirectHandler(HTTPRedirectHandler):
@@ -361,3 +369,29 @@ def read_library(params: dict[str, object], **kwargs: object) -> str:
     if isinstance(tema, str) and tema in _skill_files():
         return skill_view({"name": tema}, **kwargs)
     return _dumps({"error": "read_library_moved", "use": "skill_view", "skills": sorted(_skill_files())})
+
+
+def results_summary(params: dict[str, object], **kwargs: object) -> str:
+    """Como venimos: el resumen de resultados del bridge (automation-expert-results-v1).
+
+    Con dias (1 a 90) o con desde/hasta (AAAA-MM-DD); sin nada, los ultimos 7 dias.
+    Los parametros se validan antes de salir a la red y viajan solo como fechas o un numero.
+    """
+    del kwargs
+    query: dict[str, str] = {}
+    dias = params.get("dias")
+    if dias is not None:
+        if isinstance(dias, bool) or not isinstance(dias, int) or not 1 <= dias <= 90:
+            return _dumps({"error": "dias_invalid"})
+        query["dias"] = str(dias)
+    for key in ("desde", "hasta"):
+        value = params.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str) or not _DAY_RE.fullmatch(value):
+            return _dumps({"error": f"{key}_invalid"})
+        query[key] = value
+    if "dias" in query and "desde" in query:
+        return _dumps({"error": "window_conflict"})
+    suffix = "?" + "&".join(f"{k}={v}" for k, v in query.items()) if query else ""
+    return _dumps(_request("GET", f"/internal/automation-expert/v1/resultados/resumen{suffix}"))
