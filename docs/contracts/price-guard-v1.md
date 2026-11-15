@@ -1,7 +1,7 @@
 # Contrato: la guarda de precio (price-guard-v1)
 
 - **Estado:** escrito antes del código (MP-01 del plan de multiproducto, E-553, 2026-11-13). Describe la interfaz que va a construir MP-04 y que usan MP-03, MP-07, MP-11, MP-13, MP-19 y MP-24; no dice que nada esté construido, desplegado ni activado.
-- **Contrato:** `price-guard-v1`, versión `0.1.0` (propuesta).
+- **Contrato:** `price-guard-v1`, versión `0.1.1` (propuesta); historial al final.
 - **Diseño:** «Multiproducto: el plan de implementación» (vault del OS, `coordinacion/etapa-1/multiproducto-plan-de-implementacion.md`, MP-04 y MP-24), la guarda de precio del diseño C (`multiproducto-diseno-c-libre.md` §5.2) y la decisión D4 de Dan del 2026-11-13 (`decisiones/2026-11-13-multiproducto-decisiones-d1-d8.md`): «tanto el aviso como la guarda desde el día 1», la guarda bloqueando, sin semana de «solo registra».
 - **Código que lo va a implementar:** `src/bridge/price_guard.py` (nuevo: el extractor y la comparación), `src/bridge/hermes.py` (la guarda como regla del bucle de intentos, el mismo enchufe de la corrección de E-486: `retry_correction`, `hermes.py:373`, y `_MAX_PROPOSAL_ATTEMPTS = 2`, `hermes.py:55`, en `262d2f9`), `src/bridge/app.py` (los montos permitidos del turno y la derivación) y la procedencia del turno.
 - **Flag:** `AGENT_PRICE_GUARD_MODE`, `off` | `bloquea`. Ausente = `off`. Con `off` el bridge no extrae nada y todo sale byte a byte como hoy. Otro valor: el bridge no arranca (`price_guard_configuration_invalid`). **No hay modo «registra»** (D4).
@@ -43,7 +43,7 @@ La guarda corre **adentro del bucle de intentos** de la propuesta, después de q
 1. **Primer intento bloqueado:** la respuesta no sale. El segundo intento (el que ya existe) lleva la corrección de la guarda, con la regla `price_not_in_catalog` y los montos: «Tu respuesta anterior no se pudo usar: el monto USD 149 no está en lo que te pasamos; usá solo estos: USD 199, USD 1.361. Devolvé solo el objeto JSON.» (el texto exacto lo fija MP-04; lleva los montos bloqueados y los permitidos, nunca texto de la persona).
 2. **Segundo intento sin bloqueo:** se entrega. La clienta recibe la respuesta buena con un llamado de más de latencia.
 3. **Segundo intento también bloqueado:** la respuesta **no sale** y la conversación **se deriva** por el circuito de derivación de siempre, con `reason_code = "price_not_in_catalog"`. No hay tercer llamado.
-4. **El segundo intento es compartido:** si el primero falla por la guarda y por otra regla (el formato, o el cambio de producto de `conversation-focus-v1` §5), la corrección las dice juntas. Si el primero falla por otra regla y el segundo por la guarda, se deriva con `price_not_in_catalog` (manda la regla del último intento).
+4. **El segundo intento es compartido:** si el primero falla por la guarda y por otra regla (el formato), la corrección las dice juntas. El producto en foco ya no usa el segundo intento: con la rama B de `conversation-focus-v1` (0.2.0, decisión de Dan del 2026-11-14), un aviso del agente sobre otro producto no repite el turno; si el último intento lo trae, sale la pregunta fija (`conversation-focus-v1` §5.6). Si el primero falla por otra regla y el segundo por la guarda, se deriva con `price_not_in_catalog` (manda la regla del último intento).
 
 **El link de pago no pasa por la guarda.** La guarda mira el texto; `send_payment_link`, la reserva y el link siguen igual. Si una respuesta bloqueada dos veces traía `decision = "send_payment_link"`, el link **no** sale en ese turno (el link solo sale junto con una respuesta que se entrega) y la nota de derivación dice que el agente pidió el link de tal producto, para que la persona del equipo lo mande.
 
@@ -118,3 +118,8 @@ Propuesta escrita junto con el código; la evidencia de que funciona queda para 
 - **Lo que no es un monto, además:** un «N x M» o «N meses de M» seguido de una unidad que no es plata (minutos, días, meses, cuotas, sesiones…), el total de cuotas («1 de 12 cuotas»), un año como cuota sin moneda («3 meses de 2026»), y «12 de 166» sin «cuotas», «meses», «pagos» o «mensualidad» a 40 caracteres.
 - **Lo que no lee (límite conocido):** miles con espacio (`$1 397`), «100 mil pesos», «1,5 millones». No se leen como monto, así que tampoco se bloquean.
 - **Un intento que la guarda no miró** (una derivación, una salida que no es un objeto) va en `attempts` con `"skipped": true`.
+
+## 13. Historial
+
+- 0.1.0 (2026-11-13, E-553, #460; completado por MP-04 en E-564, #464): el contrato y lo que fijó MP-04 (§12).
+- 0.1.1 (2026-11-14, E-570): §4.4 alineado con la rama B de `conversation-focus-v1` 0.2.0: el segundo intento ya no lo comparte el cambio de producto. Solo documentación; el código de MP-04 no cambia (no implementa el foco).
