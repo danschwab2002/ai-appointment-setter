@@ -12,6 +12,25 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.39.0] - 2026-11-14
+
+Una menor sobre la 1.38.1, con 3 PR (#463, #464 y #465) y 1 migración: la release 1 del multiproducto. **Lo nuevo llega apagado o sin efecto en las instancias de un producto:** la guarda de precio (#464, E-564) queda detrás de `AGENT_PRICE_GUARD_MODE` (`off` por defecto) y el registro de las ofertas huérfanas de Hotmart (#465, E-565) detrás de `HOTMART_UNKNOWN_OFFERS_ENABLED` (apagado); el conocimiento de una capa con dos productos (#463, E-563) solo cambia algo si el manifiesto declara `[[productos]]`, y ninguna instancia lo declara hoy.
+
+### Agregado
+
+- **Dos productos con un conocimiento de una sola capa (#463, E-563, MP-05 y MP-06 del plan).** Con `[[productos]]` en el manifiesto, el bridge ya no exige una sección por producto en el conocimiento: un conocimiento de una sola capa cuenta como el del principal, y un producto que no es el principal puede no tener sección (`knowledge_products_error`). Siguen frenando el arranque una sección de un producto no declarado y un conocimiento por producto sin la sección del principal. `validate` avisa de cada producto sin sección y el arranque lo deja en el log (`instance_products_without_knowledge products=…`). Los nombres de producto que ven el agente, los segmentos y las campañas salen de `knowledge_product_names`: el principal de una capa con el nombre de su `[oferta]` y un producto sin sección con el `product_name` de su Hotmart (antes, con una capa y dos productos, la lista del agente quedaba vacía y `send_payment_link` se rechazaba con `link_without_product`). Sin `[[productos]]`, nada cambia.
+- **La guarda de precio (#464, E-564, MP-04; [price-guard-v1](docs/contracts/price-guard-v1.md)), apagada.** Con `AGENT_PRICE_GUARD_MODE=bloquea`, todo monto de la respuesta del agente (código ISO, símbolo, palabra o cuotas) tiene que estar entre los permitidos del turno (el conocimiento, la campaña y el contexto, más `[guarda_precio] montos_extra` del manifiesto); si no, se reintenta una vez con la corrección y, si el segundo intento también falla, se deriva con `price_not_in_catalog`, sin la respuesta ni el link, y con una nota privada. La procedencia anota `price_guard` en `context_added`. Con `off` (el default), el pedido, el resultado y la procedencia son idénticos a la 1.38.1; con otro valor, el bridge no arranca (`price_guard_configuration_invalid`).
+- **El registro de las ofertas huérfanas de Hotmart (#465, E-565, MP-02; [hotmart-unknown-offers-v1](docs/contracts/hotmart-unknown-offers-v1.md)), apagado.** Con `HOTMART_UNKNOWN_OFFERS_ENABLED=true`, cada evento de Hotmart de un producto o una oferta que la instancia no declara (sin ruta, la compra o el carrito que descarta el parser con el binding, el carrito de solo guardar y el freno del despachador) suma una fila en `hotmart_unknown_offers`, sin datos personales y sin payload, con su conteo idempotente por evento. `/ready` suma `hotmart_unknown_offers: abiertas:<n>` (o `no_disponible`, sin 503). Apagado, el bridge no llama a ninguna RPC nueva y `/ready` no cambia.
+
+### Qué hace quien actualiza
+
+- **1 migración, antes del bridge:** `20261114000300_hotmart_unknown_offers_v1.sql` (`hotmart_unknown_offers`, `hotmart_unknown_offer_refs`, `record_hotmart_unknown_offer_v1` y `list_hotmart_unknown_offers_v1`, solo `service_role`, RLS en las dos tablas). La aplica `aplicar-migraciones.sh`, que relee el esquema de PostgREST. Corrida dos veces aborta sin cambiar nada (`hotmart_unknown_offers_already_applied`). Con el flag apagado nadie la llama.
+- **Nada obligatorio en el manifiesto.** `[guarda_precio] montos_extra` es opcional y solo lo usa la guarda.
+- **Variables nuevas, ausentes:** `AGENT_PRICE_GUARD_MODE` (ausente = `off`) y `HOTMART_UNKNOWN_OFFERS_ENABLED` (ausente = apagado). No se escriben en ninguna instancia con esta subida; se prenden después, con su kit.
+- **Ningún profile cambia.**
+- **Las tres imágenes salen del tag**, como siempre. Solo el bridge cambia de código; el conector de Slack y la revisión diaria llevan la versión nueva sin cambios de código.
+- **`/ready`:** cambia `instance_product_version`. `hotmart_unknown_offers` aparece solo con el flag prendido.
+
 ## [1.38.1] - 2026-11-14
 
 Un parche sobre la 1.38.0, con 2 PR (#460 y #461) y sin migraciones. **Arregla `/ready` con los disparadores por audiencia prendidos** (#461, E-559): con `FLOW_AUDIENCE_TRIGGERS_ENABLED` en `true`, `/ready` contestaba 500 (`ResponseValidationError`, 6 `string_type`), porque el barredor de la audiencia devolvía sus contadores como números y `flow_audience_refused` como un diccionario, y `/ready` es `dict[str, str]`. Con el flag apagado no cambia nada de lo que corre. Suma además cuatro contratos del multiproducto (#460, E-553), solo documentación. Sin variables nuevas, sin campos nuevos en el manifiesto y sin cambios en los profiles. Solo cambia el Python del bridge (`flow_audience_sweeper.py` y `flow_audience_wiring.py`); el conector de Slack y la revisión diaria no cambian de código.
