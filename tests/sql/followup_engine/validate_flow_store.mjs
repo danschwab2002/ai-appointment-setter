@@ -694,6 +694,8 @@ check(sameJson([...lockTimeouts].sort(), [
   'claim_meta_template_notices_v1', 'finish_meta_template_notice_v1', 'list_meta_template_requests_to_poll_v1',
   // La pagina de los envios a una audiencia: confirmar y frenar (20261112220000, E-484).
   'approver_brake_flow_audience_v1', 'approver_confirm_flow_audience_v1',
+  // El producto del Automation Expert: registrar su validacion bloquea la fila (20261115000100, E-569).
+  'record_agent_product_validation_v1',
 ].sort()), '2: lock_timeout de 5 s en las que esperan locks', lockTimeouts);
 
 // ===========================================================================
