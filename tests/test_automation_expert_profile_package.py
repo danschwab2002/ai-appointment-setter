@@ -92,7 +92,8 @@ def test_the_distribution_copies_the_plugin_and_names_its_variables() -> None:
     plugin = yaml.safe_load((PLUGIN / "plugin.yaml").read_text(encoding="utf-8"))
     # Hermes busca el plugin por el nombre de su carpeta.
     assert plugin["name"] == PLUGIN.name
-    assert plugin["provides_tools"] == ["list_flows", "lead_history", "draw_flow", "skill_view", "read_library"]
+    assert plugin["provides_tools"] == ["list_flows", "lead_history", "draw_flow", "skill_view", "read_library",
+                                        "results_summary"]
     change = yaml.safe_load((PROFILE / "plugins" / "automation-expert-change" / "plugin.yaml").read_text(encoding="utf-8"))
     assert change["name"] == "automation-expert-change"
     assert change["provides_tools"] == ["get_flow_definitions", "propose_flow_change", "validate_flow_change",
@@ -411,7 +412,7 @@ def test_the_registered_tools_and_hooks() -> None:
         register_hook=lambda name, callback: hooks.__setitem__(name, callback),
     )
     plugin.register(ctx)
-    assert tools == ["list_flows", "lead_history", "draw_flow", "skill_view", "read_library"]
+    assert tools == ["list_flows", "lead_history", "draw_flow", "skill_view", "read_library", "results_summary"]
     # Sin override, Hermes rechaza el registro y las skills quedan sin lector (tools/registry.py).
     assert overrides == ["skill_view"]
     dispatch = hooks["pre_gateway_dispatch"]
@@ -428,7 +429,7 @@ def test_the_registered_tools_and_hooks() -> None:
     other: dict[str, Any] = {}
     plugin.register(SimpleNamespace(profile_name="agente-comercial", register_tool=lambda **kwargs: None,
                                     register_hook=lambda name, callback: other.__setitem__(name, callback)))
-    for tool in ("lead_history", "skill_view", "read_library"):
+    for tool in ("lead_history", "skill_view", "read_library", "results_summary"):
         blocked = other["pre_tool_call"](tool_name=tool)
         assert blocked["action"] == "block" and blocked["message"], tool
     assert other["pre_tool_call"](tool_name="otra_herramienta") is None
@@ -539,6 +540,44 @@ def test_several_candidates_come_back_without_a_second_request(bridge: type[_Bri
 def test_bad_keys_never_reach_the_network(bridge: type[_Bridge], params: dict[str, object], error: str) -> None:
     assert json.loads(_tools().lead_history(params)) == {"error": error}
     assert bridge.seen == []
+
+
+def test_the_results_summary_goes_with_only_dates_or_a_number(bridge: type[_Bridge]) -> None:
+    route = "GET /internal/automation-expert/v1/resultados/resumen"
+    body = {"contract": "automation-expert-results-v1", "contract_version": "1.0.0",
+            "lineas": ["Del 06/11 al 12/11 (hoy va parcial): 1 venta recuperada, USD 39,08 de comisión del productor."],
+            "gaps": ["conversaciones", "costo_modelo"]}
+    bridge.routes[route] = (200, body)
+    tools = _tools()
+    assert json.loads(tools.results_summary({})) == body
+    assert json.loads(tools.results_summary({"dias": 30}))["lineas"] == body["lineas"]
+    tools.results_summary({"desde": "2026-11-01", "hasta": "2026-11-11"})
+    assert [seen["path"] for seen in bridge.seen] == [
+        "/internal/automation-expert/v1/resultados/resumen",
+        "/internal/automation-expert/v1/resultados/resumen?dias=30",
+        "/internal/automation-expert/v1/resultados/resumen?desde=2026-11-01&hasta=2026-11-11",
+    ]
+    assert bridge.seen[0]["authorization"] == f"Bearer {TOKEN}"
+
+
+@pytest.mark.parametrize("params,error", [
+    ({"dias": 0}, "dias_invalid"), ({"dias": 91}, "dias_invalid"), ({"dias": "7"}, "dias_invalid"),
+    ({"dias": True}, "dias_invalid"), ({"desde": "01/11/2026"}, "desde_invalid"),
+    ({"hasta": "2026-11-01&dias=3"}, "hasta_invalid"), ({"desde": "2026-11-01", "dias": 7}, "window_conflict"),
+])
+def test_a_bad_results_window_never_reaches_the_network(bridge: type[_Bridge], params: dict[str, object],
+                                                        error: str) -> None:
+    assert json.loads(_tools().results_summary(params)) == {"error": error}
+    assert bridge.seen == []
+
+
+def test_a_results_422_reaches_the_agent_with_its_code(bridge: type[_Bridge]) -> None:
+    route = "GET /internal/automation-expert/v1/resultados/resumen"
+    bridge.routes[route] = (422, {"detail": "window_empty"})
+    assert json.loads(_tools().results_summary({"desde": "2026-11-20"})) == {"error": "window_empty"}
+    # Con el flag apagado el bridge contesta 404 sin codigo: el agente dice que no pudo leer.
+    bridge.routes[route] = (404, {"detail": "Not Found"})
+    assert json.loads(_tools().results_summary({"dias": 3})) == {"error": "automation_expert_read_unavailable"}
 
 
 def test_errors_map_to_closed_codes(bridge: type[_Bridge]) -> None:

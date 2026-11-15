@@ -128,3 +128,29 @@ SKILL_VIEW = {
         "additionalProperties": False,
     },
 }
+
+RESULTS_SUMMARY = {
+    "name": "results_summary",
+    "description": (
+        "Cómo venimos: las ventas recuperadas (por un link nuestro y atribuibles por el caso o "
+        "por la persona), la comisión del productor en USD, los mensajes de los flujos aceptados, "
+        "las compras aprobadas de todo origen y el costo de Meta de una ventana en días de la "
+        "instancia, comparados con los mismos días justo antes (cortados a la misma hora si hoy "
+        "va parcial). Trae `lineas`, el resumen ya escrito: decilo con esas palabras y no hagas "
+        "cuentas. `por_flujo` dice qué flujo vendió. Nombrá los `gaps` tal cual: lo que la "
+        "instancia no mide (las conversaciones, el costo del modelo, a veces el costo de Meta). "
+        "Sin dias ni desde, los últimos 7 días. Solo lee."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "dias": {"type": "integer", "minimum": 1, "maximum": 90,
+                     "description": "Los últimos N días, hoy incluido. No va junto con desde."},
+            "desde": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+                      "description": "El primer día (AAAA-MM-DD), en la zona de la instancia."},
+            "hasta": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+                      "description": "El último día (AAAA-MM-DD), incluido. Sin este dato, hoy."},
+        },
+        "additionalProperties": False,
+    },
+}

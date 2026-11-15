@@ -1,9 +1,17 @@
 """Registro del plugin de lectura del Automation Expert en Hermes."""
 
-from .schemas import DRAW_FLOW, LEAD_HISTORY, LIST_FLOWS, READ_LIBRARY, SKILL_VIEW
-from .tools import PROFILE_NAME, draw_flow, lead_history, list_flows, read_library, skill_view
+from .schemas import DRAW_FLOW, LEAD_HISTORY, LIST_FLOWS, READ_LIBRARY, RESULTS_SUMMARY, SKILL_VIEW
+from .tools import (
+    PROFILE_NAME,
+    draw_flow,
+    lead_history,
+    list_flows,
+    read_library,
+    results_summary,
+    skill_view,
+)
 
-_TOOLS = frozenset({"list_flows", "lead_history", "draw_flow", "skill_view", "read_library"})
+_TOOLS = frozenset({"list_flows", "lead_history", "draw_flow", "skill_view", "read_library", "results_summary"})
 
 
 def only_one_to_one_dms(**kwargs):
@@ -75,6 +83,13 @@ def register(ctx):
         toolset="automation_expert_read",
         schema=READ_LIBRARY,
         handler=read_library,
+    )
+    # E-573: como venimos, desde /resultados/resumen del bridge (automation-expert-results-v1).
+    ctx.register_tool(
+        name="results_summary",
+        toolset="automation_expert_read",
+        schema=RESULTS_SUMMARY,
+        handler=results_summary,
     )
     ctx.register_hook("pre_gateway_dispatch", only_one_to_one_dms)
     ctx.register_hook("pre_tool_call", make_profile_guard(getattr(ctx, "profile_name", None)))
