@@ -2,6 +2,7 @@
 
 - **Estado:** implementado; `CONVERSATION_RESUME_ENABLED=false` por defecto. Activado en producción el 2026-09-23 (PR #174, `fe1f5f3`); la primera reanudación real sigue pendiente (ver "Lo que salió mal la segunda vez").
 - **Fecha:** 2026-09-23
+- **Versión:** 1.1 (2026-11-15). Suma, como propuesta detrás de `CHATWOOT_LABEL_REMOVAL_RESUME_ENABLED` (apagado por defecto), el segundo disparador: el `conversation_updated` que saca `automation_paused` (E-571, PR #468, sin mergear al escribir esto). Ver "Reanudación al sacar la etiqueta" e "Historial".
 - **Objetivo:** que la pausa de una conversación deje de ser terminal, sin que el agente se meta donde una persona está atendiendo.
 
 ## Por qué existe
@@ -23,6 +24,8 @@ Umbral por defecto: **28.800 s (8 h)**, configurable. Calibrado contra el caso r
 
 ## Cuándo se reactiva
 
+Hay dos disparadores. El de esta sección es el **mensaje entrante del lead**. El segundo, el `conversation_updated` que saca la etiqueta, es una propuesta detrás de flag y tiene sus propias reglas en "Reanudación al sacar la etiqueta".
+
 Al entrar un mensaje del lead (haya devuelto `blocked` la admisión o no: la etiqueta sola también frena el envío), y sólo si **todo** esto se cumple:
 
 - la conversación leída de Chatwoot es la del remitente del webhook: la identidad esperada es el JID que trajo `contact_inbox.source_id` (en modo scoped), **no** `ALLOWED_WHATSAPP_JID`. El show de la API no trae `contact_inbox` ni `meta.sender.identifier`, así que el cliente la confirma por `meta.sender.phone_number` en E.164 (ver "Lo que salió mal la segunda vez");
@@ -41,7 +44,7 @@ Primero la capa durable (Supabase), después la etiqueta de Chatwoot. Si la etiq
 
 ## Idempotencia y límite
 
-`command_key` es `resume:<conversation_id>:<message_id>` y tiene índice único: el mismo mensaje disparador no reactiva dos veces (`replayed`). Cada reactivación deja una fila en `conversation_resume_events` con el estado previo de las dos entidades, el motivo (`inbound_after_quiet_period` cuando el sistema midió el silencio, `operator_request` cuando una persona sacó la etiqueta) y el silencio medido (nulo en el segundo caso).
+`command_key` es `resume:<conversation_id>:<message_id>` y tiene índice único: el mismo mensaje disparador no reactiva dos veces (`replayed`). En el disparador por etiqueta sacada (propuesto) no hay mensaje que la ancle, y la clave sería `resume:<conversation_id>:label:<los primeros 32 hex del sha256 de la entrega de Chatwoot>` (cumple el formato `^[a-z0-9:_-]{1,200}$` de la RPC): un reintento de la misma entrega da `replayed`, y una segunda entrega de la misma remoción da `already_active`. Cada reactivación deja una fila en `conversation_resume_events` con el estado previo de las dos entidades, el motivo (`inbound_after_quiet_period` cuando el sistema midió el silencio, `operator_request` cuando una persona sacó la etiqueta) y el silencio medido (nulo en el segundo caso).
 
 El **límite anti-loop** (por defecto 3 por conversación) existe porque el ciclo natural es reactivar → el agente vuelve a derivar → pausa → reactivar. Pasado el límite, la conversación se queda con las personas y el sistema no insiste.
 
@@ -64,7 +67,8 @@ Mientras `CONVERSATION_RESUME_ENABLED` esté activo, el historial canónico incl
 - **No despausa sola una conversación en la que nadie escribe.** El disparador es un mensaje entrante del lead; una conversación pausada que el lead abandonó se queda como está.
 - **No quita el `team_id`**: la conversación sigue visible en la cola del equipo.
 - **No reabre conversaciones resueltas.** Chatwoot las reabre solo al llegar un inbound, que es cuando corre esto.
-- **No se entera cuando una persona pone o saca la etiqueta.** Chatwoot le manda al bridge solo `message_created` (la cuenta no suscribe `conversation_updated`, y las actividades como «X removed automation_paused» no son `webhook_sendable`). La decisión de la persona se aplica recién con el siguiente mensaje del lead: sacar la etiqueta habilita al agente desde ese mensaje; ponerla frena el envío desde el primer mensaje (la guarda pre-envío la lee), pero la reanudación por silencio del equipo la puede levantar igual pasadas las 8 h, porque hoy el sistema no distingue una etiqueta puesta por una persona de una puesta por él. Para cerrar ese hueco el ingreso ya **captura** los `conversation_updated` con cambio de `label_list` (ver `chatwoot-ingress-v1.md`); la sincronización se construye sobre ese payload real, cuando la cuenta suscriba el evento.
+- **Con `CHATWOOT_LABEL_REMOVAL_RESUME_ENABLED` apagado (el default), no se entera cuando una persona pone o saca la etiqueta.** Los webhooks de las cuentas 1, 2 y 3 suscriben `message_created` y `conversation_updated` (relevado en E-539, 2026-11-13), pero el bridge solo **captura** los `conversation_updated` con cambio de `label_list` (ver `chatwoot-ingress-v1.md`) y no los procesa; las actividades como «X removed automation_paused» tampoco son `webhook_sendable`. Con el flag apagado, la decisión de la persona se aplica recién con el siguiente mensaje del lead: sacar la etiqueta habilita al agente desde ese mensaje; ponerla frena el envío desde el primer mensaje (la guarda pre-envío la lee), pero la reanudación por silencio del equipo la puede levantar igual pasadas las 8 h, porque el sistema no distingue una etiqueta puesta por una persona de una puesta por él. La sacada de la etiqueta la cubre la propuesta de "Reanudación al sacar la etiqueta"; la etiqueta **puesta** por una persona sigue sin sincronizarse en ningún caso.
+- **No cierra la conversación del setter cuando Chatwoot la resuelve.** Ver "Pendiente: necesita migración", parte 3.
 
 ## Lo que salió mal la primera vez (2026-09-23 23:11 UTC)
 
@@ -108,4 +112,44 @@ Lo que cambió:
 3. Tests con el cliente real y `allowed_jid` = número de prueba: la función sin pausa durable no llama a la RPC; con pausa durable llama con `operator_request` sin medir el silencio y sin macro; y el handler completo con los flags de producción reanuda a la 173 y vuelve a pedir la admisión. El del handler se corrió sobre el código anterior: rojo (ninguna llamada a la RPC).
 4. El ingreso captura los `conversation_updated` con cambio de `label_list` del inbox configurado (`202 captured`, sin trabajo durable), para construir la sincronización inmediata sobre un payload real.
 
-Lo que no cambia: la conversación sigue esperando el siguiente mensaje del lead para reanudarse; el mensaje que ya llegó antes de que la persona sacara la etiqueta no se reprocesa.
+Lo que no cambia: la conversación sigue esperando el siguiente mensaje del lead para reanudarse; el mensaje que ya llegó antes de que la persona sacara la etiqueta no se reprocesa. La propuesta de "Reanudación al sacar la etiqueta" (E-571) cierra esa espera cuando su flag esté prendido.
+
+## Reanudación al sacar la etiqueta (propuesta, detrás de flag)
+
+- **Estado:** propuesta, construida en E-571 (PR #468, rama `feat/claude-e571-derivaciones-chatwoot`, sin mergear al 2026-11-15). Es la parte 2 del arreglo que propuso el diagnóstico E-539. Este documento no afirma que esté desplegada ni prendida en ninguna instancia.
+- **Flag:** `CHATWOOT_LABEL_REMOVAL_RESUME_ENABLED`, `false` por defecto, en `PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES` y en `.env.example`. Apagado, el `conversation_updated` sigue el camino de hoy: se captura y no se procesa.
+
+### Qué cambia con el flag prendido
+
+Cuando una persona saca `automation_paused` de una conversación, a mano o con el macro de reanudación, el bridge reanudaría en el momento, sin esperar el próximo mensaje del lead:
+
+1. **Ingreso.** `classify_chatwoot_label_removal` (`src/bridge/filtering.py`) reconoce el `conversation_updated` cuyo `changed_attributes` saca `automation_paused` de `label_list`, del inbox y la cuenta configurados (la cuenta se chequea si viene en el payload) y con el remitente acotado como en el resto del ingreso. Ese evento se captura igual que hoy y además entra al trabajo durable con la entrega (`X-Chatwoot-Delivery`) como clave: `202 accepted`, `reason: conversation_label_removal`; una entrega repetida da `200 duplicate`. Cualquier otro cambio de etiqueta, y todos con el flag apagado, solo se capturan.
+2. **Worker.** `process_chatwoot_work` llama a `_resume_paused_conversation` con `durable_pause_recorded=True`, el motivo `operator_request` y la clave por entrega de "Idempotencia y límite", en el modo `label_removal_only`:
+   - relee la conversación y **solo reanuda si la etiqueta sigue afuera**: si volvió, no hay decisión de una persona que respetar y no hace nada;
+   - **nunca mide el silencio del equipo**: ese camino lo dispara solo un mensaje del lead;
+   - no ejecuta el macro (no hay etiqueta que sacar) ni pide los mensajes de la conversación.
+3. **Reintentos.** En este modo, una falla de red con Chatwoot o una falla de Supabase no se traga: levanta `LabelRemovalResumeTransientError` y el worker reintenta la entrega, **con un tope de 8 intentos**. La clave por entrega hace seguro el reintento. Un error de protocolo de Chatwoot (identidad que no coincide, por ejemplo) sigue fallando cerrado, sin reintento.
+
+### Qué no cambia
+
+- **Las reglas de la reanudación son las mismas de "Cuándo se reactiva"**, salvo las del silencio del equipo: la conversación `open` y `can_reply`, sin assignee humano, sin `automation_opted_out`, el contacto sin baja, sin derivación a medio proyectar y dentro del límite de reactivaciones.
+- **Exige además** `CONVERSATION_RESUME_ENABLED` y la admisión durable (cut B, `CHATWOOT_CUT_B_ADMISSION_ENABLED`), el cliente de control de Chatwoot y Supabase. Si falta alguno, el flag queda inerte: no falla el arranque y el evento solo se captura.
+- **La RPC decide.** El bridge no lee la pausa durable antes de llamar (no hay una RPC de lectura por conversación sin migración): con la conversación ya admisible la RPC da `already_active`, sin caso `not_found`, y con una derivación `projected` sin atender `blocked_pending_handoff`. Esto último es la parte 1 pendiente, abajo: **sin esa migración, sacar la etiqueta de una derivación que nadie contestó sigue sin reanudar, también con el flag prendido.**
+- El eco del propio bridge (la remoción que hace el sistema al reanudar) cuesta un snapshot y una RPC que da `already_active`. No hay loop.
+
+### Antes de prender el flag
+
+- Los tests de E-571 (`tests/test_chatwoot_label_removal_resume.py`) derivan el evento del webhook capturado de la conversación 173 más un `changed_attributes` con la forma del emisor (Chatwoot v4.13.0). El payload real de la entrega `7afec902-8c33-4239-b0a1-875ad3ada59d` (Maribel, conversación 260, 2026-11-12) está en la captura del bridge y no entró al repo. **Antes de prender el flag hay que sumarlo anonimizado como fixture con su test:** si `label_list` llega con otra forma, el clasificador falla cerrado y el flag no hace nada.
+- Conviene prenderlo junto con la migración de la parte 1, por lo de `blocked_pending_handoff`.
+
+## Pendiente: necesita migración (partes 1 y 3 de E-539)
+
+Ninguna de las dos está construida; las prepara E-577. Se describen acá como propuesta, para que el contrato diga qué falta.
+
+- **Parte 1: `attended_at` al reanudar por decisión de una persona.** Hoy la RPC `resume_paused_conversation` (definida por última vez en `20261001000500_commercial_case_lookups_by_inbound_kind.sql`) corta con `blocked_pending_handoff` ante una derivación `projected` con `attended_at` nulo **sin mirar `p_reason_code`**, en contra del [ADR-0019](../decisions/0019-handoff-attendance-gates-automation.md), que promete que sacar la etiqueta o correr el macro libera la pausa. La propuesta: una migración nueva que, con `p_reason_code = 'operator_request'`, marque esa derivación `attended_at = now()` (opcional: una columna `attended_via` con `team_reply` u `operator_resume`) y siga con la reanudación; `requested` y `projection_failed` seguirían bloqueando. Sumaría el parámetro `p_require_paused boolean default false`: con `true`, una conversación que no está `paused_human` ni con `human_takeover` devolvería `not_paused`, un resultado nuevo que el camino por etiqueta usaría y que `supabase.py` tendría que aceptar. Hasta entonces, la lista de "Resultados de la RPC" no cambia.
+- **Parte 3: cerrar la conversación del setter cuando Chatwoot la resuelve.** Las bandejas 11 y 13 tienen `lock_to_single_conversation = false`: cuando la persona vuelve a escribir, Chatwoot abre otra conversación y la vieja queda `paused_human` para siempre en la base (25 de 50 el 2026-11-13, según E-539). No existe una RPC que cierre una conversación del setter. La propuesta: `close_resolved_conversation_v1(p_external_conversation_id, p_command_key)`, que la pase a `closed` y deje constancia en `conversation_events`, llamada por un `conversation_updated` con `changed_attributes.status.current_value = 'resolved'`, detrás de su propio flag. Hoy ese evento cae como `unsupported_event` antes de la captura, así que primero hay que capturar uno real. Si una derivación abierta se cierra junto con la conversación es una decisión de Dan, porque cambia qué cuenta como «persona derivada».
+
+## Historial
+
+- **1.0 (2026-09-23).** El contrato, con las correcciones de la primera, segunda y tercera vez (2026-09-23 al 2026-09-27) y el cambio de alcance de `blocked_pending_handoff` (`20260927000300`).
+- **1.1 (2026-11-15, E-578).** Suma el disparador por `conversation_updated` que saca `automation_paused` (E-571, PR #468), como propuesta detrás de `CHATWOOT_LABEL_REMOVAL_RESUME_ENABLED`: clave por entrega, modo `label_removal_only`, reintentos con tope de 8. Corrige "Lo que este contrato no cubre": los webhooks ya suscriben `conversation_updated` (E-539). Anota las partes 1 y 3 de E-539 como pendientes con migración (E-577). Escrito antes del merge de #468: no afirma nada desplegado.
