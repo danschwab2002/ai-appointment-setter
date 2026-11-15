@@ -177,6 +177,8 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
         "20261114000150_identity_link_question_v1.sql",
         # Las ofertas huerfanas de Hotmart (20261114000300, E-565).
         "20261114000300_hotmart_unknown_offers_v1.sql",
+        # El producto que suma el AE (20261115000100, E-569).
+        "20261115000100_agent_products_v1.sql",
     ]
     native = (MIGRATIONS / "20261024000200_flow_engine_native_v1.sql").read_text(encoding="utf-8")
     assert "read_automation_expert_flows_v1" not in native
