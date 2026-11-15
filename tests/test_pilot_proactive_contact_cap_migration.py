@@ -192,6 +192,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261114000150",
         # Las ofertas huerfanas de Hotmart (20261114000300, E-565).
         "20261114000300",
+        # El producto que suma el AE (20261115000100, E-569).
+        "20261115000100",
     ]
 
     sql = _sql()

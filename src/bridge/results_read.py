@@ -396,4 +396,10 @@ def register(
         logger.info("automation_expert_access route=resultados status=200")
         return body
 
+    # E-573: el resumen corto para el Automation Expert, detras de su propio flag.
+    from bridge.results_summary import register_summary
+
+    register_summary(app, supabase=supabase, instance_ref=instance_ref, time_zone=time_zone,
+                     require_token=require_token, busy=busy, slots=slots, failure=failure,
+                     results_config=config, pricing=pricing, env=env, now=now)
     return config

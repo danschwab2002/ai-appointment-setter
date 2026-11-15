@@ -171,6 +171,8 @@ def test_it_is_one_transaction_and_comes_before_the_flow_engine_routes() -> None
         "20261114000150_identity_link_question_v1.sql",
         # Las ofertas huerfanas de Hotmart (20261114000300, E-565).
         "20261114000300_hotmart_unknown_offers_v1.sql",
+        # El producto que suma el AE (20261115000100, E-569).
+        "20261115000100_agent_products_v1.sql",
     ]
 
 
