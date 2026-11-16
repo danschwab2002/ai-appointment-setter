@@ -12,9 +12,22 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
-### Arreglado
+## [1.40.2] - 2026-11-16
 
-- **Un flujo nuevo con disparo por audiencia (manual, fecha, cada) arma su simulación y la página lo publica (E-621, macro 2).** Medido en Maribel (v1.40.0) el 2026-11-16: el Automation Expert armó tres flujos nuevos de audiencia, los validó, y la página dijo «La simulación no se pudo armar (`simulation_new_flow_counts_invalid`)», así que solo los publicaba el operador con `--sin-simulacion`. La ruta de validar pedía los disparos del evento del flujo, y un disparo por audiencia no tiene evento. Ahora la simulación sale `built` de la definición, sin leer nada: no hay disparos por evento (`disparos_por_evento: 0`), nace en la cohorte de prueba, que al publicarse está vacía (`alcance_al_nacer: 0`), a quién apunta el `para` y que cuántas personas son lo cuenta la lista congelada de cada envío. La página lo dice en palabras y publica. El comando del operador hace lo mismo (`_new_audience_flow_form`, gemela). Un flujo con evento sigue contando sus disparos como antes. Qué hace quien actualiza: nada.
+Un parche sobre la 1.40.1, con 1 PR (#481) y sin migraciones. **Un flujo nuevo con disparo por audiencia ya se puede publicar desde la página** (#481, E-621): su simulación sale armada de la definición, sin leer nada. Solo cambia el bridge (y el comando del operador); sin flag, sin variables nuevas, sin campos nuevos en el manifiesto y sin cambios de profile.
+
+### Corregido
+
+- **Un flujo nuevo con disparo por audiencia (manual, fecha, cada) arma su simulación y la página lo publica (#481, E-621, macro 2).** Medido en Maribel (v1.40.0) el 2026-11-16: el Automation Expert armó tres flujos nuevos de audiencia, los validó, y la página dijo «La simulación no se pudo armar (`simulation_new_flow_counts_invalid`)», así que solo los publicaba el operador con `--sin-simulacion`. La ruta de validar pedía los disparos del evento del flujo, y un disparo por audiencia no tiene evento. Ahora la simulación sale `built` de la definición, sin leer nada: no hay disparos por evento (`disparos_por_evento: 0`), nace en la cohorte de prueba, que al publicarse está vacía (`alcance_al_nacer: 0`), a quién apunta el `para` y que cuántas personas son lo cuenta la lista congelada de cada envío. La página lo dice en palabras y publica. El comando del operador hace lo mismo (`_new_audience_flow_form`, gemela). Un flujo con evento sigue contando sus disparos como antes. Qué hace quien actualiza: nada.
+
+### Qué hace quien actualiza
+
+- **Ninguna migración.**
+- **Nada en el manifiesto** y **sin variables nuevas.** El arreglo rige al subir, sin flag.
+- **Ningún profile cambia.**
+- **Las tres imágenes salen del tag**, como siempre. Solo el bridge cambia de código; el conector de Slack y la revisión diaria llevan la versión nueva sin cambios de código.
+- **`/ready`:** cambia `instance_product_version`.
+- **Desde la 1.40.0 (sin pasar por la 1.40.1):** se suma lo de la [1.40.1] (su migración `20261115000200_agent_products_publish_v1.sql`, antes del bridge).
 
 ## [1.40.1] - 2026-11-16
 
