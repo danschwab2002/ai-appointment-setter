@@ -458,7 +458,11 @@ def test_with_two_products_the_coupon_goes_only_in_the_link_of_its_product(
         )
 
 
-def test_a_link_of_another_product_keeps_the_fixed_coupon_of_the_instance(tmp_path: Path) -> None:
+def test_a_link_of_another_product_goes_without_the_fixed_coupon_of_the_instance(
+    tmp_path: Path,
+) -> None:
+    """E-616: el cupon fijo es del principal; antes este link salia con PROTOCOLO10+."""
+
     url = _link(
         tmp_path,
         _two(tmp_path, product="att1", payment_link_coupon_code="PROTOCOLO10+"),
@@ -467,7 +471,7 @@ def test_a_link_of_another_product_keeps_the_fixed_coupon_of_the_instance(tmp_pa
         supabase=_LinkSupabase(),
     )
 
-    assert url.endswith("&offDiscount=PROTOCOLO10%2B")
+    assert "offDiscount" not in url
 
 
 # ------------------------------------------- lo que ve el agente (revision del #424)

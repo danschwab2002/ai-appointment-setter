@@ -98,7 +98,7 @@ from bridge.purchase_agent_pause import (
 from bridge.product_label import ProductLabeler
 from bridge.product_routes import HotmartUnrouted, ProductRoute, ProductRoutes, followup_product_labels
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
-from bridge.payment_link_coupon import coupon_applied_in_context, mark_payment_link_coupon, mark_segment_link_coupon, segment_cart_discount_brake, segment_coupon_fits_product, segment_coupon_for_labels, segment_link_coupon, segment_link_offer, SegmentOfferLink, validate_payment_link_coupon_code  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
+from bridge.payment_link_coupon import coupon_applied_in_context, fixed_coupon_fits_product, mark_payment_link_coupon, mark_segment_link_coupon, segment_cart_discount_brake, segment_coupon_fits_product, segment_coupon_for_labels, segment_link_coupon, segment_link_offer, SegmentOfferLink, validate_payment_link_coupon_code  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
 from bridge.filtering import EventDecision, LabelRemoval, classify_chatwoot_event, classify_chatwoot_label_removal
 from bridge.agent_provenance import AgentTurn, CONTEXT_BUILDER_VERSION
 from bridge.hermes import AGENT_TURN_FAILED_REASON_CODE, HermesShadowProcessor, agent_turn_failure_to_hand_off, payment_link_product  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
@@ -8083,6 +8083,18 @@ def create_app(
                 conversation_ref,
             )
         code = settings.payment_link_coupon_code
+        if code is not None and not fixed_coupon_fits_product(
+            link_product=link_product,
+            principal_product=commercial_ally_routes.principal.key,
+        ):
+            # E-616: el cupon fijo es del principal; el link de otro producto
+            # sale sin cupon y sin ``coupon_applied`` adelantado.
+            logger.info(
+                "payment_link_coupon_other_product product=%s conversation=%s",
+                link_product,
+                context.get("conversation_ref") if isinstance(context, dict) else None,
+            )
+            return None
         if code is None or not settings.payment_link_coupon_recovery_only:
             return code
         applied = coupon_applied_in_context(context)
@@ -8166,6 +8178,7 @@ def create_app(
             history,
             coupon_code=settings.payment_link_coupon_code,
             recovery_only=settings.payment_link_coupon_recovery_only,
+            several_products=several_products,
         )
         normalized = _normalize_chatwoot_history(
             history,
