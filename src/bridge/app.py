@@ -122,6 +122,7 @@ from bridge.handoff_link_note import (
 )
 from bridge import price_guard as price_guard_module
 from bridge import hotmart_unknown_offers as unknown_offers_module
+from bridge import permission_connectors as permission_connectors_module
 from bridge import handoff_notice
 from bridge.handoff_notice import (
     HANDOFF_NOTICE_DECISION,
@@ -582,6 +583,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # Hotmart. No depende del aliado: el catalogo es el del manifiesto. Por
     # instancia, solo prenderlo.
     "hotmart_unknown_offers_enabled",
+    # E-628 (permission-registry-v1 §8): los conectores del aviso de permiso. Lo
+    # especifico (que avisos, que ofertas) es de [[permisos.avisos]]; por
+    # instancia, solo prenderlo.
+    "permission_notice_connector_enabled",
     # Transcribir un audio no depende del aliado: la key y el host de Chatwoot
     # ya son configuracion por runtime.
     "chatwoot_audio_transcription_enabled",
@@ -1085,6 +1090,10 @@ class Settings:
     # (el default) el bridge no llama a ninguna RPC nueva, /ready no cambia y
     # todo es byte a byte como antes.
     hotmart_unknown_offers_enabled: bool = False
+    # E-628 (permission-registry-v1 §8): PERMISSION_NOTICE_CONNECTOR_ENABLED.
+    # Apagado (el default) no se carga ningun aviso, no se escribe ningun
+    # permiso y /ready no cambia.
+    permission_notice_connector_enabled: bool = False
     # Los segmentos aprobados de [[agente.segmentos]], cargados al arrancar con
     # el flag prendido. None con el flag apagado.
     agent_segment_catalog: SegmentCatalog | None = None
@@ -2602,6 +2611,14 @@ class Settings:
             agent_price_guard_mode=agent_price_guard_mode,
             hotmart_unknown_offers_enabled=(
                 os.getenv(unknown_offers_module.UNKNOWN_OFFERS_ENV, "false")
+                .strip()
+                .lower()
+                == "true"
+            ),
+            permission_notice_connector_enabled=(
+                os.getenv(
+                    permission_connectors_module.PERMISSION_NOTICE_CONNECTOR_ENV, "false"
+                )
                 .strip()
                 .lower()
                 == "true"
@@ -6128,6 +6145,21 @@ def create_app(
         if settings.hotmart_unknown_offers_enabled and shared_supabase is not None
         else None
     )
+    # E-628 (permission-registry-v1 §8): los avisos de [[permisos.avisos]] y los
+    # dos conectores que escriben el permiso antes de la admision nativa.
+    # Apagado, None: nada se carga ni se escribe y /ready no cambia.
+    permission_connectors: permission_connectors_module.PermissionNoticeConnectors | None = None
+    if settings.permission_notice_connector_enabled:
+        if settings.instance_manifest is None or shared_supabase is None:
+            raise ValueError(
+                "PERMISSION_NOTICE_CONNECTOR_ENABLED requires INSTANCE_MANIFEST_PATH "
+                "and Supabase"
+            )
+        permission_connectors = permission_connectors_module.PermissionNoticeConnectors(
+            shared_supabase,
+            tenant_ref=settings.instance_manifest.tenant_ref,
+            notices=settings.instance_manifest.permission_notices,
+        )
     # E-317 (campaign-inbound-entry-v1): la palabra clave y la pregunta de entrada de
     # las campanas. Sin el flag, None y el turno no lee nada nuevo.
     campaign_inbound = _campaign_inbound_entry_setup(
@@ -6943,6 +6975,7 @@ def create_app(
             flow_engine=flow_engine_runtime,
             purchase_agent_pause=purchase_agent_pause,
             identity_link_bind=settings.identity_link_mode == "vivo",
+            permission_connectors=permission_connectors,
             commercial_ally_config=(
                 settings.commercial_ally_config
                 if portable_dynamic_recipient
@@ -7324,6 +7357,10 @@ def create_app(
                 # La primera lectura, antes de los workers. Si la base no
                 # contesta sigue con los segmentos del manifiesto y reintenta.
                 await agent_campaign_live.start()
+            if permission_connectors is not None:
+                # E-628: los avisos a la base antes del primer evento. Si la base
+                # no contesta, se reintenta antes de cada evento con aviso.
+                await permission_connectors.register_notices()
             if resolution_worker is not None:
                 await resolution_worker.start()
             if hotmart_abandonment_timer_worker is not None:
@@ -11962,6 +11999,15 @@ def create_app(
             commercial_ally_readiness = {
                 **commercial_ally_readiness,
                 "hotmart_unknown_offers": unknown_offers_state,
+            }
+        if permission_connectors is not None:
+            # E-628 (permission-registry-v1 §8): cuantos avisos estan vigentes,
+            # como "<n>-activos", o "sin_cargar" si la base no los acepto. No
+            # responde 503: sin avisos la admision es la de antes. Apagado,
+            # /ready no cambia.
+            commercial_ally_readiness = {
+                **commercial_ally_readiness,
+                "permission_notices": permission_connectors.readiness(datetime.now(UTC)),
             }
         if segment_catalog is not None:
             # Cada segmento como clave:vN:sha:estado (por_empezar, vigente,

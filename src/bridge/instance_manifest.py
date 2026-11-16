@@ -37,6 +37,15 @@ from .handoff_notice import (
     default_service_hours,
     parse_day,
 )
+from .permission_connectors import (
+    CHECKBOXES as PERMISSION_CHECKBOXES,
+    CONNECTOR_HOTMART_CHECKOUT,
+    CONNECTOR_LANDING,
+    CONNECTORS as PERMISSION_CONNECTORS,
+    MAX_WINDOW_HOURS as PERMISSION_MAX_WINDOW_HOURS,
+    USES as PERMISSION_USES,
+    PermissionNotice,
+)
 from .payment_slip import (
     PAYMENT_SLIP_TEMPLATE_PARAMETERS,
     PaymentSlipMethod,
@@ -177,6 +186,8 @@ _TOP_KEYS_OPTIONAL = {
     "atencion",
     # E-564 (price-guard-v1 §8): montos legitimos que no estan en ningun texto.
     "guarda_precio",
+    # E-628 (permission-registry-v1 §8): los avisos de permiso de WhatsApp.
+    "permisos",
 }
 
 # La etiqueta de Chatwoot de un producto. Chatwoot pasa el titulo a minusculas y
@@ -425,6 +436,10 @@ class InstanceManifest:
     # [guarda_precio].montos_extra (E-564, price-guard-v1 §8): montos legitimos
     # que el agente dice y no estan en ningun texto del turno. Vacio = ninguno.
     price_guard_extra_amounts: tuple[PriceGuardExtraAmount, ...] = ()
+    # [[permisos.avisos]] (E-628, permission-registry-v1 §8): los avisos de
+    # permiso de WhatsApp en el checkout de Hotmart o en una landing. Vacio =
+    # ninguno: los conectores no escriben nada.
+    permission_notices: tuple[PermissionNotice, ...] = ()
 
     @property
     def service_hours(self) -> ServiceHours:
@@ -774,6 +789,9 @@ class InstanceManifest:
         campaigns = _campaigns(payload.get("campanas"), agent_segments, all_offers)
         attention = _attention(payload.get("atencion"), time_zone)
         price_guard_extra_amounts = _price_guard_extra_amounts(payload.get("guarda_precio"))
+        permission_notices = _permission_notices(
+            payload.get("permisos"), funnel_ref, offers, products
+        )
 
         manifest = cls(
             product_version=product_version,
@@ -816,6 +834,7 @@ class InstanceManifest:
             campaigns=campaigns,
             attention=attention,
             price_guard_extra_amounts=price_guard_extra_amounts,
+            permission_notices=permission_notices,
         )
         for flow, enabled in manifest.flows.items():
             blockers = manifest.flow_blockers(flow)
@@ -1705,3 +1724,200 @@ def _payment_slip_methods(payload: Mapping[str, Any]) -> tuple[PaymentSlipMethod
         return parse_payment_slip_methods(ficha["medios"])
     except ValueError as exc:
         raise ManifestError(str(exc)) from exc
+
+
+# [[permisos.avisos]] (E-628, docs/contracts/permission-registry-v1.md §8).
+_NOTICE_REF = re.compile(r"[a-z0-9][a-z0-9._-]{0,119}")
+_NOTICE_SRC = re.compile(r"[A-Za-z0-9_.:-]{1,255}")
+_NOTICE_URL = re.compile(r"https://[^\s]+")
+_NOTICE_REQUIRED = {
+    "ref", "conector", "url", "copy_version", "texto", "casilla", "medido_en", "medido_por",
+    "vigente_desde", "ventana_horas",
+}
+_NOTICE_OPTIONAL = {
+    "producto", "ofertas", "usos", "vigente_hasta", "requiere_src", "oferta_exclusiva",
+}
+MAX_PERMISSION_NOTICES = 20
+
+
+def _aware_datetime(value: object, where: str) -> datetime:
+    """Una fecha con hora y zona: TOML (``2026-11-17T15:00:00Z``) o texto ISO 8601."""
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError as exc:
+            raise ManifestError(f"{where} debe ser una fecha y hora ISO 8601 con zona") from exc
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        raise ManifestError(f"{where} debe ser una fecha y hora con zona (AAAA-MM-DDTHH:MM:SSZ)")
+    return value
+
+
+def _permission_notices(
+    raw: object,
+    funnel_ref: str,
+    offers: tuple[Offer, ...],
+    products: tuple[Product, ...],
+) -> tuple[PermissionNotice, ...]:
+    """``[[permisos.avisos]]``: el aviso que una persona ve en el checkout o en la landing.
+
+    Cada aviso es una afirmacion de quien firma el manifiesto, como un formulario de
+    ``[adaptadores.ghl]``: que la pagina publicada muestra ese texto exacto desde
+    ``vigente_desde`` (nunca antes de ``medido_en``). Un texto nuevo es una
+    ``copy_version`` nueva y un ``ref`` nuevo: la base no deja cambiar un aviso.
+    """
+    if raw is None:
+        return ()
+    if not isinstance(raw, dict):
+        raise ManifestError("permisos debe ser una tabla")
+    _exact_keys("permisos", raw, {"avisos"})
+    entries = raw["avisos"]
+    if not isinstance(entries, list) or not entries or not all(
+        isinstance(entry, dict) for entry in entries
+    ):
+        raise ManifestError("permisos.avisos debe ser una lista de tablas ([[permisos.avisos]])")
+    if len(entries) > MAX_PERMISSION_NOTICES:
+        raise ManifestError(f"permisos.avisos: admite hasta {MAX_PERMISSION_NOTICES} avisos")
+    # El funnel y las ofertas de cada producto: el principal es el de [instancia].
+    principal = (funnel_ref, frozenset(offer.code for offer in offers))
+    by_product: dict[str, tuple[str, frozenset[str]]] = {}
+    for product in products:
+        by_product[product.key] = (
+            principal
+            if product.commerce is None
+            else (
+                product.commerce.funnel_ref,
+                frozenset(offer.code for offer in product.commerce.offers),
+            )
+        )
+    notices: list[PermissionNotice] = []
+    for index, entry in enumerate(entries):
+        where = f"permisos.avisos[{index}]"
+        _exact_keys(where, entry, _NOTICE_REQUIRED, _NOTICE_OPTIONAL)
+        ref = _str(entry, "ref", f"{where}.ref")
+        if _NOTICE_REF.fullmatch(ref) is None:
+            raise ManifestError(f"{where}.ref debe ser un id en minusculas (a-z, 0-9, punto, guiones)")
+        connector = _str(entry, "conector", f"{where}.conector")
+        if connector not in PERMISSION_CONNECTORS:
+            raise ManifestError(
+                f"{where}.conector debe ser uno de: {', '.join(PERMISSION_CONNECTORS)}"
+            )
+        product_ref, declared = principal
+        if "producto" in entry:
+            product_name = _str(entry, "producto", f"{where}.producto")
+            if product_name not in by_product:
+                raise ManifestError(
+                    f"{where}.producto '{product_name}' no es un producto de [[productos]]"
+                )
+            product_ref, declared = by_product[product_name]
+        notice_offers = _str_list(entry.get("ofertas", []), f"{where}.ofertas")
+        unknown = sorted(set(notice_offers) - declared)
+        if unknown:
+            raise ManifestError(
+                f"{where}.ofertas: {', '.join(unknown)} no es una oferta declarada del producto"
+            )
+        uses = _str_list(entry.get("usos", list(PERMISSION_USES)), f"{where}.usos")
+        if not uses or set(uses) - set(PERMISSION_USES):
+            raise ManifestError(
+                f"{where}.usos: en v1 solo {', '.join(PERMISSION_USES)} "
+                "(la difusion es una decision aparte)"
+            )
+        url = _str(entry, "url", f"{where}.url")
+        if _NOTICE_URL.fullmatch(url) is None or len(url) > 2048:
+            raise ManifestError(f"{where}.url debe ser la URL https:// donde esta el aviso")
+        copy_version = _str(entry, "copy_version", f"{where}.copy_version")
+        if _NOTICE_REF.fullmatch(copy_version) is None:
+            raise ManifestError(
+                f"{where}.copy_version debe ser un id en minusculas (a-z, 0-9, punto, guiones)"
+            )
+        text = entry.get("texto")
+        if not isinstance(text, str) or not text.strip() or len(text) > 4000:
+            raise ManifestError(
+                f"{where}.texto debe ser el texto exacto del aviso (hasta 4000 caracteres)"
+            )
+        checkbox = _str(entry, "casilla", f"{where}.casilla")
+        if checkbox not in PERMISSION_CHECKBOXES:
+            raise ManifestError(
+                f"{where}.casilla debe ser una de: {', '.join(PERMISSION_CHECKBOXES)}"
+            )
+        measured_at = _aware_datetime(entry.get("medido_en"), f"{where}.medido_en")
+        measured_by = _str(entry, "medido_por", f"{where}.medido_por")
+        if len(measured_by) > 200:
+            raise ManifestError(f"{where}.medido_por admite hasta 200 caracteres")
+        valid_from = _aware_datetime(entry.get("vigente_desde"), f"{where}.vigente_desde")
+        if valid_from < measured_at:
+            raise ManifestError(f"{where}.vigente_desde no puede ser anterior a medido_en")
+        valid_until = None
+        if "vigente_hasta" in entry:
+            valid_until = _aware_datetime(entry.get("vigente_hasta"), f"{where}.vigente_hasta")
+            if valid_until < valid_from:
+                raise ManifestError(
+                    f"{where}.vigente_hasta no puede ser anterior a vigente_desde"
+                )
+        window = entry.get("ventana_horas")
+        if type(window) is not int or not 1 <= window <= PERMISSION_MAX_WINDOW_HOURS:
+            raise ManifestError(
+                f"{where}.ventana_horas debe ser un entero entre 1 y "
+                f"{PERMISSION_MAX_WINDOW_HOURS} (el max_lookback del scope de la oferta)"
+            )
+        requires_src = None
+        if connector == CONNECTOR_HOTMART_CHECKOUT:
+            only_landing = sorted({"requiere_src", "oferta_exclusiva"} & set(entry))
+            if only_landing:
+                raise ManifestError(
+                    f"{where}: {', '.join(only_landing)} es solo de un aviso de landing"
+                )
+        else:
+            if entry.get("oferta_exclusiva") is not True:
+                raise ManifestError(
+                    f"{where}: un aviso de landing afirma oferta_exclusiva = true (la oferta "
+                    "solo se llega desde esa landing; un link directo al checkout se salta el aviso)"
+                )
+            if not notice_offers:
+                raise ManifestError(
+                    f"{where}.ofertas: un aviso de landing nombra sus ofertas exclusivas"
+                )
+            if "requiere_src" in entry:
+                requires_src = _str(entry, "requiere_src", f"{where}.requiere_src")
+                if _NOTICE_SRC.fullmatch(requires_src) is None:
+                    raise ManifestError(
+                        f"{where}.requiere_src debe ser el src de la landing (A-Z, 0-9, _.:-)"
+                    )
+        notices.append(
+            PermissionNotice(
+                notice_ref=ref,
+                connector=connector,
+                product_ref=product_ref,
+                offer_refs=tuple(sorted(notice_offers)),
+                uses=tuple(sorted(uses)),
+                surface_url=url,
+                copy_version=copy_version,
+                text=text,
+                checkbox=checkbox,
+                measured_at=measured_at,
+                measured_by=measured_by,
+                valid_from=valid_from,
+                valid_until=valid_until,
+                window=timedelta(hours=window),
+                requires_src=requires_src,
+                exclusive_offer=connector == CONNECTOR_LANDING,
+            )
+        )
+    refs = [notice.notice_ref for notice in notices]
+    if len(set(refs)) != len(refs):
+        raise ManifestError("permisos.avisos: dos avisos con el mismo ref")
+    # Una oferta exclusiva de una landing no puede estar en el aviso de otra
+    # landing: si dos paginas la llevan, no es exclusiva de ninguna.
+    landing_of_offer: dict[tuple[str, str], tuple[str | None, str]] = {}
+    for notice in notices:
+        if notice.connector != CONNECTOR_LANDING:
+            continue
+        page = urlsplit(notice.surface_url)
+        here = (page.hostname, page.path)
+        for offer in notice.offer_refs:
+            other = landing_of_offer.setdefault((notice.product_ref, offer), here)
+            if other != here:
+                raise ManifestError(
+                    f"permisos.avisos: la oferta {offer} esta en avisos de dos landings "
+                    "distintas; no es exclusiva de ninguna"
+                )
+    return tuple(notices)

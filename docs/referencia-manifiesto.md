@@ -266,6 +266,47 @@ montos_extra = [
 | `montos_extra[].moneda` | Código ISO 4217 en mayúsculas (`USD`, `MXN`) | No carga |
 | `montos_extra[].que_es` | Qué es ese monto, para quien revisa | No carga si está vacío |
 
+## `[[permisos.avisos]]`, opcional (E-628)
+
+Los avisos de permiso de WhatsApp que una persona ve **en el paso**, sin formulario: en el checkout de Hotmart o pegado al botón de compra de una landing (`docs/contracts/permission-registry-v1.md` §8). Con `PERMISSION_NOTICE_CONNECTOR_ENABLED=true` el bridge los carga en la base al arrancar y, por cada carrito o pago rechazado con teléfono de una oferta cubierta que va a la admisión nativa, escribe el permiso antes de admitir. Apagado, no se usan.
+
+Cada aviso es una afirmación de quien firma el manifiesto, como un formulario de `[adaptadores.ghl]`: que la página publicada muestra **ese texto exacto** desde `vigente_desde`, y que se midió (`medido_en`) antes de declararlo. Un texto nuevo es una `copy_version` nueva y un `ref` nuevo: la base no deja cambiar un aviso ya cargado. Para cerrar uno se le pone `vigente_hasta`; los permisos que ya dio siguen valiendo.
+
+```toml
+[[permisos.avisos]]
+ref = "maribel-combo-checkout-v1"
+conector = "hotmart_checkout"
+ofertas = ["<oferta-del-combo>"]
+url = "https://pay.hotmart.com/<hotlink>?off=<oferta-del-combo>"
+copy_version = "maribel-whatsapp-checkout-v1"
+texto = "Al continuar, aceptas que El Protocolo te contacte por WhatsApp ..."
+casilla = "ninguna"
+medido_en = 2026-11-18T15:00:00Z
+medido_por = "E-6xx, captura de la página publicada"
+vigente_desde = 2026-11-18T15:00:00Z
+ventana_horas = 24
+```
+
+| Campo | Qué es | Si está mal |
+|---|---|---|
+| `ref` | Id estable del aviso (minúsculas, números, punto, guiones) | No carga; dos iguales tampoco |
+| `conector` | `hotmart_checkout` (el aviso está en la página de pago) o `landing` (pegado al botón de compra) | No carga |
+| `producto` | Opcional: la `clave` de un `[[productos]]`. Sin él, el principal | No carga si no es un producto declarado |
+| `ofertas` | Las ofertas que cubre, declaradas en el producto. En `hotmart_checkout`, vacío = todo el producto | No carga si nombra una oferta ajena |
+| `usos` | Opcional, `["recuperacion"]` (el único en v1; la difusión es una decisión aparte) | No carga con otro uso |
+| `url` | La URL `https://` donde está el aviso | No carga |
+| `copy_version` | La versión del texto | No carga |
+| `texto` | El texto exacto, byte a byte como se publicó (hasta 4000 caracteres). La base guarda su sha256 en UTF-8 | No carga si está vacío |
+| `casilla` | `ninguna`, `opcional_sin_premarcar` u `obligatoria` | No carga |
+| `medido_en`, `medido_por` | Cuándo y quién midió la página publicada | No carga sin zona horaria |
+| `vigente_desde` | Desde cuándo vale; nunca antes de `medido_en`. Un evento anterior no da permiso | No carga |
+| `vigente_hasta` | Opcional: el cierre del aviso. Al arrancar, el bridge lo cierra en la base | No carga si es anterior a `vigente_desde` |
+| `ventana_horas` | La ventana para entrar de cada permiso (1 a 720): el `max_lookback` del scope de la oferta en `hotmart_purchase_intent_scopes` (24 h al instalar) | No carga |
+| `oferta_exclusiva` | Solo `landing`, obligatoria y `true`: la oferta se llega **solo** desde esa landing (un link directo al checkout se salta el aviso). Una oferta en avisos de dos landings distintas no es exclusiva de ninguna | No carga |
+| `requiere_src` | Solo `landing`, opcional: el `origin.src` (o `sck`) que tiene que traer un pago rechazado. El carrito no trae `src` y no se le exige | No carga en un aviso de checkout |
+
+Con un aviso de checkout y uno de landing que cubren el mismo evento, el permiso sale del de checkout (la persona escribió el teléfono debajo del aviso).
+
 ## `[slack]` y `[revision_diaria]`, opcionales
 
 | Campo | Qué es |
