@@ -61,6 +61,7 @@ from .flow_replay import (
 __all__ = [
     "CAMBIOS_MAX",
     "NEW_FLOW_COUNTS_CONTRACT",
+    "build_native_audience_reach_simulation",
     "build_native_flow_simulation",
     "build_new_audience_flow_simulation",
     "build_new_flow_simulation",
@@ -532,6 +533,9 @@ def native_flow_counts_request(store: Any, items: Any) -> dict[str, Any] | None:
     * ``{"product_ref", "trigger"}`` si hay un solo item, de un flujo nativo: el evento es el de la
       definicion que va a quedar (la del item en una ``version``, la del destino en un ``volver``,
       la activa en un ``prender`` o un ``apagar``);
+    * ``{"audience_reach": {"product_ref", "flow_id", "version"}}`` si es un ``prender`` o un ``apagar`` de
+      un flujo con disparo por audiencia (``manual``, ``fecha``, ``cada``): no tiene evento, se cuenta su
+      audiencia de hoy con ``read_flow_audience_reach_v1`` (E-622);
     * ``{"simulation_unavailable": <motivo>}`` si son todos nativos pero no se puede pedir.
 
     Nativo es lo que dice el almacen (``native``, una ruta del motor sin ``legacy_kind``) o un flujo en
@@ -560,8 +564,17 @@ def native_flow_counts_request(store: Any, items: Any) -> dict[str, Any] | None:
         definition = versions.get(str(item.get("version")))
     else:
         definition = versions.get(str(flow.get("active_version")))
-    trigger = _event_of(definition)
     product = item.get("producto")
+    if item["tipo"] in AUDIENCE_REACH_ITEM_TYPES and isinstance(definition, Mapping) \
+            and audience_form(definition.get("dispara")) is not None:
+        # Un disparo por audiencia no tiene evento: prender o apagar se simula con cuantas personas
+        # cumplen hoy su para (read_flow_audience_reach_v1, E-622).
+        version = flow.get("active_version")
+        if not isinstance(product, str) or not isinstance(flow.get("flow_id"), str) \
+                or type(version) is not int:
+            return {"simulation_unavailable": NATIVE_FLOW_COUNTS_INVALID}
+        return {"audience_reach": {"product_ref": product, "flow_id": flow["flow_id"], "version": version}}
+    trigger = _event_of(definition)
     if not isinstance(trigger, str) or not isinstance(product, str):
         return {"simulation_unavailable": NATIVE_FLOW_COUNTS_INVALID}
     return {"product_ref": product, "trigger": trigger}
@@ -638,6 +651,97 @@ def build_native_flow_simulation(counts: Any, items: Sequence[ProposalItem], *,
         sharing = [entry for entry in _sharing_the_event(world, item.producto, trigger) if entry["flujo"] != own]
         if sharing:
             summary["comparte_el_evento_con"] = sharing
+        return {"status": "built", "summary": summary, "summary_sha256": summary_sha256(summary), "cambios": []}
+    except _Failed as failed:
+        return {"status": "failed", "reason_code": failed.reason_code}
+    except Exception:  # noqa: BLE001 - la vista previa no se cae por la simulacion
+        return {"status": "failed", "reason_code": SIMULATION_ERROR}
+
+
+# E-622: prender o apagar un flujo con disparo por audiencia (manual, fecha, cada). No tiene evento, asi que la
+# lectura de conteos no sirve (daba simulation_native_flow_counts_invalid y la pagina no publicaba el paso de la
+# cohorte a todos). Se cuenta su audiencia de hoy con read_flow_audience_reach_v1 (20261116000100): la misma
+# definicion de «compro» y del formulario que la lista congelada, sin telefonos ni contactos. Las etiquetas de
+# Chatwoot y la repeticion no las ve la base, y la ocurrencia corta en por_ocurrencia: el numero es un maximo.
+AUDIENCE_REACH_CONTRACT = "flow-audience-reach-v1"
+AUDIENCE_REACH_INVALID = "simulation_audience_reach_invalid"
+AUDIENCE_REACH_UNAVAILABLE = "simulation_audience_reach_unavailable"
+AUDIENCE_REACH_ITEM_TYPES = frozenset({"prender", "apagar"})
+_REACH_KEYS = frozenset({"contract", "flow_id", "version", "product_ref", "state", "status", "measured_at",
+                         "candidates", "opted_out", "already_customer", "matching", "without_contact", "ambiguous",
+                         "read_capped"})
+
+
+def _reach_count(value: object) -> int:
+    if type(value) is not int or value < 0:
+        raise _Failed(AUDIENCE_REACH_INVALID)
+    return value
+
+
+def build_native_audience_reach_simulation(reach: Any, items: Sequence[ProposalItem], *,
+                                           world: FlowWorld | None) -> dict[str, Any]:
+    """La simulacion de un ``prender`` o un ``apagar`` de un flujo con disparo por audiencia (E-622).
+
+    ``reach`` es la respuesta de ``read_flow_audience_reach_v1`` para la version activa del flujo. Se vuelve a
+    mirar aca, contra ``world`` y el item, que sea de ese flujo, esa version y ese producto, y que los numeros
+    cierren. El resumen dice el cambio, a quien apunta el ``para``, cuantas personas lo cumplen hoy, cuantas
+    saldrian por envio (el tope de ``por_ocurrencia``) y por que es un maximo. Nunca levanta.
+    """
+    try:
+        if world is None or len(items) != 1:
+            raise _Failed(NATIVE_FLOW_MIXED)
+        item = items[0]
+        flow = world.flow(item.flow_id) if item.flow_id is not None else None
+        if item.tipo not in AUDIENCE_REACH_ITEM_TYPES or flow is None or not flow.is_native:
+            raise _Failed(NATIVE_FLOW_MIXED)
+        definition = flow.active_definition
+        if not isinstance(definition, Mapping):
+            raise _Failed(AUDIENCE_REACH_INVALID)
+        try:
+            spec = audience_spec(definition)
+        except AudienceSpecInvalid:
+            raise _Failed(AUDIENCE_REACH_INVALID) from None
+        if not isinstance(reach, Mapping) or set(reach) != _REACH_KEYS \
+                or reach.get("contract") != AUDIENCE_REACH_CONTRACT \
+                or reach.get("flow_id") != flow.flow_id or reach.get("version") != flow.active_version \
+                or reach.get("product_ref") != item.producto or reach.get("status") != spec.status \
+                or type(reach.get("read_capped")) is not bool:
+            raise _Failed(AUDIENCE_REACH_INVALID)
+        candidates, opted_out = _reach_count(reach.get("candidates")), _reach_count(reach.get("opted_out"))
+        customers, matching = _reach_count(reach.get("already_customer")), _reach_count(reach.get("matching"))
+        without, ambiguous = _reach_count(reach.get("without_contact")), _reach_count(reach.get("ambiguous"))
+        if matching + opted_out + customers > candidates:
+            raise _Failed(AUDIENCE_REACH_INVALID)
+        audience: dict[str, Any] = {"es": spec.status, "producto": spec.product or item.producto}
+        if spec.status == "prospecta":
+            audience["formulario_en_dias"] = spec.form_window_days
+        if spec.labels:
+            audience["etiquetas"] = list(spec.labels)
+        if spec.excluded:
+            audience["excluye"] = list(spec.excluded)
+        per_send = min(matching, spec.per_occurrence)
+        # Por que el numero es un maximo: lo que la base no ve y lo que corta la ocurrencia.
+        caveats = []
+        if spec.labels or spec.excluded:
+            caveats.append("etiquetas_de_chatwoot")
+        # topes.repeticion: quien ya recibio una ocurrencia del flujo (la de la cohorte, por ejemplo) puede quedar
+        # afuera como repetida; la lista lo mira al armarse.
+        caveats.append("repeticion")
+        if matching > spec.per_occurrence:
+            caveats.append("tope_por_ocurrencia")
+        summary: dict[str, Any] = {
+            "flujo": f"{item.producto}/{item.flujo}", "tipo": item.tipo, "estado_hoy": flow.state,
+            "queda_en": "apagado" if item.tipo == "apagar" else (item.a or "prendido"),
+            "disparador": spec.form, "audiencia": audience,
+            "ritmo": {"por_hora": spec.per_hour, "por_ocurrencia": spec.per_occurrence},
+            "medido_en": reach.get("measured_at"),
+            "cumplen_hoy": matching, "con_baja": opted_out, "ya_clientas": customers,
+            "sin_contacto": without, "ambiguas": ambiguous, "lectura_al_tope": reach["read_capped"],
+            "por_envio": per_send, "cota": TOUCH_AT_MOST, "por_que": caveats,
+            "confirma": _AUDIENCE_CONFIRMS[spec.form],
+        }
+        if item.tipo == "apagar":
+            summary["dejarian_de_recibirlo"] = per_send
         return {"status": "built", "summary": summary, "summary_sha256": summary_sha256(summary), "cambios": []}
     except _Failed as failed:
         return {"status": "failed", "reason_code": failed.reason_code}

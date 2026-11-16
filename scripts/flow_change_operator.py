@@ -335,6 +335,15 @@ class Ops:
         if native is not None:
             if "simulation_unavailable" in native:
                 return native
+            if "audience_reach" in native:
+                # Prender o apagar un flujo de audiencia: sin evento, cuenta su audiencia de hoy (E-622).
+                request = native["audience_reach"]
+                try:
+                    reach = self.sql_json(SQL_AUDIENCE_REACH, {**args, "flow": request["flow_id"],
+                                                               "version": request["version"]}, read_only=True)
+                except Refused:
+                    return {"simulation_unavailable": "simulation_audience_reach_unavailable"}
+                return {"native_audience_reach": reach}
             try:
                 counts = self.sql_json(SQL_NEW_FLOW_COUNTS, {**args, "product": native["product_ref"],
                                                              "trigger": native["trigger"]}, read_only=True)
@@ -483,6 +492,9 @@ SQL_HISTORY = f"""select public.read_flow_engine_history_v1({INSTANCE_SQL}, {_ar
 # La simulacion de un flujo nuevo (flow-engine-v2 §14): los disparos de su disparador en 7 dias.
 SQL_NEW_FLOW_COUNTS = f"""select public.read_flow_engine_native_trigger_counts_v1({INSTANCE_SQL},
     {_arg('product')}, {_arg('trigger')}, now() - interval '7 days')::text;"""
+# Prender o apagar un flujo de audiencia (E-622, 20261116000100): cuantas personas cumplen hoy su para.
+SQL_AUDIENCE_REACH = f"""select public.read_flow_audience_reach_v1({INSTANCE_SQL},
+    {_arg('flow')}::uuid, {_arg('version')}::integer)::text;"""
 ENGINE_PAGES_MAX = 10
 
 # La gemela de bridge.flow_change_simulation.native_flow_counts_request (E-241), sin importar el
@@ -509,6 +521,17 @@ def _simulation_trigger(definition: object) -> str | None:
 
 
 _AUDIENCE_FORMS = ("fecha", "cada", "manual")
+
+
+_AUDIENCE_REACH_ITEM_TYPES = frozenset({"prender", "apagar"})
+
+
+def _audience_form(trigger: object) -> str | None:
+    """Gemela de flow_audience.audience_form: ``fecha``, ``cada`` o ``manual`` si es la unica clave."""
+    if not isinstance(trigger, Mapping) or len(trigger) != 1:
+        return None
+    (key,) = tuple(trigger)
+    return key if key in _AUDIENCE_FORMS else None
 
 
 def _new_audience_flow_form(items: object) -> str | None:
@@ -551,8 +574,16 @@ def _native_flow_counts_request(store: object, items: object) -> dict[str, Any] 
         definition = versions.get(str(item.get("version")))
     else:
         definition = versions.get(str(flow.get("active_version")))
-    trigger = _simulation_trigger(definition)
     product = item.get("producto")
+    if item["tipo"] in _AUDIENCE_REACH_ITEM_TYPES and isinstance(definition, Mapping) \
+            and _audience_form(definition.get("dispara")) is not None:
+        # Gemela de E-622: un disparo por audiencia no tiene evento; se cuenta su audiencia de hoy.
+        version = flow.get("active_version")
+        if not isinstance(product, str) or not isinstance(flow.get("flow_id"), str) \
+                or type(version) is not int:
+            return {"simulation_unavailable": "simulation_native_flow_counts_invalid"}
+        return {"audience_reach": {"product_ref": product, "flow_id": flow["flow_id"], "version": version}}
+    trigger = _simulation_trigger(definition)
     if not isinstance(trigger, str) or not isinstance(product, str):
         return {"simulation_unavailable": "simulation_native_flow_counts_invalid"}
     return {"product_ref": product, "trigger": trigger}

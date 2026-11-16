@@ -146,6 +146,8 @@ require(JSON.stringify(executable) === JSON.stringify([
   'list_agent_products_v1(jsonb, boolean, integer)',
   'list_flow_changes_v1(jsonb, boolean, integer)',
   'list_meta_template_requests_v1(jsonb, boolean, integer)',
+  // La audiencia de hoy de un flujo de audiencia, para prender o apagarlo (20261116000100, E-622).
+  'read_flow_audience_reach_v1(jsonb, uuid, integer)',
   'read_flow_engine_history_v1(jsonb, text, timestamp with time zone)',
   'read_flow_engine_native_trigger_counts_v1(jsonb, text, text, timestamp with time zone)',
   'read_flow_engine_v1(jsonb, text)',

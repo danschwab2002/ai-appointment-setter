@@ -64,7 +64,8 @@ const sha = (text) => createHash('sha256').update(text).digest('hex');
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-for (const name of names.slice(position + 1)) {
+// 20261116000100 (E-622) suma una lectura contada encima de read_flow_audience_candidates_v1 sin tocar estas.
+for (const name of names.slice(position + 1).filter((n) => n !== '20261116000100_flow_audience_reach_v1.sql')) {
   if (readFileSync(join(root, 'supabase/migrations', name), 'utf8').includes('flow_audience_')) {
     fail(`${name} toca el disparo por audiencia: revisar esta prueba`);
   }

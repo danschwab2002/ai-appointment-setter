@@ -53,6 +53,7 @@ from typing import Any
 
 from .flow_change_preview import build_preview
 from .flow_change_simulation import (
+    build_native_audience_reach_simulation,
     build_native_flow_simulation,
     build_new_audience_flow_simulation,
     build_new_flow_simulation,
@@ -242,6 +243,9 @@ def validate_proposal(payload: object, *, environ: Mapping[str, str]) -> dict[st
             simulacion = build_new_audience_flow_simulation(items)
         elif "new_flow_counts" in data:
             simulacion = build_new_flow_simulation(data.get("new_flow_counts"), items, world=world)
+        elif "native_audience_reach" in data:
+            # Prender o apagar un flujo de audiencia: cuantas personas cumplen hoy su para (E-622).
+            simulacion = build_native_audience_reach_simulation(data.get("native_audience_reach"), items, world=world)
         elif "native_flow_counts" in data:
             # Un cambio sobre un flujo nativo: los disparos de su evento, sin la historia del carrito (E-241).
             simulacion = build_native_flow_simulation(data.get("native_flow_counts"), items, world=world)
