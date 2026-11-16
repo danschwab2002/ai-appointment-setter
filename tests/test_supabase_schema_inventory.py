@@ -2343,15 +2343,27 @@ def test_agent_products_fingerprint_goes_before_the_publish() -> None:
     assert "save_agent_product_draft_v1(jsonb,uuid,integer,jsonb,text,jsonb,text,text)" in compact
 
 
-def test_agent_products_publish_fingerprint_is_last() -> None:
+def test_agent_products_publish_fingerprint_checks_the_page_and_the_live_read() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261115000200 (E-575): publicar solo desde la pagina, la lectura en vivo de service_role y una
     # campana viva por lugar.
-    publish = sql.split("'20261115000200'", 1)[1].split("select\n    version,", 1)[0]
+    publish = sql.split("'20261115000200'", 1)[1].split("'20261116000100'", 1)[0].rsplit("union all", 1)[0]
     compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", publish))
 
-    assert compact.endswith(",3,'agent_products_publish')")
+    assert compact.endswith(",3,'agent_products_publish'")
     assert "approver_publish_agent_product_v1(jsonb,text,uuid,text,text)" in compact
     assert "get_live_agent_products_v1(jsonb)" in compact
     assert "indexname='agent_campaigns_one_live'" in compact
     assert "indexdeflike'%live_scope%'" in compact
+
+
+def test_flow_audience_reach_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261116000100 (E-622): la audiencia contada, solo para el rol del agente, y la lista con telefonos
+    # sigue siendo del bridge.
+    reach = sql.split("'20261116000100'", 1)[1].split("select\n    version,", 1)[0]
+    compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", reach))
+
+    assert compact.endswith(",2,'flow_audience_reach')")
+    assert "read_flow_audience_reach_v1(jsonb,uuid,integer)" in compact
+    assert "read_flow_audience_candidates_v1(jsonb,uuid,integer,integer)" in compact

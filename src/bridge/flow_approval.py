@@ -1149,6 +1149,52 @@ def _new_audience_lines(summary: Mapping[str, Any]) -> str | None:
                     "número sale de la lista congelada de cada envío.</p>")
 
 
+_REACH_CAVEATS = {
+    "etiquetas_de_chatwoot": "las etiquetas las mira la lista en Chatwoot al armarse",
+    "repeticion": "quien ya recibió un envío de este flujo puede quedar afuera por la repetición",
+    "tope_por_ocurrencia": "cada envío corta en el tope por envío",
+}
+
+
+def _audience_reach_lines(summary: Mapping[str, Any]) -> str | None:
+    """Prender o apagar un flujo de audiencia (E-622): cuantas personas cumplen hoy su ``para``, o None."""
+    matching, per_send = summary.get("cumplen_hoy"), summary.get("por_envio")
+    audience = summary.get("audiencia")
+    form = summary.get("disparador")
+    if not isinstance(matching, int) or not isinstance(per_send, int) or not isinstance(audience, Mapping) \
+            or form not in _AUDIENCE_TRIGGER_TEXT:
+        return None
+    head = _native_change_line(summary) or ""
+    product = _esc(audience.get("producto"))
+    if audience.get("es") == "clienta":
+        who = f"clientas que compraron <strong>{product}</strong>"
+    else:
+        who = (f"prospectas de <strong>{product}</strong> con el formulario con permiso de WhatsApp en los "
+               f"últimos {_esc(audience.get('formulario_en_dias'))} días")
+    people = f"<strong>{_esc(matching)}</strong> {'persona' if matching == 1 else 'personas'}"
+    head += (f"<p>Disparo por audiencia (<strong>{_esc(_AUDIENCE_TRIGGER_TEXT[form])}</strong>). Hoy cumplen la "
+             f"audiencia {people}: {who}, sin las que se dieron de baja.</p>")
+    if summary.get("tipo") == "apagar":
+        head += (f"<p>Al apagarlo, como máximo <strong>{_esc(per_send)}</strong> "
+                 f"{'persona dejaría' if per_send == 1 else 'personas dejarían'} de recibir el próximo envío.</p>")
+    else:
+        head += (f"<p>Para todos, cada envío le llegaría como máximo a <strong>{_esc(per_send)}</strong> "
+                 f"{'persona' if per_send == 1 else 'personas'}.</p>")
+    left = [f"{_esc(summary.get(key))} {text}" for key, text in (
+        ("con_baja", "con baja"), ("ya_clientas", "que ya compraron"), ("sin_contacto", "sin contacto"),
+        ("ambiguas", "con el teléfono en más de un contacto")) if isinstance(summary.get(key), int) and summary[key]]
+    if left:
+        head += f"<p>Quedan afuera: {', '.join(left)}.</p>"
+    caveats = summary.get("por_que") if isinstance(summary.get("por_que"), list) else []
+    said = [_REACH_CAVEATS[str(caveat)] for caveat in caveats if str(caveat) in _REACH_CAVEATS]
+    note = "Es un máximo: " + "; ".join(said) + "." if said else "Es un máximo."
+    if summary.get("lectura_al_tope") is True:
+        note += " La lectura llegó a su tope: hay más personas que las contadas."
+    if form == "manual":
+        note += " El número exacto lo confirma una persona en «Envíos a una audiencia» antes de que salga."
+    return head + f"<p class=\"meta\">Contado en la base el {_esc(summary.get('medido_en'))}. {_esc(note)}</p>"
+
+
 def _simulation_summary(simulation: object, *, turns_off: bool = False) -> str:
     gate = ("Apagar solo saca envíos: la página lo publica igual." if turns_off else
             "La página no publica sin simulación: la publica el operador con <code>--sin-simulacion</code>.")
@@ -1159,6 +1205,8 @@ def _simulation_summary(simulation: object, *, turns_off: bool = False) -> str:
                 f"{gate}</p>")
     summary = simulation.get("summary") if isinstance(simulation.get("summary"), Mapping) else {}
     audience = _new_audience_lines(summary)
+    if audience is None:
+        audience = _audience_reach_lines(summary)
     if audience is not None:
         return audience
     line = ""

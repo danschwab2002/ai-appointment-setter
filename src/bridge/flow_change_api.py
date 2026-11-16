@@ -236,6 +236,11 @@ class FlowChangeStore:
             "p_instance": instance, "p_product_ref": product_ref, "p_trigger": trigger,
             "p_since": since.isoformat().replace("+00:00", "Z")})
 
+    async def read_audience_reach(self, instance: Mapping[str, str], flow_id: str, version: int) -> Any:
+        """``read_flow_audience_reach_v1`` (20261116000100, E-622): cuantas personas cumplen hoy la audiencia."""
+        return await self._rpc("read_flow_audience_reach_v1", {
+            "p_instance": instance, "p_flow_id": flow_id, "p_version": version})
+
     async def read_history(self, instance: Mapping[str, str], product_ref: str, since: datetime) -> Any:
         return await self._rpc("read_flow_engine_history_v1", {
             "p_instance": instance, "p_product_ref": product_ref,
@@ -283,6 +288,15 @@ async def _simulation_inputs(store: FlowChangeStore, instance: Mapping[str, str]
     if native is not None:
         if "simulation_unavailable" in native:
             return native
+        if "audience_reach" in native:
+            # Prender o apagar un flujo de audiencia: sin evento, cuenta su audiencia de hoy (E-622).
+            request = native["audience_reach"]
+            try:
+                reach = await store.read_audience_reach(instance, request["flow_id"], request["version"])
+            except (StoreUnavailable, StoreRejected):
+                logger.info("automation_expert_change route=validate simulation=audience_reach_unavailable")
+                return {"simulation_unavailable": "simulation_audience_reach_unavailable"}
+            return {"native_audience_reach": reach}
         try:
             counts = await store.read_new_flow_counts(instance, native["product_ref"], native["trigger"],
                                                       datetime.now(UTC) - NEW_FLOW_WINDOW)

@@ -7472,6 +7472,33 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'agent_products_publish'
+    union all
+    select
+        '20261116000100',
+        '20261116000100_flow_audience_reach_v1.sql',
+        -- La audiencia de hoy de un flujo de audiencia, contada (E-622): solo el rol del agente la corre ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.read_flow_audience_reach_v1(jsonb,uuid,integer)')
+              and prosecdef
+              and case when to_regrole('automation_expert_change') is null then true
+                       else has_function_privilege('automation_expert_change', oid, 'EXECUTE') end
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- ... y se apoya en la lista del bridge, que sigue siendo solo de service_role.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.read_flow_audience_candidates_v1(jsonb,uuid,integer,integer)')
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and case when to_regrole('automation_expert_change') is null then true
+                       else not has_function_privilege('automation_expert_change', oid, 'EXECUTE') end
+        )::int,
+        2,
+        'flow_audience_reach'
 )
 select
     version,

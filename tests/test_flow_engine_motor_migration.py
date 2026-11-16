@@ -188,6 +188,8 @@ def test_it_is_one_transaction_and_comes_before_the_bridge_reads() -> None:
         "20261115000100_agent_products_v1.sql",
         # Publicar con siembra el producto del AE (20261115000200, E-575).
         "20261115000200_agent_products_publish_v1.sql",
+        # La audiencia de hoy de un flujo de audiencia para el rol del agente (20261116000100, E-622).
+        "20261116000100_flow_audience_reach_v1.sql",
     ]
     later = (MIGRATIONS / names[position + 1]).read_text(encoding="utf-8")
     assert "create or replace" not in later.lower()

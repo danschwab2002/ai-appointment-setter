@@ -57,7 +57,9 @@ const REVIEWED = new Set(['20261112210400_e483_payment_failure_by_phone_v1.sql',
     // El producto que suma el AE (20261115000100, E-569): dos tablas y cuatro RPC del AE.
     '20261115000100_agent_products_v1.sql',
     // Publicar con siembra el producto del AE (20261115000200, E-575).
-    '20261115000200_agent_products_publish_v1.sql']);
+    '20261115000200_agent_products_publish_v1.sql',
+    // La audiencia de hoy de un flujo de audiencia para el rol del agente (20261116000100, E-622).
+    '20261116000100_flow_audience_reach_v1.sql']);
 for (const name of names.slice(position + 1).filter((candidate) => !REVIEWED.has(candidate))) {
   const text = readFileSync(join(root, 'supabase/migrations', name), 'utf8');
   if (text.includes('flow_engine_native_campaign_origin') || text.includes('audience_purchase_intent_id')) {

@@ -12,6 +12,10 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Arreglado
+
+- **Pasar un flujo de audiencia de la cohorte a todos (o apagarlo) arma su simulación con la audiencia real, y la página lo publica (E-622, macro 2).** Después de E-621 el `prender` de un flujo `manual`, `fecha` o `cada` seguía saliendo «La simulación no se pudo armar (`simulation_native_flow_counts_invalid`)»: la simulación de un flujo nativo cuenta los disparos de su evento, y un disparo por audiencia no tiene evento. La migración `20261116000100` suma `read_flow_audience_reach_v1`, solo para el rol del agente: cuántas personas cumplen hoy el `para` del flujo (con la misma lista que arma cada envío), sin teléfonos ni contactos. La simulación dice cuántas cumplen, cuántas saldrían por envío (el tope `por_ocurrencia`), cuántas quedan afuera y por qué el número es un máximo (las etiquetas las mira Chatwoot al armar la lista, la repetición). El comando del operador lee lo mismo (`_native_flow_counts_request`, gemela). Qué hace quien actualiza: aplicar la migración `20261116000100` (aditiva; sin ella el `prender` sigue sin simulación, con `simulation_audience_reach_unavailable`).
+
 ## [1.40.2] - 2026-11-16
 
 Un parche sobre la 1.40.1, con 1 PR (#481) y sin migraciones. **Un flujo nuevo con disparo por audiencia ya se puede publicar desde la página** (#481, E-621): su simulación sale armada de la definición, sin leer nada. Solo cambia el bridge (y el comando del operador); sin flag, sin variables nuevas, sin campos nuevos en el manifiesto y sin cambios de profile.
