@@ -7499,6 +7499,47 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'flow_audience_reach'
+    union all
+    select
+        '20261116000200',
+        '20261116000200_permission_registry_v1.sql',
+        -- El registro de permiso de WhatsApp (E-627, permission-registry-v1): las dos tablas con RLS ...
+        (
+            select count(*) = 2
+            from pg_class
+            where oid in (to_regclass('public.permission_notices'), to_regclass('public.permission_grants'))
+              and relrowsecurity
+        )::int
+        -- ... las cuatro RPC solo de service_role ...
+        + (
+            select count(*) = 4
+            from functions
+            where oid in (
+                to_regprocedure('public.register_permission_notice_v1(jsonb)'),
+                to_regprocedure('public.close_permission_notice_v1(text,text,timestamptz)'),
+                to_regprocedure('public.record_permission_grant_v1(jsonb)'),
+                to_regprocedure('public.revoke_permission_grant_v1(uuid,text)'))
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- ... y la segunda rama del permiso en la admision nativa, con el permiso en la fila del recorrido.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_admit_native_flow(public.flow_controls,public.webhook_events,uuid,text,timestamptz,bigint,bigint,text)')
+              and definition like '%permission_registry_cart: begin%'
+              and definition like '%permission_registry_payment_failure: begin%'
+        )::int
+        + (
+            select count(*) = 1
+            from information_schema.columns
+            where table_schema = 'public' and table_name = 'flow_engine_native_runs'
+              and column_name = 'audience_permission_grant_id'
+        )::int,
+        4,
+        'permission_registry'
 )
 select
     version,

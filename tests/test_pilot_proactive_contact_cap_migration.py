@@ -198,6 +198,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261115000200",
         # La audiencia de hoy de un flujo de audiencia para el rol del agente (20261116000100, E-622).
         "20261116000100",
+        # El registro de permiso de WhatsApp (20261116000200, E-627).
+        "20261116000200",
     ]
 
     sql = _sql()

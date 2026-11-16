@@ -268,7 +268,12 @@ expected_service_role(signature) as (
         ('public.record_hotmart_unknown_offer_v1(text, bigint, text, text, text, text, text, uuid)'),
         ('public.list_hotmart_unknown_offers_v1(text, boolean)'),
         -- 20261115000200: la lectura en vivo de los productos del AE (E-575, MP-08).
-        ('public.get_live_agent_products_v1(jsonb)')
+        ('public.get_live_agent_products_v1(jsonb)'),
+        -- 20261116000200: el registro de permiso de WhatsApp (E-627).
+        ('public.register_permission_notice_v1(jsonb)'),
+        ('public.close_permission_notice_v1(text, text, timestamp with time zone)'),
+        ('public.record_permission_grant_v1(jsonb)'),
+        ('public.revoke_permission_grant_v1(uuid, text)')
 ),
 functions as (
     select
