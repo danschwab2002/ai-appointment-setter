@@ -59,7 +59,9 @@ if (position < 0) fail(`${MIGRATION} no esta en la cadena`);
 // Despues van solo las del producto que suma el AE (20261115000100, E-569, y su publicacion 20261115000200, E-575),
 // que no tocan este registro, y la audiencia de hoy de un flujo de audiencia (20261116000100, E-622), que tampoco.
 if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261115000100_agent_products_v1.sql',
-  '20261115000200_agent_products_publish_v1.sql', '20261116000100_flow_audience_reach_v1.sql'])) fail(`despues de ${MIGRATION} van solo la de E-569, la de E-575 y la de E-622`, names.slice(position + 1));
+  '20261115000200_agent_products_publish_v1.sql', '20261116000100_flow_audience_reach_v1.sql',
+    // El registro de permiso de WhatsApp (20261116000200, E-627).
+    '20261116000200_permission_registry_v1.sql'])) fail(`despues de ${MIGRATION} van solo la de E-569, la de E-575 y la de E-622`, names.slice(position + 1));
 const apply = async (file) => db.exec(readFileSync(file, 'utf8').replace(
   /create extension if not exists pgcrypto;/gi,
   '-- pgcrypto is built into PGlite',

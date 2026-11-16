@@ -54,7 +54,9 @@ const ONLY_CALLS = new Set(['20261108004100_flow_change_publish_native_version_g
     // Publicar con siembra el producto del AE (20261115000200, E-575).
     '20261115000200_agent_products_publish_v1.sql',
     // La audiencia de hoy de un flujo de audiencia para el rol del agente (20261116000100, E-622).
-    '20261116000100_flow_audience_reach_v1.sql']);
+    '20261116000100_flow_audience_reach_v1.sql',
+    // El registro de permiso de WhatsApp (20261116000200, E-627).
+    '20261116000200_permission_registry_v1.sql']);
 for (const name of names.slice(position + 1).filter((candidate) => !ONLY_CALLS.has(candidate))) {
   if (readFileSync(join(root, 'supabase/migrations', name), 'utf8').includes('_flow_engine_native_unsupported')) {
     fail(`${name} toca _flow_engine_native_unsupported: revisar esta prueba`);

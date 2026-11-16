@@ -485,7 +485,10 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261114000100 y 20261114000150 (el correlador que decide solo y su
     # pregunta, E-536) suman sus trece.
     # 20261114000300 (las ofertas huerfanas de Hotmart, E-565) suma sus dos.
-    assert len(allowlisted) == 235
+    # 20261116000200 (el registro de permiso de WhatsApp, E-627) suma sus cuatro.
+    assert len(allowlisted) == 239
+    assert "record_permission_grant_v1(jsonb)" in allowlisted
+    assert "close_permission_notice_v1(text, text, timestamp with time zone)" in allowlisted
     assert "record_hotmart_unknown_offer_v1(text, bigint, text, text, text, text, text, uuid)" in allowlisted
     assert "list_hotmart_unknown_offers_v1(text, boolean)" in allowlisted
     assert "complete_identity_link_decision_v1(uuid, uuid, bigint, text, text, text, text, text, text, text[], text, text)" in allowlisted
@@ -2357,13 +2360,34 @@ def test_agent_products_publish_fingerprint_checks_the_page_and_the_live_read() 
     assert "indexdeflike'%live_scope%'" in compact
 
 
-def test_flow_audience_reach_fingerprint_is_last() -> None:
+def test_flow_audience_reach_fingerprint_counts_the_agent_read() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261116000100 (E-622): la audiencia contada, solo para el rol del agente, y la lista con telefonos
     # sigue siendo del bridge.
-    reach = sql.split("'20261116000100'", 1)[1].split("select\n    version,", 1)[0]
+    reach = sql.split("'20261116000100'", 1)[1].split("'20261116000200'", 1)[0].rsplit("union all", 1)[0]
     compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", reach))
 
-    assert compact.endswith(",2,'flow_audience_reach')")
+    assert compact.endswith(",2,'flow_audience_reach'")
     assert "read_flow_audience_reach_v1(jsonb,uuid,integer)" in compact
     assert "read_flow_audience_candidates_v1(jsonb,uuid,integer,integer)" in compact
+
+
+def test_permission_registry_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261116000200 (E-627): las dos tablas con RLS, las cuatro RPC solo de service_role, la segunda rama
+    # del permiso en la admision nativa y el permiso en la fila del recorrido.
+    registry = sql.split("'20261116000200'", 1)[1].split("select\n    version,", 1)[0]
+    compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", registry))
+
+    assert compact.endswith(",4,'permission_registry')")
+    assert "to_regclass('public.permission_notices')" in compact
+    assert "to_regclass('public.permission_grants')" in compact
+    for rpc in (
+        "register_permission_notice_v1(jsonb)",
+        "close_permission_notice_v1(text,text,timestamptz)",
+        "record_permission_grant_v1(jsonb)",
+        "revoke_permission_grant_v1(uuid,text)",
+    ):
+        assert rpc in compact
+    assert "permission_registry_cart:begin" in compact
+    assert "column_name='audience_permission_grant_id'" in compact
