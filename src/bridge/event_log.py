@@ -44,6 +44,13 @@ LOGGED_INFO_EVENTS = frozenset(
         # las ofertas huerfanas (bridge.hotmart_unknown_offers, E-565): la
         # entrada, el motivo, el producto y la oferta de Hotmart; nada personal
         "hotmart_unknown_offer_recorded",
+        # el permiso de los avisos (bridge.permission_connectors, E-628): el
+        # aviso, el conector, el id del evento, el resultado y el motivo; nunca
+        # el telefono ni el mail
+        "permission_notice_registered",
+        "permission_notice_closed",
+        "permission_grant_recorded",
+        "permission_grant_skipped",
         # el worker (bridge.worker)
         "hotmart_event_not_planned",
         "hotmart_purchase_processed",

@@ -154,6 +154,7 @@ from bridge.payment_slip_reminders import PAYMENT_SLIP_DUE_DAY_STEP, PAYMENT_SLI
 from bridge.phones import equivalent_whatsapp_phones, whatsapp_phone_region
 from bridge.product_routes import HotmartUnrouted, ProductRoute, ProductRoutes
 from bridge.hotmart_unknown_offers import HotmartUnknownOfferRecorder, for_dispatch
+from bridge.permission_connectors import PermissionNoticeConnectors
 from bridge.recovery_agent import (
     FollowupHandoffSuggestion,
     FollowupMessageProposal,
@@ -4478,9 +4479,14 @@ class ResolutionWorker:
         native_payment_slip_enabled: bool = False,
         native_payment_slip_methods: tuple[PaymentSlipMethod, ...] | None = None,
         identity_link_bind: bool = False,
+        permission_connectors: PermissionNoticeConnectors | None = None,
     ) -> None:
         self._supabase = supabase
         self._poll_interval = poll_interval_seconds
+        # E-628 (permission-registry-v1 §8): con PERMISSION_NOTICE_CONNECTOR_ENABLED,
+        # el carrito y el pago rechazado que van a la admision nativa registran
+        # antes el permiso del aviso declarado. None: lo de siempre.
+        self._permission_connectors = permission_connectors
         # E-536 (identity-link-decider-v1): con IDENTITY_LINK_MODE=vivo, el carrito
         # atado por el correlador escribe al telefono de la atadura (resolution.py).
         self._identity_link_bind = identity_link_bind
@@ -5014,6 +5020,8 @@ class ResolutionWorker:
             resolver_kwargs: dict[str, Any] = {}
             if self._identity_link_bind:
                 resolver_kwargs["identity_link_bind"] = True
+            if self._permission_connectors is not None:
+                resolver_kwargs["permission_connectors"] = self._permission_connectors
             if native_only_route is not None:
                 resolver_kwargs["commercial_ally_config"] = native_only_route.config
                 resolver_kwargs["native_only"] = True

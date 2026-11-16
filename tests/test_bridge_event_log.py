@@ -284,6 +284,7 @@ def test_every_reviewed_event_is_a_hotmart_line_present_in_the_code() -> None:
             "agent_campaigns.py",
             "hermes.py",
             "hotmart_unknown_offers.py",
+            "permission_connectors.py",
         )
     )
     for name in LOGGED_INFO_EVENTS:
@@ -300,6 +301,8 @@ def test_every_reviewed_event_is_a_hotmart_line_present_in_the_code() -> None:
                 "safety_handoff_",
                 "agent_output_",
                 "handoff_notice_",
+                # E-628: el permiso de los avisos (bridge.permission_connectors)
+                "permission_",
             )
         ), name
         assert f'"{name} ' in sources, name

@@ -2915,6 +2915,86 @@ class SupabaseClient:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
         return _response_rows(response, operation=operation)
 
+    async def register_permission_notice(self, notice: dict[str, Any]) -> str:
+        """Carga un aviso declarado (permission-registry-v1 §3, E-628).
+
+        Devuelve ``inserted`` o ``unchanged``. Otro contenido con el mismo
+        ``notice_ref`` (``permission_notice_conflict``) o un aviso invalido
+        llegan como HTTP de error y levantan.
+        """
+        operation = "permission_notice_register"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/register_permission_notice_v1",
+            content=json.dumps({"p_notice": notice}, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1 or rows[0].get("outcome") not in {"inserted", "unchanged"}:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return str(rows[0]["outcome"])
+
+    async def close_permission_notice(
+        self, *, tenant_ref: str, notice_ref: str, valid_until: str
+    ) -> str:
+        """Cierra un aviso: ``closed``, ``already_closed`` o ``not_found``."""
+        operation = "permission_notice_close"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/close_permission_notice_v1",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": tenant_ref,
+                    "p_notice_ref": notice_ref,
+                    "p_valid_until": valid_until,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1 or rows[0].get("outcome") not in {
+            "closed",
+            "already_closed",
+            "not_found",
+        }:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return str(rows[0]["outcome"])
+
+    async def record_permission_grant(
+        self, grant: dict[str, Any]
+    ) -> tuple[str | None, str, str | None]:
+        """Escribe un permiso desde un conector: ``(grant_id, outcome, reason)``.
+
+        ``inserted``, ``duplicate`` (el mismo evento otra vez) o ``rejected`` con
+        el motivo de la base (lo que el aviso no cubre). Un argumento invalido
+        llega como HTTP de error y levanta.
+        """
+        operation = "permission_grant_record"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/record_permission_grant_v1",
+            content=json.dumps({"p_grant": grant}, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        outcome = row.get("outcome")
+        if outcome not in {"inserted", "duplicate", "rejected"}:
+            raise SupabaseError(f"{operation}_invalid_outcome")
+        grant_id = row.get("grant_id")
+        reason = row.get("reason")
+        return (
+            grant_id if isinstance(grant_id, str) else None,
+            outcome,
+            reason if isinstance(reason, str) else None,
+        )
+
     async def admit_portable_hotmart_cart_abandonment(
         self,
         *,

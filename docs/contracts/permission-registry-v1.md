@@ -1,9 +1,9 @@
 # Contrato: el registro de permiso de WhatsApp (permission-registry-v1)
 
-- **Estado:** M1 de E-624 (E-627, 2026-11-16): las tablas, las RPC y la consulta del núcleo, en la migración `20261116000200_permission_registry_v1.sql`. El conector que escribe permisos (M2) no existe todavía: hasta entonces ninguna instancia tiene filas y la admisión es la de antes. No dice que nada esté desplegado ni activado.
-- **Contrato:** `permission-registry-v1`, versión `0.1.0`.
+- **Estado:** M1 de E-624 (E-627, 2026-11-16): las tablas, las RPC y la consulta del núcleo, en la migración `20261116000200_permission_registry_v1.sql`. M2 (E-628, 2026-11-16): los conectores `hotmart_checkout` y `landing` del bridge, `[[permisos.avisos]]` en el manifiesto y el flag `PERMISSION_NOTICE_CONNECTOR_ENABLED`, apagado por defecto (§8). No dice que nada esté desplegado ni activado.
+- **Contrato:** `permission-registry-v1`, versión `0.2.0` (0.1.0: M1; 0.2.0: suma §8).
 - **Diseño:** E-624 «Permiso de WhatsApp sin formulario: registro de permiso y conectores» (vault del OS, `coordinacion/etapa-1/reportes/E-624.md`, §4, opción A), aprobado en su enfoque por Dan el 2026-11-16: el núcleo solo pregunta si hay un permiso registrado; de dónde salió lo resuelven conectores enchufables (ADR-0021 punto 8).
-- **Código:** `supabase/migrations/20261116000200_permission_registry_v1.sql`; validador `tests/sql/followup_engine/validate_permission_registry.mjs`.
+- **Código:** `supabase/migrations/20261116000200_permission_registry_v1.sql`; validador `tests/sql/followup_engine/validate_permission_registry.mjs`. Conectores: `src/bridge/permission_connectors.py`; pruebas `tests/test_permission_connectors.py`.
 
 ## 1. Qué resuelve
 
@@ -96,5 +96,39 @@ Con un permiso registrado, la fila de `flow_engine_native_runs` lleva `audience_
 
 ## 7. Lo que espera a otros encargos
 
-- **M2:** el conector `hotmart_checkout`/`landing` en el bridge (escribe con `record_permission_grant_v1` antes de la admisión nativa), `[[permisos.avisos]]` en el manifiesto (cargado con `register_permission_notice_v1`), el flag `PERMISSION_NOTICE_CONNECTOR_ENABLED` y `/ready`.
+- **M3:** la skill del Automation Expert y la línea de la página de aprobación («le llega a quien dio permiso para WhatsApp: formulario, aviso en el checkout de <oferta> desde <fecha>»).
+- **M4:** el PR de cada instancia que declara su aviso (`[[permisos.avisos]]`, con la medición de la página publicada).
 - **Destino (D1-D5 de E-624):** el formulario como conector más, el relleno del histórico, las audiencias que leen solo el registro, `permiso: registrado` y el monitor diario del aviso.
+
+## 8. Los conectores del aviso: `hotmart_checkout` y `landing` (0.2.0, E-628)
+
+Código: `src/bridge/permission_connectors.py`. Solo con `PERMISSION_NOTICE_CONNECTOR_ENABLED=true` (apagado por defecto: no se carga ningún aviso, no se escribe ningún permiso y `/ready` no cambia).
+
+**El aviso.** Sale de `[[permisos.avisos]]` del manifiesto de la instancia (`docs/referencia-manifiesto.md`). Al arrancar, antes del primer evento, el bridge carga cada aviso con `register_permission_notice_v1` (el sha256 del texto en UTF-8) y cierra con `close_permission_notice_v1` el que el manifiesto cierra (`vigente_hasta`). Si la base no lo acepta (no responde, o `permission_notice_conflict`: otro texto con el mismo `ref`), lo reintenta antes de cada evento con aviso y, mientras tanto, no escribe ningún permiso. `ventana_horas` es la ventana para entrar de cada permiso: el `max_lookback` del scope de la oferta, declarado en el manifiesto porque el bridge no lee `hotmart_purchase_intent_scopes` (el rol del bridge no tiene acceso).
+
+**Cuándo corre.** En la resolución del evento, solo cuando el carrito (`PURCHASE_OUT_OF_SHOPPING_CART`) o el pago rechazado (`PURCHASE_CANCELED`) van a la admisión nativa (un flujo nativo de ese producto prendido o en cohorte, la identidad portable de la instancia), **inmediatamente antes** de `admit_flow_engine_event_v1`, para que `_registered_permission_reason` lo encuentre. La ficha, la compra y la intención no pasan por acá.
+
+**Qué escribe.** A lo sumo un permiso por evento, con `record_permission_grant_v1`:
+
+| Clave | Valor |
+|---|---|
+| `tenant_ref` | el de la instancia |
+| `phone` | el teléfono del evento (`buyer.phone` o `buyer.checkout_phone`); la base lo pasa a canónico |
+| `contact_id` | el contacto que la resolución acaba de resolver o crear |
+| `normalized_email` | el mail del evento, si viene |
+| `product_ref` | el producto de la admisión nativa (el `funnel_ref` del binding del producto) |
+| `offer_ref` | la oferta del evento |
+| `uses` | `["recuperacion"]` |
+| `connector`, `connector_version` | el del aviso elegido, `v1` |
+| `evidence_kind`, `evidence_ref` | `aviso_en_el_paso`, el `webhook_event_id` |
+| `notice_ref`, `copy_version` | los del aviso elegido |
+| `granted_at` | el `creation_date` del evento |
+| `expires_at` | `granted_at` + `ventana_horas` |
+
+**El aviso elegido.** Del producto, con la oferta en `ofertas` (o sin ofertas, en un aviso de checkout), vigente al `creation_date` y con `recuperacion`. Si hay de los dos conectores, el de `hotmart_checkout`; dentro de uno, el de `vigente_desde` más nuevo. Un aviso de `landing` con `requiere_src` no respalda un pago rechazado cuyo `data.purchase.origin` no traiga ese valor en `src` ni en `sck`; el carrito no trae `origin` y no se le exige. Que la oferta sea **exclusiva** de la landing no lo puede ver el bridge: lo afirma el manifiesto (`oferta_exclusiva = true`, obligatoria en un aviso de landing), y una oferta en avisos de dos landings distintas no carga.
+
+**Lo que no escribe.** Un evento sin teléfono (sin teléfono no hay a quién escribirle), de una oferta sin aviso, anterior a `vigente_desde` o posterior a `vigente_hasta`. Lo anota en el log (`permission_grant_skipped` con el motivo: `sin_telefono`, `sin_aviso`, `src_distinto`).
+
+**Lo que contesta la base.** `inserted` y `duplicate` (Hotmart reenvía) quedan en el log (`permission_grant_recorded`); `rejected` con su motivo, como `warning` (`permission_grant_rejected`). Ni un `rejected` ni una falla de la base frenan el evento: sigue a la admisión, que sin permiso termina en `no_entra:permiso`, como antes. Ninguna línea lleva teléfono, mail ni nombre.
+
+**`/ready`.** Con el flag, `permission_notices`: `<n>-activos` (los avisos del manifiesto vigentes ahora) o `sin_cargar` si la base todavía no los aceptó. Nunca responde 503 por esto.

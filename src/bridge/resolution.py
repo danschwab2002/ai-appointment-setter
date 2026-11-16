@@ -37,6 +37,7 @@ from bridge.supabase import (
 
 if TYPE_CHECKING:
     from bridge.flow_engine_runtime import FlowEngineRuntime
+    from bridge.permission_connectors import PermissionNoticeConnectors
 
 # Grace period before the first contact attempt (hours).
 DEFAULT_GRACE_HOURS = 1
@@ -315,6 +316,7 @@ async def resolve_event(
     native_payment_slip_product_ref: str | None = None,
     native_only: bool = False,
     identity_link_bind: bool = False,
+    permission_connectors: PermissionNoticeConnectors | None = None,
 ) -> SituationReport:
     """Resolve identity for one webhook event and return a situation report.
 
@@ -347,6 +349,13 @@ async def resolve_event(
     and the contact of the event is left with it (the send goes to
     ``contacts.phone``). Without a tie, the base answers None and nothing
     changes. A failed read keeps today's phone: the planner then refuses it.
+
+    ``permission_connectors`` (E-628, permission-registry-v1 §8): with
+    PERMISSION_NOTICE_CONNECTOR_ENABLED, a cart or a payment failure with a phone
+    that goes to the native admission first records the permission of a declared
+    notice (checkout or landing), so the admission finds it. A rejected or failed
+    record changes nothing: the admission answers as before. None is exactly
+    today's path.
     """
     if event_type == EVENT_PURCHASE_CANCELED:
         buyer = (
@@ -628,6 +637,23 @@ async def resolve_event(
                     admit_native_cart,
                 )
 
+                if (
+                    permission_connectors is not None
+                    and native_trigger in ("carrito", "pago_fallido")
+                ):
+                    # E-628: el permiso del aviso, antes de la admision nativa,
+                    # para que la audiencia lo encuentre. Nunca levanta.
+                    await permission_connectors.record_for_event(
+                        webhook_event_id=webhook_event_id,
+                        event_type=buyer.event_type,
+                        payload=payload,
+                        product_ref=native_product_ref,
+                        offer_code=buyer.offer_code,
+                        phone=buyer.buyer_phone,
+                        email=buyer.buyer_email,
+                        contact_id=contact_id,
+                        creation_date_ms=buyer.creation_date_ms,
+                    )
                 native_cart = await admit_native_cart(
                     supabase,
                     runtime=flow_engine,
