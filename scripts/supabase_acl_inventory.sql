@@ -266,7 +266,9 @@ expected_service_role(signature) as (
         ('public.record_identity_link_answer_v1(text, text, bigint, text, bigint)'),
         -- 20261114000300: las ofertas huerfanas de Hotmart (E-565).
         ('public.record_hotmart_unknown_offer_v1(text, bigint, text, text, text, text, text, uuid)'),
-        ('public.list_hotmart_unknown_offers_v1(text, boolean)')
+        ('public.list_hotmart_unknown_offers_v1(text, boolean)'),
+        -- 20261115000200: la lectura en vivo de los productos del AE (E-575, MP-08).
+        ('public.get_live_agent_products_v1(jsonb)')
 ),
 functions as (
     select

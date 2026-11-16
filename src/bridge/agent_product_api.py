@@ -8,6 +8,9 @@ lo publica (eso es de la pagina de aprobacion, MP-08 y MP-20).
 * ``POST .../products``: crea (la version siguiente de la clave) o rehace un borrador.
 * ``POST .../products/{id}/validate``: revalida y, sin bloqueos, la base lo congela 24 h.
 * ``GET  .../products`` y ``GET .../products/{id}``: en que estado estan.
+* ``POST .../products/{id}/discard``: descarta un borrador o una validada que
+  nunca se publico (E-575, MP-08; D7 de E-569). Lo publicado lo pausa o lo
+  cierra la pagina.
 
 Detras de ``AGENT_PRODUCTS_ENABLED`` (apagado por defecto: las rutas no
 existen y el bridge no llama a ninguna RPC de productos). Usa la clave del
@@ -64,11 +67,12 @@ _RESULT_STATUS = {
     "agent_product_not_draft": 409,
     "agent_product_expired": 409,
     "agent_product_key_is_immutable": 409,
+    "agent_product_final": 409,
 }
 
 
 class ProductStore(FlowChangeStore):
-    """Las cuatro funciones del agente de 20261115000100, con la clave de su rol."""
+    """Las funciones del agente (cuatro de 20261115000100 y descartar de 20261115000200), con la clave de su rol."""
 
     async def save_product(self, instance: Mapping[str, str], *, product_id: str | None, revision: int | None,
                            minimum: Mapping[str, Any], free_text: str, warnings: list[dict[str, str]],
@@ -91,6 +95,12 @@ class ProductStore(FlowChangeStore):
     async def list_products(self, instance: Mapping[str, str], *, only_open: bool, limit: int) -> dict[str, Any]:
         return await self._rpc("list_agent_products_v1", {"p_instance": instance, "p_only_open": only_open,
                                                            "p_limit": limit})
+
+    async def discard_product(self, instance: Mapping[str, str], *, product_id: str, reason: str,
+                              requested_by: str) -> dict[str, Any]:
+        return await self._rpc("discard_agent_product_v1", {
+            "p_instance": instance, "p_product_id": product_id, "p_reason": reason,
+            "p_requested_by_ref": requested_by})
 
 
 def check_settings(settings: Any) -> None:
@@ -299,6 +309,34 @@ def register_agent_product_routes(app: FastAPI, *, token: str, store: ProductSto
         return envelope({"product_id": checked, "status": recorded.get("status"),
                          "fingerprint": recorded.get("fingerprint"), "expires_at": recorded.get("expires_at"),
                          **result, "preview": preview_view})
+
+    @app.post(f"{PREFIX}/products/{{product_id}}/discard")
+    async def discard_product(product_id: str, request: Request,
+                              authorization: str | None = Header(default=None)) -> Any:
+        """Descarta lo que nunca se publico. La base decide el estado; repetir contesta replayed."""
+        authenticate(authorization)
+        checked = _product_id(product_id)
+        body = _check_keys(await _body(request), required={"reason", "requested_by"},
+                           allowed={"reason", "requested_by"})
+        requested_by = _requested_by(body)
+        reason = body["reason"]
+        if not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 500:
+            raise EntryRefused("invalid_body", {"field": "reason", "problem": "length_1_to_500"})
+        if looks_like_identifier(reason):
+            raise EntryRefused("identifier_not_allowed", {"field": "reason", "problem": "phone_or_mail"})
+        busy()
+        async with slots:
+            try:
+                discarded = await store.discard_product(instance, product_id=checked, reason=reason,
+                                                        requested_by=requested_by)
+            except (StoreUnavailable, StoreRejected) as error:
+                raise failure(error, "discard", checked) from None
+        refused = result_failure(discarded, "discard", checked)
+        if refused is not None:
+            raise refused
+        logger.info("agent_product route=discard product=%s status=200 replayed=%s", checked,
+                    discarded.get("replayed") is True)
+        return envelope({"product_id": checked, "status": "descartada", "replayed": discarded.get("replayed") is True})
 
     @app.get(f"{PREFIX}/products")
     async def list_products(estado: str = "abiertas", limit: str = str(LIST_DEFAULT_LIMIT),

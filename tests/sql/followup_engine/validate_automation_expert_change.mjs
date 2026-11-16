@@ -133,6 +133,8 @@ const executable = (await db.query(`select p.proname || '(' || oidvectortypes(p.
 // un flujo nuevo (20261024000600, flow-engine-v2 seccion 14), y la lista de las
 // propuestas (20261030000300, E-208, flow-change-cycle-v1 1.10.0).
 require(JSON.stringify(executable) === JSON.stringify([
+  // Descartar el producto propio (20261115000200, E-575).
+  'discard_agent_product_v1(jsonb, uuid, text, text)',
   // Las cuatro de las campanas del Automation Expert (20261108005000, E-355), en su orden alfabetico.
   'get_agent_campaign_v1(jsonb, uuid)',
   // Las cuatro del producto del Automation Expert (20261115000100, E-569), en su orden alfabetico.

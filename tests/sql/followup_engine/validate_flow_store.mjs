@@ -696,6 +696,9 @@ check(sameJson([...lockTimeouts].sort(), [
   'approver_brake_flow_audience_v1', 'approver_confirm_flow_audience_v1',
   // El producto del Automation Expert: registrar su validacion bloquea la fila (20261115000100, E-569).
   'record_agent_product_validation_v1',
+  // Publicar, pausar, reanudar y cerrar el producto desde la pagina (20261115000200, E-575).
+  'approver_close_agent_product_v1', 'approver_pause_agent_product_v1', 'approver_publish_agent_product_v1',
+  'approver_resume_agent_product_v1',
 ].sort()), '2: lock_timeout de 5 s en las que esperan locks', lockTimeouts);
 
 // ===========================================================================

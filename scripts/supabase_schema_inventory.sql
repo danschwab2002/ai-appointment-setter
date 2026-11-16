@@ -7433,6 +7433,45 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'agent_products'
+    union all
+    select
+        '20261115000200',
+        '20261115000200_agent_products_publish_v1.sql',
+        -- Publicar con siembra, pausar y cerrar el producto del AE; una campana viva por producto (E-575,
+        -- product-card-v1 §7): publicar solo desde la pagina, con su rol ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.approver_publish_agent_product_v1(jsonb,text,uuid,text,text)')
+              and prosecdef
+              and case when to_regrole('flow_change_approver') is null then false
+                       else has_function_privilege('flow_change_approver', oid, 'EXECUTE') end
+              and case when to_regrole('automation_expert_change') is null then true
+                       else not has_function_privilege('automation_expert_change', oid, 'EXECUTE') end
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+        )::int
+        -- ... la lectura en vivo, solo para service_role ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_live_agent_products_v1(jsonb)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- ... y una sola campana viva por lugar (la instancia o un producto del AE).
+        + (
+            select count(*) = 1
+            from pg_indexes
+            where schemaname = 'public'
+              and indexname = 'agent_campaigns_one_live'
+              and indexdef like '%live_scope%'
+              and indexdef like '%status = ''publicada''%'
+        )::int,
+        3,
+        'agent_products_publish'
 )
 select
     version,
