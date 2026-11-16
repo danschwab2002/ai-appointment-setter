@@ -161,12 +161,19 @@ def mark_payment_link_coupon(
     *,
     coupon_code: str | None,
     recovery_only: bool,
+    several_products: bool = False,
 ) -> None:
     """Le dice al agente si el link que va a salir trae el cupon.
 
     Solo con el flag y con el link del agente prendido
     (``payment_link_action`` en el contexto): ``coupon_applied`` es true o
     false. Con el flag apagado el contexto no cambia.
+
+    E-616: el cupon fijo es del principal (``fixed_coupon_fits_product``) y,
+    con varios productos, el producto del link lo nombra el agente despues de
+    leer esto. Como con el cupon de la campana (D11 de E-338),
+    ``coupon_applied`` no se adelanta: va en false, y el agente no promete un
+    10 % que el link de otro producto no trae. Con un producto, como siempre.
     """
 
     if not recovery_only:
@@ -174,9 +181,26 @@ def mark_payment_link_coupon(
     action = context.get("payment_link_action")
     if not isinstance(action, dict):
         return
-    action["coupon_applied"] = coupon_code is not None and (
-        conversation_had_recovery_touch(history)
+    action["coupon_applied"] = (
+        coupon_code is not None
+        and not several_products
+        and conversation_had_recovery_touch(history)
     )
+
+
+def fixed_coupon_fits_product(
+    *, link_product: str | None, principal_product: str | None
+) -> bool:
+    """Si el cupon fijo de la instancia va en el link de este producto (E-616).
+
+    ``PAYMENT_LINK_COUPON_CODE`` es un cupon de Hotmart del principal (en
+    Maribel, ``PROTOCOLO10+`` de El Protocolo): va solo en el link del
+    principal, como el de una campana sin ``[oferta].producto``
+    (``segment_coupon_fits_product``). Sin ``[[productos]]`` (``link_product``
+    None) hay un solo producto y siempre va.
+    """
+
+    return link_product is None or link_product == principal_product
 
 
 def coupon_applied_in_context(context: object) -> bool | None:

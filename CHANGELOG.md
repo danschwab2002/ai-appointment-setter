@@ -12,6 +12,10 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Arreglado
+
+- **El cupón fijo de la instancia va solo en el link del principal (E-616, hallazgo de E-613 §1.5).** `PAYMENT_LINK_COUPON_CODE` (en Maribel, `PROTOCOLO10+`, un cupón de El Protocolo) salía en el link del agente de cualquier producto: con un segundo producto en `[[productos]]`, el link de ese producto salía con `offDiscount` del principal. Ahora el link de otro producto sale sin cupón (log `payment_link_coupon_other_product`), y con varios productos y `PAYMENT_LINK_COUPON_RECOVERY_ONLY=true`, `payment_link_action.coupon_applied` va en `false` (no se adelanta, como el cupón de la campaña, D11 de E-338), así que el agente no promete el 10 % y el link sale como se le dijo. **Con un solo producto, igual que antes.** Qué hace quien actualiza: nada.
+
 ## [1.40.0] - 2026-11-15
 
 Una menor sobre la 1.39.0, con 10 PR (#467 a #476) y 1 migración: la primera release con el resumen de resultados para el Automation Expert (la ruta de #471 y la herramienta `results_summary` de #476) y la release 2 del multiproducto (#470 y #475, `agent_products`). **Lo nuevo llega apagado:** el resumen (#471, E-573) queda detrás de `AUTOMATION_EXPERT_RESULTS_SUMMARY_ENABLED`, `agent_products` (#470 y #475, E-569) detrás de `AGENT_PRODUCTS_ENABLED`, la reanudación al sacar `automation_paused` (#468, E-571) detrás de `CHATWOOT_LABEL_REMOVAL_RESUME_ENABLED` y la lectura del catálogo de Hotmart (#472, E-574) detrás de `HOTMART_CATALOG_READ_ENABLED`, que ningún módulo vivo importa. **Rige al subir, sin flag:** el 409 del aviso de una campaña tras un reinicio pasa a «ya avisado» (#469, E-572). **Cambia el profile del Automation Expert** (#476: su SOUL, no el común, y el plugin `automation-expert-read` de 0.3.0 a 0.4.0), que llega a una conversación nueva con el AE. El conector de Slack no cambia de código.
