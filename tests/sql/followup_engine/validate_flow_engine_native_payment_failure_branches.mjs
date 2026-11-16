@@ -133,7 +133,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026110300100
     // Las ofertas huerfanas de Hotmart (20261114000300, E-565): dos tablas y dos RPC de service_role.
     '20261114000300_hotmart_unknown_offers_v1.sql',
     // El producto que suma el AE (20261115000100, E-569): dos tablas y cuatro RPC del AE.
-    '20261115000100_agent_products_v1.sql'])) {
+    '20261115000100_agent_products_v1.sql',
+    // Publicar con siembra el producto del AE (20261115000200, E-575).
+    '20261115000200_agent_products_publish_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la del aviso de derivaciones sin atender`, names.slice(position + 1));
 }
 if (TEMPLATES.length !== 4 || REFUSALS.length !== 3 || REFUSALS[1].persona !== REFUSALS[2].persona) {

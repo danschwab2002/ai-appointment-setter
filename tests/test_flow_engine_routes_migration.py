@@ -182,6 +182,8 @@ def test_it_is_one_transaction_and_comes_right_after_the_t4b() -> None:
         "20261114000300_hotmart_unknown_offers_v1.sql",
         # El producto que suma el AE (20261115000100, E-569).
         "20261115000100_agent_products_v1.sql",
+        # Publicar con siembra el producto del AE (20261115000200, E-575).
+        "20261115000200_agent_products_publish_v1.sql",
     ]
 
 

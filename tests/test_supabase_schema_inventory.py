@@ -485,7 +485,7 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261114000100 y 20261114000150 (el correlador que decide solo y su
     # pregunta, E-536) suman sus trece.
     # 20261114000300 (las ofertas huerfanas de Hotmart, E-565) suma sus dos.
-    assert len(allowlisted) == 234
+    assert len(allowlisted) == 235
     assert "record_hotmart_unknown_offer_v1(text, bigint, text, text, text, text, text, uuid)" in allowlisted
     assert "list_hotmart_unknown_offers_v1(text, boolean)" in allowlisted
     assert "complete_identity_link_decision_v1(uuid, uuid, bigint, text, text, text, text, text, text, text[], text, text)" in allowlisted
@@ -2329,15 +2329,29 @@ def test_hotmart_unknown_offers_fingerprint_goes_before_the_agent_products() -> 
     assert "record_hotmart_unknown_offer_v1(text,bigint,text,text,text,text,text,uuid)" in compact
 
 
-def test_agent_products_fingerprint_is_last() -> None:
+def test_agent_products_fingerprint_goes_before_the_publish() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261115000100 (E-569): las dos tablas con RLS, la unica publicada por producto y proponer
     # solo con el rol del agente.
-    products = sql.split("'20261115000100'", 1)[1].split("select\n    version,", 1)[0]
+    products = sql.split("'20261115000100'", 1)[1].split("'20261115000200'", 1)[0].rsplit("union all", 1)[0]
     compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", products))
 
-    assert compact.endswith(",3,'agent_products')")
+    assert compact.endswith(",3,'agent_products'")
     assert "to_regclass('public.agent_products')" in compact
     assert "to_regclass('public.agent_product_events')" in compact
     assert "indexname='agent_products_one_live_per_key'" in compact
     assert "save_agent_product_draft_v1(jsonb,uuid,integer,jsonb,text,jsonb,text,text)" in compact
+
+
+def test_agent_products_publish_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261115000200 (E-575): publicar solo desde la pagina, la lectura en vivo de service_role y una
+    # campana viva por lugar.
+    publish = sql.split("'20261115000200'", 1)[1].split("select\n    version,", 1)[0]
+    compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", publish))
+
+    assert compact.endswith(",3,'agent_products_publish')")
+    assert "approver_publish_agent_product_v1(jsonb,text,uuid,text,text)" in compact
+    assert "get_live_agent_products_v1(jsonb)" in compact
+    assert "indexname='agent_campaigns_one_live'" in compact
+    assert "indexdeflike'%live_scope%'" in compact
