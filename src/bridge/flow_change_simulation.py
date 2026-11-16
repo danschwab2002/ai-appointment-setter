@@ -37,6 +37,7 @@ from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 from typing import Any
 
+from .flow_audience import AudienceSpecInvalid, audience_form, audience_spec
 from .flow_definition import FlowWorld, ProposalItem, parse_due_anchor
 from .flow_engine import (
     ENGINE_CAPABILITIES_V1,
@@ -61,11 +62,13 @@ __all__ = [
     "CAMBIOS_MAX",
     "NEW_FLOW_COUNTS_CONTRACT",
     "build_native_flow_simulation",
+    "build_new_audience_flow_simulation",
     "build_new_flow_simulation",
     "build_simulation",
     "engine_flows_from_read",
     "native_flow_counts_request",
     "native_touches",
+    "new_audience_flow_form",
     "summary_sha256",
 ]
 
@@ -302,6 +305,86 @@ def build_new_flow_simulation(counts: Any, items: Sequence[ProposalItem], *,
         sharing = _sharing_the_event(world, item.producto, trigger)
         if sharing:
             summary["comparte_el_evento_con"] = sharing
+        return {"status": "built", "summary": summary, "summary_sha256": summary_sha256(summary), "cambios": []}
+    except _Failed as failed:
+        return {"status": "failed", "reason_code": failed.reason_code}
+    except Exception:  # noqa: BLE001 - la vista previa no se cae por la simulacion
+        return {"status": "failed", "reason_code": SIMULATION_ERROR}
+
+
+# La simulacion de un flujo nuevo con disparo por audiencia (E-621): ``dispara`` es ``manual``, ``fecha`` o
+# ``cada`` (E-484). No tiene evento, asi que no hay disparos que contar con
+# read_flow_engine_native_trigger_counts_v1 (que acepta compra, carrito, pago_fallido, intencion y silencio):
+# antes la simulacion quedaba failed con simulation_new_flow_counts_invalid y la pagina no publicaba
+# (medido en Maribel, v1.40.0, el 2026-11-16). Lo que se sabe sin leer nada es honesto y alcanza para
+# aprobar: un nuevo nace en cohorte, y la cohorte de un flujo que no existe esta vacia, asi que al
+# publicarse no le llega a nadie; cada envio arma su lista congelada y solo deja pasar a la cohorte
+# (materialize_flow_audience_occurrence_v1, fuera_de_cohorte). Cuantas personas cumplen el ``para`` lo
+# cuenta la lista de cada envio (la de un manual la confirma una persona con el conteo, D7). Pasar a todos
+# es un prender, con su propuesta y su si.
+NEW_AUDIENCE_FLOW_INVALID = "simulation_new_flow_audience_invalid"
+_AUDIENCE_CONFIRMS = {"manual": "una_persona_en_la_pagina_de_envios", "fecha": "sola_a_la_hora",
+                      "cada": "sola_a_la_hora"}
+
+
+def new_audience_flow_form(items: Any) -> str | None:
+    """``manual``, ``fecha`` o ``cada`` si la propuesta es un solo ``nuevo`` con disparo por audiencia; si no, None.
+
+    Recibe los items tal cual estan guardados (la ruta del agente) o ya leidos (``ProposalItem``). La gemela,
+    sin importar el bridge, es ``_new_audience_flow_form`` de ``scripts/flow_change_operator.py``.
+    """
+    if not isinstance(items, (list, tuple)) or len(items) != 1:
+        return None
+    item = items[0]
+    if isinstance(item, ProposalItem):
+        kind, definition = item.tipo, item.definicion
+    elif isinstance(item, Mapping):
+        kind, definition = item.get("tipo"), item.get("definicion")
+    else:
+        return None
+    if kind != "nuevo" or not isinstance(definition, Mapping):
+        return None
+    return audience_form(definition.get("dispara"))
+
+
+def build_new_audience_flow_simulation(items: Sequence[ProposalItem]) -> dict[str, Any]:
+    """La simulacion de un ``nuevo`` con disparo por audiencia (E-621), sin leer nada. Nunca levanta.
+
+    ``{"status": "built", "summary": {flujo_nuevo, disparador, dispara, audiencia, ritmo,
+    disparos_por_evento: 0, nace_en: "cohorte", cohorte_al_nacer: 0, alcance_al_nacer: 0,
+    cuenta_la_lista: "cada_envio", confirma}, "summary_sha256", "cambios": []}``. Vuelve a leer la
+    definicion con ``audience_spec`` (la misma lectura que el barredor): una que no sabe leer da
+    ``failed`` con ``simulation_new_flow_audience_invalid``.
+    """
+    try:
+        form = new_audience_flow_form(items)
+        if form is None or not items[0].is_new_flow:
+            raise _Failed(NEW_FLOW_MIXED)
+        item = items[0]
+        definition = item.definicion
+        if not isinstance(definition, Mapping):
+            raise _Failed(NEW_AUDIENCE_FLOW_INVALID)
+        try:
+            spec = audience_spec(definition)
+        except AudienceSpecInvalid:
+            raise _Failed(NEW_AUDIENCE_FLOW_INVALID) from None
+        audience: dict[str, Any] = {"es": spec.status, "producto": spec.product or item.producto}
+        if spec.status == "prospecta":
+            audience["formulario_en_dias"] = spec.form_window_days
+        if spec.labels:
+            audience["etiquetas"] = list(spec.labels)
+        if spec.excluded:
+            audience["excluye"] = list(spec.excluded)
+        trigger = definition.get("dispara")
+        body = trigger.get(form) if isinstance(trigger, Mapping) else None
+        summary = {
+            "flujo_nuevo": f"{item.producto}/{item.flujo}", "disparador": form,
+            "dispara": json.loads(json.dumps(body if isinstance(body, Mapping) else {}, ensure_ascii=False)),
+            "audiencia": audience,
+            "ritmo": {"por_hora": spec.per_hour, "por_ocurrencia": spec.per_occurrence},
+            "disparos_por_evento": 0, "nace_en": "cohorte", "cohorte_al_nacer": 0, "alcance_al_nacer": 0,
+            "cuenta_la_lista": "cada_envio", "confirma": _AUDIENCE_CONFIRMS[form],
+        }
         return {"status": "built", "summary": summary, "summary_sha256": summary_sha256(summary), "cambios": []}
     except _Failed as failed:
         return {"status": "failed", "reason_code": failed.reason_code}

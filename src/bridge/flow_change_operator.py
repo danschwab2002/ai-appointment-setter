@@ -52,7 +52,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .flow_change_preview import build_preview
-from .flow_change_simulation import build_native_flow_simulation, build_new_flow_simulation, build_simulation
+from .flow_change_simulation import (
+    build_native_flow_simulation,
+    build_new_audience_flow_simulation,
+    build_new_flow_simulation,
+    build_simulation,
+)
 from .flow_definition import (
     FlowWorld,
     ROUTE_NOT_READ,
@@ -232,6 +237,9 @@ def validate_proposal(payload: object, *, environ: Mapping[str, str]) -> dict[st
         unavailable = data.get("simulation_unavailable")
         if isinstance(unavailable, str):
             simulacion = {"status": "failed", "reason_code": unavailable}
+        elif data.get("new_flow_audience") is True:
+            # Un nuevo con disparo por audiencia: sin evento que contar, nace en cohorte vacia (E-621).
+            simulacion = build_new_audience_flow_simulation(items)
         elif "new_flow_counts" in data:
             simulacion = build_new_flow_simulation(data.get("new_flow_counts"), items, world=world)
         elif "native_flow_counts" in data:

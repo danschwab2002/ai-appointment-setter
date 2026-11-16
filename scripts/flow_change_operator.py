@@ -319,6 +319,10 @@ class Ops:
         if new_flows:
             if len(items) != 1:
                 return {"simulation_unavailable": "simulation_new_flow_mixed"}
+            if _new_audience_flow_form(items) is not None:
+                # Un disparo por audiencia no tiene evento que contar: el validador arma la simulacion
+                # de la definicion, sin leer la base (E-621).
+                return {"new_flow_audience": True}
             definition = new_flows[0].get("definicion")
             trigger = _simulation_trigger(definition)
             try:
@@ -502,6 +506,25 @@ def _simulation_trigger(definition: object) -> str | None:
     if set(trigger) == {"silencio"} and isinstance(silence, Mapping) and silence.get("lo_ultimo") == "agente":
         return "silencio"
     return None
+
+
+_AUDIENCE_FORMS = ("fecha", "cada", "manual")
+
+
+def _new_audience_flow_form(items: object) -> str | None:
+    """Gemela de flow_change_simulation.new_audience_flow_form (E-621): la forma del disparo por audiencia
+    de un solo ``nuevo`` (``manual``, ``fecha`` o ``cada``, la unica clave de ``dispara``), o None."""
+    if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], Mapping):
+        return None
+    item = items[0]
+    definition = item.get("definicion")
+    if item.get("tipo") != "nuevo" or not isinstance(definition, Mapping):
+        return None
+    trigger = definition.get("dispara")
+    if not isinstance(trigger, Mapping) or len(trigger) != 1:
+        return None
+    (key,) = tuple(trigger)
+    return key if key in _AUDIENCE_FORMS else None
 
 
 def _native_flow_counts_request(store: object, items: object) -> dict[str, Any] | None:

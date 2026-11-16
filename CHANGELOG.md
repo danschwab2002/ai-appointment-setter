@@ -12,6 +12,10 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Arreglado
+
+- **Un flujo nuevo con disparo por audiencia (manual, fecha, cada) arma su simulación y la página lo publica (E-621, macro 2).** Medido en Maribel (v1.40.0) el 2026-11-16: el Automation Expert armó tres flujos nuevos de audiencia, los validó, y la página dijo «La simulación no se pudo armar (`simulation_new_flow_counts_invalid`)», así que solo los publicaba el operador con `--sin-simulacion`. La ruta de validar pedía los disparos del evento del flujo, y un disparo por audiencia no tiene evento. Ahora la simulación sale `built` de la definición, sin leer nada: no hay disparos por evento (`disparos_por_evento: 0`), nace en la cohorte de prueba, que al publicarse está vacía (`alcance_al_nacer: 0`), a quién apunta el `para` y que cuántas personas son lo cuenta la lista congelada de cada envío. La página lo dice en palabras y publica. El comando del operador hace lo mismo (`_new_audience_flow_form`, gemela). Un flujo con evento sigue contando sus disparos como antes. Qué hace quien actualiza: nada.
+
 ## [1.40.1] - 2026-11-16
 
 Un parche sobre la 1.40.0, con 2 PR (#478 y #479) y 1 migración. **Arregla el cupón fijo de la instancia en el link de otro producto** (#479, E-616): con un segundo producto en `[[productos]]`, el link de ese producto salía con el cupón del principal; con un solo producto no cambia nada. Suma además, **apagada**, la pieza MP-08 del multiproducto (#478, E-575): publicar, pausar, reanudar, cerrar y descartar el producto que propuso el Automation Expert, con la siembra en la misma transacción del sí, detrás de `AGENT_PRODUCTS_ENABLED` (el flag de la 1.40.0, sin variables nuevas). La migración cambia además `agent_campaigns` (una campaña viva por producto): sin productos del AE el resultado de publicar y reanudar una campaña es el de hoy. Sin campos nuevos en el manifiesto y sin cambios de profile.

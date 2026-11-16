@@ -1099,6 +1099,56 @@ def _native_touches_lines(touches: object) -> str:
     return f"<p>Cuántos llegan a cada mensaje:</p><ul>{rows}</ul>"
 
 
+_AUDIENCE_TRIGGER_TEXT = {"manual": "manual", "fecha": "en una fecha", "cada": "cada cierto tiempo"}
+_WEEKDAY_TEXT = {"lun": "lunes", "mar": "martes", "mie": "miércoles", "jue": "jueves", "vie": "viernes",
+                 "sab": "sábados", "dom": "domingos"}
+
+
+def _new_audience_lines(summary: Mapping[str, Any]) -> str | None:
+    """La simulacion de un flujo nuevo con disparo por audiencia (E-621), o None si es otra simulacion.
+
+    No hay evento que contar: dice que nace en la cohorte vacia (al publicarse no le llega a nadie), a quien
+    apunta el ``para`` y que cuantas personas son lo cuenta la lista de cada envio.
+    """
+    form = summary.get("disparador")
+    audience = summary.get("audiencia")
+    if form not in _AUDIENCE_TRIGGER_TEXT or not isinstance(audience, Mapping) \
+            or summary.get("disparos_por_evento") != 0:
+        return None
+    lines = (f"<p>Disparo por audiencia (<strong>{_esc(_AUDIENCE_TRIGGER_TEXT[form])}</strong>): no lo dispara "
+             "un evento, así que no hay disparos que contar en los últimos 7 días.</p>")
+    lines += ("<p>Nace en la cohorte de prueba, que al publicarse tiene <strong>0</strong> contactos: no le llega "
+              "a nadie hasta que se cargue un teléfono, y después solo a la cohorte. Pasar a todos es otra "
+              "propuesta.</p>")
+    product = _esc(audience.get("producto"))
+    if audience.get("es") == "clienta":
+        who = f"las clientas que compraron <strong>{product}</strong>"
+    else:
+        days = audience.get("formulario_en_dias")
+        who = (f"las prospectas de <strong>{product}</strong> que dejaron el formulario con permiso de WhatsApp "
+               f"en los últimos {_esc(days)} días")
+    labels = audience.get("etiquetas")
+    if isinstance(labels, list) and labels:
+        who += f", con la etiqueta {_esc(', '.join(str(label) for label in labels))}"
+    excluded = audience.get("excluye")
+    if isinstance(excluded, list) and excluded:
+        who += f", sin {_esc(', '.join(str(label) for label in excluded))}"
+    trigger = summary.get("dispara") if isinstance(summary.get("dispara"), Mapping) else {}
+    if form == "manual":
+        when = ("La lista se arma en «Envíos a una audiencia» (Armar la lista), y ahí se ve cuántas personas salen antes de "
+                "confirmar.")
+    elif form == "fecha":
+        when = (f"La lista se arma sola el {_esc(str(trigger.get('el', '')).replace('T', ' a las '))} "
+                f"({_esc(trigger.get('zona'))}).")
+    else:
+        days = trigger.get("dias") if isinstance(trigger.get("dias"), list) else []
+        said = ", ".join(_WEEKDAY_TEXT.get(str(day), str(day)) for day in days)
+        when = f"La lista se arma sola los {_esc(said)} a las {_esc(trigger.get('hora'))} ({_esc(trigger.get('zona'))})."
+    lines += f"<p>A quién apunta: {who}. Cuántas personas son lo cuenta la lista de cada envío. {when}</p>"
+    return lines + ("<p class=\"meta\">Sin estimación con eventos: un disparo por audiencia no tiene evento. El "
+                    "número sale de la lista congelada de cada envío.</p>")
+
+
 def _simulation_summary(simulation: object, *, turns_off: bool = False) -> str:
     gate = ("Apagar solo saca envíos: la página lo publica igual." if turns_off else
             "La página no publica sin simulación: la publica el operador con <code>--sin-simulacion</code>.")
@@ -1108,6 +1158,9 @@ def _simulation_summary(simulation: object, *, turns_off: bool = False) -> str:
         return (f"<p>La simulación no se pudo armar (<code>{_esc(simulation.get('reason_code'))}</code>). "
                 f"{gate}</p>")
     summary = simulation.get("summary") if isinstance(simulation.get("summary"), Mapping) else {}
+    audience = _new_audience_lines(summary)
+    if audience is not None:
+        return audience
     line = ""
     fired, people = summary.get("disparos"), summary.get("personas")
     if isinstance(fired, int) and isinstance(people, int):

@@ -56,7 +56,7 @@ from fastapi.responses import JSONResponse
 
 from .flow_change_operator import OperatorInputError, validate_proposal, world_from_store
 from .flow_change_preview import template_view
-from .flow_change_simulation import native_flow_counts_request, simulation_trigger
+from .flow_change_simulation import native_flow_counts_request, new_audience_flow_form, simulation_trigger
 from .flow_definition import (
     InstanceRuntime,
     InstanceView,
@@ -263,6 +263,10 @@ async def _simulation_inputs(store: FlowChangeStore, instance: Mapping[str, str]
         # Un flujo nuevo no tiene historia en el motor: se cuentan los disparos de su disparador.
         if len(items) != 1:
             return {"simulation_unavailable": "simulation_new_flow_mixed"}
+        if new_audience_flow_form(items) is not None:
+            # Un disparo por audiencia (manual, fecha, cada) no tiene evento que contar: la simulacion
+            # sale de la definicion y de que nace en cohorte, sin leer nada (E-621).
+            return {"new_flow_audience": True}
         definition = new_flows[0].get("definicion")
         # Su evento, o el silencio del agente (P22-3, E-269), que se cuenta con la vara del legado.
         trigger = simulation_trigger(definition)
