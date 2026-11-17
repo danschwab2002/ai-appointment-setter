@@ -28,11 +28,11 @@ def test_they_are_one_transaction_each_and_the_last_two() -> None:
         assert "already_applied" in sql
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
     # Despues de la ficha de OXXO nativa (20261113200000, E-528, C4), la ultima del #455.
-    assert names[-8] == "20261113200000_e528_native_payment_slip_v1.sql"
-    assert names[-7] == A.name
-    assert names[-6] == B.name
+    assert names[-9] == "20261113200000_e528_native_payment_slip_v1.sql"
+    assert names[-8] == A.name
+    assert names[-7] == B.name
     # Despues va solo la de las ofertas huerfanas de Hotmart (20261114000300, E-565).
-    assert names[-5] == "20261114000300_hotmart_unknown_offers_v1.sql"
+    assert names[-6] == "20261114000300_hotmart_unknown_offers_v1.sql"
 
 
 def test_the_replacements_are_only_the_four_functions_of_the_cart_and_the_permission() -> None:
@@ -92,4 +92,5 @@ def test_the_validator_runs_last_with_npm_test() -> None:
     assert package["scripts"]["test"].endswith(
         " && node validate_e528_native_payment_slip.mjs && node validate_identity_link_decider.mjs"
         " && node validate_hotmart_unknown_offers.mjs && node validate_agent_products.mjs && node validate_agent_products_publish.mjs && node validate_flow_audience_reach.mjs && node validate_permission_registry.mjs"
+        " && node validate_flow_engine_native_audience_recipient.mjs --check"
     )

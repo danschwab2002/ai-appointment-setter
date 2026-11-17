@@ -80,7 +80,11 @@ const results = {};
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-if (names.slice(position + 1).length !== 0) fail(`${MIGRATION} es la ultima`, names.slice(position + 1));
+// Despues va solo el destinatario de un flujo nativo de audiencia (20261117000500, E-661): cambia el tipo de
+// get_followup_execution_context, que esta no toca.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261117000500_flow_engine_native_audience_recipient_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de E-661`, names.slice(position + 1));
+}
 
 // ---------------------------------------------------------------------------
 // 0. La forma de la migracion.

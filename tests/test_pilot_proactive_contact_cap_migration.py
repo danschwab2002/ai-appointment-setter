@@ -200,6 +200,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261116000100",
         # El registro de permiso de WhatsApp (20261116000200, E-627).
         "20261116000200",
+        # El destinatario de un flujo nativo de audiencia (20261117000500, E-661).
+        "20261117000500",
     ]
 
     sql = _sql()

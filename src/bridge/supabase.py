@@ -1602,6 +1602,10 @@ class FollowupExecutionContext:
     offer_code: str | None
     current_goal: str | None
     lead_stage: str
+    # E-661 (20261117000500): el producto_ref del evento que abrio un caso
+    # nativo de audiencia, que nace sin oferta. None en todo otro caso, o con
+    # una base sin la migracion.
+    audience_product_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -9440,6 +9444,9 @@ class SupabaseClient:
             current_goal=_optional_string(row, "current_goal", operation=operation),
             lead_stage=_required_enum(
                 row, "lead_stage", _LEAD_STAGES, operation=operation
+            ),
+            audience_product_ref=_optional_string(
+                row, "flow_engine_audience_product_ref", operation=operation
             ),
         )
 

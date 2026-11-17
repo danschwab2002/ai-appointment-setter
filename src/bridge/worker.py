@@ -451,6 +451,12 @@ def _is_authorized_followup_recipient(
     With several products of the instance (E-350), the same comparison against
     each of them: a native run of a product that is not the principal is not
     a stranger. With one, the routes add nothing.
+
+    A native run opened by an audience trigger (manual, fecha, cada) has no
+    offer by design (E-661): the base hands the ``producto_ref`` of its event
+    (``audience_product_ref``, 20261117000500), and the run passes when that
+    product is a declared product of the instance (its ``funnel_ref``) with
+    the same name. Every other case keeps the offer comparison.
     """
     if is_allowed_whatsapp_target(execution_context.buyer_phone, allowed_jid):
         return True
@@ -460,9 +466,13 @@ def _is_authorized_followup_recipient(
         or execution_context.buyer_phone is None
     ):
         return False
-    configs = [commercial_ally_config]
-    if product_routes is not None and len(product_routes) > 1:
-        configs.extend(route.config for route in product_routes if not route.principal)
+    configs = _declared_configs(commercial_ally_config, product_routes)
+    if _is_audience_case(execution_context):
+        return any(
+            execution_context.audience_product_ref == config.funnel_ref
+            and execution_context.product_name == config.product_name
+            for config in configs
+        )
     return any(
         execution_context.product_name == config.product_name
         and execution_context.offer_code in config.accepted_offer_codes
@@ -470,7 +480,19 @@ def _is_authorized_followup_recipient(
     )
 
 
+def _is_audience_case(execution_context: FollowupExecutionContext) -> bool:
+    """A native audience run: no offer and the product of its event (E-661)."""
+    return (
+        execution_context.offer_code is None
+        and execution_context.audience_product_ref is not None
+    )
+
+
 RECIPIENT_OFFER_NOT_DECLARED = "recipient_offer_not_declared"
+# E-661: an audience run (no offer by design) whose product the instance does
+# not declare closes with its own reason and no retry, like an undeclared
+# offer: retrying does not declare the product.
+RECIPIENT_PRODUCT_NOT_DECLARED = "recipient_product_not_declared"
 
 
 def _declared_configs(
@@ -518,6 +540,27 @@ def _recipient_offer_not_declared(
     return bool(same_product) and all(
         execution_context.offer_code not in config.accepted_offer_codes
         for config in same_product
+    )
+
+
+def _recipient_audience_product_not_declared(
+    *,
+    execution_context: FollowupExecutionContext,
+    commercial_ally_config: CommercialAllyConfig | None,
+    portable_recipient_enabled: bool = False,
+) -> bool:
+    """Whether a refused recipient is an audience run of an undeclared product (E-661).
+
+    Only under the portable boundary with a phone, like E-432: the legacy
+    boundary and a missing phone keep ``pre_request_failed``. A case with an
+    offer, or a case without an offer that is not an audience run (an event
+    trigger without offer), keeps its reason as before.
+    """
+    return (
+        portable_recipient_enabled
+        and commercial_ally_config is not None
+        and execution_context.buyer_phone is not None
+        and _is_audience_case(execution_context)
     )
 
 
@@ -3281,6 +3324,31 @@ class DurableDispatcher:
                                         await self._record_undeclared_offer(
                                             execution_context
                                         )
+                                elif _recipient_audience_product_not_declared(
+                                    execution_context=execution_context,
+                                    commercial_ally_config=(
+                                        self._commercial_ally_config
+                                    ),
+                                    portable_recipient_enabled=(
+                                        self._portable_recipient_enabled
+                                    ),
+                                ):
+                                    # E-661: una audiencia nace sin oferta; si
+                                    # su producto no es de la instancia, no se
+                                    # arregla reintentando.
+                                    logger.warning(
+                                        "durable_followup_audience_product_not_declared "
+                                        "action_id=%s attempt_id=%s product=%s",
+                                        action.action_id,
+                                        attempt.attempt_id,
+                                        execution_context.audience_product_ref,
+                                    )
+                                    await self._finalize_pre_request_failure(
+                                        action=action,
+                                        attempt=attempt,
+                                        reason_code=RECIPIENT_PRODUCT_NOT_DECLARED,
+                                        retryable=False,
+                                    )
                                 else:
                                     await self._finalize_pre_request_failure(
                                         action=action,
