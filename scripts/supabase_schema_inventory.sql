@@ -7565,6 +7565,31 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'flow_engine_native_audience_recipient'
+    union all
+    select
+        '20261117000600',
+        '20261117000600_flow_audience_repeat_counts_started_v1.sql',
+        -- La repeticion de un flujo de audiencia cuenta solo a quien arranco (E-665): el armado de la lista
+        -- mira open_outcome ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.materialize_flow_audience_occurrence_v1(jsonb,uuid,integer,jsonb,jsonb)')
+              and position('flow_audience_repeat_counts_started' in definition) > 0
+              and position('m.open_outcome is null or m.open_outcome = ''arranco''' in definition) > 0
+        )::int
+        -- ... y sigue siendo security definer, solo de service_role (create or replace, mismos permisos).
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.materialize_flow_audience_occurrence_v1(jsonb,uuid,integer,jsonb,jsonb)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        2,
+        'flow_audience_repeat_counts_started'
 )
 select
     version,

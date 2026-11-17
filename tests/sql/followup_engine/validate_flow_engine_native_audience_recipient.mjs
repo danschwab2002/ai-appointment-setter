@@ -54,8 +54,9 @@ const sha = (text) => createHash('sha256').update(text).digest('hex');
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify([])) {
-  fail(`despues de ${MIGRATION} no va ninguna`, names.slice(position + 1));
+// Despues va solo la repeticion de un flujo de audiencia (20261117000600, E-665): no toca el contexto del despacho.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261117000600_flow_audience_repeat_counts_started_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de la repeticion de E-665`, names.slice(position + 1));
 }
 
 // ---------------------------------------------------------------------------

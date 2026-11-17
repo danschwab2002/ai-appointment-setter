@@ -1,0 +1,45 @@
+{
+  "_capture": {
+    "origen": "maribel_db (stack maribel, contenedor maribel_db), leida por psql con default_transaction_read_only=on",
+    "fecha": "2026-11-17T22:50Z",
+    "encargo": "E-665",
+    "tablas": ["flow_controls", "flow_definitions", "flow_audience_occurrences", "flow_audience_members", "flow_engine_start_rejections"],
+    "anonimizado": "sin telefono, mail ni nombre; contact_id y source_ref recortados a 8 caracteres; las omitidas fuera de la cohorte (254 y 265) solo como conteo",
+    "lo_usa": "tests/sql/followup_engine/validate_flow_audience_repeat_started.mjs"
+  },
+  "flujo": {
+    "flow_key": "aviso_manual_prueba",
+    "estado": "cohorte",
+    "version": 1,
+    "dispara": {"manual": {}},
+    "topes": {"bolsa": "maribel-aviso-manual-prueba", "total": 1000, "por_dia": "sin_tope",
+      "repeticion": {"una_por": "persona", "otra_despues_de": "7d"}}
+  },
+  "contacto": "7deb0367",
+  "ocurrencias": [
+    {
+      "id": "8ed2f5be",
+      "occurrence_key": "manual:52ccc479-bae3-4dd1-bef9-d18baa11b8f1",
+      "form": "manual",
+      "state": "terminada",
+      "member_count": 1,
+      "omitted_count": 254,
+      "materialized_at": "2026-11-16T15:16:06.634Z",
+      "miembro": {"position": 48, "state": "liberada", "omit_reason": null,
+        "released_at": "2026-11-16T17:09:33.187Z", "opened_at": "2026-11-16T17:09:33.553Z", "open_outcome": "no_arranca"},
+      "rechazo_de_arranque": {"phase": "admision", "reason": "conversacion_viva", "source_ref": "1515e3a7",
+        "first_at": "2026-11-16T17:09:33.484Z", "count": 1}
+    },
+    {
+      "id": "8eaf8645",
+      "occurrence_key": "manual:a1d39ef1-0168-4f30-ac7b-11a97f2d54b9",
+      "form": "manual",
+      "state": "materializada",
+      "member_count": 0,
+      "omitted_count": 265,
+      "materialized_at": "2026-11-17T13:09:33.644Z",
+      "miembro": {"position": 58, "state": "omitida", "omit_reason": "repetida",
+        "released_at": null, "opened_at": null, "open_outcome": null}
+    }
+  ]
+}

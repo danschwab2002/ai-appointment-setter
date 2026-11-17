@@ -28,7 +28,8 @@ const results = {};
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-for (const name of names.slice(position + 1)) {
+// 20261117000600 (E-665) cambia solo la repeticion del armado de la lista, que esta lectura no mira.
+for (const name of names.slice(position + 1).filter((n) => n !== '20261117000600_flow_audience_repeat_counts_started_v1.sql')) {
   if (readFileSync(join(root, 'supabase/migrations', name), 'utf8').includes('flow_audience_')) {
     fail(`${name} toca el disparo por audiencia: revisar esta prueba`);
   }

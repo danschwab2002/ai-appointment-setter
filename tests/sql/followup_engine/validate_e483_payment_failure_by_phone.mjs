@@ -85,7 +85,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026111221050
     // El registro de permiso de WhatsApp (20261116000200, E-627).
     '20261116000200_permission_registry_v1.sql',
     // El destinatario de un flujo nativo de audiencia (20261117000500, E-661).
-    '20261117000500_flow_engine_native_audience_recipient_v1.sql'])) {
+    '20261117000500_flow_engine_native_audience_recipient_v1.sql',
+    // La repeticion de un flujo de audiencia cuenta solo a quien arranco (20261117000600, E-665).
+    '20261117000600_flow_audience_repeat_counts_started_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de C2`, names.slice(position + 1));
 }
 
