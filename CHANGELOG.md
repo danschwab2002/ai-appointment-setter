@@ -12,6 +12,10 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Corregido
+
+- **El envío de un flujo nativo de audiencia (`manual`, `fecha`, `cada`) pasa el chequeo del destinatario validando el producto, no una oferta (E-661).** El evento de audiencia no lleva oferta (por diseño) y el despachador exigía una oferta aceptada: todo envío de audiencia terminaba en 4 intentos `pre_request_failed` con `followup_recipient_not_allowlisted`, en todas las instancias. La migración `20261117000500` suma a `get_followup_execution_context` la columna `flow_engine_audience_product_ref` (el `producto_ref` del evento que abrió un caso nativo de audiencia; nula en todo otro caso), y el bridge autoriza ese caso si el producto es uno declarado de la instancia (`funnel_ref` y nombre). Si no lo es, cierra sin reintentos con `recipient_product_not_declared`. Los disparos por evento (compra, carrito, pago rechazado, formulario) siguen con el chequeo por oferta, sin cambios. Qué hace quien actualiza: aplicar la migración `20261117000500` antes del bridge (cambia el tipo de retorno con drop y create, conserva los permisos y es idempotente: si ya está aplicada no hace nada).
+
 ## [1.40.3] - 2026-11-16
 
 Un parche sobre la 1.40.2, con 3 PR (#483, #484 y #485) y 2 migraciones. **Prender o apagar un flujo de audiencia arma su simulación con la audiencia real** (#483, E-622), y la página lo publica. Suma además, **apagados**, el registro de permiso de WhatsApp (#484, E-627) y sus conectores del aviso (#485, E-628, detrás de `PERMISSION_NOTICE_CONNECTOR_ENABLED`): sin filas en `permission_grants` y con el flag apagado, la admisión del carrito y del pago rechazado nativos es la de hoy. Sin cambios de profile.

@@ -7540,6 +7540,31 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         4,
         'permission_registry'
+    union all
+    select
+        '20261117000500',
+        '20261117000500_flow_engine_native_audience_recipient_v1.sql',
+        -- El destinatario de un flujo nativo de audiencia (E-661): el contexto del despachador devuelve el
+        -- producto del evento de un caso de audiencia ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_followup_execution_context(uuid,text,bigint,timestamptz)')
+              and position('flow_engine_native_audience_recipient' in definition) > 0
+              and pg_get_function_result(oid) like '%flow_engine_audience_product_ref text)'
+        )::int
+        -- ... y sigue siendo solo de service_role (drop y create, mismos permisos).
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_followup_execution_context(uuid,text,bigint,timestamptz)')
+              and not prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        2,
+        'flow_engine_native_audience_recipient'
 )
 select
     version,

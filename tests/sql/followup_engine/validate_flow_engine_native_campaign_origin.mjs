@@ -61,7 +61,9 @@ const REVIEWED = new Set(['20261112210400_e483_payment_failure_by_phone_v1.sql',
     // La audiencia de hoy de un flujo de audiencia para el rol del agente (20261116000100, E-622).
     '20261116000100_flow_audience_reach_v1.sql',
     // El registro de permiso de WhatsApp (20261116000200, E-627).
-    '20261116000200_permission_registry_v1.sql']);
+    '20261116000200_permission_registry_v1.sql',
+    // El destinatario de un flujo nativo de audiencia (20261117000500, E-661).
+    '20261117000500_flow_engine_native_audience_recipient_v1.sql']);
 for (const name of names.slice(position + 1).filter((candidate) => !REVIEWED.has(candidate))) {
   const text = readFileSync(join(root, 'supabase/migrations', name), 'utf8');
   if (text.includes('flow_engine_native_campaign_origin') || text.includes('audience_purchase_intent_id')) {

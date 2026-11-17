@@ -188,6 +188,8 @@ def test_it_is_one_transaction_and_comes_right_after_the_t4b() -> None:
         "20261116000100_flow_audience_reach_v1.sql",
         # El registro de permiso de WhatsApp (20261116000200, E-627).
         "20261116000200_permission_registry_v1.sql",
+        # El destinatario de un flujo nativo de audiencia (20261117000500, E-661).
+        "20261117000500_flow_engine_native_audience_recipient_v1.sql",
     ]
 
 

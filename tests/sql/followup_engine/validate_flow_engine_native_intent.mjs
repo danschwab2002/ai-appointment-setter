@@ -176,7 +176,9 @@ if (JSON.stringify(names.slice(names.indexOf(MIGRATION) + 1)) !== JSON.stringify
     // La audiencia de hoy de un flujo de audiencia para el rol del agente (20261116000100, E-622).
     '20261116000100_flow_audience_reach_v1.sql',
     // El registro de permiso de WhatsApp (20261116000200, E-627).
-    '20261116000200_permission_registry_v1.sql'])) {
+    '20261116000200_permission_registry_v1.sql',
+    // El destinatario de un flujo nativo de audiencia (20261117000500, E-661).
+    '20261117000500_flow_engine_native_audience_recipient_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la del seguimiento a 24 h nativo`, names.slice(-3));
 }
 if (maribel.name !== 'maribel_retomar_proceso_01') fail('el fixture no es la plantilla de Maribel');

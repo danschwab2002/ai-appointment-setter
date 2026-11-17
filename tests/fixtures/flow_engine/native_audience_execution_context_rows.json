@@ -1,0 +1,69 @@
+{
+  "_capture": {
+    "origen": "validate_flow_engine_native_audience_recipient.mjs: la cadena entera de migraciones (PGlite) con el evento de flow_audience_opener.audience_event; el caso replica 083dc040.../602c59d3... de Maribel (2026-11-17 16:01-16:10Z): offer_code y context.flow_engine_offer nulos, flow_engine_trigger audiencia",
+    "encargo": "E-661",
+    "regenerar": "cd tests/sql/followup_engine && node validate_flow_engine_native_audience_recipient.mjs --emit"
+  },
+  "instance": {
+    "tenant_ref": "lancemos",
+    "funnel_ref": "att1",
+    "product_name": "Alimenta tu Tiroides"
+  },
+  "flow_event": {
+    "fuente": "audiencia",
+    "tipo": "manual",
+    "evento_id": "audiencia:<OCCURRENCE>:<CONTACT>",
+    "flujo_id": "<FLOW>",
+    "version": 1,
+    "ocurrencia_id": "<OCCURRENCE>",
+    "producto_ref": "att1",
+    "contacto_id": "<CONTACT>",
+    "momento": "<MOMENTO>",
+    "chatwoot": {
+      "account_id": 2,
+      "inbox_id": 11
+    },
+    "destino": "12025550401"
+  },
+  "admission": {
+    "flow_id": "<FLOW>",
+    "outcome": "motor_arranco",
+    "created": true
+  },
+  "case_context": {
+    "flow_engine_trigger": "audiencia",
+    "flow_engine_offer": null,
+    "offer_code": null
+  },
+  "execution_context": {
+    "action_id": "<ACTION>",
+    "action_type": "first_contact_review",
+    "step_key": "first_contact",
+    "recovery_case_id": "<CASE>",
+    "contact_id": "<CONTACT>",
+    "source_event_id": "<EVENT>",
+    "buyer_name": "Compradora Motor audiencia-ana",
+    "buyer_email": "motor-a-01@example.test",
+    "buyer_phone": "12025550401",
+    "product_name": "Alimenta tu Tiroides",
+    "offer_code": null,
+    "current_goal": null,
+    "lead_stage": "new",
+    "flow_engine_audience_product_ref": "att1"
+  },
+  "execution_context_before_migration": {
+    "action_id": "<ACTION>",
+    "action_type": "first_contact_review",
+    "step_key": "first_contact",
+    "recovery_case_id": "<CASE>",
+    "contact_id": "<CONTACT>",
+    "source_event_id": "<EVENT>",
+    "buyer_name": "Compradora Motor audiencia-ana",
+    "buyer_email": "motor-a-01@example.test",
+    "buyer_phone": "12025550401",
+    "product_name": "Alimenta tu Tiroides",
+    "offer_code": null,
+    "current_goal": null,
+    "lead_stage": "new"
+  }
+}

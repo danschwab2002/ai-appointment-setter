@@ -140,7 +140,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026102800010
     // La audiencia de hoy de un flujo de audiencia para el rol del agente (20261116000100, E-622).
     '20261116000100_flow_audience_reach_v1.sql',
     // El registro de permiso de WhatsApp (20261116000200, E-627).
-    '20261116000200_permission_registry_v1.sql'])) {
+    '20261116000200_permission_registry_v1.sql',
+    // El destinatario de un flujo nativo de audiencia (20261117000500, E-661).
+    '20261117000500_flow_engine_native_audience_recipient_v1.sql'])) {
   fail(`despues de ${MIGRATION} van solo la de la pagina de aprobacion y la del carrito nativo`, names.slice(position + 1));
 }
 if (captured.payload.event !== 'PURCHASE_APPROVED' || captured.payload.data.purchase.offer.code !== 'gopi6lh7'
@@ -300,9 +302,14 @@ const context = await readContext();
 if (context.offer_code !== offer || context.product_name !== A.productName || context.buyer_phone !== phone) {
   fail('el contexto del despacho', context);
 }
+// 20261117000500 (E-661): una compra no es una audiencia; el producto del evento de audiencia llega nulo.
+if (context.flow_engine_audience_product_ref !== null) fail('la compra trae producto de audiencia', context);
 // Rojo: la definicion de antes da la oferta nula (el followup_recipient_not_allowlisted de produccion).
 const red = await rolledBack(async () => {
+  // 20261117000500 (E-661) le sumo una columna: la definicion de antes vuelve con drop y create.
+  await db.exec(`drop function public.${CONTEXT_FN}`);
   await db.exec(previousDefinitions[CONTEXT_FN]);
+  await db.exec(`grant execute on function public.${CONTEXT_FN} to service_role`);
   return readContext();
 });
 if (red.offer_code !== null) fail('sin la migracion la oferta tendria que ser nula', red);

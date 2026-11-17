@@ -2372,14 +2372,14 @@ def test_flow_audience_reach_fingerprint_counts_the_agent_read() -> None:
     assert "read_flow_audience_candidates_v1(jsonb,uuid,integer,integer)" in compact
 
 
-def test_permission_registry_fingerprint_is_last() -> None:
+def test_permission_registry_fingerprint_counts_the_registry() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261116000200 (E-627): las dos tablas con RLS, las cuatro RPC solo de service_role, la segunda rama
     # del permiso en la admision nativa y el permiso en la fila del recorrido.
-    registry = sql.split("'20261116000200'", 1)[1].split("select\n    version,", 1)[0]
+    registry = sql.split("'20261116000200'", 1)[1].split("'20261117000500'", 1)[0].rsplit("union all", 1)[0]
     compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", registry))
 
-    assert compact.endswith(",4,'permission_registry')")
+    assert compact.endswith(",4,'permission_registry'")
     assert "to_regclass('public.permission_notices')" in compact
     assert "to_regclass('public.permission_grants')" in compact
     for rpc in (
@@ -2391,3 +2391,17 @@ def test_permission_registry_fingerprint_is_last() -> None:
         assert rpc in compact
     assert "permission_registry_cart:begin" in compact
     assert "column_name='audience_permission_grant_id'" in compact
+
+
+def test_flow_engine_native_audience_recipient_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261117000500 (E-661): el contexto del despachador con el producto del evento de audiencia,
+    # y solo de service_role despues del drop y create.
+    row = sql.split("'20261117000500'", 1)[1].split("select\n    version,", 1)[0]
+    compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
+
+    assert compact.endswith(",2,'flow_engine_native_audience_recipient')")
+    assert "to_regprocedure('public.get_followup_execution_context(uuid,text,bigint,timestamptz)')" in compact
+    assert "position('flow_engine_native_audience_recipient'indefinition)>0" in compact
+    assert "like'%flow_engine_audience_product_reftext)'" in compact
+    assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact
