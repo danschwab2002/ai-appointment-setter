@@ -12,9 +12,21 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.40.4] - 2026-11-17
+
+Un parche sobre la 1.40.3, con 1 PR (#487) y 1 migración. **El envío de un flujo nativo de audiencia (`manual`, `fecha`, `cada`) deja de frenarse en el chequeo del destinatario** (#487, E-661): se valida el producto del evento en vez de una oferta. Sin variables nuevas ni cambios de profile.
+
 ### Corregido
 
-- **El envío de un flujo nativo de audiencia (`manual`, `fecha`, `cada`) pasa el chequeo del destinatario validando el producto, no una oferta (E-661).** El evento de audiencia no lleva oferta (por diseño) y el despachador exigía una oferta aceptada: todo envío de audiencia terminaba en 4 intentos `pre_request_failed` con `followup_recipient_not_allowlisted`, en todas las instancias. La migración `20261117000500` suma a `get_followup_execution_context` la columna `flow_engine_audience_product_ref` (el `producto_ref` del evento que abrió un caso nativo de audiencia; nula en todo otro caso), y el bridge autoriza ese caso si el producto es uno declarado de la instancia (`funnel_ref` y nombre). Si no lo es, cierra sin reintentos con `recipient_product_not_declared`. Los disparos por evento (compra, carrito, pago rechazado, formulario) siguen con el chequeo por oferta, sin cambios. Qué hace quien actualiza: aplicar la migración `20261117000500` antes del bridge (cambia el tipo de retorno con drop y create, conserva los permisos y es idempotente: si ya está aplicada no hace nada).
+- **El envío de un flujo nativo de audiencia (`manual`, `fecha`, `cada`) pasa el chequeo del destinatario validando el producto, no una oferta (#487, E-661).** El evento de audiencia no lleva oferta (por diseño) y el despachador exigía una oferta aceptada: todo envío de audiencia terminaba en 4 intentos `pre_request_failed` con `followup_recipient_not_allowlisted`, en todas las instancias. La migración `20261117000500` suma a `get_followup_execution_context` la columna `flow_engine_audience_product_ref` (el `producto_ref` del evento que abrió un caso nativo de audiencia; nula en todo otro caso), y el bridge autoriza ese caso si el producto es uno declarado de la instancia (`funnel_ref` y nombre). Si no lo es, cierra sin reintentos con `recipient_product_not_declared`. Los disparos por evento (compra, carrito, pago rechazado, formulario) siguen con el chequeo por oferta, sin cambios. Qué hace quien actualiza: aplicar la migración `20261117000500` antes del bridge (cambia el tipo de retorno con drop y create, conserva los permisos y es idempotente: si ya está aplicada no hace nada).
+
+### Qué hace quien actualiza
+
+- **1 migración, antes del bridge:** `20261117000500_flow_engine_native_audience_recipient_v1.sql` (#487). Suma la columna `flow_engine_audience_product_ref` al final de lo que devuelve `get_followup_execution_context`. Aborta sin cambiar nada si la definición viva no es la conocida, y una segunda corrida no hace nada. La aplica `aplicar-migraciones.sh`, que relee el esquema de PostgREST.
+- **La vuelta atrás es solo la imagen:** un bridge de la 1.40.3 ignora la columna nueva. Un bridge de la 1.40.4 sin la migración frena la audiencia como antes.
+- **Ninguna variable nueva, nada en el manifiesto, ningún profile.**
+- **Las tres imágenes salen del tag**, como siempre. Solo el bridge cambia de código; el conector de Slack y la revisión diaria llevan la versión nueva sin cambios de código.
+- **`/ready`:** cambia `instance_product_version`.
 
 ## [1.40.3] - 2026-11-16
 
