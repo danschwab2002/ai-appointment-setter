@@ -204,6 +204,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261117000500",
         # La repeticion de un flujo de audiencia cuenta solo a quien arranco (20261117000600, E-665).
         "20261117000600",
+        # Los motivos de quien no arranco en un envio a una audiencia (20261117000700, E-666).
+        "20261117000700",
     ]
 
     sql = _sql()

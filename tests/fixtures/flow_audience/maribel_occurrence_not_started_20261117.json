@@ -1,0 +1,38 @@
+{
+  "_capture": {
+    "origen": "maribel_db (contenedor maribel_db, psql en solo lectura), 2026-11-17: el cuerpo de _flow_audience_occurrence_rows de la migracion 20261117000700 corrido como SELECT sobre la ocurrencia 8ed2f5be... de aviso_manual_prueba (2026-11-16 17:09Z: una persona liberada, no_arranca, conversacion_viva en flow_engine_start_rejections). El usuario de Slack, reemplazado.",
+    "encargo": "E-666"
+  },
+  "occurrence": {
+    "brake_reason": null,
+    "confirmed_at": "2026-11-16T17:09:28.339207+00:00",
+    "confirmed_by": "slack:U0SLACKUSR1",
+    "finished_at": "2026-11-16T17:09:33.554771+00:00",
+    "flow_id": "6217b517-f87b-424b-8c47-8fb1d199d7b1",
+    "flow_key": "aviso_manual_prueba",
+    "flow_version": 1,
+    "form": "manual",
+    "materialized_at": "2026-11-16T15:16:06.63446+00:00",
+    "materialized_by": "slack:U0SLACKUSR1",
+    "member_count": 1,
+    "no_flow_count": 0,
+    "not_started_by_reason": {
+      "conversacion_viva": 1
+    },
+    "not_started_count": 1,
+    "occurrence_id": "8ed2f5be-1c28-40f4-9fc0-59184a748eab",
+    "occurrence_key": "manual:52ccc479-bae3-4dd1-bef9-d18baa11b8f1",
+    "omitted_by_reason": {
+      "fuera_de_cohorte": 254
+    },
+    "omitted_count": 254,
+    "per_hour": 200,
+    "per_occurrence": 1000,
+    "product_ref": "maribel",
+    "released_count": 1,
+    "scheduled_at": "2026-11-16T15:16:05.043205+00:00",
+    "started_count": 0,
+    "state": "terminada",
+    "unsettled_count": 0
+  }
+}

@@ -65,7 +65,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026111500010
     // El destinatario de un flujo nativo de audiencia (20261117000500, E-661).
     '20261117000500_flow_engine_native_audience_recipient_v1.sql',
     // La repeticion de un flujo de audiencia cuenta solo a quien arranco (20261117000600, E-665).
-    '20261117000600_flow_audience_repeat_counts_started_v1.sql'])) fail(`despues de ${MIGRATION} van solo la de E-569, la de E-575 y la de E-622`, names.slice(position + 1));
+    '20261117000600_flow_audience_repeat_counts_started_v1.sql',
+    // Los motivos de quien no arranco en un envio a una audiencia (20261117000700, E-666).
+    '20261117000700_flow_audience_start_reasons_v1.sql'])) fail(`despues de ${MIGRATION} van solo la de E-569, la de E-575 y la de E-622`, names.slice(position + 1));
 const apply = async (file) => db.exec(readFileSync(file, 'utf8').replace(
   /create extension if not exists pgcrypto;/gi,
   '-- pgcrypto is built into PGlite',
