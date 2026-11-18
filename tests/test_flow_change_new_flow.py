@@ -365,8 +365,9 @@ def test_validating_a_new_flow_reads_the_counts_of_its_trigger() -> None:
     assert "new_flow_counts" in inputs
     [counts_sql] = [stdin for argv, stdin in docker.calls if "read_flow_engine_native_trigger_counts_v1" in stdin]
     assert "trigger\tcompra" in counts_sql and "product\tatt1" in counts_sql
-    assert ops.read_engine_inputs([_new_item(), _new_item(flujo="otra")]) == {
-        "simulation_unavailable": "simulation_new_flow_mixed"}
+    # Dos nuevos (E-657): uno con su lectura cada uno; el validador arma la simulacion por flujo.
+    both = ops.read_engine_inputs([_new_item(), _new_item(flujo="otra")])
+    assert set(both) == {"new_flows"} and [set(read) for read in both["new_flows"]] == [{"new_flow_counts"}] * 2
 
 
 _ENV = {"CONTENEDOR_DB": "att1-db", "CONTENEDOR_CHATWOOT_DB": "chatwoot-db", "BASE_CHATWOOT_DB": "infra",

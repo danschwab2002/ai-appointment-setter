@@ -149,9 +149,9 @@ def test_the_bridge_and_the_operator_ask_for_the_same_reading() -> None:
     cases = [
         (audience, [_prender()], asked),
         (audience, [_prender(tipo="apagar")], asked),
-        # Una version de un flujo de audiencia sigue sin simulacion (no es el paso de la cohorte a todos).
-        (audience, [{**_prender(), "tipo": "version", "definicion": _published()}],
-         {"simulation_unavailable": "simulation_native_flow_counts_invalid"}),
+        # E-668: una version de un flujo de audiencia con la misma audiencia tambien la cuenta (antes,
+        # simulation_native_flow_counts_invalid). Lo demas de la version: test_e668_audience_version_simulation.py.
+        (audience, [{**_prender(), "tipo": "version", "definicion": _published()}], asked),
         (audience, [_prender(), _prender()], {"simulation_unavailable": "simulation_native_flow_mixed"}),
         ({"flows": [{**_aviso_flow(), "active_version": None}]}, [_prender()],
          {"simulation_unavailable": "simulation_native_flow_counts_invalid"}),

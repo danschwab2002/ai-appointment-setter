@@ -12295,6 +12295,19 @@ def create_app(
         flow_engine_readiness = (
             flow_engine_runtime.readiness() if flow_engine_runtime is not None else {}
         )
+        if instance_runtime is not None:
+            # E-668: lo que este bridge ejecuta, con el que valida el AE y la
+            # pagina. El comando del operador lo lee de aca (CONTENEDOR_BRIDGE)
+            # para validar con las mismas capacidades del motor. Solo flags y el
+            # producto principal: ningun secreto ni dato de nadie.
+            flow_engine_readiness = {
+                **flow_engine_readiness,
+                "flow_change_runtime": json.dumps(
+                    instance_runtime.to_json(),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            }
         return {
             "status": "ready",
             "pilot_boundary": "configured",
