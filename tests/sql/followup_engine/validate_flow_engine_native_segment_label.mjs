@@ -58,7 +58,9 @@ const ONLY_CALLS = new Set(['20261108004100_flow_change_publish_native_version_g
     // El registro de permiso de WhatsApp (20261116000200, E-627).
     '20261116000200_permission_registry_v1.sql',
     // El destinatario de un flujo nativo de audiencia (20261117000500, E-661).
-    '20261117000500_flow_engine_native_audience_recipient_v1.sql']);
+    '20261117000500_flow_engine_native_audience_recipient_v1.sql',
+    // La repeticion de un flujo de audiencia cuenta solo a quien arranco (20261117000600, E-665).
+    '20261117000600_flow_audience_repeat_counts_started_v1.sql']);
 for (const name of names.slice(position + 1).filter((candidate) => !ONLY_CALLS.has(candidate))) {
   if (readFileSync(join(root, 'supabase/migrations', name), 'utf8').includes('_flow_engine_native_unsupported')) {
     fail(`${name} toca _flow_engine_native_unsupported: revisar esta prueba`);

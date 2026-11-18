@@ -202,6 +202,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261116000200",
         # El destinatario de un flujo nativo de audiencia (20261117000500, E-661).
         "20261117000500",
+        # La repeticion de un flujo de audiencia cuenta solo a quien arranco (20261117000600, E-665).
+        "20261117000600",
     ]
 
     sql = _sql()

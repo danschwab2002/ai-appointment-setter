@@ -190,6 +190,8 @@ def test_it_is_one_transaction_and_comes_right_after_the_t4b() -> None:
         "20261116000200_permission_registry_v1.sql",
         # El destinatario de un flujo nativo de audiencia (20261117000500, E-661).
         "20261117000500_flow_engine_native_audience_recipient_v1.sql",
+        # La repeticion de un flujo de audiencia cuenta solo a quien arranco (20261117000600, E-665).
+        "20261117000600_flow_audience_repeat_counts_started_v1.sql",
     ]
 
 

@@ -82,7 +82,9 @@ const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Despues va solo el destinatario de un flujo nativo de audiencia (20261117000500, E-661): cambia el tipo de
 // get_followup_execution_context, que esta no toca.
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261117000500_flow_engine_native_audience_recipient_v1.sql'])) {
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261117000500_flow_engine_native_audience_recipient_v1.sql',
+  // La repeticion de un flujo de audiencia cuenta solo a quien arranco (20261117000600, E-665).
+  '20261117000600_flow_audience_repeat_counts_started_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de E-661`, names.slice(position + 1));
 }
 
