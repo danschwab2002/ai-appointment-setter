@@ -56,6 +56,12 @@ las que dicen su valor por defecto):
 * ``TENANT``, ``ALIADA`` y ``ZONA``: la instancia.
 * ``APROBADORES``: los nombres que pueden escribir, separados por comas
   (``dan`` en ATT1). ``--quien`` tiene que estar en la lista.
+* ``CONTENEDOR_BRIDGE`` (opcional, E-668): el filtro del contenedor del bridge
+  vivo. Con el, el validador recibe lo que ejecuta el bridge
+  (``flow_change_runtime`` de su ``/ready``, leido desde adentro: solo flags y
+  el producto principal) y valida un flujo de audiencia o de varios toques
+  como la ruta del agente. Sin el, como antes. Si esta y no se puede leer, no
+  se valida.
 
 El SQL va siempre por la entrada estandar de ``psql -X``; los valores, en una
 tabla temporal cargada con ``COPY ... FROM STDIN``, nunca pegados en el texto
@@ -160,6 +166,9 @@ class Config:
     ally: str
     zone: str
     approvers: tuple[str, ...]
+    # E-668: el contenedor del bridge vivo, de donde se lee lo que ejecuta (``flow_change_runtime`` de /ready).
+    # Opcional: sin el, el validador no sabe que ejecuta el bridge, como antes.
+    bridge_filter: str | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> Config:
@@ -191,6 +200,7 @@ class Config:
             ally=required("ALIADA"),
             zone=required("ZONA"),
             approvers=approvers,
+            bridge_filter=env.get("CONTENEDOR_BRIDGE", "").strip() or None,
         )
 
     @property
@@ -207,6 +217,7 @@ class Ops:
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
     code: Callable[[], str] = lambda: secrets.token_hex(3)
     _containers: dict[str, str] = field(default_factory=dict)
+    _runtime: dict[str, Any] | None = None
 
     # -- salida ------------------------------------------------------------
     def say(self, line: str = "") -> None:
@@ -303,6 +314,20 @@ class Ops:
             raise Refused(f"el validador rechazo la entrada: {out.get('reason_code') if isinstance(out, dict) else '?'}")
         return result.returncode, out
 
+    def _new_flow_input(self, args: Mapping[str, Any], product: object, item: Mapping[str, Any]) -> dict[str, Any]:
+        """Lo que lee la simulacion de un item ``nuevo``: los disparos de su disparador, o por que no."""
+        if _new_audience_flow_form([item]) is not None:
+            # Un disparo por audiencia no tiene evento que contar: el validador arma la simulacion
+            # de la definicion, sin leer la base (E-621).
+            return {"new_flow_audience": True}
+        trigger = _simulation_trigger(item.get("definicion"))
+        try:
+            counts = self.sql_json(SQL_NEW_FLOW_COUNTS, {**args, "product": product, "trigger": trigger},
+                                   read_only=True)
+        except Refused:
+            return {"simulation_unavailable": "flow_engine_unavailable"}
+        return {"new_flow_counts": counts}
+
     def read_engine_inputs(self, items: object, store: object = None) -> dict[str, Any]:
         """La lectura del motor y la historia del producto, o por que no se pudieron leer.
 
@@ -317,20 +342,11 @@ class Ops:
         new_flows = [item for item in items if isinstance(item, Mapping) and item.get("tipo") == "nuevo"] \
             if isinstance(items, list) else []
         if new_flows:
-            if len(items) != 1:
+            if len(new_flows) != len(items):
                 return {"simulation_unavailable": "simulation_new_flow_mixed"}
-            if _new_audience_flow_form(items) is not None:
-                # Un disparo por audiencia no tiene evento que contar: el validador arma la simulacion
-                # de la definicion, sin leer la base (E-621).
-                return {"new_flow_audience": True}
-            definition = new_flows[0].get("definicion")
-            trigger = _simulation_trigger(definition)
-            try:
-                counts = self.sql_json(SQL_NEW_FLOW_COUNTS, {**args, "product": next(iter(products)),
-                                                             "trigger": trigger}, read_only=True)
-            except Refused:
-                return {"simulation_unavailable": "flow_engine_unavailable"}
-            return {"new_flow_counts": counts}
+            # Varios nuevos (E-657): cada uno con su lectura; el validador arma uno por flujo.
+            reads = [self._new_flow_input(args, next(iter(products)), item) for item in new_flows]
+            return reads[0] if len(reads) == 1 else {"new_flows": reads}
         native = _native_flow_counts_request(store, items)
         if native is not None:
             if "simulation_unavailable" in native:
@@ -368,8 +384,35 @@ class Ops:
             return {"simulation_unavailable": "flow_engine_unavailable"}
         return {"engine": engine, "history": history}
 
+    def read_runtime(self) -> dict[str, Any] | None:
+        """Lo que ejecuta el bridge vivo (E-668): ``flow_change_runtime`` de su /ready, o None sin CONTENEDOR_BRIDGE.
+
+        Es el mismo ``InstanceRuntime`` con el que validan la ruta del AE y la pagina: sin el, el validador del
+        operador no conoce las capacidades del motor (un flujo de audiencia da ``motor_nativo:disparador``, ``permiso``
+        y ``forma``). Se lee desde adentro del contenedor (/ready no esta publicado afuera); solo sale esa clave, y
+        se valida su forma. Con CONTENEDOR_BRIDGE puesto, no leerla es un rechazo: no se valida a ciegas.
+        """
+        if self.config.bridge_filter is None:
+            return None
+        if self._runtime is not None:
+            return self._runtime
+        result = self.docker.run(["exec", "-i", self.container(self.config.bridge_filter), "python", "-c",
+                                  RUNTIME_PROBE])
+        try:
+            raw = json.loads(result.stdout.strip().splitlines()[-1]).get("flow_change_runtime")
+            runtime = json.loads(raw) if isinstance(raw, str) else None
+        except (IndexError, ValueError, AttributeError):
+            runtime = None
+        if result.returncode or not _runtime_ok(runtime):
+            raise Refused("no se pudo leer lo que ejecuta el bridge (flow_change_runtime de /ready): no se valida")
+        self._runtime = runtime
+        return runtime
+
     def validate(self, proposal: Mapping[str, Any], world: Mapping[str, Any],
                  catalog: Mapping[str, Any] | None) -> dict[str, Any]:
+        runtime = self.read_runtime()
+        if runtime is not None:
+            world = {**world, "instance": {**world["instance"], "runtime": runtime}}
         payload = {**world, **self.read_engine_inputs(proposal["items"], world.get("store")), "catalog": catalog, "proposal": {
             key: proposal[key] for key in ("id", "revision", "items", "draft_base", "purpose", "requested_by_kind")}}
         _, out = self.module("validar", payload)
@@ -497,6 +540,22 @@ SQL_AUDIENCE_REACH = f"""select public.read_flow_audience_reach_v1({INSTANCE_SQL
     {_arg('flow')}::uuid, {_arg('version')}::integer)::text;"""
 ENGINE_PAGES_MAX = 10
 
+# E-668: lo que ejecuta el bridge, leido desde adentro de su contenedor. Solo sale flow_change_runtime de /ready.
+RUNTIME_PROBE = (
+    "import json,sys,urllib.request\n"
+    "b=json.loads(urllib.request.urlopen('http://127.0.0.1:8000/ready',timeout=10).read())\n"
+    "sys.stdout.write(json.dumps({'flow_change_runtime':b.get('flow_change_runtime')})+'\\n')\n"
+)
+# InstanceRuntime.to_json y NativeRuntime.to_json del bridge: los flags y el producto principal.
+_RUNTIME_FLAGS = ("engine_enabled", "native_intent_enabled", "native_silence_sweeper", "cart_touches",
+                  "native_multitouch_enabled", "native_personal_coupon_enabled", "native_payment_slip_enabled")
+
+
+def _runtime_ok(runtime: object) -> bool:
+    return isinstance(runtime, dict) and set(runtime) == {*_RUNTIME_FLAGS, "main_product"} \
+        and all(type(runtime[key]) is bool for key in _RUNTIME_FLAGS) \
+        and isinstance(runtime["main_product"], str) and bool(_NAME.fullmatch(runtime["main_product"]))
+
 # La gemela de bridge.flow_change_simulation.native_flow_counts_request (E-241), sin importar el
 # bridge: este script corre con la libreria estandar. test_flow_change_native_simulation.py fija que
 # las dos contesten lo mismo.
@@ -524,6 +583,8 @@ _AUDIENCE_FORMS = ("fecha", "cada", "manual")
 
 
 _AUDIENCE_REACH_ITEM_TYPES = frozenset({"prender", "apagar"})
+# Gemela de E-668: una version o un volver de un flujo de audiencia, con la misma audiencia que la activa.
+_AUDIENCE_VERSION_ITEM_TYPES = frozenset({"version", "volver"})
 
 
 def _audience_form(trigger: object) -> str | None:
@@ -532,6 +593,17 @@ def _audience_form(trigger: object) -> str | None:
         return None
     (key,) = tuple(trigger)
     return key if key in _AUDIENCE_FORMS else None
+
+
+def _is_audience(definition: object) -> bool:
+    return isinstance(definition, Mapping) and _audience_form(definition.get("dispara")) is not None
+
+
+def _same_audience(active: object, destination: object) -> bool:
+    """Gemela de flow_change_simulation.same_audience (E-668): las dos de audiencia, mismo para y producto."""
+    return _is_audience(active) and _is_audience(destination) \
+        and active.get("para") == destination.get("para") \
+        and active.get("producto") == destination.get("producto")  # type: ignore[union-attr]
 
 
 def _new_audience_flow_form(items: object) -> str | None:
@@ -575,9 +647,14 @@ def _native_flow_counts_request(store: object, items: object) -> dict[str, Any] 
     else:
         definition = versions.get(str(flow.get("active_version")))
     product = item.get("producto")
-    if item["tipo"] in _AUDIENCE_REACH_ITEM_TYPES and isinstance(definition, Mapping) \
-            and _audience_form(definition.get("dispara")) is not None:
-        # Gemela de E-622: un disparo por audiencia no tiene evento; se cuenta su audiencia de hoy.
+    active = versions.get(str(flow.get("active_version")))
+    if item["tipo"] in _AUDIENCE_VERSION_ITEM_TYPES and (_is_audience(definition) or _is_audience(active)):
+        # Gemela de E-668: con otra audiencia que la activa no hay lectura que la cuente.
+        if not _same_audience(active, definition):
+            return {"simulation_unavailable": "simulation_audience_version_audience_changed"}
+    if (item["tipo"] in _AUDIENCE_REACH_ITEM_TYPES or item["tipo"] in _AUDIENCE_VERSION_ITEM_TYPES) \
+            and _is_audience(definition):
+        # Gemela de E-622 y E-668: un disparo por audiencia no tiene evento; se cuenta su audiencia de hoy.
         version = flow.get("active_version")
         if not isinstance(product, str) or not isinstance(flow.get("flow_id"), str) \
                 or type(version) is not int:

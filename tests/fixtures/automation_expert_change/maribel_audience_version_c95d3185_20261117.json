@@ -1,0 +1,304 @@
+{
+  "_captured": {
+    "source": "maribel_db (stack maribel), solo lectura (default_transaction_read_only=on)",
+    "captured_at": "2026-11-18T03:35Z",
+    "by": "E-668",
+    "what": "La propuesta c95d3185 (version de aviso_manual_prueba, repeticion 7d a 20h) que la ruta del AE de v1.40.4 valido con simulation_native_flow_counts_invalid, y el flujo en el almacen (flow_controls + flow_definitions v1). Sin refs de Slack ni de personas: los *_by_ref quedan afuera.",
+    "runtime_note": "Maribel v1.40.4 no publica su runtime en /ready (lo suma E-668). Se deriva de /ready del 18/11 03:3xZ: flow_engine enabled, flow_engine_native_intent on, flow_engine_cart_touches disabled, flow_engine_native_silence_running 1, flow_audience ok (corre con FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED). Cupon propio y ficha: no se ven en /ready; van en false (no cambian esta propuesta).",
+    "esquema_note": "Las definiciones van sin la clave esquema (setter-flujo/v1): el test la vuelve a poner al cargar. validate_flow_engine_native_silence.mjs recorre tests/fixtures y compara cada definicion con esquema contra el motor de antes del disparo por audiencia, y una de audiencia da distinto por diseno."
+  },
+  "proposal": {
+    "id": "c95d3185-b28f-4959-b76b-5af1ca6c0f24",
+    "tenant_ref": "lancemos",
+    "ally_ref": "maribel",
+    "status": "descartada",
+    "revision": 1,
+    "items": [
+      {
+        "tipo": "version",
+        "flujo": "aviso_manual_prueba",
+        "flow_id": "6217b517-f87b-424b-8c47-8fb1d199d7b1",
+        "en_curso": "seguir",
+        "producto": "maribel",
+        "definicion": {
+          "para": {
+            "es": "prospecta",
+            "formulario_en": "30d"
+          },
+          "entra": {
+            "permiso": "formulario",
+            "contesto_a": []
+          },
+          "flujo": "aviso_manual_prueba",
+          "pasos": [
+            {
+              "idioma": "es_MX",
+              "plantilla": "maribel_retomar_proceso_02",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "ritmo": {
+            "por_hora": 200,
+            "por_ocurrencia": 1000
+          },
+          "topes": {
+            "bolsa": "maribel-aviso-manual-prueba",
+            "total": 1000,
+            "por_dia": "sin_tope",
+            "repeticion": {
+              "una_por": "persona",
+              "otra_despues_de": "20h"
+            }
+          },
+          "estado": "borrador",
+          "nombre": "Aviso a mano (prueba)",
+          "dispara": {
+            "manual": {}
+          },
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          },
+          "producto": "maribel",
+          "prioridad": {
+            "le_gana_a": [],
+            "no_arranca_mientras": []
+          }
+        }
+      }
+    ],
+    "draft_base": {
+      "6217b517-f87b-424b-8c47-8fb1d199d7b1": {
+        "active_version": 1
+      }
+    },
+    "base": {
+      "1fa0036a-af98-4d8a-a011-fc51bbbe0882": {
+        "active_version": 1
+      },
+      "25251cae-ac02-4afa-9f36-fd02719f768e": {
+        "active_version": 1
+      },
+      "2bbab9a9-ccd6-46a7-90ed-80d08e717fa3": {
+        "active_version": 2
+      },
+      "4d250a44-09e7-4142-9153-7b404293ec95": {
+        "active_version": 1
+      },
+      "5aa6adfa-5eee-46ea-a659-b2bf09cc5f14": {
+        "active_version": 1
+      },
+      "6217b517-f87b-424b-8c47-8fb1d199d7b1": {
+        "generation": 2,
+        "active_version": 1
+      },
+      "7e05fd92-dc08-44ec-91db-5b8d3786509e": {
+        "active_version": 3
+      },
+      "c69a054d-2ff4-48fb-841d-75b7939204a7": {
+        "active_version": 1
+      },
+      "de9316a0-539f-47ff-85ea-24d4e31d3ea2": {
+        "active_version": 1
+      },
+      "f35f2b63-078c-44f2-8a77-5e1a9dae95a5": {
+        "active_version": 4
+      },
+      "f66051a2-6a45-4ca9-9ca2-3f469ac13e80": {
+        "active_version": 2
+      },
+      "f7be432a-5564-4917-b63a-6caeb50b8a2a": {
+        "active_version": 1
+      }
+    },
+    "purpose": "Repetir la prueba del aviso a mano con la versión nueva del sistema arriba: repetición a 20 horas, solo en el grupo de prueba",
+    "requested_by_kind": "automation_expert",
+    "fingerprint": "8ddb59dc981cfca4f6c309a1312f99c08c98ea15976a449b08575babe47e2870",
+    "validated_at": "2026-11-17T23:30:37.216425+00:00",
+    "expires_at": "2026-11-18T23:30:37.216425+00:00",
+    "created_at": "2026-11-17T23:30:36.101536+00:00",
+    "closed_at": "2026-11-17T23:35:37.118414+00:00",
+    "close_reason": "no sirve",
+    "closed_by_kind": "slack"
+  },
+  "stored_validation": {
+    "result": {
+      "blocks": [],
+      "warnings": []
+    },
+    "preview": {
+      "huecos": [
+        {
+          "code": "simulation_failed",
+          "reason_code": "simulation_native_flow_counts_invalid"
+        },
+        {
+          "code": "in_flight_not_counted"
+        },
+        {
+          "code": "audience_change_not_computed"
+        }
+      ],
+      "a_quien": null,
+      "cambios": [
+        {
+          "diff": [
+            {
+              "ruta": "/topes/repeticion/otra_despues_de",
+              "antes": "7d",
+              "despues": "20h"
+            }
+          ],
+          "tipo": "version",
+          "flujo": "aviso_manual_prueba",
+          "en_curso": "seguir",
+          "producto": "maribel",
+          "base_version": 1
+        }
+      ],
+      "empieza": "al_publicar",
+      "en_curso": {
+        "politica": "seguir",
+        "recorridos": null
+      },
+      "mensajes": [
+        {
+          "ruta": "/pasos/0",
+          "flujo": "aviso_manual_prueba",
+          "estado": "APPROVED",
+          "idioma": "es_MX",
+          "producto": "maribel",
+          "categoria": "MARKETING",
+          "plantilla": "maribel_retomar_proceso_02",
+          "como_lo_ve": {
+            "pie": null,
+            "cuerpo": "Hola [nombre], tu inscripción en [producto] quedó a un paso de terminar.\n\nTienes un *10% de descuento* especial para retomar tu compra, da clic en el botón para redimirlo\n\nResponde si necesitas ayuda para completar tu compra.",
+            "botones": [
+              {
+                "tipo": "QUICK_REPLY",
+                "texto": "Retomar proceso"
+              },
+              {
+                "tipo": "QUICK_REPLY",
+                "texto": "No mas mensajes"
+              }
+            ],
+            "encabezado": null
+          },
+          "encontrada": true
+        }
+      ],
+      "para_que": "Repetir la prueba del aviso a mano con la versión nueva del sistema arriba: repetición a 20 horas, solo en el grupo de prueba",
+      "simulacion": {
+        "status": "failed",
+        "reason_code": "simulation_native_flow_counts_invalid"
+      },
+      "advertencias": [],
+      "volver_atras": [
+        {
+          "flujo": "aviso_manual_prueba",
+          "producto": "maribel",
+          "a_version": 1
+        }
+      ]
+    },
+    "validator": {
+      "actor": "automation_expert",
+      "phase": "publish",
+      "git_sha": "a499d860fab5c0f8555e48af01ef05a70cd6f218",
+      "contract": "setter-flujo/v1",
+      "rules_version": 1,
+      "product_version": "1.40.4"
+    }
+  },
+  "store_flow": {
+    "flow_id": "6217b517-f87b-424b-8c47-8fb1d199d7b1",
+    "product_ref": "maribel",
+    "flow_key": "aviso_manual_prueba",
+    "state": "cohorte",
+    "active_version": 1,
+    "generation": 2,
+    "changed_at": "2026-11-16T15:08:30.646589+00:00",
+    "changed_by_kind": "slack",
+    "native": true,
+    "versions": {
+      "1": {
+        "para": {
+          "es": "prospecta",
+          "formulario_en": "30d"
+        },
+        "entra": {
+          "permiso": "formulario",
+          "contesto_a": []
+        },
+        "flujo": "aviso_manual_prueba",
+        "pasos": [
+          {
+            "idioma": "es_MX",
+            "plantilla": "maribel_retomar_proceso_02",
+            "variables": [
+              "nombre",
+              "producto"
+            ]
+          }
+        ],
+        "ritmo": {
+          "por_hora": 200,
+          "por_ocurrencia": 1000
+        },
+        "topes": {
+          "bolsa": "maribel-aviso-manual-prueba",
+          "total": 1000,
+          "por_dia": "sin_tope",
+          "repeticion": {
+            "una_por": "persona",
+            "otra_despues_de": "7d"
+          }
+        },
+        "estado": "publicada",
+        "nombre": "Aviso a mano (prueba)",
+        "dispara": {
+          "manual": {}
+        },
+        "horario": {
+          "zona": "America/Mexico_City",
+          "desde": "09:00",
+          "hasta": "21:00"
+        },
+        "termina": {
+          "si": [
+            "compra"
+          ],
+          "vence": "1d"
+        },
+        "version": 1,
+        "producto": "maribel",
+        "prioridad": {
+          "le_gana_a": [],
+          "no_arranca_mientras": []
+        }
+      }
+    }
+  },
+  "definition_sha256_v1": "f298533158899247963754ff6f0eb9c5ff196a0397d81de06ea412f204c5d399",
+  "runtime": {
+    "engine_enabled": true,
+    "native_intent_enabled": true,
+    "native_silence_sweeper": true,
+    "cart_touches": false,
+    "main_product": "maribel",
+    "native_multitouch_enabled": true,
+    "native_personal_coupon_enabled": false,
+    "native_payment_slip_enabled": false
+  }
+}

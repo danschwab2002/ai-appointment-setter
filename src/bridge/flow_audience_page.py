@@ -6,7 +6,8 @@ con ``FLOW_AUDIENCE_TRIGGERS_ENABLED`` (apagado, las rutas dan 404).
 
 * ``GET  /flow-approval/envios``: los flujos ``manual`` que corren, con «Armar la
   lista», y las ocurrencias de la instancia: cuantas personas van a salir, cuantas
-  quedaron afuera y por que, el ritmo y como va el envio. Sin telefonos ni nombres.
+  quedaron afuera y por que, el ritmo y como va el envio: de las que salieron, cuantas
+  arrancaron y cuantas no, con el motivo agrupado (E-666). Sin telefonos ni nombres.
 * ``POST /flow-approval/envios/armar``: arma la lista de un flujo ``manual`` (la arma
   el bridge, con quien la pidio). Queda esperando; nadie la recibe todavia.
 * ``POST /flow-approval/envios/{id}/confirmar``: **el si de una persona**. Hay que
@@ -70,6 +71,29 @@ _BRAKE = {"meta_salud:red": "la salud del número está en rojo", "meta_salud:ye
           "meta_salud:limited": "Meta limitó los envíos del número",
           "meta_salud:limite_bajo": "el límite de mensajes del número es bajo (2.000 por día o menos)",
           "a_mano": "lo frenó una persona"}
+# Por que no arranco una persona que salio de la lista (E-666): el rechazo de la admision del
+# motor (flow_engine_start_rejections, por el evento de esa persona; not_started_by_reason de
+# _flow_audience_occurrence_rows, 20261117000700). Texto para quien opera, no para el equipo tecnico.
+_NOT_STARTED = {
+    "conversacion_viva": "estaba conversando con nosotros en las últimas 24 h",
+    "conversacion_derivada": "su conversación la tiene una persona del equipo",
+    "compra": "ya compró",
+    "no_entra:permiso": "no tiene permiso vigente para recibir el mensaje",
+    "sin_permiso": "no tiene permiso vigente para recibir el mensaje",
+    "baja": "pidió no recibir más mensajes",
+    "fuera_de_cohorte": "no está en el grupo de prueba",
+    "repetida": "ya recibió este flujo hace poco",
+    "tope_por_persona": "ya recibió el máximo de mensajes por persona",
+    "evento_con_otro_flujo": "le correspondía otro flujo",
+    "sin_registro": "no quedó registrado el motivo",
+}
+_NOT_STARTED_PREFIX = {
+    "no_arranca_mientras": "tenía otro flujo en curso",
+    "politica_compilada": "el flujo no se pudo preparar",
+    "error_interno": "falló el sistema al arrancar",
+}
+# Las que salieron y el motor no les encontro flujo (open_outcome sin_flujo).
+_NO_FLOW = "el flujo se apagó o cambió de versión"
 _DONE = {
     "armada": "Lista armada. Revisá cuántas personas van a salir y confirmá abajo.",
     "confirmada": "Confirmado. Sale al ritmo por hora del flujo, y se frena solo si baja la salud del número.",
@@ -99,6 +123,53 @@ def _omitted_text(by_reason: object) -> str:
     return f"<p>Quedaron afuera: {_esc(', '.join(parts))}.</p>" if parts else ""
 
 
+def _not_started_text(reason: str) -> str:
+    if reason in _NOT_STARTED:
+        return _NOT_STARTED[reason]
+    prefix = reason.split(":", 1)[0]
+    if prefix in _NOT_STARTED_PREFIX:
+        return _NOT_STARTED_PREFIX[prefix]
+    return f"otro motivo (código {reason})"
+
+
+def _count(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _started_html(row: Mapping[str, Any]) -> str:
+    """De las que salieron: cuantas arrancaron, cuantas no y por que (E-666).
+
+    Con una base sin 20261117000700 (sin ``not_started_by_reason``) dice lo de antes.
+    """
+    released = int(row.get("released_count") or 0)
+    started = int(row.get("started_count") or 0)
+    not_started = _count(row.get("not_started_count"))
+    no_flow = _count(row.get("no_flow_count"))
+    unsettled = _count(row.get("unsettled_count"))
+    by_reason = row.get("not_started_by_reason")
+    if not_started is None or no_flow is None or unsettled is None or not isinstance(by_reason, Mapping):
+        return f"<p>Salieron {released}; el motor abrió el envío a {started}.</p>"
+    grouped: dict[str, int] = {}
+    for reason, n in by_reason.items():
+        if _count(n):
+            text = _not_started_text(str(reason))
+            grouped[text] = grouped.get(text, 0) + int(n)
+    told = sum(grouped.values())
+    if not_started > told:
+        text = _NOT_STARTED["sin_registro"]
+        grouped[text] = grouped.get(text, 0) + not_started - told
+    if no_flow:
+        grouped[_NO_FLOW] = grouped.get(_NO_FLOW, 0) + no_flow
+    missing = not_started + no_flow
+    lines = [f'<p class="count">Salieron de la lista <strong>{released}</strong>: arrancaron '
+             f"<strong>{started}</strong>, no arrancaron <strong>{missing}</strong>"
+             + (f", esperando al motor {unsettled}" if unsettled else "") + ".</p>"]
+    if grouped:
+        parts = [f"{n} {text}" for text, n in sorted(grouped.items(), key=lambda item: (-item[1], item[0]))]
+        lines.append(f"<p>Por qué no arrancaron: {_esc('; '.join(parts))}.</p>")
+    return "".join(lines)
+
+
 def _occurrence_html(row: Mapping[str, Any], *, csrf: str, time_zone: str | None) -> str:
     occurrence_id = str(row.get("occurrence_id") or "")
     if not _canonical_uuid(occurrence_id):
@@ -113,9 +184,8 @@ def _occurrence_html(row: Mapping[str, Any], *, csrf: str, time_zone: str | None
         f'<p class="count">Van a salir: <strong>{members}</strong> personas, a {per_hour} por hora como máximo.</p>',
         _omitted_text(row.get("omitted_by_reason")),
     ]
-    if state in ("enviando", "terminada"):
-        lines.append(f"<p>Salieron {int(row.get('released_count') or 0)}; el motor abrió el envío a "
-                     f"{int(row.get('started_count') or 0)}.</p>")
+    if state in ("enviando", "terminada") or int(row.get("released_count") or 0) > 0:
+        lines.append(_started_html(row))
     if state == "frenada":
         lines.append(f"<p>Frenado: {_esc(_BRAKE.get(str(row.get('brake_reason')), str(row.get('brake_reason'))))}.</p>")
     lines.append(f"<p class=\"meta\">Armada {_esc(_when(row.get('materialized_at'), time_zone))}</p>")

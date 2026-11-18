@@ -1157,7 +1157,7 @@ _REACH_CAVEATS = {
 
 
 def _audience_reach_lines(summary: Mapping[str, Any]) -> str | None:
-    """Prender o apagar un flujo de audiencia (E-622): cuantas personas cumplen hoy su ``para``, o None."""
+    """Prender, apagar o una version de un flujo de audiencia (E-622, E-668): cuantas cumplen hoy su ``para``."""
     matching, per_send = summary.get("cumplen_hoy"), summary.get("por_envio")
     audience = summary.get("audiencia")
     form = summary.get("disparador")
@@ -1177,6 +1177,19 @@ def _audience_reach_lines(summary: Mapping[str, Any]) -> str | None:
     if summary.get("tipo") == "apagar":
         head += (f"<p>Al apagarlo, como máximo <strong>{_esc(per_send)}</strong> "
                  f"{'persona dejaría' if per_send == 1 else 'personas dejarían'} de recibir el próximo envío.</p>")
+    elif summary.get("tipo") in ("version", "volver"):
+        # E-668: una version no cambia a quien le llega hoy el flujo; el numero es la audiencia, no los mensajes.
+        head = _native_structure_line(summary) + head
+        reach = summary.get("alcance")
+        if reach == "todos":
+            head += (f"<p>Esta versión le llegaría a quienes entren desde que se publique: cada envío, como máximo a "
+                     f"<strong>{_esc(per_send)}</strong> {'persona' if per_send == 1 else 'personas'}.</p>")
+        elif reach == "cohorte":
+            head += ("<p>Hoy el flujo solo le llega a la cohorte de prueba: cada envío sale a las de la cohorte que "
+                     "cumplan la audiencia, no a todas esas personas.</p>")
+        else:
+            head += "<p>Hoy el flujo no le llega a nadie, y no va a mandar nada hasta prenderlo.</p>"
+        head += "<p>Lo que cambia paso por paso está en el detalle de la propuesta.</p>"
     else:
         head += (f"<p>Para todos, cada envío le llegaría como máximo a <strong>{_esc(per_send)}</strong> "
                  f"{'persona' if per_send == 1 else 'personas'}.</p>")
@@ -1204,6 +1217,13 @@ def _simulation_summary(simulation: object, *, turns_off: bool = False) -> str:
         return (f"<p>La simulación no se pudo armar (<code>{_esc(simulation.get('reason_code'))}</code>). "
                 f"{gate}</p>")
     summary = simulation.get("summary") if isinstance(simulation.get("summary"), Mapping) else {}
+    flows = summary.get("flujos")
+    if isinstance(flows, list) and flows:
+        # Varios flujos nuevos en una propuesta (E-657): la simulacion de cada uno, con su nombre.
+        return "".join(
+            f"<h4>{_esc(flow.get('flujo_nuevo'))}</h4>"
+            + _simulation_summary({"status": "built", "summary": flow}, turns_off=turns_off)
+            for flow in flows if isinstance(flow, Mapping))
     audience = _new_audience_lines(summary)
     if audience is None:
         audience = _audience_reach_lines(summary)

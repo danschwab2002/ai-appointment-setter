@@ -57,6 +57,7 @@ from .flow_change_simulation import (
     build_native_flow_simulation,
     build_new_audience_flow_simulation,
     build_new_flow_simulation,
+    build_new_flows_simulation,
     build_simulation,
 )
 from .flow_definition import (
@@ -238,6 +239,9 @@ def validate_proposal(payload: object, *, environ: Mapping[str, str]) -> dict[st
         unavailable = data.get("simulation_unavailable")
         if isinstance(unavailable, str):
             simulacion = {"status": "failed", "reason_code": unavailable}
+        elif "new_flows" in data:
+            # Varios items nuevos (E-657): cada flujo se simula por separado, con su lectura.
+            simulacion = build_new_flows_simulation(data.get("new_flows"), items, world=world)
         elif data.get("new_flow_audience") is True:
             # Un nuevo con disparo por audiencia: sin evento que contar, nace en cohorte vacia (E-621).
             simulacion = build_new_audience_flow_simulation(items)
