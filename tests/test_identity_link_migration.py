@@ -28,11 +28,13 @@ def test_they_are_one_transaction_each_and_the_last_two() -> None:
         assert "already_applied" in sql
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
     # Despues de la ficha de OXXO nativa (20261113200000, E-528, C4), la ultima del #455.
-    assert names[-11] == "20261113200000_e528_native_payment_slip_v1.sql"
-    assert names[-10] == A.name
-    assert names[-9] == B.name
+    assert names[-12] == "20261113200000_e528_native_payment_slip_v1.sql"
+    assert names[-11] == A.name
+    assert names[-10] == B.name
     # Despues va solo la de las ofertas huerfanas de Hotmart (20261114000300, E-565).
-    assert names[-8] == "20261114000300_hotmart_unknown_offers_v1.sql"
+    assert names[-9] == "20261114000300_hotmart_unknown_offers_v1.sql"
+    # La ultima arregla el numero de conversacion de los avisos (20261118000300, E-656).
+    assert names[-1] == "20261118000300_identity_link_conversation_number_account_v1.sql"
 
 
 def test_the_replacements_are_only_the_four_functions_of_the_cart_and_the_permission() -> None:

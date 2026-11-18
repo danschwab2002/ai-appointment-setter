@@ -55,7 +55,9 @@ const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.end
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Despues va solo la repeticion de un flujo de audiencia (20261117000600, E-665): no toca el contexto del despacho.
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261117000600_flow_audience_repeat_counts_started_v1.sql', '20261117000700_flow_audience_start_reasons_v1.sql'])) {
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261117000600_flow_audience_repeat_counts_started_v1.sql', '20261117000700_flow_audience_start_reasons_v1.sql',
+  // El numero de conversacion de los avisos del correlador (20261118000300, E-656): no toca el contexto del despacho.
+  '20261118000300_identity_link_conversation_number_account_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de la repeticion de E-665`, names.slice(position + 1));
 }
 

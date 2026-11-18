@@ -49,6 +49,8 @@ import { buildWorld, errorOf, fail, one, root, sameSet } from './validate_flow_e
 
 const A_MIGRATION = '20261114000100_identity_link_decider_v1.sql';
 const B_MIGRATION = '20261114000150_identity_link_question_v1.sql';
+// El numero de conversacion de los avisos encuentra la identidad 'chatwoot:<n>' (20261118000300, E-656).
+const C_MIGRATION = '20261118000300_identity_link_conversation_number_account_v1.sql';
 const CHANGED_A = [
   'plan_lancemos_pilot_cart_recovery(uuid,uuid,text,text,text,text,integer,timestamp with time zone,bigint,bigint,text,text,integer)',
   '_portable_cart_audience_checks(text,integer,uuid,uuid,text,text)',
@@ -91,7 +93,9 @@ if (JSON.stringify(names.slice(position + 2)) !== JSON.stringify(['2026111400030
     // La repeticion de un flujo de audiencia cuenta solo a quien arranco (20261117000600, E-665).
     '20261117000600_flow_audience_repeat_counts_started_v1.sql',
     // Los motivos de quien no arranco en un envio a una audiencia (20261117000700, E-666).
-    '20261117000700_flow_audience_start_reasons_v1.sql'])) fail('despues de la pregunta van solo la de E-565, la de E-569, la de E-575 y la de E-622', names.slice(position + 2));
+    '20261117000700_flow_audience_start_reasons_v1.sql',
+    // El numero de conversacion de los avisos (20261118000300, E-656).
+    C_MIGRATION])) fail('despues de la pregunta van solo la de E-565, la de E-569, la de E-575, la de E-622, la de E-627, la de E-661, la de E-665, la de E-666 y la de E-656', names.slice(position + 2));
 const readMigration = (name) => readFileSync(join(root, 'supabase/migrations', name), 'utf8')
   .replace(/create extension if not exists pgcrypto;/gi, '-- pgcrypto is built into PGlite');
 
@@ -175,7 +179,7 @@ const canExecute = async (db, signature, role) => (await db.query(
 // ---------------------------------------------------------------------------
 // El mundo, sin las dos migraciones (la prueba en rojo), y los helpers.
 // ---------------------------------------------------------------------------
-const world = await buildWorld({ skip: [A_MIGRATION, B_MIGRATION] });
+const world = await buildWorld({ skip: [A_MIGRATION, B_MIGRATION, C_MIGRATION] });
 const { db, A, PLAN_CART, LEGACY, admitForm, dbNow } = world;
 const CART = JSON.parse(readFileSync(join(root, 'tests/fixtures/hotmart_cart_abandonment_rejected_v1.json'), 'utf8')).payload;
 const OFFER = A.offers.at(-1) ?? A.offers[0];
@@ -263,6 +267,7 @@ if ((await correlationOf(red)).outcome !== 'conflict') fail('el rojo no quedo en
 }
 await db.exec(readMigration(A_MIGRATION));
 await db.exec(readMigration(B_MIGRATION));
+// E-656: la C se aplica en la seccion 11, despues de ver el aviso sin numero (el rojo).
 results.rojo_sin_migracion = 'pilot_audience_intent_unresolved';
 
 // ---------------------------------------------------------------------------
@@ -528,6 +533,55 @@ const guardOf = async (lead) => (await q1('select public.get_identity_link_evide
 // 11. Los avisos.
 // ---------------------------------------------------------------------------
 const NOTICES = 'select * from public.read_identity_link_notices_v1($1,$2,100)';
+// E-656: el aviso de decision lleva el numero de conversacion de la identidad de WhatsApp del telefono
+// de la intencion, guardada como la escribe el producto (account_id 'chatwoot:<n>', 20261001000200:766).
+{
+  const r1Decision = await q1(`select decision_id from public.identity_link_decisions
+    where webhook_event_id = $1 and mode = 'vivo' and branch = 'ata'`, [r1.event], 'r1 decision');
+  const r1Key = `decision:${r1Decision.decision_id}`;
+  const R1_CONVERSATION = 656001;
+  // La identidad la escribio el producto al planificar r1 (seccion 3), con la cuenta como 'chatwoot:<n>';
+  // le falta solo el numero, que Chatwoot le pone cuando se abre la conversacion.
+  const written = await q(`select id, account_id from public.channel_identities
+    where channel = 'whatsapp' and external_user_id = any(public._whatsapp_phone_variants($1))`, [r1.phone]);
+  if (written.length !== 1 || written[0].account_id !== `chatwoot:${A.accountId}`) {
+    fail('avisos: el producto escribe la identidad de r1 con la cuenta chatwoot:<n>', written);
+  }
+  await q('update public.channel_identities set external_conversation_id = $2, updated_at = now() where id = $1',
+    [written[0].id, String(R1_CONVERSATION)]);
+  const conversationOf = async () => (await q(NOTICES, [A.tenant, A.funnel])).find((row) => row.notice_key === r1Key);
+  const before = await conversationOf();
+  if (!before) fail('avisos: falta el de la decision de r1');
+  // Rojo: sin la C la funcion compara la cuenta con '<n>' y no encuentra la identidad 'chatwoot:<n>'.
+  if (before.conversation_id !== null) fail('avisos: sin la C el aviso de decision tenia que salir sin numero (el rojo)', before);
+  const direct = 'select public._identity_link_conversation_number($1,$2) as n';
+  if ((await q1(direct, [r1.phone, A.accountId], 'sin C')).n !== null) fail('sin la C la funcion tenia que dar null');
+  const preC = await snapshot(db);
+  await db.exec(readMigration(C_MIGRATION));
+  const postC = await snapshot(db);
+  const changedC = [...preC.keys()].filter((s) => !postC.has(s) || postC.get(s).definition !== preC.get(s).definition);
+  if (!sameSet(changedC, ['_identity_link_conversation_number(text,bigint)'])) fail('la migracion C cambio otra cosa', changedC);
+  const attributesC = [...preC.keys()].filter((s) => postC.has(s)
+    && ['acl', 'prosecdef', 'provolatile'].some((k) => postC.get(s)[k] !== preC.get(s)[k]));
+  if (attributesC.length || postC.size !== preC.size) fail('la migracion C cambio privilegios o agrego funciones', attributesC);
+  for (const role of ['anon', 'authenticated', 'service_role']) {
+    if (await canExecute(db, '_identity_link_conversation_number(text,bigint)', role)) fail(`C: ${role} no puede ejecutarla`);
+  }
+  const againC = await errorOf(db, () => db.exec(readMigration(C_MIGRATION)));
+  if (againC?.code !== '55000') fail('C: correrla dos veces tiene que abortar', againC?.message);
+  await db.exec('rollback').catch(() => {});
+  // Verde: la identidad 'chatwoot:<n>' y la forma '<n>' se encuentran; otra cuenta no.
+  if (Number((await q1(direct, [r1.phone, A.accountId], 'con C')).n) !== R1_CONVERSATION) fail('con la C la funcion da el numero');
+  if ((await q1(direct, [r1.phone, Number(A.accountId) + 1], 'otra cuenta')).n !== null) fail('C: otra cuenta no encuentra nada');
+  const after = await conversationOf();
+  if (Number(after?.conversation_id) !== R1_CONVERSATION) fail('avisos: el de decision lleva el numero de conversacion', after);
+  await q(`update public.channel_identities set account_id = $1 where external_conversation_id = $2`,
+    [String(A.accountId), String(R1_CONVERSATION)]);
+  if (Number((await conversationOf())?.conversation_id) !== R1_CONVERSATION) fail('C: la forma sin prefijo tambien se encuentra');
+  await q(`update public.channel_identities set account_id = $1 where external_conversation_id = $2`,
+    [`chatwoot:${A.accountId}`, String(R1_CONVERSATION)]);
+  results.aviso_con_numero = `rojo sin la C (null), verde con la C (${R1_CONVERSATION})`;
+}
 {
   const notices = await q(NOTICES, [A.tenant, A.funnel]);
   const decisions = notices.filter((row) => row.kind === 'decision');

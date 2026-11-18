@@ -206,6 +206,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261117000600",
         # Los motivos de quien no arranco en un envio a una audiencia (20261117000700, E-666).
         "20261117000700",
+        # El numero de conversacion de los avisos del correlador (20261118000300, E-656).
+        "20261118000300",
     ]
 
     sql = _sql()

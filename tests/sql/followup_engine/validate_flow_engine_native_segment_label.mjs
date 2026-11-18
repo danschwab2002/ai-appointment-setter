@@ -62,7 +62,9 @@ const ONLY_CALLS = new Set(['20261108004100_flow_change_publish_native_version_g
     // La repeticion de un flujo de audiencia cuenta solo a quien arranco (20261117000600, E-665).
     '20261117000600_flow_audience_repeat_counts_started_v1.sql',
     // Los motivos de quien no arranco en un envio a una audiencia (20261117000700, E-666).
-    '20261117000700_flow_audience_start_reasons_v1.sql']);
+    '20261117000700_flow_audience_start_reasons_v1.sql',
+    // El numero de conversacion de los avisos del correlador (20261118000300, E-656).
+    '20261118000300_identity_link_conversation_number_account_v1.sql']);
 for (const name of names.slice(position + 1).filter((candidate) => !ONLY_CALLS.has(candidate))) {
   if (readFileSync(join(root, 'supabase/migrations', name), 'utf8').includes('_flow_engine_native_unsupported')) {
     fail(`${name} toca _flow_engine_native_unsupported: revisar esta prueba`);

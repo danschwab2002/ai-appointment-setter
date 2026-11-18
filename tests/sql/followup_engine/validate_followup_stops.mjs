@@ -138,7 +138,9 @@ if (!same(names.slice(position + 1), ['20261102000100_recovery_coupon_by_reply_v
     // La repeticion de un flujo de audiencia cuenta solo a quien arranco (20261117000600, E-665).
     '20261117000600_flow_audience_repeat_counts_started_v1.sql',
     // Los motivos de quien no arranco en un envio a una audiencia (20261117000700, E-666).
-    '20261117000700_flow_audience_start_reasons_v1.sql'])) {
+    '20261117000700_flow_audience_start_reasons_v1.sql',
+    // El numero de conversacion de los avisos del correlador (20261118000300, E-656).
+    '20261118000300_identity_link_conversation_number_account_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la renovacion por respuesta`, names.slice(position + 1));
 }
 
