@@ -191,6 +191,8 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
         "20261117000600_flow_audience_repeat_counts_started_v1.sql",
         # Los motivos de quien no arranco en un envio a una audiencia (20261117000700, E-666).
         "20261117000700_flow_audience_start_reasons_v1.sql",
+        # El numero de conversacion de los avisos del correlador (20261118000300, E-656).
+        "20261118000300_identity_link_conversation_number_account_v1.sql",
     ]
     native = (MIGRATIONS / "20261024000200_flow_engine_native_v1.sql").read_text(encoding="utf-8")
     assert "read_automation_expert_flows_v1" not in native

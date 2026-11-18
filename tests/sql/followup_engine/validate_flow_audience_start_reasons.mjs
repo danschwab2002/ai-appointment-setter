@@ -55,8 +55,10 @@ const canon = (value) => JSON.stringify(value, (_, v) => (v && typeof v === 'obj
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify([])) {
-  fail(`despues de ${MIGRATION} no va ninguna`, names.slice(position + 1));
+// Despues va solo el numero de conversacion de los avisos del correlador (20261118000300, E-656), que no toca
+// las ocurrencias.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261118000300_identity_link_conversation_number_account_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de E-656`, names.slice(position + 1));
 }
 
 // ---------------------------------------------------------------------------

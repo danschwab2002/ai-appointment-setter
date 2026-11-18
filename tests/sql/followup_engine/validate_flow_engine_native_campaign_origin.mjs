@@ -67,7 +67,9 @@ const REVIEWED = new Set(['20261112210400_e483_payment_failure_by_phone_v1.sql',
     // La repeticion de un flujo de audiencia cuenta solo a quien arranco (20261117000600, E-665).
     '20261117000600_flow_audience_repeat_counts_started_v1.sql',
     // Los motivos de quien no arranco en un envio a una audiencia (20261117000700, E-666).
-    '20261117000700_flow_audience_start_reasons_v1.sql']);
+    '20261117000700_flow_audience_start_reasons_v1.sql',
+    // El numero de conversacion de los avisos del correlador (20261118000300, E-656).
+    '20261118000300_identity_link_conversation_number_account_v1.sql']);
 for (const name of names.slice(position + 1).filter((candidate) => !REVIEWED.has(candidate))) {
   const text = readFileSync(join(root, 'supabase/migrations', name), 'utf8');
   if (text.includes('flow_engine_native_campaign_origin') || text.includes('audience_purchase_intent_id')) {

@@ -113,6 +113,8 @@ const DERIVED_FROM_MIGRATION = [
   '20261112210600_e483_native_audience_source_v1.sql',
   '20261113200000_e528_native_payment_slip_v1.sql',
   '20261116000200_permission_registry_v1.sql',
+  // El numero de conversacion de los avisos del correlador (20261118000300, E-656).
+  '20261118000300_identity_link_conversation_number_account_v1.sql',
 ];
 for (const name of DERIVED_FROM_MIGRATION) {
   if (!MIGRATIONS.includes(name) || name <= MIGRATION) {

@@ -7615,6 +7615,29 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'flow_audience_start_reasons'
+    union all
+    select
+        '20261118000300',
+        '20261118000300_identity_link_conversation_number_account_v1.sql',
+        -- El numero de conversacion de los avisos del correlador acepta la cuenta
+        -- 'chatwoot:<n>' que escribe el producto, ademas de '<n>' (E-656) ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._identity_link_conversation_number(text,bigint)')
+              and position('''chatwoot:'' || p_account_id::text, p_account_id::text' in definition) > 0
+        )::int
+        -- ... y sigue sin execute para la API.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._identity_link_conversation_number(text,bigint)')
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        2,
+        'identity_link_conversation_number_account'
 )
 select
     version,
