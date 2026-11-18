@@ -67,7 +67,10 @@ if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // 20261116000100 (E-622) suma una lectura contada encima de read_flow_audience_candidates_v1 sin tocar estas.
 // 20261117000600 (E-665) cambia la repeticion del armado, con su propia prueba
 // (validate_flow_audience_repeat_started.mjs); la seccion 4 de abajo sigue valiendo (ana arranco).
-const LATER_OK = ['20261116000100_flow_audience_reach_v1.sql', '20261117000600_flow_audience_repeat_counts_started_v1.sql'];
+// 20261117000700 (E-666) suma claves a _flow_audience_occurrence_rows sin tocar las de antes
+// (validate_flow_audience_start_reasons.mjs); esta prueba lee las suyas con la cadena entera.
+const LATER_OK = ['20261116000100_flow_audience_reach_v1.sql', '20261117000600_flow_audience_repeat_counts_started_v1.sql',
+  '20261117000700_flow_audience_start_reasons_v1.sql'];
 for (const name of names.slice(position + 1).filter((n) => !LATER_OK.includes(n))) {
   if (readFileSync(join(root, 'supabase/migrations', name), 'utf8').includes('flow_audience_')) {
     fail(`${name} toca el disparo por audiencia: revisar esta prueba`);

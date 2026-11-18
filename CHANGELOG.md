@@ -12,6 +12,10 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Corregido
+
+- **La página de envíos a una audiencia (`/flow-approval/envios`) dice, en cada envío, cuántas personas arrancaron, cuántas no y por qué (E-666).** Antes una ocurrencia terminada sin nadie que arrancara decía «Terminado · Salieron 1; el motor abrió el envío a 0», sin el motivo (Maribel, 16/11: la persona estaba conversando y el motivo `conversacion_viva` quedaba solo en `flow_engine_start_rejections`). La migración `20261117000700` hace `create or replace` de la lectura privada `_flow_audience_occurrence_rows` (misma firma, atributos y permisos) y suma `not_started_count`, `no_flow_count`, `unsettled_count` y `not_started_by_reason`, sin teléfonos ni contactos; la página agrupa el motivo en castellano simple. Qué hace quien actualiza: aplicar la migración `20261117000700` (idempotente; con una definición que no conoce aborta sin cambiar nada). El orden con el bridge es indistinto: sin la migración la página dice lo de antes.
+
 ## [1.40.4] - 2026-11-17
 
 Un parche sobre la 1.40.3, con 1 PR (#487) y 1 migración. **El envío de un flujo nativo de audiencia (`manual`, `fecha`, `cada`) deja de frenarse en el chequeo del destinatario** (#487, E-661): se valida el producto del evento en vez de una oferta. Sin variables nuevas ni cambios de profile.

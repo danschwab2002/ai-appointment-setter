@@ -1,0 +1,62 @@
+{
+  "_capture": {
+    "origen": "validate_flow_audience_start_reasons.mjs: la cadena entera de migraciones (PGlite), la lectura de la pagina (approver_read_flow_audience_v1) de una ocurrencia manual con cinco personas: una arranco, una no por conversacion viva (el caso 8ed2f5be... de Maribel, 2026-11-16 17:09Z), una no sin rechazo registrado, una sin flujo y una sin asentar",
+    "encargo": "E-666",
+    "regenerar": "cd tests/sql/followup_engine && node validate_flow_audience_start_reasons.mjs --emit"
+  },
+  "occurrence": {
+    "brake_reason": null,
+    "confirmed_at": "<CONFIRMED_AT>",
+    "confirmed_by": "slack:U0DANSCHWAB1",
+    "finished_at": null,
+    "flow_id": "<FLOW>",
+    "flow_key": "aviso_a_mano",
+    "flow_version": 1,
+    "form": "manual",
+    "materialized_at": "<MATERIALIZED_AT>",
+    "materialized_by": "slack:U0DANSCHWAB1",
+    "member_count": 5,
+    "no_flow_count": 1,
+    "not_started_by_reason": {
+      "conversacion_viva": 1,
+      "sin_registro": 1
+    },
+    "not_started_count": 2,
+    "occurrence_id": "<OCCURRENCE>",
+    "occurrence_key": "manual:66666666-6666-4666-8666-666666666666",
+    "omitted_by_reason": {},
+    "omitted_count": 0,
+    "per_hour": 200,
+    "per_occurrence": 1000,
+    "product_ref": "att1",
+    "released_count": 5,
+    "scheduled_at": "<SCHEDULED_AT>",
+    "started_count": 1,
+    "state": "enviando",
+    "unsettled_count": 1
+  },
+  "occurrence_before_migration": {
+    "brake_reason": null,
+    "confirmed_at": "<CONFIRMED_AT>",
+    "confirmed_by": "slack:U0DANSCHWAB1",
+    "finished_at": null,
+    "flow_id": "<FLOW>",
+    "flow_key": "aviso_a_mano",
+    "flow_version": 1,
+    "form": "manual",
+    "materialized_at": "<MATERIALIZED_AT>",
+    "materialized_by": "slack:U0DANSCHWAB1",
+    "member_count": 5,
+    "occurrence_id": "<OCCURRENCE>",
+    "occurrence_key": "manual:66666666-6666-4666-8666-666666666666",
+    "omitted_by_reason": {},
+    "omitted_count": 0,
+    "per_hour": 200,
+    "per_occurrence": 1000,
+    "product_ref": "att1",
+    "released_count": 5,
+    "scheduled_at": "<SCHEDULED_AT>",
+    "started_count": 1,
+    "state": "enviando"
+  }
+}

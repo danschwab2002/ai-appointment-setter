@@ -7590,6 +7590,31 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'flow_audience_repeat_counts_started'
+    union all
+    select
+        '20261117000700',
+        '20261117000700_flow_audience_start_reasons_v1.sql',
+        -- Los motivos de quien no arranco en un envio a una audiencia (E-666): la lectura privada de las
+        -- ocurrencias trae los conteos por resultado y not_started_by_reason ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_audience_occurrence_rows(text,text,integer)')
+              and position('flow_audience_start_reasons' in definition) > 0
+              and position('not_started_by_reason' in definition) > 0
+        )::int
+        -- ... y sigue sin permisos fuera del dueno (create or replace, security invoker).
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_audience_occurrence_rows(text,text,integer)')
+              and not prosecdef
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        2,
+        'flow_audience_start_reasons'
 )
 select
     version,
