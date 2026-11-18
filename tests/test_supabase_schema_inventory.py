@@ -2422,15 +2422,28 @@ def test_flow_audience_repeat_counts_started_fingerprint_counts_the_build() -> N
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact
 
 
-def test_flow_audience_start_reasons_fingerprint_is_last() -> None:
+def test_flow_audience_start_reasons_fingerprint_counts_the_rows() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261117000700 (E-666): la lectura privada de las ocurrencias con los motivos de quien no
     # arranco, sin permisos fuera del dueno.
-    row = sql.split("'20261117000700'", 1)[1].split("select\n    version,", 1)[0]
+    row = sql.split("'20261117000700'", 1)[1].split("'20261118000300'", 1)[0].rsplit("union all", 1)[0]
     compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
 
-    assert compact.endswith(",2,'flow_audience_start_reasons')")
+    assert compact.endswith(",2,'flow_audience_start_reasons'")
     assert "to_regprocedure('public._flow_audience_occurrence_rows(text,text,integer)')" in compact
     assert "position('flow_audience_start_reasons'indefinition)>0" in compact
     assert "position('not_started_by_reason'indefinition)>0" in compact
+    assert "nothas_function_privilege('service_role',oid,'EXECUTE')" in compact
+
+
+def test_identity_link_conversation_number_account_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261118000300 (E-656): la funcion de los avisos del correlador compara la cuenta con
+    # 'chatwoot:<n>' y con '<n>', y sigue sin execute para la API.
+    row = sql.split("'20261118000300'", 1)[1].split("select\n    version,", 1)[0]
+    compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
+
+    assert compact.endswith(",2,'identity_link_conversation_number_account')")
+    assert "_identity_link_conversation_number(text,bigint)" in compact
+    assert "chatwoot:''||p_account_id::text,p_account_id::text" in compact
     assert "nothas_function_privilege('service_role',oid,'EXECUTE')" in compact

@@ -19,7 +19,7 @@
 //      nacen las ocho funciones, las cuatro RPC solo de service_role y las
 //      privadas de nadie; las dos tablas sin acceso directo de nadie de la API;
 //      la restriccion del recorrido nombra el permiso; correrla dos veces aborta;
-//      es la ultima;
+//      despues va solo la de E-656;
 //   1. las RPC: el aviso entra, se repite sin cambios y otro contenido con el
 //      mismo id aborta; el hash que no es del texto, la vigencia anterior a la
 //      medicion y una clave de mas no entran; el permiso entra y el mismo acto
@@ -86,8 +86,10 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026111700050
   // La repeticion de un flujo de audiencia cuenta solo a quien arranco (20261117000600, E-665).
   '20261117000600_flow_audience_repeat_counts_started_v1.sql',
   // Los motivos de quien no arranco en un envio a una audiencia (20261117000700, E-666).
-  '20261117000700_flow_audience_start_reasons_v1.sql'])) {
-  fail(`despues de ${MIGRATION} va solo la de E-661`, names.slice(position + 1));
+  '20261117000700_flow_audience_start_reasons_v1.sql',
+  // El numero de conversacion de los avisos del correlador (20261118000300, E-656), que no toca el permiso.
+  '20261118000300_identity_link_conversation_number_account_v1.sql'])) {
+  fail(`despues de ${MIGRATION} van solo la de E-661, la de E-665, la de E-666 y la de E-656`, names.slice(position + 1));
 }
 
 // ---------------------------------------------------------------------------
