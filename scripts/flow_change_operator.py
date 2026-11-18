@@ -303,6 +303,20 @@ class Ops:
             raise Refused(f"el validador rechazo la entrada: {out.get('reason_code') if isinstance(out, dict) else '?'}")
         return result.returncode, out
 
+    def _new_flow_input(self, args: Mapping[str, Any], product: object, item: Mapping[str, Any]) -> dict[str, Any]:
+        """Lo que lee la simulacion de un item ``nuevo``: los disparos de su disparador, o por que no."""
+        if _new_audience_flow_form([item]) is not None:
+            # Un disparo por audiencia no tiene evento que contar: el validador arma la simulacion
+            # de la definicion, sin leer la base (E-621).
+            return {"new_flow_audience": True}
+        trigger = _simulation_trigger(item.get("definicion"))
+        try:
+            counts = self.sql_json(SQL_NEW_FLOW_COUNTS, {**args, "product": product, "trigger": trigger},
+                                   read_only=True)
+        except Refused:
+            return {"simulation_unavailable": "flow_engine_unavailable"}
+        return {"new_flow_counts": counts}
+
     def read_engine_inputs(self, items: object, store: object = None) -> dict[str, Any]:
         """La lectura del motor y la historia del producto, o por que no se pudieron leer.
 
@@ -317,20 +331,11 @@ class Ops:
         new_flows = [item for item in items if isinstance(item, Mapping) and item.get("tipo") == "nuevo"] \
             if isinstance(items, list) else []
         if new_flows:
-            if len(items) != 1:
+            if len(new_flows) != len(items):
                 return {"simulation_unavailable": "simulation_new_flow_mixed"}
-            if _new_audience_flow_form(items) is not None:
-                # Un disparo por audiencia no tiene evento que contar: el validador arma la simulacion
-                # de la definicion, sin leer la base (E-621).
-                return {"new_flow_audience": True}
-            definition = new_flows[0].get("definicion")
-            trigger = _simulation_trigger(definition)
-            try:
-                counts = self.sql_json(SQL_NEW_FLOW_COUNTS, {**args, "product": next(iter(products)),
-                                                             "trigger": trigger}, read_only=True)
-            except Refused:
-                return {"simulation_unavailable": "flow_engine_unavailable"}
-            return {"new_flow_counts": counts}
+            # Varios nuevos (E-657): cada uno con su lectura; el validador arma uno por flujo.
+            reads = [self._new_flow_input(args, next(iter(products)), item) for item in new_flows]
+            return reads[0] if len(reads) == 1 else {"new_flows": reads}
         native = _native_flow_counts_request(store, items)
         if native is not None:
             if "simulation_unavailable" in native:

@@ -247,6 +247,25 @@ class FlowChangeStore:
             "p_since": since.isoformat().replace("+00:00", "Z")})
 
 
+async def _new_flow_input(store: FlowChangeStore, instance: Mapping[str, str], product: str,
+                          item: Mapping[str, Any]) -> dict[str, Any]:
+    """Lo que lee la simulacion de un item ``nuevo``: los disparos de su disparador, o por que no."""
+    if new_audience_flow_form([item]) is not None:
+        # Un disparo por audiencia (manual, fecha, cada) no tiene evento que contar: la simulacion
+        # sale de la definicion y de que nace en cohorte, sin leer nada (E-621).
+        return {"new_flow_audience": True}
+    # Su evento, o el silencio del agente (P22-3, E-269), que se cuenta con la vara del legado.
+    trigger = simulation_trigger(item.get("definicion"))
+    if not isinstance(trigger, str):
+        return {"simulation_unavailable": "simulation_new_flow_counts_invalid"}
+    try:
+        counts = await store.read_new_flow_counts(instance, product, trigger, datetime.now(UTC) - NEW_FLOW_WINDOW)
+    except (StoreUnavailable, StoreRejected):
+        logger.info("automation_expert_change route=validate simulation=flow_engine_unavailable")
+        return {"simulation_unavailable": "flow_engine_unavailable"}
+    return {"new_flow_counts": counts}
+
+
 async def _simulation_inputs(store: FlowChangeStore, instance: Mapping[str, str], items: Any,
                              snapshot: Any = None) -> dict[str, Any]:
     """La lectura del motor y la historia del producto de la propuesta, para la simulacion.
@@ -266,24 +285,11 @@ async def _simulation_inputs(store: FlowChangeStore, instance: Mapping[str, str]
     new_flows = [item for item in items if isinstance(item, Mapping) and item.get("tipo") == "nuevo"]
     if new_flows:
         # Un flujo nuevo no tiene historia en el motor: se cuentan los disparos de su disparador.
-        if len(items) != 1:
+        if len(new_flows) != len(items):
             return {"simulation_unavailable": "simulation_new_flow_mixed"}
-        if new_audience_flow_form(items) is not None:
-            # Un disparo por audiencia (manual, fecha, cada) no tiene evento que contar: la simulacion
-            # sale de la definicion y de que nace en cohorte, sin leer nada (E-621).
-            return {"new_flow_audience": True}
-        definition = new_flows[0].get("definicion")
-        # Su evento, o el silencio del agente (P22-3, E-269), que se cuenta con la vara del legado.
-        trigger = simulation_trigger(definition)
-        if not isinstance(trigger, str):
-            return {"simulation_unavailable": "simulation_new_flow_counts_invalid"}
-        try:
-            counts = await store.read_new_flow_counts(instance, next(iter(products)), trigger,
-                                                      datetime.now(UTC) - NEW_FLOW_WINDOW)
-        except (StoreUnavailable, StoreRejected):
-            logger.info("automation_expert_change route=validate simulation=flow_engine_unavailable")
-            return {"simulation_unavailable": "flow_engine_unavailable"}
-        return {"new_flow_counts": counts}
+        # Varios nuevos (E-657): cada uno se lee por separado, y la simulacion arma uno por flujo.
+        reads = [await _new_flow_input(store, instance, next(iter(products)), item) for item in new_flows]
+        return reads[0] if len(reads) == 1 else {"new_flows": reads}
     native = native_flow_counts_request(snapshot, items)
     if native is not None:
         if "simulation_unavailable" in native:

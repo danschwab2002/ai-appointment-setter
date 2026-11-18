@@ -65,6 +65,7 @@ __all__ = [
     "build_native_flow_simulation",
     "build_new_audience_flow_simulation",
     "build_new_flow_simulation",
+    "build_new_flows_simulation",
     "build_simulation",
     "engine_flows_from_read",
     "native_flow_counts_request",
@@ -520,6 +521,58 @@ def simulation_trigger(definition: object) -> str | None:
     if set(trigger) == {"silencio"} and isinstance(silence, Mapping) and silence.get("lo_ultimo") == "agente":
         return SILENCE_COUNTS_TRIGGER
     return None
+
+
+def build_new_flows_simulation(inputs: Any, items: Sequence[ProposalItem], *,
+                               world: FlowWorld | None = None) -> dict[str, Any]:
+    """La simulacion de una propuesta con uno o mas items ``nuevo`` (E-657): cada flujo por separado.
+
+    ``inputs`` trae, en el orden de los items, lo que leyo quien valida para cada uno: ``{"new_flow_counts":
+    ...}`` (la lectura de su disparador), ``{"new_flow_audience": True}`` (un disparo por audiencia, sin
+    lectura) o ``{"simulation_unavailable": <motivo>}``. Con un solo item el resultado es exactamente el de
+    antes. Con varios, el resumen es ``{"flujos": [<resumen de cada uno>]}`` y su sha256 cubre todo; si uno
+    no se puede simular, la propuesta queda ``failed`` con el motivo de ese. Dos nuevos de la misma propuesta
+    con el mismo evento se nombran en ``comparte_el_evento_con`` (estado ``nuevo``), como con un flujo del
+    almacen. Nunca levanta.
+    """
+    try:
+        if not isinstance(inputs, list) or not items or len(inputs) != len(items) \
+                or not all(item.is_new_flow for item in items):
+            raise _Failed(NEW_FLOW_MIXED)
+        built = []
+        for data, item in zip(inputs, items):
+            if not isinstance(data, Mapping):
+                raise _Failed(NEW_FLOW_COUNTS_INVALID)
+            unavailable = data.get("simulation_unavailable")
+            if isinstance(unavailable, str):
+                raise _Failed(unavailable)
+            if data.get("new_flow_audience") is True:
+                one = build_new_audience_flow_simulation([item])
+            elif "new_flow_counts" in data:
+                one = build_new_flow_simulation(data.get("new_flow_counts"), [item], world=world)
+            else:
+                raise _Failed(NEW_FLOW_COUNTS_INVALID)
+            if one.get("status") != "built":
+                raise _Failed(str(one.get("reason_code") or SIMULATION_ERROR))
+            built.append(one)
+        if len(built) == 1:
+            return built[0]
+        summaries = [dict(one["summary"]) for one in built]
+        events = [None if data.get("new_flow_audience") is True else simulation_trigger(item.definicion)
+                  for data, item in zip(inputs, items)]
+        for index, summary in enumerate(summaries):
+            twins = [{"flujo": f"{other.producto}/{other.flujo}", "estado": "nuevo"}
+                     for position, other in enumerate(items)
+                     if position != index and events[index] is not None and events[position] == events[index]]
+            if twins:
+                summary["comparte_el_evento_con"] = sorted(
+                    list(summary.get("comparte_el_evento_con") or []) + twins, key=lambda entry: entry["flujo"])
+        summary = {"flujos": summaries}
+        return {"status": "built", "summary": summary, "summary_sha256": summary_sha256(summary), "cambios": []}
+    except _Failed as failed:
+        return {"status": "failed", "reason_code": failed.reason_code}
+    except Exception:  # noqa: BLE001 - la vista previa no se cae por la simulacion
+        return {"status": "failed", "reason_code": SIMULATION_ERROR}
 
 
 def native_flow_counts_request(store: Any, items: Any) -> dict[str, Any] | None:

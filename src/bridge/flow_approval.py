@@ -1204,6 +1204,13 @@ def _simulation_summary(simulation: object, *, turns_off: bool = False) -> str:
         return (f"<p>La simulación no se pudo armar (<code>{_esc(simulation.get('reason_code'))}</code>). "
                 f"{gate}</p>")
     summary = simulation.get("summary") if isinstance(simulation.get("summary"), Mapping) else {}
+    flows = summary.get("flujos")
+    if isinstance(flows, list) and flows:
+        # Varios flujos nuevos en una propuesta (E-657): la simulacion de cada uno, con su nombre.
+        return "".join(
+            f"<h4>{_esc(flow.get('flujo_nuevo'))}</h4>"
+            + _simulation_summary({"status": "built", "summary": flow}, turns_off=turns_off)
+            for flow in flows if isinstance(flow, Mapping))
     audience = _new_audience_lines(summary)
     if audience is None:
         audience = _audience_reach_lines(summary)
