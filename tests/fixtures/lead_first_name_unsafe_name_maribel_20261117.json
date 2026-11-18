@@ -1,0 +1,68 @@
+{
+  "_capture": {
+    "fecha": "2026-11-18",
+    "origen": "maribel_db (stack maribel, contenedor maribel_db), leida en solo lectura (PGOPTIONS default_transaction_read_only=on) el 2026-11-18 por la trabajadora de E-664. Filas: recovery_cases, scheduled_actions y lead_first_name_inferences del caso 4b0a25ca-773c-422e-8f79-9b13c17837c0; la forma del nombre, de contacts.full_name medida con booleanos en SQL (nunca se imprimio el valor).",
+    "anonimizacion": "Sin telefono, sin mail, sin nombre y sin el producto. El nombre real era un email de 21 caracteres sin digitos ni espacios; 'nombre_sintetico' es un email inventado con la misma forma y el mismo largo, para que la prueba pase por el mismo filtro. Los ids del caso y de la accion se conservan: no identifican a la persona fuera de la base.",
+    "por_que": "E-664: el primer contacto del formulario se cerro con template_parameters_missing sin reintento porque el nombre no paso template_greeting_name_is_safe, y el caso quedo unreachable sin que la persona recibiera nada."
+  },
+  "caso": {
+    "id": "4b0a25ca-773c-422e-8f79-9b13c17837c0",
+    "source": "landing",
+    "status": "unreachable",
+    "policy_key": "maribel-primer-contacto-formulario",
+    "policy_version": 2,
+    "lead_stage": "new",
+    "next_contact_reason": "delivery_failed_no_touch_left",
+    "created_at": "2026-11-17T10:55:12.840349+00:00",
+    "closed_at": "2026-11-17T11:55:15.786256+00:00",
+    "context": {
+      "trigger_kind": "precheckout_intent",
+      "closed_without_pending_touch": {
+        "origin": "finalize",
+        "action_id": "2f989d81-7fdc-4f29-a52f-ddc1664f5d5e",
+        "to_status": "unreachable",
+        "from_status": "grace_period",
+        "action_status": "permanent_failed",
+        "terminal_reason": "template_parameters_missing"
+      }
+    }
+  },
+  "accion": {
+    "id": "2f989d81-7fdc-4f29-a52f-ddc1664f5d5e",
+    "action_type": "first_contact_review",
+    "status": "permanent_failed",
+    "step_key": "first_contact",
+    "anchor_type": "precheckout_intent",
+    "execution_attempt_count": 1,
+    "max_execution_retries": 3,
+    "error_code": "template_parameters_missing",
+    "terminal_reason": "template_parameters_missing",
+    "due_at": "2026-11-17T11:55:12.762+00:00"
+  },
+  "inferencia_del_nombre": {
+    "result": "uncertain",
+    "first_name": null,
+    "model_name": "agente-comercial",
+    "prompt_version": "lead-first-name-v2",
+    "created_at": "2026-11-17T10:55:15.542417+00:00"
+  },
+  "forma_del_nombre": {
+    "largo": 21,
+    "es_email": true,
+    "tiene_digitos": false,
+    "tiene_espacios": false
+  },
+  "nombre_sintetico": "nombre.lead@correo.mx",
+  "frecuencia": {
+    "acciones_cerradas_por_template_parameters_missing_en_maribel_db": [
+      {"policy_key": "maribel-primer-contacto-formulario", "cantidad": 1, "dia": "2026-11-17"},
+      {"policy_key": "maribel-recuperacion-un-toque", "cantidad": 1, "dia": "2026-11-01"}
+    ]
+  },
+  "plantilla": {
+    "nombre": "maribel_retomar_proceso_01",
+    "idioma": "es_MX",
+    "parametros": ["nombre", "producto"],
+    "comienzo_del_cuerpo": "Hola {{1}}, revisamos tu intento de compra"
+  }
+}
