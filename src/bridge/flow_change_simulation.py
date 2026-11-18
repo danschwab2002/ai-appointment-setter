@@ -71,6 +71,7 @@ __all__ = [
     "native_flow_counts_request",
     "native_touches",
     "new_audience_flow_form",
+    "same_audience",
     "summary_sha256",
 ]
 
@@ -618,10 +619,16 @@ def native_flow_counts_request(store: Any, items: Any) -> dict[str, Any] | None:
     else:
         definition = versions.get(str(flow.get("active_version")))
     product = item.get("producto")
-    if item["tipo"] in AUDIENCE_REACH_ITEM_TYPES and isinstance(definition, Mapping) \
-            and audience_form(definition.get("dispara")) is not None:
+    active = versions.get(str(flow.get("active_version")))
+    if item["tipo"] in AUDIENCE_VERSION_ITEM_TYPES and (_is_audience(definition) or _is_audience(active)):
+        # E-668: una version o un volver de un flujo de audiencia tampoco tiene evento. Con la misma
+        # audiencia que la version activa (D1) se cuenta la de hoy; si cambia, no hay lectura que la cuente.
+        if not same_audience(active, definition):
+            return {"simulation_unavailable": AUDIENCE_VERSION_CHANGED}
+    if (item["tipo"] in AUDIENCE_REACH_ITEM_TYPES or item["tipo"] in AUDIENCE_VERSION_ITEM_TYPES) \
+            and _is_audience(definition):
         # Un disparo por audiencia no tiene evento: prender o apagar se simula con cuantas personas
-        # cumplen hoy su para (read_flow_audience_reach_v1, E-622).
+        # cumplen hoy su para (read_flow_audience_reach_v1, E-622); una version o un volver, igual (E-668).
         version = flow.get("active_version")
         if not isinstance(product, str) or not isinstance(flow.get("flow_id"), str) \
                 or type(version) is not int:
@@ -720,6 +727,30 @@ AUDIENCE_REACH_CONTRACT = "flow-audience-reach-v1"
 AUDIENCE_REACH_INVALID = "simulation_audience_reach_invalid"
 AUDIENCE_REACH_UNAVAILABLE = "simulation_audience_reach_unavailable"
 AUDIENCE_REACH_ITEM_TYPES = frozenset({"prender", "apagar"})
+# E-668 (2026-11-18): una version o un volver de un flujo de audiencia (Maribel, c95d3185: aviso_manual_prueba con
+# la repeticion de 7d a 20h) quedaba con simulation_native_flow_counts_invalid y la pagina no la publicaba. Se
+# simula con la audiencia de hoy de la version activa cuando la version que queda tiene la misma audiencia (el
+# mismo para, el mismo producto y un disparo por audiencia, D1): la lectura (20261116000100) cuenta el para de la
+# version activa y la base no sabe contar el de una definicion que todavia no esta publicada. Si la audiencia
+# cambia, AUDIENCE_VERSION_CHANGED: la publica el operador con --sin-simulacion. La gemela del script es
+# _AUDIENCE_VERSION_ITEM_TYPES.
+AUDIENCE_VERSION_ITEM_TYPES = frozenset({"version", "volver"})
+AUDIENCE_VERSION_CHANGED = "simulation_audience_version_audience_changed"
+
+
+def _is_audience(definition: object) -> bool:
+    return isinstance(definition, Mapping) and audience_form(definition.get("dispara")) is not None
+
+
+def same_audience(active: object, destination: object) -> bool:
+    """Si las dos definiciones son de audiencia y apuntan a la misma gente: el mismo ``para`` y ``producto`` (E-668).
+
+    La forma del disparo (``manual``, ``fecha``, ``cada``) puede cambiar: la audiencia de hoy es la misma. La
+    gemela, sin importar el bridge, es ``_same_audience`` de ``scripts/flow_change_operator.py``.
+    """
+    return _is_audience(active) and _is_audience(destination) \
+        and active.get("para") == destination.get("para") \
+        and active.get("producto") == destination.get("producto")  # type: ignore[union-attr]
 _REACH_KEYS = frozenset({"contract", "flow_id", "version", "product_ref", "state", "status", "measured_at",
                          "candidates", "opted_out", "already_customer", "matching", "without_contact", "ambiguous",
                          "read_capped"})
@@ -745,11 +776,21 @@ def build_native_audience_reach_simulation(reach: Any, items: Sequence[ProposalI
             raise _Failed(NATIVE_FLOW_MIXED)
         item = items[0]
         flow = world.flow(item.flow_id) if item.flow_id is not None else None
-        if item.tipo not in AUDIENCE_REACH_ITEM_TYPES or flow is None or not flow.is_native:
+        if item.tipo not in AUDIENCE_REACH_ITEM_TYPES | AUDIENCE_VERSION_ITEM_TYPES or flow is None \
+                or not flow.is_native:
             raise _Failed(NATIVE_FLOW_MIXED)
-        definition = flow.active_definition
-        if not isinstance(definition, Mapping):
+        active = flow.active_definition
+        if item.tipo == "version":
+            definition: object = item.definicion
+        elif item.tipo == "volver":
+            definition = flow.versions.get(item.version) if item.version is not None else None
+        else:
+            definition = active
+        if not isinstance(definition, Mapping) or not isinstance(active, Mapping):
             raise _Failed(AUDIENCE_REACH_INVALID)
+        if item.tipo in AUDIENCE_VERSION_ITEM_TYPES and not same_audience(active, definition):
+            # Se vuelve a mirar aca, sin creerle a quien pidio la lectura (E-668, D1).
+            raise _Failed(AUDIENCE_VERSION_CHANGED)
         try:
             spec = audience_spec(definition)
         except AudienceSpecInvalid:
@@ -782,9 +823,13 @@ def build_native_audience_reach_simulation(reach: Any, items: Sequence[ProposalI
         caveats.append("repeticion")
         if matching > spec.per_occurrence:
             caveats.append("tope_por_ocurrencia")
+        if item.tipo in AUDIENCE_VERSION_ITEM_TYPES:
+            stays = flow.state  # una version o un volver no cambian el estado (E-353)
+        else:
+            stays = "apagado" if item.tipo == "apagar" else (item.a or "prendido")
         summary: dict[str, Any] = {
             "flujo": f"{item.producto}/{item.flujo}", "tipo": item.tipo, "estado_hoy": flow.state,
-            "queda_en": "apagado" if item.tipo == "apagar" else (item.a or "prendido"),
+            "queda_en": stays,
             "disparador": spec.form, "audiencia": audience,
             "ritmo": {"por_hora": spec.per_hour, "por_ocurrencia": spec.per_occurrence},
             "medido_en": reach.get("measured_at"),
@@ -795,6 +840,14 @@ def build_native_audience_reach_simulation(reach: Any, items: Sequence[ProposalI
         }
         if item.tipo == "apagar":
             summary["dejarian_de_recibirlo"] = per_send
+        elif item.tipo in AUDIENCE_VERSION_ITEM_TYPES:
+            # A quien le llega hoy el flujo (E-353): en cohorte, solo a la cohorte, no a esas personas.
+            summary["alcance"] = _REACH_BY_STATE.get(flow.state, "nadie_hoy")
+            if item.tipo == "volver":
+                summary["vuelve_a_version"] = item.version
+            changes = structural_changes(active, definition)
+            if changes:
+                summary["cambia_estructura"] = list(changes)
         return {"status": "built", "summary": summary, "summary_sha256": summary_sha256(summary), "cambios": []}
     except _Failed as failed:
         return {"status": "failed", "reason_code": failed.reason_code}
