@@ -58,7 +58,13 @@ from bridge.lead_decline import (
     detect_declared_payment,
     detect_lead_decline,
 )
-from bridge.lead_first_name import resolve_greeting_name, template_greeting_name_is_safe
+from bridge.lead_first_name import (
+    NEUTRAL_GREETING_SOURCE,
+    TEMPLATE_NEUTRAL_GREETING,
+    GreetingName,
+    resolve_greeting_name,
+    template_greeting_name_is_safe,
+)
 from bridge.payment_link_coupon import SEGMENT_COUPON_ACTIVE, segment_coupon_for_labels
 from bridge.phones import equivalent_whatsapp_phones, same_whatsapp_phone
 from bridge.reactivation import _last_conversational_message, _scan_summary
@@ -773,8 +779,10 @@ class ConversationFollowupSweeper:
       reserva portable y solo deja pasar una conversacion adoptada (la
       respuesta a una plantilla nuestra).
     * ``refuse_unsafe_greeting``: un nombre que no pasa
-      ``template_greeting_name_is_safe`` no se manda, igual que en el
-      despachador. Se reintenta en cada barrido y se cuenta.
+      ``template_greeting_name_is_safe`` no va en la plantilla, igual que en el
+      despachador. Con ``neutral_greeting`` (por defecto
+      ``TEMPLATE_NEUTRAL_GREETING``, E-664) sale el saludo sin nombre; con
+      ``None``, no se manda, se reintenta en cada barrido y se cuenta.
     * ``send_hours`` y ``time_zone``, los dos o ninguno: fuera de
       [inicio, fin), en la hora local, el barrido no lee nada. ``(0, 24)`` es a
       cualquier hora.
@@ -825,6 +833,7 @@ class ConversationFollowupSweeper:
         send_hours: tuple[int, int] | None = None,
         time_zone: ZoneInfo | None = None,
         refuse_unsafe_greeting: bool = False,
+        neutral_greeting: str | None = TEMPLATE_NEUTRAL_GREETING,
         phone_equivalence: bool = False,
         external_user_id_resolver: Callable[..., Awaitable[str]] | None = None,
         native_run: NativeSilenceRun | None = None,
@@ -874,6 +883,14 @@ class ConversationFollowupSweeper:
             or (send_hours is not None and not _valid_send_hours(send_hours))
             or (time_zone is not None and not isinstance(time_zone, ZoneInfo))
             or not isinstance(refuse_unsafe_greeting, bool)
+            or (
+                neutral_greeting is not None
+                and (
+                    not isinstance(neutral_greeting, str)
+                    or neutral_greeting != " ".join(neutral_greeting.split())
+                    or not template_greeting_name_is_safe(neutral_greeting)
+                )
+            )
             or not isinstance(phone_equivalence, bool)
             or (
                 external_user_id_resolver is not None
@@ -923,6 +940,7 @@ class ConversationFollowupSweeper:
         self._send_hours = send_hours
         self._time_zone = time_zone
         self._refuse_unsafe_greeting = refuse_unsafe_greeting
+        self._neutral_greeting = neutral_greeting
         self._phone_equivalence = phone_equivalence
         self._external_user_id_resolver = external_user_id_resolver
         self._native_run = native_run
@@ -1257,6 +1275,19 @@ class ConversationFollowupSweeper:
         greeting = await resolve_greeting_name(
             candidate.contact_name, store=self._supabase  # type: ignore[arg-type]
         )
+        if (
+            self._refuse_unsafe_greeting
+            and self._neutral_greeting is not None
+            and not template_greeting_name_is_safe(greeting.name)
+        ):
+            # E-664: el saludo sin nombre, en vez de no mandar. El log nunca
+            # lleva el nombre.
+            logger.warning(
+                f"{self._log_prefix}_name_neutral conversation=%s source=%s",
+                candidate.conversation_id,
+                greeting.source,
+            )
+            greeting = GreetingName(self._neutral_greeting, NEUTRAL_GREETING_SOURCE)
         if self._refuse_unsafe_greeting and not template_greeting_name_is_safe(
             greeting.name
         ):

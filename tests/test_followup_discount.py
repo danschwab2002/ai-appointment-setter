@@ -921,9 +921,12 @@ def test_an_unsafe_greeting_is_refused_before_reserving(
         chatwoot.entries[1]["conversation"]["meta"]["sender"]["name"] = phone_as_name
         return chatwoot
 
+    # Sin el saludo neutro (E-664: neutral_greeting=None), el rechazo de antes.
     chatwoot = chatwoot_with_a_phone_as_name()
     supabase = _FakeSupabase()
-    sweeper = _sweeper(chatwoot, supabase, hours_after=25, refuse_unsafe_greeting=True)
+    sweeper = _sweeper(
+        chatwoot, supabase, hours_after=25, refuse_unsafe_greeting=True, neutral_greeting=None
+    )
     with caplog.at_level(logging.WARNING, logger="bridge.followup_discount"):
         assert asyncio.run(sweeper.run_once()) == 1
     # El nombre de la 194 pasa el filtro y sale; la 193 no se reserva.
@@ -948,6 +951,41 @@ def test_an_unsafe_greeting_is_refused_before_reserving(
         for sent in chatwoot.sent
     }
     assert greetings == {194: "Maria", 193: phone_as_name}
+
+
+def test_an_unsafe_greeting_goes_out_with_the_neutral_greeting(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # E-664: con el filtro y el saludo neutro por defecto, la conversacion cuyo
+    # nombre no pasa el filtro tambien recibe el seguimiento, con «qué tal» en
+    # {{1}}: «Hola, qué tal. Soy del equipo de ...». El log no lleva el nombre.
+    phone_as_name = "+593 90 000 0193"
+    chatwoot = _FakeChatwoot(["194", "193"])
+    chatwoot.entries[1]["conversation"]["meta"]["sender"]["name"] = phone_as_name
+    supabase = _FakeSupabase()
+    sweeper = _sweeper(chatwoot, supabase, hours_after=25, refuse_unsafe_greeting=True)
+    with caplog.at_level(logging.WARNING, logger="bridge.followup_discount"):
+        assert asyncio.run(sweeper.run_once()) == 2
+    greetings = {
+        sent["conversation_id"]: sent["template_params"]["processed_params"]["body"]["1"]
+        for sent in chatwoot.sent
+    }
+    assert greetings == {194: "Maria", 193: "qué tal"}
+    assert sweeper.last_scan_summary == "scanned=2 sent=2"
+    assert (
+        "conversation_followup_name_neutral conversation=193 source=full_name"
+        in caplog.text
+    )
+    assert phone_as_name not in caplog.text and "000 0193" not in caplog.text
+
+
+def test_a_neutral_greeting_that_does_not_pass_the_filter_is_refused() -> None:
+    for bad in ("", " qué tal", "hola@evil.example", "x" * 61, 7):
+        with pytest.raises(ValueError):
+            _sweeper(
+                _FakeChatwoot(["194"]), _FakeSupabase(), hours_after=25,
+                refuse_unsafe_greeting=True, neutral_greeting=bad,
+            )
 
 
 @pytest.mark.parametrize(

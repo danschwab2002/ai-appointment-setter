@@ -122,14 +122,17 @@ def test_d1_a_refused_name_closes_the_action_without_a_retry(
 ) -> None:
     # El nombre del caso no cambia solo: cierra en el primer intento, antes del
     # catalogo y de cualquier llamada a Chatwoot. Sin next_attempt_at la base
-    # cierra la accion permanent_failed y no toca el caso (la 5b).
+    # cierra la accion permanent_failed y no toca el caso (la 5b). Desde E-664,
+    # solo sin el saludo neutro (neutral_greeting=None); con el, ver la prueba
+    # que sigue.
     authority = _Authority(offer_code=offer_code, anchor_type=anchor_type, buyer_name=name)
     chatwoot = _Chatwoot(ATT1_CATALOG)
 
     with caplog.at_level(logging.WARNING, logger="bridge.worker"):
         decisions = _run(
             _dispatcher(
-                authority, chatwoot, tmp_path, greeting=greeting, template=WITH_FORM_TEMPLATE
+                authority, chatwoot, tmp_path, greeting=greeting,
+                template=replace(WITH_FORM_TEMPLATE, neutral_greeting=None),
             )
         )
 
@@ -145,6 +148,38 @@ def test_d1_a_refused_name_closes_the_action_without_a_retry(
     assert not (tmp_path / "meta-effects").exists()
     assert "approved_template_name_refused" in caplog.text
     assert name not in caplog.text
+
+
+@pytest.mark.parametrize("greeting", [True, False], ids=["con saludo", "sin saludo"])
+@pytest.mark.parametrize("name", _NOT_A_NAME)
+@pytest.mark.parametrize(("anchor_type", "offer_code"), EXCEPTION_5_TRIGGERS)
+def test_d1_e664_a_refused_name_goes_out_with_the_neutral_greeting(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    anchor_type: str,
+    offer_code: str,
+    name: str,
+    greeting: bool,
+) -> None:
+    # E-664: con la configuracion por defecto, los tres disparos de la excepcion
+    # 5 mandan la plantilla con el saludo neutro en {{1}} en vez de cerrar.
+    authority = _Authority(offer_code=offer_code, anchor_type=anchor_type, buyer_name=name)
+    chatwoot = _Chatwoot(ATT1_CATALOG)
+
+    with caplog.at_level(logging.WARNING, logger="bridge.worker"):
+        decisions = _run(
+            _dispatcher(
+                authority, chatwoot, tmp_path, greeting=greeting, template=WITH_FORM_TEMPLATE
+            )
+        )
+
+    assert decisions[-1].decision == "execute"
+    [message] = _messages(chatwoot)
+    assert message["template_params"]["processed_params"]["body"]["1"] == "qué tal"
+    assert authority.events[-1] == "accepted"
+    assert "approved_template_name_neutral" in caplog.text
+    assert name not in caplog.text
+    assert name not in message["content"]
 
 
 # ------------------------------------------------ D2: el arranque rechazado

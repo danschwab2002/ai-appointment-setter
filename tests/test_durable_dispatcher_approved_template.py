@@ -45,7 +45,11 @@ from bridge.app import Settings, create_app
 from bridge.approved_templates import TemplateHeaderMedia
 from bridge.chatwoot import ChatwootClient
 from bridge.instance_manifest import InstanceManifest, Template
-from bridge.lead_first_name import FirstNameInference, lead_name_key
+from bridge.lead_first_name import (
+    TEMPLATE_NEUTRAL_GREETING,
+    FirstNameInference,
+    lead_name_key,
+)
 from bridge.messaging import (
     ChatwootMessageSender,
     FinalMetaEffectGate,
@@ -1749,6 +1753,7 @@ _NOT_A_NAME = [
 def test_the_form_first_contact_refuses_a_name_that_is_not_a_name(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, name: str, greeting: bool
 ) -> None:
+    # Sin el saludo neutro (E-664: neutral_greeting=None), el cierre de antes.
     authority = _Authority(
         offer_code="gopi6lh7", anchor_type=FORM_ANCHOR, buyer_name=name
     )
@@ -1758,7 +1763,8 @@ def test_the_form_first_contact_refuses_a_name_that_is_not_a_name(
         decisions = _run(
             _dispatcher(
                 authority, chatwoot, tmp_path,
-                greeting=greeting, template=WITH_FORM_TEMPLATE,
+                greeting=greeting,
+                template=replace(WITH_FORM_TEMPLATE, neutral_greeting=None),
             )
         )
 
@@ -1776,6 +1782,48 @@ def test_the_form_first_contact_refuses_a_name_that_is_not_a_name(
     assert "approved_template_name_refused" in caplog.text
     # El log no lleva el nombre: es dato personal y es el texto del atacante.
     assert name not in caplog.text
+
+
+@pytest.mark.parametrize("greeting", [True, False], ids=["greeting", "no greeting"])
+@pytest.mark.parametrize("name", _NOT_A_NAME)
+def test_the_form_first_contact_greets_without_a_name_that_is_not_a_name(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, name: str, greeting: bool
+) -> None:
+    # E-664 (decision de Dan del 2026-11-17): con la configuracion por defecto, el
+    # nombre que no pasa el filtro no cierra el primer contacto; la plantilla sale
+    # con el saludo neutro. El texto hasheado, el contenido de Chatwoot y
+    # processed_params llevan el mismo valor, y ni el mensaje ni el log llevan el
+    # nombre del caso.
+    assert WITH_FORM_TEMPLATE.neutral_greeting == TEMPLATE_NEUTRAL_GREETING
+    authority = _Authority(
+        offer_code="gopi6lh7", anchor_type=FORM_ANCHOR, buyer_name=name
+    )
+    chatwoot = _Chatwoot(ATT1_CATALOG)
+
+    with caplog.at_level(logging.WARNING, logger="bridge.worker"):
+        decisions = _run(
+            _dispatcher(
+                authority, chatwoot, tmp_path,
+                greeting=greeting, template=WITH_FORM_TEMPLATE,
+            )
+        )
+
+    assert decisions[-1].decision == "execute"
+    [message] = chatwoot.posts("/conversations/200/messages")
+    assert message["template_params"]["processed_params"]["body"] == {
+        "1": "qué tal",
+        "2": "Alimenta tu Tiroides",
+    }
+    assert message["content"] == _expected(
+        FORM_TEMPLATE, first="qué tal", product="Alimenta tu Tiroides"
+    )
+    assert message["content"].startswith("Hola, qué tal. Soy del equipo de Dra. Nina.")
+    assert authority.events[-1] == "accepted"
+    assert "approved_template_name_neutral" in caplog.text
+    assert "approved_template_name_refused" not in caplog.text
+    for value in (name, "evil.example", "5512345678"):
+        assert value not in message["content"]
+        assert value not in caplog.text
 
 
 @pytest.mark.parametrize("greeting", [True, False], ids=["greeting", "no greeting"])

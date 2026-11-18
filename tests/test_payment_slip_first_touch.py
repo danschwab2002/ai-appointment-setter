@@ -380,12 +380,27 @@ def test_the_closed_gate_records_c1_and_sends_nothing(tmp_path: Path) -> None:
 
 
 def test_an_unsafe_name_closes_c1_like_any_first_contact(tmp_path: Path) -> None:
+    # Sin el saludo neutro (E-664: neutral_greeting=None), el cierre de antes.
     authority = _SlipAuthority(buyer_name="https://example.test/promo")
 
-    closed = _nothing_went_out(_run(authority, tmp_path), authority)
+    closed = _nothing_went_out(
+        _run(authority, tmp_path, template=replace(TEMPLATE, neutral_greeting=None)), authority
+    )
 
     assert closed["reason_code"] == "template_parameters_missing"
     assert "slip_context" not in authority.events
+
+
+def test_an_unsafe_name_sends_c1_with_the_neutral_greeting(tmp_path: Path) -> None:
+    # E-664: por defecto, C1 sale con «qué tal» en el lugar del nombre.
+    authority = _SlipAuthority(buyer_name="https://example.test/promo")
+
+    chatwoot = _run(authority, tmp_path)
+
+    [message] = chatwoot.posts("/conversations/200/messages")
+    assert message["template_params"]["processed_params"]["body"]["1"] == "qué tal"
+    assert message["content"].startswith("Hola, qué tal.")
+    assert "example.test" not in message["content"]
 
 
 def test_the_cart_keeps_its_own_template_with_the_slip_on(tmp_path: Path) -> None:

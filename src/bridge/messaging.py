@@ -21,6 +21,10 @@ from typing import Awaitable, Callable, Protocol
 from bridge.approved_templates import TemplateHeaderMedia
 from bridge.chatwoot import ChatwootClient, ChatwootProtocolError
 from bridge.hotmart import normalize_phone
+from bridge.lead_first_name import (
+    TEMPLATE_NEUTRAL_GREETING,
+    template_greeting_name_is_safe,
+)
 from bridge.payment_slip import PAYMENT_SLIP_TEMPLATE_PARAMETERS
 from bridge.phones import (
     equivalent_whatsapp_phones,
@@ -188,8 +192,21 @@ class WhatsAppTemplateConfig:
     payment_slip_category: str | None = None
     payment_slip_steps: tuple[PaymentSlipStepTemplate, ...] = ()
     header_media: tuple[tuple[str, TemplateHeaderMedia], ...] = ()
+    # E-664: lo que va en ``nombre`` cuando el nombre del caso no pasa
+    # ``template_greeting_name_is_safe`` (``lead_first_name.TEMPLATE_NEUTRAL_GREETING``).
+    # Por defecto, prendido (D1 de E-664). ``None`` deja el cierre de antes:
+    # ``template_parameters_missing`` sin reintento. Solo lo lee el modo directo
+    # del dispatcher; Johanna no pasa por ahi.
+    neutral_greeting: str | None = TEMPLATE_NEUTRAL_GREETING
 
     def __post_init__(self) -> None:
+        if self.neutral_greeting is not None:
+            if (
+                not isinstance(self.neutral_greeting, str)
+                or self.neutral_greeting != " ".join(self.neutral_greeting.split())
+                or not template_greeting_name_is_safe(self.neutral_greeting)
+            ):
+                raise ValueError("invalid_template_neutral_greeting")
         if not isinstance(self.header_media, tuple) or not all(
             isinstance(item, tuple)
             and len(item) == 2

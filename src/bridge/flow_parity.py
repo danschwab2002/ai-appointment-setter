@@ -292,7 +292,8 @@ EXCEPTIONS_V1: tuple[FlowException, ...] = (
     FlowException(
         "nombre_inseguro_cierra", _CON_PRIMER_CONTACTO, "despacho",
         "src/bridge/worker.py#nombre_inseguro_cierra",
-        "El nombre que no pasa el filtro cierra la accion sin reintento (D1).",
+        "El nombre que no pasa el filtro cierra la accion sin reintento (D1); desde E-664"
+        " sale con el saludo neutro y cierra solo sin el (neutral_greeting None).",
     ),
     FlowException(
         "fallo_permanente_deja_el_caso_abierto", _CON_PRIMER_CONTACTO, "sql",

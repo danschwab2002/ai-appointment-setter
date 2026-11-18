@@ -82,6 +82,22 @@ _TEMPLATE_NAME_TAG_RANGE = ("\U000e0020", "\U000e007f")
 # WhatsApp convierte en enlace. "J.C. Pérez" no la tiene.
 _DOMAIN_SHAPE_RE = re.compile(r"\.[^\W\d_]{2,}", re.UNICODE)
 
+# El saludo sin nombre (E-664, decision de Dan del 2026-11-17). Cuando el valor
+# de ``{{1}}`` no pasa ``template_greeting_name_is_safe`` (un email, una URL,
+# digitos en el campo del nombre), la plantilla sale con esto en lugar del
+# nombre, en vez de cerrar el primer contacto sin mandar nada. Medido en
+# Maribel el 2026-11-17: el caso 4b0a25ca quedo ``unreachable`` con un email
+# de 21 caracteres en el nombre (fixture
+# ``tests/fixtures/lead_first_name_unsafe_name_maribel_20261117.json``).
+# Se lee bien en las dos formas de los cuerpos aprobados de Maribel y ATT1:
+# «Hola qué tal, revisamos tu intento de compra» (maribel_retomar_proceso_01) y
+# «Hola, qué tal. Soy del equipo de Dra. Nina.» (att1_interes_precheckout_01 y
+# todas las «Hola, {{1}}.»). Sin genero y sin suponer nada de la persona. Pasa
+# el filtro: lo verifica ``WhatsAppTemplateConfig`` al armarse.
+TEMPLATE_NEUTRAL_GREETING = "qué tal"
+# El valor de ``GreetingName.source`` / de los logs cuando sale el saludo neutro.
+NEUTRAL_GREETING_SOURCE = "neutral"
+
 # v2 (2026-09-28). La v1 pedia "el primer nombre" y aceptaba compuestos de uso
 # comun: medida contra el modelo real con los 136 nombres del inbox 9, devolvio
 # dos nombres de pila donde la persona usa uno ("Daniel Humberto", "Adriana

@@ -68,6 +68,7 @@ from bridge.hotmart import (
     parse_hotmart_purchase_payload,
 )
 from bridge.lead_first_name import (
+    NEUTRAL_GREETING_SOURCE,
     resolve_greeting_name,
     template_greeting_name_is_safe,
 )
@@ -1855,19 +1856,34 @@ class DurableDispatcher:
             # The name is unverified input (the public form, Hotmart) and the
             # full name is the last resort of the greeting, or the value itself
             # without it: a URL, an email or a long text would go out inside
-            # the approved template. It does not change on its own, so the
-            # action closes on the first attempt, before the catalog and any
-            # Chatwoot call. The log never carries the name.
+            # the approved template. The log never carries the name.
+            neutral = template.neutral_greeting
+            if neutral is None:
+                # Without the neutral greeting (E-664) it does not change on its
+                # own, so the action closes on the first attempt, before the
+                # catalog and any Chatwoot call.
+                logger.warning(
+                    "approved_template_name_refused action_id=%s trigger=%s source=%s",
+                    action.action_id,
+                    trigger_kind,
+                    name_source,
+                )
+                return _ApprovedTemplateComposition(
+                    failure_reason=APPROVED_TEMPLATE_PARAMETERS_MISSING,
+                    retryable=False,
+                )
+            # E-664: the template goes out greeting without a name. It is also
+            # the greeting the sender puts in {{1}}, so the hashed text and
+            # processed_params stay identical.
             logger.warning(
-                "approved_template_name_refused action_id=%s trigger=%s source=%s",
+                "approved_template_name_neutral action_id=%s trigger=%s source=%s",
                 action.action_id,
                 trigger_kind,
                 name_source,
             )
-            return _ApprovedTemplateComposition(
-                failure_reason=APPROVED_TEMPLATE_PARAMETERS_MISSING,
-                retryable=False,
-            )
+            name_value = neutral
+            greeting_name = neutral
+            name_source = NEUTRAL_GREETING_SOURCE
         # flow-parity-fin: nombre_inseguro_cierra
         if step_key == PAYMENT_FAILURE_FOLLOWUP_STEP:
             return await self._compose_payment_failure_followup_proposal(
@@ -2099,6 +2115,42 @@ class DurableDispatcher:
             greeting_name=greeting_name,
         )
 
+    def _neutral_if_unsafe(
+        self,
+        action: Any,
+        *,
+        variables: tuple[str, ...] | list[str],
+        name_value: str | None,
+        greeting_name: str | None,
+    ) -> tuple[str | None, str | None]:
+        """E-664: the neutral greeting in place of a name that does not pass the filter.
+
+        Only a name that is there and does not pass ``template_greeting_name_is_safe``:
+        an empty one still closes as ``template_parameters_missing`` (it is a value of
+        the case that is missing, not one that cannot go out). Without the neutral
+        greeting in the template config, nothing changes and the caller closes as
+        before. Returns ``(name_value, greeting_name)``; the log never carries the name.
+        """
+        neutral = (
+            self._waba_template.neutral_greeting
+            if self._waba_template is not None
+            else None
+        )
+        if (
+            neutral is None
+            or "nombre" not in variables
+            or not isinstance(name_value, str)
+            or not name_value.strip()
+            or template_greeting_name_is_safe(name_value)
+        ):
+            return name_value, greeting_name
+        logger.warning(
+            "approved_template_name_neutral action_id=%s step_key=%s",
+            action.action_id,
+            action.step_key,
+        )
+        return neutral, neutral
+
     async def _compose_native_step_proposal(
         self,
         *,
@@ -2266,6 +2318,9 @@ class DurableDispatcher:
             greeting = await resolve_greeting_name(buyer_name, store=self._supabase)
             greeting_name = greeting.name.strip()
             name_value = greeting_name
+        name_value, greeting_name = self._neutral_if_unsafe(
+            action, variables=variables, name_value=name_value, greeting_name=greeting_name
+        )
         source: dict[str, str | None] = {"nombre": name_value, "producto": product_name, **coupon_values}
         if any(
             not isinstance(source.get(item), str) or not source[item].strip()  # type: ignore[union-attr]
@@ -2871,6 +2926,9 @@ class DurableDispatcher:
             greeting = await resolve_greeting_name(buyer_name, store=self._supabase)
             greeting_name = greeting.name.strip()
             name_value = greeting_name
+        name_value, greeting_name = self._neutral_if_unsafe(
+            action, variables=variables, name_value=name_value, greeting_name=greeting_name
+        )
         if (
             ("nombre" in variables
              and (not isinstance(name_value, str) or not template_greeting_name_is_safe(name_value)))
