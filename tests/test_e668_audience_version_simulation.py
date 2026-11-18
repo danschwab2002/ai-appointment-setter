@@ -38,8 +38,20 @@ from bridge.flow_change_simulation import (
 )
 from bridge.flow_definition import parse_items
 
-FIXTURE = json.loads((Path(__file__).parent / "fixtures/automation_expert_change/"
-                      "maribel_audience_version_c95d3185_20261117.json").read_text(encoding="utf-8"))
+def _with_schema(node: object) -> object:
+    """El fixture guarda las definiciones sin ``esquema`` (ver ``_captured.esquema_note``): se vuelve a poner."""
+    if isinstance(node, dict):
+        out = {key: _with_schema(value) for key, value in node.items()}
+        if "dispara" in out and "pasos" in out and "esquema" not in out:
+            out["esquema"] = "setter-flujo/v1"
+        return out
+    if isinstance(node, list):
+        return [_with_schema(value) for value in node]
+    return node
+
+
+FIXTURE = _with_schema(json.loads((Path(__file__).parent / "fixtures/automation_expert_change/"
+                                   "maribel_audience_version_c95d3185_20261117.json").read_text(encoding="utf-8")))
 FLOW = FIXTURE["store_flow"]
 FLOW_ID = FLOW["flow_id"]
 STORE = {"flows": [FLOW]}

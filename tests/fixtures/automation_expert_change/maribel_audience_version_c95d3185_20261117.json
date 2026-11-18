@@ -4,7 +4,8 @@
     "captured_at": "2026-11-18T03:35Z",
     "by": "E-668",
     "what": "La propuesta c95d3185 (version de aviso_manual_prueba, repeticion 7d a 20h) que la ruta del AE de v1.40.4 valido con simulation_native_flow_counts_invalid, y el flujo en el almacen (flow_controls + flow_definitions v1). Sin refs de Slack ni de personas: los *_by_ref quedan afuera.",
-    "runtime_note": "Maribel v1.40.4 no publica su runtime en /ready (lo suma E-668). Se deriva de /ready del 18/11 03:3xZ: flow_engine enabled, flow_engine_native_intent on, flow_engine_cart_touches disabled, flow_engine_native_silence_running 1, flow_audience ok (corre con FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED). Cupon propio y ficha: no se ven en /ready; van en false (no cambian esta propuesta)."
+    "runtime_note": "Maribel v1.40.4 no publica su runtime en /ready (lo suma E-668). Se deriva de /ready del 18/11 03:3xZ: flow_engine enabled, flow_engine_native_intent on, flow_engine_cart_touches disabled, flow_engine_native_silence_running 1, flow_audience ok (corre con FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED). Cupon propio y ficha: no se ven en /ready; van en false (no cambian esta propuesta).",
+    "esquema_note": "Las definiciones van sin la clave esquema (setter-flujo/v1): el test la vuelve a poner al cargar. validate_flow_engine_native_silence.mjs recorre tests/fixtures y compara cada definicion con esquema contra el motor de antes del disparo por audiencia, y una de audiencia da distinto por diseno."
   },
   "proposal": {
     "id": "c95d3185-b28f-4959-b76b-5af1ca6c0f24",
@@ -57,7 +58,6 @@
           "dispara": {
             "manual": {}
           },
-          "esquema": "setter-flujo/v1",
           "horario": {
             "zona": "America/Mexico_City",
             "desde": "09:00",
@@ -270,7 +270,6 @@
         "dispara": {
           "manual": {}
         },
-        "esquema": "setter-flujo/v1",
         "horario": {
           "zona": "America/Mexico_City",
           "desde": "09:00",
