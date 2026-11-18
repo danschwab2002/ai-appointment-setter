@@ -196,6 +196,8 @@ def test_it_is_one_transaction_and_comes_before_the_bridge_reads() -> None:
         "20261117000500_flow_engine_native_audience_recipient_v1.sql",
         # La repeticion de un flujo de audiencia cuenta solo a quien arranco (20261117000600, E-665).
         "20261117000600_flow_audience_repeat_counts_started_v1.sql",
+        # Los motivos de quien no arranco en un envio a una audiencia (20261117000700, E-666).
+        "20261117000700_flow_audience_start_reasons_v1.sql",
     ]
     later = (MIGRATIONS / names[position + 1]).read_text(encoding="utf-8")
     assert "create or replace" not in later.lower()

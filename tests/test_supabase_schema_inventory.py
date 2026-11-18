@@ -2407,16 +2407,30 @@ def test_flow_engine_native_audience_recipient_fingerprint() -> None:
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact
 
 
-def test_flow_audience_repeat_counts_started_fingerprint_is_last() -> None:
+def test_flow_audience_repeat_counts_started_fingerprint_counts_the_build() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261117000600 (E-665): el armado de la lista mira open_outcome en la repeticion, y sigue
     # security definer y solo de service_role despues del create or replace.
-    row = sql.split("'20261117000600'", 1)[1].split("select\n    version,", 1)[0]
+    row = sql.split("'20261117000600'", 1)[1].split("'20261117000700'", 1)[0].rsplit("union all", 1)[0]
     compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
 
-    assert compact.endswith(",2,'flow_audience_repeat_counts_started')")
+    assert compact.endswith(",2,'flow_audience_repeat_counts_started'")
     assert ("to_regprocedure('public.materialize_flow_audience_occurrence_v1(jsonb,uuid,integer,jsonb,jsonb)')"
             in compact)
     assert "position('flow_audience_repeat_counts_started'indefinition)>0" in compact
     assert "m.open_outcomeisnullorm.open_outcome=''arranco''" in compact
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact
+
+
+def test_flow_audience_start_reasons_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261117000700 (E-666): la lectura privada de las ocurrencias con los motivos de quien no
+    # arranco, sin permisos fuera del dueno.
+    row = sql.split("'20261117000700'", 1)[1].split("select\n    version,", 1)[0]
+    compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
+
+    assert compact.endswith(",2,'flow_audience_start_reasons')")
+    assert "to_regprocedure('public._flow_audience_occurrence_rows(text,text,integer)')" in compact
+    assert "position('flow_audience_start_reasons'indefinition)>0" in compact
+    assert "position('not_started_by_reason'indefinition)>0" in compact
+    assert "nothas_function_privilege('service_role',oid,'EXECUTE')" in compact
