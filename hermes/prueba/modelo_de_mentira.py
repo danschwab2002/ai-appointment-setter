@@ -9,9 +9,16 @@ de sistema. Contesta con lo mismo en una linea, asi la prueba lo lee de la respu
 
     MENTIRA herramientas=0 soul=entero modelo=prueba/modelo
 
+Con ``--conocimiento`` mira tambien un texto que el bridge manda como mensaje ``system`` en cada
+pedido (el conocimiento comercial renderizado), y suma al final si llego entero y cuantos bytes de
+sistema vio el modelo:
+
+    MENTIRA herramientas=0 soul=entero modelo=prueba/modelo conocimiento=entero sistema=41234
+
 Solo libreria estandar. Uso:
 
-    python3 modelo_de_mentira.py --puerto 9999 --soul /ruta/SOUL.md --registro /tmp/pedidos.jsonl
+    python3 modelo_de_mentira.py --puerto 9999 --soul /ruta/SOUL.md --registro /tmp/pedidos.jsonl \
+        [--conocimiento /ruta/conocimiento.md]
 """
 
 from __future__ import annotations
@@ -36,31 +43,42 @@ def _textos_de_sistema(mensajes: list) -> list[str]:
     return textos
 
 
-def resumir_pedido(cuerpo: dict, soul: str) -> dict:
+def _estado(esperado: str, sistema: str) -> str:
+    limpio = esperado.strip()
+    if limpio and limpio in sistema:
+        return "entero"
+    if limpio and limpio[:200] in sistema:
+        return "cortado"
+    return "ausente"
+
+
+def resumir_pedido(cuerpo: dict, soul: str, conocimiento: str | None = None) -> dict:
     sistema = "\n".join(_textos_de_sistema(cuerpo.get("messages", [])))
-    soul_limpio = soul.strip()
-    if soul_limpio and soul_limpio in sistema:
-        estado_soul = "entero"
-    elif soul_limpio and soul_limpio[:200] in sistema:
-        estado_soul = "cortado"
-    else:
-        estado_soul = "ausente"
-    return {
+    resumen = {
         "modelo": cuerpo.get("model", ""),
         "herramientas": len(cuerpo.get("tools") or []),
-        "soul": estado_soul,
+        "soul": _estado(soul, sistema),
         "stream": bool(cuerpo.get("stream")),
     }
+    if conocimiento is not None:
+        resumen["conocimiento"] = _estado(conocimiento, sistema)
+        resumen["sistema"] = len(sistema.encode("utf-8"))
+    return resumen
 
 
 def respuesta(resumen: dict) -> str:
-    return (
+    texto = (
         f"MENTIRA herramientas={resumen['herramientas']} soul={resumen['soul']} "
         f"modelo={resumen['modelo']}"
     )
+    if "conocimiento" in resumen:
+        texto += f" conocimiento={resumen['conocimiento']} sistema={resumen['sistema']}"
+    return texto
 
 
-def armar_servidor(puerto: int, soul_path: Path, registro: Path) -> ThreadingHTTPServer:
+def armar_servidor(
+    puerto: int, soul_path: Path, registro: Path, conocimiento_path: Path | None = None
+) -> ThreadingHTTPServer:
     class Manejador(BaseHTTPRequestHandler):
         def log_message(self, *args):  # sin ruido en la salida de la prueba
             return
@@ -86,7 +104,10 @@ def armar_servidor(puerto: int, soul_path: Path, registro: Path) -> ThreadingHTT
                 self._json(404, {"error": {"message": "no existe"}})
                 return
             soul = soul_path.read_text(encoding="utf-8") if soul_path.exists() else ""
-            resumen = resumir_pedido(cuerpo, soul)
+            conocimiento = (
+                conocimiento_path.read_text(encoding="utf-8") if conocimiento_path is not None else None
+            )
+            resumen = resumir_pedido(cuerpo, soul, conocimiento)
             with registro.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(resumen) + "\n")
             texto = respuesta(resumen)
@@ -145,8 +166,9 @@ def main() -> None:
     parser.add_argument("--puerto", type=int, default=9999)
     parser.add_argument("--soul", type=Path, required=True)
     parser.add_argument("--registro", type=Path, required=True)
+    parser.add_argument("--conocimiento", type=Path, default=None)
     args = parser.parse_args()
-    armar_servidor(args.puerto, args.soul, args.registro).serve_forever()
+    armar_servidor(args.puerto, args.soul, args.registro, args.conocimiento).serve_forever()
 
 
 if __name__ == "__main__":
