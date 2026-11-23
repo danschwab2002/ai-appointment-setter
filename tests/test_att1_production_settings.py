@@ -618,7 +618,7 @@ def test_the_coupon_without_its_pages_and_interval_starts_with_the_defaults(
     )
 
     [kwargs] = built
-    assert (kwargs["max_pages"], kwargs["scan_interval_seconds"]) == (5, 300.0)
+    assert (kwargs["max_pages"], kwargs["scan_interval_seconds"]) == (200, 300.0)
 
 
 @pytest.mark.parametrize(

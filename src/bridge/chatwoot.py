@@ -58,7 +58,13 @@ _STALLED_LISTING_MARGIN_SECONDS = 3_600
 # abiertas con actividad reciente (Maribel, 2026-11-22: ~1.700; el del
 # 2026-11-29, ~3.600) y el barrido no llegaba nunca a su corte. 400 paginas son
 # 10.000 conversaciones; el barrido igual termina en el corte de su ventana.
+# Es tambien el tope del seguimiento con cupon (y su barrido
+# nativo de silencio), de la reactivacion, del registro de rechazos de Meta y
+# del indice de etiquetas de las audiencias.
 MAX_CONVERSATION_SCAN_PAGES = 400
+# El default de esos barridos: 200 paginas, 5.000 conversaciones por estado
+# (el del masivo del 2026-11-29 son ~3.600 mas las que ya estaban abiertas).
+DEFAULT_CONVERSATION_SCAN_PAGES = 200
 
 
 def _stalled_listing_item_cannot_qualify(conversation: dict[str, object]) -> bool:
@@ -73,6 +79,86 @@ def _stalled_listing_item_cannot_qualify(conversation: dict[str, object]) -> boo
         return True
     labels = conversation.get("labels")
     return isinstance(labels, list) and "automation_paused" in labels
+
+
+def _listing_int(value: object) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return None
+
+
+# Lo reciente no se asienta: margen por el mismo segundo y por el reloj.
+SETTLE_MIN_AGE_SECONDS = 120
+
+
+class SettledConversationMemo:
+    """Las conversaciones que un barrido ya leyo enteras y que no pueden cambiar.
+
+    Un envio masivo deja miles de conversaciones con actividad reciente (Maribel,
+    inbox 13, 2026-11-22: ~3.600 plantillas) y casi todas quedan igual durante
+    dias: la plantilla y nada mas. Un barrido que pide el show y los mensajes de
+    cada una en cada vuelta hace ~7.200 llamadas cada pocos minutos. Esta memoria
+    guarda, por conversacion, el ``last_activity_at`` con que se leyo y el motivo
+    con que se descarto, solo para motivos que dependen unicamente de los
+    mensajes (y no del reloj, de las etiquetas ni del contacto). Mientras el
+    listado traiga el mismo ``last_activity_at``, no hay mensaje nuevo: ningun
+    mensaje es posterior a esa marca (medido el 2026-10-01 en el inbox 9), asi
+    que uno nuevo la mueve, y el motivo sigue valiendo sin volver a leer.
+
+    Un item sin ``last_activity_at`` entero o con otra marca se lee entero, como
+    antes. La memoria vive en el proceso (un reinicio la vacia y el primer
+    barrido lee todo) y en cada barrido completo queda solo con lo que el
+    listado volvio a traer: lo que sale de la ventana se olvida.
+
+    Uso: ``begin()`` antes de listar, ``lookup(item)`` desde el filtro del
+    listado, ``settle(details, motivo)`` despues de evaluar, ``commit()`` al
+    terminar el barrido sin error. Un barrido que falla no toca lo guardado.
+    """
+
+    def __init__(self) -> None:
+        self._settled: dict[int, tuple[int, str]] = {}
+        self._next: dict[int, tuple[int, str]] = {}
+
+    def __len__(self) -> int:
+        return len(self._settled)
+
+    def begin(self) -> None:
+        self._next = {}
+
+    def lookup(self, item: dict[str, object]) -> str | None:
+        """El motivo guardado si el item del listado no tuvo actividad nueva."""
+        conversation_id = _listing_int(item.get("id"))
+        activity = _listing_int(item.get("last_activity_at"))
+        if conversation_id is None or activity is None:
+            return None
+        entry = self._settled.get(conversation_id)
+        if entry is None or entry[0] != activity:
+            return None
+        self._next[conversation_id] = entry
+        return entry[1]
+
+    def settle(self, details: object, reason: str, *, now_epoch: int) -> None:
+        """Guardar el motivo con la marca de actividad del show que se evaluo.
+
+        No guarda una conversacion con actividad de hace menos de
+        ``SETTLE_MIN_AGE_SECONDS``: ``last_activity_at`` va en segundos, y un
+        mensaje que entra en el mismo segundo que la lectura (o con el reloj
+        de Chatwoot corrido) no la movería. Esa conversacion se relee en la
+        vuelta siguiente.
+        """
+        if not isinstance(details, dict):
+            return
+        conversation_id = _listing_int(details.get("id"))
+        activity = _listing_int(details.get("last_activity_at"))
+        if conversation_id is None or activity is None:
+            return
+        if now_epoch - activity < SETTLE_MIN_AGE_SECONDS:
+            return
+        self._next[conversation_id] = (activity, reason)
+
+    def commit(self) -> None:
+        self._settled = self._next
+        self._next = {}
 
 
 class ChatwootProtocolError(RuntimeError):
@@ -2918,7 +3004,7 @@ class ChatwootClient:
             not isinstance(expected_inbox_id, int)
             or isinstance(expected_inbox_id, bool)
             or expected_inbox_id <= 0
-            or not 1 <= max_pages <= 20
+            or not 1 <= max_pages <= MAX_CONVERSATION_SCAN_PAGES
             or not isinstance(messages_limit, int)
             or isinstance(messages_limit, bool)
             or messages_limit <= 0
@@ -3008,6 +3094,7 @@ class ChatwootClient:
         max_pages: int = 5,
         messages_limit: int = 30,
         include_messages: bool = True,
+        skip_listing_item: Callable[[dict[str, object]], bool] | None = None,
     ) -> list[dict[str, object]]:
         """Listar las conversaciones con actividad reciente, con su historial.
 
@@ -3035,11 +3122,21 @@ class ChatwootClient:
         incompleto se leeria como 'no hay a quien'. Una conversacion que recibe
         actividad durante el barrido sube al principio de la lista y puede
         quedar afuera de esta pasada; la toma la siguiente.
+
+        ``skip_listing_item`` (opcional) recibe cada item del listado que esta
+        dentro de la ventana, antes de pedir su show y sus mensajes. Si
+        devuelve ``True``, el item no se lee ni se devuelve: es quien llama el
+        que sabe que ese item ya no puede ser de su criterio (los barridos del
+        seguimiento, de la reactivacion y de Meta tras un envio masivo, que
+        deja miles de conversaciones con actividad reciente). El corte, el
+        orden y el conteo del listado no cambian: el item igual cuenta como
+        listado.
         """
         if (
             not isinstance(expected_inbox_id, int)
             or isinstance(expected_inbox_id, bool)
             or expected_inbox_id <= 0
+            or (skip_listing_item is not None and not callable(skip_listing_item))
             or not isinstance(statuses, tuple)
             or not statuses
             or len(set(statuses)) != len(statuses)
@@ -3113,6 +3210,10 @@ class ChatwootClient:
                         if conversation_id in seen_conversations:
                             continue
                         seen_conversations.add(conversation_id)
+                        if skip_listing_item is not None and skip_listing_item(
+                            conversation
+                        ):
+                            continue
                         if not include_messages:
                             collected.append({"conversation": conversation})
                             continue

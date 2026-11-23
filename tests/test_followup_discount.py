@@ -644,14 +644,15 @@ def test_the_sweeper_reads_resolved_conversations_inside_the_window() -> None:
     now = int(sweeper._clock())
     assert asyncio.run(sweeper.run_once()) == 2
 
-    assert chatwoot.listings == [
-        {
-            "expected_inbox_id": 9,
-            "statuses": ("open", "resolved"),
-            "active_since_epoch": now - 72 * HOUR - HOUR,
-            "max_pages": 5,
-        }
-    ]
+    listing = dict(chatwoot.listings[0])
+    assert callable(listing.pop("skip_listing_item"))
+    assert len(chatwoot.listings) == 1
+    assert listing == {
+        "expected_inbox_id": 9,
+        "statuses": ("open", "resolved"),
+        "active_since_epoch": now - 72 * HOUR - HOUR,
+        "max_pages": 200,
+    }
     by_conversation = {claim["external_conversation_id"]: claim for claim in supabase.claims}
     assert by_conversation[201]["regime"] == REGIME_LINK_SENT
     assert by_conversation[201]["last_outbound_message_id"] == 2507

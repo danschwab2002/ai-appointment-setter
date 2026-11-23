@@ -143,7 +143,7 @@ Lo prueban `tests/test_followup_discount.py` (el barredor con la conversacion 21
 | `CONVERSATION_FOLLOWUP_MIN_AGE_SECONDS` | `86400` | 24 h. Con manifiesto y el flag prendido, un valor menor exige `CONVERSATION_FOLLOWUP_ONLY_PHONE`: es solo para la prueba |
 | `CONVERSATION_FOLLOWUP_MAX_AGE_SECONDS` | `259200` | 72 h |
 | `CONVERSATION_FOLLOWUP_MAX_SENDS_PER_SCAN` | `10` | |
-| `CONVERSATION_FOLLOWUP_MAX_PAGES` | `5` | Por estado (`open`, `resolved`), 25 conversaciones por pagina |
+| `CONVERSATION_FOLLOWUP_MAX_PAGES` | `200` | Por estado (`open`, `resolved`), 25 conversaciones por pagina, entre 1 y 400 (era 5, con maximo 20: el masivo de Maribel del 2026-11-22 dejo ~3.600 conversaciones en la ventana y el barrido no cerraba). Lo comparte el barrido nativo de silencio. Lo que el listado ya descarta (pausada, baja, muteada, pospuesta, otro producto, contacto bloqueado) no se lee, y una conversacion ya leida cuyo motivo sale solo de los mensajes (`never_replied`, el ultimo mensaje es nuestro o del lead, `team_replied`) no se relee mientras su `last_activity_at` no cambie ni sea de los ultimos 2 minutos |
 | `CONVERSATION_FOLLOWUP_SEND_HOURS` | — | `HH-HH`, con 0 <= inicio < fin <= 24, en la zona del manifiesto: `09-21`, o `00-24` para mandar a cualquier hora. Solo con manifiesto, y obligatoria con el flag prendido |
 | `CONVERSATION_FOLLOWUP_ONLY_PHONE` | — | El modo de un solo telefono, en E.164 (`+` y de 7 a 15 digitos). Vacia: el alcance del entrante (todo el inbox con los remitentes por scope) |
 

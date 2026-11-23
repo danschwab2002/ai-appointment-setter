@@ -42,7 +42,9 @@ from bridge.lead_decline import (
 )
 from bridge.recovery_coupon_reply import prospect_texts_after_last_template
 from bridge.chatwoot import (
+    MAX_CONVERSATION_SCAN_PAGES,
     ChatwootProtocolError,
+    SettledConversationMemo,
     TeamMessageTimestampError,
     seconds_since_last_team_message,
 )
@@ -61,6 +63,23 @@ DEFAULT_MIN_INBOUND_AGE_SECONDS = 86_400
 DEFAULT_MAX_INBOUND_AGE_SECONDS = 2_592_000
 DEFAULT_SCAN_INTERVAL_SECONDS = 900.0
 DEFAULT_MAX_REACTIVATIONS = 1
+# Margen del corte del listado sobre la ventana, como el del seguimiento: el
+# barrido tarda, y la edad del mensaje se mide con el reloj de despues de listar.
+LISTING_MARGIN_SECONDS = 3_600
+# El tope de paginas por defecto es el maximo (400, 10.000 conversaciones), no
+# las 200 de los otros barridos: la ventana es de 30 dias y entran los masivos
+# de varias semanas (Maribel: ~1.900 abiertas del 2026-11-22 mas ~3.600 del
+# 2026-11-29). Es solo el listado; lo que se lee entero lo acota el filtro.
+DEFAULT_MAX_PAGES = MAX_CONVERSATION_SCAN_PAGES
+# Los motivos que salen solo de los mensajes (ni reloj, ni etiquetas, ni
+# contacto): sin actividad nueva siguen valiendo (``SettledConversationMemo``).
+# Tras un envio masivo es casi todo: el ultimo mensaje es la plantilla.
+REACTIVATION_MESSAGE_ONLY_SKIPS = frozenset({
+    "no_conversational_history",
+    "last_message_not_inbound",
+    "last_message_not_from_contact",
+    "last_message_empty",
+})
 
 _E164_RE = re.compile(r"\+[1-9]\d{6,14}")
 _DIGITS_RE = re.compile(r"[0-9]")
@@ -445,6 +464,42 @@ def evaluate_reactivation_candidate(
     )
 
 
+def reactivation_listing_skip_reason(item: object) -> str | None:
+    """El motivo con que el item del listado ya descarta la conversacion, o ``None``.
+
+    Solo campos que trae el listado de Chatwoot (capturas del inbox 9 del
+    2026-10-01 y del inbox 11 del 2026-10-10: ``status``, ``can_reply``,
+    ``muted``, ``snoozed_until``, ``labels``; y ``meta.sender.blocked`` en la
+    del inbox 9 del 2026-09-26), con el criterio de
+    ``evaluate_reactivation_candidate``. ``can_reply`` descarta solo con un
+    ``true`` explicito (dentro de la ventana de 24 h); si falta, el show
+    decide. Un campo ausente o con otra forma no descarta.
+    """
+    if not isinstance(item, dict):
+        return None
+    status = item.get("status")
+    if isinstance(status, str) and status != "open":
+        return "conversation_not_open"
+    if item.get("can_reply") is True:
+        return "inside_service_window"
+    if item.get("muted") is True:
+        return "conversation_muted"
+    if "snoozed_until" in item and item.get("snoozed_until") not in (None, ""):
+        return "conversation_snoozed"
+    labels = item.get("labels")
+    if (
+        isinstance(labels, list)
+        and all(isinstance(label, str) for label in labels)
+        and "automation_opted_out" in labels
+    ):
+        return "contact_opted_out"
+    meta = item.get("meta")
+    sender = meta.get("sender") if isinstance(meta, dict) else None
+    if isinstance(sender, dict) and sender.get("blocked") is True:
+        return "contact_blocked_or_unknown"
+    return None
+
+
 def _scan_summary(
     *, scanned: int, sent: int, motivos: "Counter[str]", top: int = 4
 ) -> str:
@@ -478,7 +533,7 @@ class ConversationReactivationSweeper:
         quiet_seconds_threshold: int = 28_800,
         max_reactivations: int = DEFAULT_MAX_REACTIVATIONS,
         max_sends_per_scan: int = 10,
-        max_pages: int = 5,
+        max_pages: int = DEFAULT_MAX_PAGES,
         allowed_phone: str | None = None,
         clock: Callable[[], float] = time.time,
         stop_on_lead_decline: bool = False,
@@ -500,7 +555,7 @@ class ConversationReactivationSweeper:
             or not isinstance(max_sends_per_scan, int)
             or isinstance(max_sends_per_scan, bool)
             or max_sends_per_scan < 1
-            or not 1 <= max_pages <= 20
+            or not 1 <= max_pages <= MAX_CONVERSATION_SCAN_PAGES
         ):
             raise ValueError("invalid conversation reactivation configuration")
         self._chatwoot = chatwoot
@@ -524,6 +579,8 @@ class ConversationReactivationSweeper:
         self._has_completed_scan = False
         self._last_sent_count = 0
         self._last_scan_summary = "never"
+        # Lo que ya se leyo y no cambia sin actividad nueva (el envio masivo).
+        self._settled = SettledConversationMemo()
 
     @property
     def last_scan_state(self) -> str:
@@ -586,14 +643,40 @@ class ConversationReactivationSweeper:
             template_name=self._template_name,
             expected_language=self._expected_template_language,
         )
-        conversations = await self._chatwoot.list_open_conversations_with_messages(
+        # Solo las abiertas con actividad dentro de la ventana, de la mas
+        # reciente a la mas vieja: una candidata tiene su ultimo mensaje (del
+        # lead) dentro de ``max_inbound_age_seconds`` y ``last_activity_at``
+        # nunca es anterior a el. Antes se leian todas las abiertas, sin orden
+        # y con su detalle: tras un envio masivo (Maribel, 2026-11-22) eran
+        # miles, el tope de 20 paginas no alcanzaba y el conteo cambiaba entre
+        # paginas (conversation_count_changed).
+        listed_at = int(self._clock())
+        listing_skips: Counter[str] = Counter()
+
+        def skip_listing_item(item: dict[str, object]) -> bool:
+            # Primero el listado (el motivo vigente para el resumen); la
+            # memoria se consulta igual, para no olvidar lo ya leido.
+            settled = self._settled.lookup(item)
+            reason = reactivation_listing_skip_reason(item) or settled
+            if reason is None:
+                return False
+            listing_skips[reason] += 1
+            return True
+
+        self._settled.begin()
+        conversations = await self._chatwoot.list_recent_conversations_with_messages(
             expected_inbox_id=self._inbox_id,
+            statuses=("open",),
+            active_since_epoch=(
+                listed_at - self._max_inbound_age_seconds - LISTING_MARGIN_SECONDS
+            ),
             max_pages=self._max_pages,
+            skip_listing_item=skip_listing_item,
         )
         now_epoch = int(self._clock())
         sent = 0
         failed = False
-        motivos: Counter[str] = Counter()
+        motivos: Counter[str] = Counter(listing_skips)
         for entry in conversations:
             if sent >= self._max_sends_per_scan:
                 break
@@ -622,6 +705,11 @@ class ConversationReactivationSweeper:
                 continue
             if decision.candidate is None:
                 motivos[decision.skip_reason or "unknown"] += 1
+                if decision.skip_reason in REACTIVATION_MESSAGE_ONLY_SKIPS:
+                    # El reloj de antes de listar: nunca agranda la edad.
+                    self._settled.settle(
+                        details, decision.skip_reason, now_epoch=listed_at
+                    )
                 logger.debug(
                     "conversation_reactivation_skipped reason=%s",
                     decision.skip_reason,
@@ -636,11 +724,14 @@ class ConversationReactivationSweeper:
                 # resumen del barrido.
                 motivos[self._last_claim_outcome or "not_reactivated"] += 1
                 failed = failed or self._last_attempt_failed
+        self._settled.commit()
         self._last_sent_count = sent
         self._has_completed_scan = True
         self._last_scan_state = "error" if failed else "healthy"
         self._last_scan_summary = _scan_summary(
-            scanned=len(conversations), sent=sent, motivos=motivos
+            scanned=len(conversations) + sum(listing_skips.values()),
+            sent=sent,
+            motivos=motivos,
         )
         logger.info(
             "conversation_reactivation_scan %s", self._last_scan_summary

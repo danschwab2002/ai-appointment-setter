@@ -19,7 +19,8 @@ Chatwoot acepta la plantilla (el intento queda `accepted_by_chatwoot` y el caso 
 
 `MetaDeliveryRejectionSweeper`, cada `META_DELIVERY_SCAN_INTERVAL_SECONDS` (600 por defecto, entre 60 y 3600):
 
-1. Lista las conversaciones de la bandeja (abiertas, resueltas, pendientes y pospuestas) con actividad en las últimas 6 h. El primer barrido de cada proceso, con el reintento prendido, mira 72 h.
+1. Lista las conversaciones de la bandeja (abiertas, resueltas, pendientes y pospuestas) con actividad en las últimas 6 h, hasta `META_DELIVERY_MAX_PAGES` páginas por estado. El primer barrido de cada proceso, con el reintento prendido, mira 72 h. Si ese barrido ancho no llega al corte de su ventana con el tope de páginas (un envío masivo dentro de esas 72 h), no se reintenta ancho para siempre: el log dice `meta_delivery_first_scan_wide_incomplete`, el resumen cuenta `first_scan_wide_incomplete=1` y en la misma vuelta se lista la ventana normal de 6 h. Lo que se pierde son los rechazos de entre 6 y 72 h atrás ocurridos mientras el proceso no corría. Si la ventana normal tampoco cierra, el barrido falla cerrado (`conversation_scan_incomplete`), como siempre.
+   Una conversación ya leída sin ningún mensaje `failed`, con al menos un mensaje y con cada plantilla nuestra `delivered` o `read`, no se relee mientras su `last_activity_at` no cambie (resumen: `unchanged_skipped`). No se asienta la que tuvo actividad en los últimos 2 minutos, porque `last_activity_at` va en segundos. Lo que sigue `sent` o tiene un rechazo se relee en cada vuelta. La memoria vive en el proceso: un reinicio vuelve a leer todo una vez.
 2. Registra cada mensaje nuestro en `failed` con `record_meta_delivery_rejection_v1`: idempotente por (bandeja, mensaje), atado al intento (`followup_delivery_attempts.remote_message_id`), a su caso y a la conversación cuando la base los conoce. El intento y el caso no cambian.
 3. Con el reintento prendido y dentro del horario, toma de la base los primeros contactos con 131049 de entre 24 h y 72 h sin reintento (`list_due_meta_first_touch_retries_v1`), relee cada conversación y decide.
 
@@ -73,6 +74,7 @@ El aviso es `MSG-002` («Envío falló definitivamente») por el conector de Sla
 | `META_FIRST_TOUCH_RETRY_SEND_HOURS` | vacío | `HH-HH` en la zona del manifiesto; sin ella, `CONVERSATION_FOLLOWUP_SEND_HOURS`. |
 | `META_UNREACHABLE_CLOSE_ENABLED` | `false` | El cierre y el aviso del 131026. Exige el registro. |
 | `META_DELIVERY_SCAN_INTERVAL_SECONDS` | `600` | El intervalo del barrido. |
+| `META_DELIVERY_MAX_PAGES` | `200` | Páginas del listado por estado (25 conversaciones cada una), entre 1 y 400. Era 10 fijo: tras el masivo de Maribel del 2026-11-22 el barrido no llegaba al corte de su ventana. |
 | `META_ACCOUNT_HOLD_RETRY_ENABLED` | `false` | El reintento del rechazo de la cuenta (E-348). Exige el registro, el manifiesto, `META_FINAL_EFFECT_ENABLED=true`, `META_FIRST_TOUCH_RETRY_TEMPLATES` y un horario; no exige `META_FIRST_TOUCH_RETRY_ENABLED`. |
 | `META_ACCOUNT_HOLD_CODES` | `131042` | Los códigos de la cuenta, separados por coma, hasta 10. Nunca 131049 ni 131026. |
 | `META_ACCOUNT_HOLD_MAX_AGE_SECONDS` | `259200` | El vencimiento desde el mensaje original (72 h), entre 3600 y 604800. |

@@ -29,6 +29,7 @@ from uuid import UUID
 
 import httpx
 
+from bridge.chatwoot import MAX_CONVERSATION_SCAN_PAGES
 from bridge.flow_audience import AudienceSpec, Candidate, Occurrence
 from bridge.flow_audience_sweeper import AudienceFlow, OccurrenceRow, ReleasedMember
 from bridge.phones import equivalent_whatsapp_phones
@@ -214,12 +215,14 @@ class ChatwootLabelIndex:
     Usa el listado que ya usa el aviso de derivaciones
     (``list_recent_conversations_with_messages(include_messages=False)``): cada item
     trae ``labels`` y ``meta.sender.phone_number``. Un listado incompleto (mas de
-    20 paginas por estado) o un item con etiquetas y sin telefono es
-    ``AudienceLabelsUnavailable``: una audiencia por etiqueta no sale a medias.
+    ``MAX_CONVERSATION_SCAN_PAGES`` paginas por estado; eran 20, 500
+    conversaciones, y un envio masivo deja ~3.600 en la ventana) o un item con
+    etiquetas y sin telefono es ``AudienceLabelsUnavailable``: una audiencia
+    por etiqueta no sale a medias. Es solo el listado, sin show ni mensajes.
     """
 
     STATUSES = ("open", "pending", "snoozed", "resolved")
-    MAX_PAGES = 20
+    MAX_PAGES = MAX_CONVERSATION_SCAN_PAGES
 
     def __init__(self, *, chatwoot: Any, inbox_id: int, clock: Any = None) -> None:
         self._chatwoot = chatwoot

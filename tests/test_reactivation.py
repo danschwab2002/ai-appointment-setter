@@ -471,14 +471,14 @@ class _ChatwootFalso:
         self.message_id = message_id
         self.sent: list[dict] = []
         self.inbox_calls = 0
+        self.listings: list[dict] = []
 
     async def get_inbox(self, *, inbox_id: int) -> dict:
         self.inbox_calls += 1
         return copy.deepcopy(INBOX_FIXTURE)
 
-    async def list_open_conversations_with_messages(
-        self, *, expected_inbox_id: int, max_pages: int
-    ) -> list[dict]:
+    async def list_recent_conversations_with_messages(self, **kwargs) -> list[dict]:
+        self.listings.append(kwargs)
         if self.conversations is not None:
             return copy.deepcopy(self.conversations)
         return [
@@ -705,7 +705,7 @@ def test_an_unreadable_team_timestamp_skips_only_that_conversation() -> None:
         {"max_reactivations": 0},
         {"max_sends_per_scan": 0},
         {"max_pages": 0},
-        {"max_pages": 21},
+        {"max_pages": 401},
         {"min_inbound_age_seconds": -1},
         {"max_inbound_age_seconds": 10, "min_inbound_age_seconds": 20},
     ],
