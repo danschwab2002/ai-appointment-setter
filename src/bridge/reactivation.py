@@ -654,9 +654,10 @@ class ConversationReactivationSweeper:
         listing_skips: Counter[str] = Counter()
 
         def skip_listing_item(item: dict[str, object]) -> bool:
-            reason = self._settled.lookup(item) or reactivation_listing_skip_reason(
-                item
-            )
+            # Primero el listado (el motivo vigente para el resumen); la
+            # memoria se consulta igual, para no olvidar lo ya leido.
+            settled = self._settled.lookup(item)
+            reason = reactivation_listing_skip_reason(item) or settled
             if reason is None:
                 return False
             listing_skips[reason] += 1
@@ -705,7 +706,10 @@ class ConversationReactivationSweeper:
             if decision.candidate is None:
                 motivos[decision.skip_reason or "unknown"] += 1
                 if decision.skip_reason in REACTIVATION_MESSAGE_ONLY_SKIPS:
-                    self._settled.settle(details, decision.skip_reason)
+                    # El reloj de antes de listar: nunca agranda la edad.
+                    self._settled.settle(
+                        details, decision.skip_reason, now_epoch=listed_at
+                    )
                 logger.debug(
                     "conversation_reactivation_skipped reason=%s",
                     decision.skip_reason,

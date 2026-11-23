@@ -87,6 +87,10 @@ def _listing_int(value: object) -> int | None:
     return None
 
 
+# Lo reciente no se asienta: margen por el mismo segundo y por el reloj.
+SETTLE_MIN_AGE_SECONDS = 120
+
+
 class SettledConversationMemo:
     """Las conversaciones que un barrido ya leyo enteras y que no pueden cambiar.
 
@@ -133,13 +137,22 @@ class SettledConversationMemo:
         self._next[conversation_id] = entry
         return entry[1]
 
-    def settle(self, details: object, reason: str) -> None:
-        """Guardar el motivo con la marca de actividad del show que se evaluo."""
+    def settle(self, details: object, reason: str, *, now_epoch: int) -> None:
+        """Guardar el motivo con la marca de actividad del show que se evaluo.
+
+        No guarda una conversacion con actividad de hace menos de
+        ``SETTLE_MIN_AGE_SECONDS``: ``last_activity_at`` va en segundos, y un
+        mensaje que entra en el mismo segundo que la lectura (o con el reloj
+        de Chatwoot corrido) no la movería. Esa conversacion se relee en la
+        vuelta siguiente.
+        """
         if not isinstance(details, dict):
             return
         conversation_id = _listing_int(details.get("id"))
         activity = _listing_int(details.get("last_activity_at"))
         if conversation_id is None or activity is None:
+            return
+        if now_epoch - activity < SETTLE_MIN_AGE_SECONDS:
             return
         self._next[conversation_id] = (activity, reason)
 

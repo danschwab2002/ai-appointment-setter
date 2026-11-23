@@ -456,7 +456,10 @@ def conversation_settled(entry: Mapping[str, object]) -> bool:
     guarda lo que ya esta en un estado final para este barrido.
     """
     messages = entry.get("messages")
-    if not isinstance(messages, list):
+    # Sin mensajes no se asienta: el primer contacto crea la conversacion y
+    # manda la plantilla en dos llamadas, y la plantilla puede entrar en el
+    # mismo segundo (``last_activity_at`` no cambia) y volver rechazada.
+    if not isinstance(messages, list) or not messages:
         return False
     for message in messages:
         if not isinstance(message, dict):
@@ -705,7 +708,9 @@ class MetaDeliveryRejectionSweeper:
                 ):
                     self._account_ok_epoch = delivered
             if conversation_settled(entry):
-                self._settled.settle(entry.get("conversation"), SETTLED_REASON)
+                self._settled.settle(
+                    entry.get("conversation"), SETTLED_REASON, now_epoch=now_epoch
+                )
         if not self._stopping.is_set():
             self._settled.commit()
         self._first_scan = False

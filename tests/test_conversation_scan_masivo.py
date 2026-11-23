@@ -161,8 +161,7 @@ class MassiveInbox:
                 "last_activity_at": item["last_activity_at"],
             }
         )
-        last = copy.deepcopy(self.messages[conversation_id][-1])
-        show["messages"] = [last]
+        show["messages"] = copy.deepcopy(self.messages[conversation_id][-1:])
         return httpx.Response(200, json=show)
 
     def calls(self) -> dict[str, int]:
@@ -209,7 +208,8 @@ def _massive_inbox(
     for index in range(total + older):
         conversation_id = 20_000 + index
         if index < total:
-            activity = now - 60 - index
+            # Mas de 2 minutos atras: lo reciente no se asienta (ver el test).
+            activity = now - 300 - index
         else:
             activity = now - 7 * 3_600 - (index - total) * 150
         item = _silent_item()
@@ -377,8 +377,10 @@ def test_the_memo_keeps_a_reason_only_while_the_activity_mark_holds() -> None:
     item = {"id": 7, "last_activity_at": 100}
     memo.begin()
     assert memo.lookup(item) is None
-    memo.settle({"id": 7, "last_activity_at": 100}, "never_replied")
-    memo.settle({"id": 8, "last_activity_at": "100"}, "never_replied")
+    memo.settle({"id": 7, "last_activity_at": 100}, "never_replied", now_epoch=1_000)
+    memo.settle({"id": 8, "last_activity_at": "100"}, "never_replied", now_epoch=1_000)
+    # Con actividad de hace menos de 2 minutos, no se guarda.
+    memo.settle({"id": 9, "last_activity_at": 900}, "never_replied", now_epoch=1_000)
     memo.commit()
     assert len(memo) == 1
     memo.begin()
@@ -666,3 +668,121 @@ def test_meta_delivery_normal_window_that_cannot_finish_still_fails_closed(
     )
     with pytest.raises(ChatwootProtocolError, match="conversation_scan_incomplete"):
         asyncio.run(sweeper.run_once())
+
+
+# --- la memoria no esconde lo que cambia sin actividad nueva -----------------
+
+OTHER_PHONE = "+5215599999999"
+
+
+def _answered(inbox: MassiveInbox, conversation_id: int, inbound_at: int, labels: list[str]) -> None:
+    """Contesto la plantilla y el agente le respondio un minuto despues (la 120)."""
+    by_id = {m["id"]: m for m in SHOW_120["messages"]}
+    template = dict(copy.deepcopy(by_id[2962]), created_at=inbound_at - 600)
+    reply = dict(copy.deepcopy(by_id[2968]), created_at=inbound_at)
+    agent = dict(copy.deepcopy(by_id[2971]), created_at=inbound_at + 60)
+    assert agent["sender"]["type"] == "agent_bot" and agent["message_type"] == 1
+    for message in (template, reply, agent):
+        message["conversation_id"] = conversation_id
+    item = _silent_item()
+    item.update({"id": conversation_id, "last_activity_at": inbound_at + 60,
+                 "timestamp": inbound_at + 60, "labels": labels})
+    inbox.items.append(item)
+    inbox.messages[conversation_id] = [template, reply, agent]
+
+
+def _followup_only_other_phone(inbox: MassiveInbox, clock: _Clock) -> ConversationFollowupSweeper:
+    # Con only_phone de otro numero la candidata se cuenta como held_only_phone
+    # sin reservar nada: se ve que llego a candidata.
+    return ConversationFollowupSweeper(
+        chatwoot=inbox.client(), supabase=object(), account_id=ACCOUNT, inbox_id=INBOX,
+        template_name="att1_seguimiento_descuento_01", coupon_code="TIROIDES10",
+        product_name="Alimenta tu Tiroides", expected_template_language="es_MX",
+        only_phone=OTHER_PHONE, clock=clock,
+    )
+
+
+def test_followup_candidate_by_the_passage_of_time_with_the_memo_loaded() -> None:
+    inbox = _massive_inbox(50)
+    _answered(inbox, 30_000, NOW - 12 * 3_600, [])
+    clock = _Clock(NOW)
+    sweeper = _followup_only_other_phone(inbox, clock)
+    asyncio.run(sweeper.run_once())
+    assert sweeper.last_scan_summary == "scanned=51 sent=0 never_replied=50 inbound_too_recent=1"
+    inbox.calls()
+    clock.now += 300
+    asyncio.run(sweeper.run_once())
+    # La memoria tiene las 50 plantillas; la que espera el reloj se relee.
+    assert inbox.calls() == {"inbox": 1, "listing": 4, "show": 1, "messages": 1}
+    # A las 24 h del entrante, sin actividad nueva, es candidata.
+    clock.now = NOW + 12 * 3_600 + 60
+    asyncio.run(sweeper.run_once())
+    assert inbox.calls() == {"inbox": 1, "listing": 4, "show": 1, "messages": 1}
+    assert sweeper.last_scan_summary == "scanned=51 sent=0 never_replied=50 held_only_phone=1"
+
+
+def test_followup_resumes_when_the_pause_label_is_removed_with_the_memo_loaded() -> None:
+    inbox = _massive_inbox(50)
+    _answered(inbox, 30_001, NOW - 30 * 3_600, ["automation_paused"])
+    clock = _Clock(NOW)
+    sweeper = _followup_only_other_phone(inbox, clock)
+    asyncio.run(sweeper.run_once())
+    assert sweeper.last_scan_summary == "scanned=51 sent=0 never_replied=50 conversation_paused=1"
+    assert inbox.calls()["show"] == 50
+    # El equipo saca la pausa: la etiqueta cambia, la actividad no.
+    next(item for item in inbox.items if item["id"] == 30_001)["labels"] = []
+    clock.now += 300
+    asyncio.run(sweeper.run_once())
+    assert inbox.calls() == {"inbox": 1, "listing": 4, "show": 1, "messages": 1}
+    assert sweeper.last_scan_summary == "scanned=51 sent=0 never_replied=50 held_only_phone=1"
+
+
+def test_the_summary_counts_the_listing_reason_before_the_memo() -> None:
+    inbox = _massive_inbox(50)
+    clock = _Clock(NOW)
+    sweeper = _followup(inbox, clock)
+    asyncio.run(sweeper.run_once())
+    # Una ya asentada como never_replied se pausa: el resumen dice el motivo vigente.
+    next(item for item in inbox.items if item["id"] == 20_000)["labels"] = ["automation_paused"]
+    clock.now += 300
+    asyncio.run(sweeper.run_once())
+    assert sweeper.last_scan_summary == "scanned=50 sent=0 never_replied=49 conversation_paused=1"
+
+
+def test_meta_delivery_does_not_settle_a_conversation_without_messages() -> None:
+    # El primer contacto crea la conversacion y manda la plantilla en dos
+    # llamadas: si el barrido lee entre medio, la ve vacia. La plantilla entra
+    # en el mismo segundo (la marca no cambia) y Meta la rechaza.
+    inbox = _massive_inbox(3)
+    inbox.messages[20_001] = []
+    clock = _Clock(NOW)
+    supabase = _MetaSupabase()
+    sweeper = MetaDeliveryRejectionSweeper(
+        chatwoot=inbox.client(), supabase=supabase, account_id=ACCOUNT, inbox_id=INBOX, clock=clock,
+    )
+    asyncio.run(sweeper.run_once())
+    _with_rejections(inbox, [20_001])
+    clock.now += 600
+    asyncio.run(sweeper.run_once())
+    assert supabase.recorded == [2831]
+    assert not conversation_settled({"conversation": {}, "messages": []})
+
+
+def test_meta_delivery_does_not_settle_what_moved_in_the_last_two_minutes() -> None:
+    # Leida con actividad de hace 10 s: un mensaje del mismo segundo no movera
+    # last_activity_at, asi que se relee en la vuelta siguiente.
+    inbox = _massive_inbox(3)
+    item = next(item for item in inbox.items if item["id"] == 20_002)
+    item["last_activity_at"] = NOW - 10
+    clock = _Clock(NOW)
+    supabase = _MetaSupabase()
+    sweeper = MetaDeliveryRejectionSweeper(
+        chatwoot=inbox.client(), supabase=supabase, account_id=ACCOUNT, inbox_id=INBOX, clock=clock,
+    )
+    asyncio.run(sweeper.run_once())
+    failed = _rejected_message()
+    failed["conversation_id"] = 20_002
+    inbox.messages[20_002] = [*inbox.messages[20_002], failed]
+    clock.now += 600
+    asyncio.run(sweeper.run_once())
+    assert supabase.recorded == [2831]

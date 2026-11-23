@@ -1167,11 +1167,14 @@ class ConversationFollowupSweeper:
         listing_skips: Counter[str] = Counter()
 
         def skip_listing_item(item: dict[str, object]) -> bool:
-            reason = self._settled.lookup(item) or followup_listing_skip_reason(
+            # Primero el listado (el motivo vigente para el resumen); la
+            # memoria se consulta igual, para no olvidar lo ya leido.
+            settled = self._settled.lookup(item)
+            reason = followup_listing_skip_reason(
                 item,
                 other_product_labels=self._other_product_labels,
                 own_product_label=self._own_product_label,
-            )
+            ) or settled
             if reason is None:
                 return False
             listing_skips[reason] += 1
@@ -1217,7 +1220,9 @@ class ConversationFollowupSweeper:
             if decision.candidate is None:
                 motivos[decision.skip_reason or "unknown"] += 1
                 if decision.skip_reason in FOLLOWUP_MESSAGE_ONLY_SKIPS:
-                    self._settled.settle(details, decision.skip_reason)
+                    self._settled.settle(
+                        details, decision.skip_reason, now_epoch=now_epoch
+                    )
                 if decision.skip_reason in (LEAD_DECLINED, LEAD_DECLARED_PAYMENT):
                     self._log_stop(details.get("id"), decision.skip_reason)
                 continue
