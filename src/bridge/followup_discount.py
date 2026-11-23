@@ -49,7 +49,12 @@ from zoneinfo import ZoneInfo
 
 from bridge.business_auto_reply import TEMPLATE_MARKERS
 from bridge.flow_schedule import Franja, is_open
-from bridge.chatwoot import ChatwootProtocolError
+from bridge.chatwoot import (
+    DEFAULT_CONVERSATION_SCAN_PAGES,
+    MAX_CONVERSATION_SCAN_PAGES,
+    ChatwootProtocolError,
+    SettledConversationMemo,
+)
 from bridge.checkout_issuance import generate_issuance_ulid
 from bridge.lead_decline import (
     DECLARED_PAYMENT_HOLD_SECONDS,
@@ -712,6 +717,61 @@ def evaluate_followup_candidate(
     )
 
 
+# Los motivos de ``evaluate_followup_candidate`` que salen solo de los mensajes,
+# sin el reloj, las etiquetas ni el contacto: mientras la conversacion no tenga
+# actividad nueva, siguen valiendo (``SettledConversationMemo``). Es casi todo el
+# envio masivo: ``never_replied``, la plantilla sola.
+FOLLOWUP_MESSAGE_ONLY_SKIPS = frozenset({
+    "no_conversational_history",
+    "last_message_inbound",
+    "last_message_not_from_agent",
+    "never_replied",
+    "team_replied",
+})
+
+
+def followup_listing_skip_reason(
+    item: object,
+    *,
+    other_product_labels: frozenset[str] = frozenset(),
+    own_product_label: str | None = None,
+) -> str | None:
+    """El motivo con que el item del listado ya descarta la conversacion, o ``None``.
+
+    Solo campos que trae el listado de Chatwoot (capturas de
+    ``/conversations?status=open|resolved&inbox_id=...&sort_by=...`` del inbox 9
+    del 2026-10-01 y del inbox 11 del 2026-10-10: ``status``, ``labels``,
+    ``muted``, ``snoozed_until``; y ``meta.sender.blocked`` en la del inbox 9
+    del 2026-09-26) y con el mismo criterio que ``evaluate_followup_candidate``
+    aplica al show. Si un campo falta o tiene otra forma, no descarta: el show y
+    los mensajes deciden como siempre.
+    """
+    if not isinstance(item, dict):
+        return None
+    status = item.get("status")
+    if isinstance(status, str) and status not in FOLLOWUP_CONVERSATION_STATUSES:
+        return "conversation_status_excluded"
+    if item.get("muted") is True:
+        return "conversation_muted"
+    if "snoozed_until" in item and item.get("snoozed_until") not in (None, ""):
+        return "conversation_snoozed"
+    labels = item.get("labels")
+    if isinstance(labels, list) and all(isinstance(label, str) for label in labels):
+        if "automation_opted_out" in labels:
+            return "contact_opted_out"
+        if "automation_paused" in labels:
+            return "conversation_paused"
+        if other_product_labels.intersection(labels) and (
+            own_product_label is None or own_product_label not in labels
+        ):
+            return OTHER_PRODUCT_CONVERSATION
+    meta = item.get("meta")
+    sender = meta.get("sender") if isinstance(meta, dict) else None
+    if isinstance(sender, dict) and sender.get("blocked") is True:
+        return "contact_blocked_or_unknown"
+    return None
+
+
 def _valid_send_hours(value: object) -> bool:
     """``(inicio, fin)`` en horas enteras, con 0 <= inicio < fin <= 24.
 
@@ -827,7 +887,7 @@ class ConversationFollowupSweeper:
         min_inbound_age_seconds: int = DEFAULT_MIN_INBOUND_AGE_SECONDS,
         max_inbound_age_seconds: int = DEFAULT_MAX_INBOUND_AGE_SECONDS,
         max_sends_per_scan: int = 10,
-        max_pages: int = 5,
+        max_pages: int = DEFAULT_CONVERSATION_SCAN_PAGES,
         allowed_phone: str | None = None,
         only_phone: str | None = None,
         send_hours: tuple[int, int] | None = None,
@@ -869,7 +929,7 @@ class ConversationFollowupSweeper:
             or not isinstance(max_sends_per_scan, int)
             or isinstance(max_sends_per_scan, bool)
             or max_sends_per_scan < 1
-            or not 1 <= max_pages <= 20
+            or not 1 <= max_pages <= MAX_CONVERSATION_SCAN_PAGES
             or (
                 only_phone is not None
                 and (
@@ -963,6 +1023,8 @@ class ConversationFollowupSweeper:
         self._stops_logged: set[tuple[int, str]] = set()
         # E-272: la plantilla de un solo boton se loguea una vez por proceso.
         self._legacy_template_logged = False
+        # Lo que ya se leyo y no cambia sin actividad nueva (el envio masivo).
+        self._settled = SettledConversationMemo()
 
     @property
     def last_scan_state(self) -> str:
@@ -1099,6 +1161,23 @@ class ConversationFollowupSweeper:
         # Abiertas y resueltas, solo las que tuvieron actividad dentro de la
         # ventana: una conversacion con el ultimo mensaje del lead hace mas de
         # 72 h no puede recibir el seguimiento y no se lee.
+        # Lo que el listado ya descarta no se lee (ni show ni mensajes): un
+        # envio masivo deja miles de conversaciones en la ventana. Se cuenta
+        # con su motivo, como si se hubiera leido.
+        listing_skips: Counter[str] = Counter()
+
+        def skip_listing_item(item: dict[str, object]) -> bool:
+            reason = self._settled.lookup(item) or followup_listing_skip_reason(
+                item,
+                other_product_labels=self._other_product_labels,
+                own_product_label=self._own_product_label,
+            )
+            if reason is None:
+                return False
+            listing_skips[reason] += 1
+            return True
+
+        self._settled.begin()
         conversations = await self._chatwoot.list_recent_conversations_with_messages(
             expected_inbox_id=self._inbox_id,
             statuses=self._conversation_statuses,
@@ -1106,10 +1185,11 @@ class ConversationFollowupSweeper:
                 now_epoch - self._max_inbound_age_seconds - LISTING_MARGIN_SECONDS
             ),
             max_pages=self._max_pages,
+            skip_listing_item=skip_listing_item,
         )
         sent = 0
         failed = False
-        motivos: Counter[str] = Counter()
+        motivos: Counter[str] = Counter(listing_skips)
         for entry in conversations:
             if sent >= self._max_sends_per_scan:
                 break
@@ -1136,6 +1216,8 @@ class ConversationFollowupSweeper:
             )
             if decision.candidate is None:
                 motivos[decision.skip_reason or "unknown"] += 1
+                if decision.skip_reason in FOLLOWUP_MESSAGE_ONLY_SKIPS:
+                    self._settled.settle(details, decision.skip_reason)
                 if decision.skip_reason in (LEAD_DECLINED, LEAD_DECLARED_PAYMENT):
                     self._log_stop(details.get("id"), decision.skip_reason)
                 continue
@@ -1179,11 +1261,14 @@ class ConversationFollowupSweeper:
                     self._log_stop(
                         decision.candidate.conversation_id, self._last_outcome
                     )
+        self._settled.commit()
         self._last_sent_count = sent
         self._has_completed_scan = True
         self._last_scan_state = "error" if failed else "healthy"
         self._last_scan_summary = _followup_scan_summary(
-            scanned=len(conversations), sent=sent, motivos=motivos
+            scanned=len(conversations) + sum(listing_skips.values()),
+            sent=sent,
+            motivos=motivos,
         )
         logger.info(f"{self._log_prefix}_scan %s", self._last_scan_summary)
         return sent

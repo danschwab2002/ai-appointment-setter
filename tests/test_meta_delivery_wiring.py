@@ -32,6 +32,7 @@ FLAGS = (
     "META_ACCOUNT_HOLD_RETRY_ENABLED",
     "META_ACCOUNT_HOLD_CODES",
     "META_ACCOUNT_HOLD_MAX_AGE_SECONDS",
+    "META_DELIVERY_MAX_PAGES",
 )
 
 
@@ -101,6 +102,8 @@ def test_everything_is_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.meta_first_touch_retry_templates == frozenset()
     assert settings.meta_first_touch_retry_send_hours is None
     assert settings.meta_delivery_scan_interval_seconds == 600.0
+    # 200 paginas de 25: el masivo de Maribel (~3.600) entra en la ventana.
+    assert settings.meta_delivery_max_pages == 200
     # E-348: el rechazo de la cuenta, apagado, con sus defaults (D1 y D2).
     assert settings.meta_account_hold_retry_enabled is False
     assert settings.meta_account_hold_codes == frozenset({"131042"})
@@ -149,6 +152,28 @@ def test_registering_builds_the_sweeper_without_retry_and_publishes_it() -> None
     assert body["meta_unreachable_close"] == "disabled"
     assert body["meta_account_hold_retry"] == "disabled"
     assert sweeper.account_hold_enabled is False
+
+
+def test_the_page_cap_is_read_from_the_environment_and_reaches_the_sweeper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("META_DELIVERY_MAX_PAGES", "20")
+    assert _settings_from_env(monkeypatch).meta_delivery_max_pages == 20
+    monkeypatch.setenv("META_DELIVERY_MAX_PAGES", "400")
+    assert _settings_from_env(monkeypatch).meta_delivery_max_pages == 400
+    app = create_app(
+        _settings(meta_delivery_rejections_enabled=True, meta_delivery_max_pages=300),
+        chatwoot_client=_chatwoot_client(),
+        supabase_client=_FakeSupabase(),  # type: ignore[arg-type]
+    )
+    assert app.state.meta_delivery_sweeper._max_pages == 300
+
+
+@pytest.mark.parametrize("pages", [0, 401])
+def test_a_page_cap_out_of_range_does_not_start(pages: int) -> None:
+    with pytest.raises(ValueError, match="META_DELIVERY_MAX_PAGES must be 1-400"):
+        create_app(_settings(meta_delivery_max_pages=pages), chatwoot_client=_chatwoot_client(),
+                   supabase_client=_FakeSupabase())  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("flag", ["meta_first_touch_retry_enabled", "meta_unreachable_close_enabled"])

@@ -68,9 +68,12 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from bridge.chatwoot import (
+    DEFAULT_CONVERSATION_SCAN_PAGES,
     FIRST_TOUCH_RETRY_MARKER,
     FLOW_ENGINE_PURCHASE_WELCOME_MARKER,
+    MAX_CONVERSATION_SCAN_PAGES,
     ChatwootProtocolError,
+    SettledConversationMemo,
 )
 from bridge.messaging import FinalMetaEffect, FinalMetaEffectGate
 from bridge.meta_error import meta_error_code_of
@@ -95,6 +98,12 @@ DEFAULT_SCAN_INTERVAL_SECONDS = 600.0
 # del envio y la conversacion queda con esa actividad. El primer barrido de cada
 # proceso mira el techo entero, para que un reinicio no pierda nada.
 DEFAULT_LOOKBACK_SECONDS = 21_600
+# El tope de paginas del listado (25 por pagina, por estado). Era 10, con un
+# maximo de 20: tras el masivo de Maribel del 2026-11-22 (~3.600 plantillas) el
+# barrido no llegaba nunca al corte de su ventana. META_DELIVERY_MAX_PAGES.
+DEFAULT_MAX_PAGES = DEFAULT_CONVERSATION_SCAN_PAGES
+# El motivo con que la memoria del barrido guarda una conversacion ya leida.
+SETTLED_REASON = "settled"
 DEFAULT_MAX_RETRIES_PER_SCAN = 3
 REJECTION_CONVERSATION_STATUSES = ("open", "resolved", "pending", "snoozed")
 UNREACHABLE_EVENT_CODE = "MSG-002"
@@ -436,6 +445,29 @@ def latest_template_delivered(entry: Mapping[str, object]) -> int | None:
     return latest
 
 
+def conversation_settled(entry: Mapping[str, object]) -> bool:
+    """Si la conversacion ya no puede aportar nada mientras no tenga actividad nueva.
+
+    Sin ningun rechazo, y con cada plantilla nuestra (las de ``touch_kind``) ya
+    ``delivered`` o ``read``: lo que queda ``sent`` todavia puede volver
+    ``failed`` de Meta, y un rechazo se registra (y pasa por la espera de la
+    cuenta) en cada barrido, como siempre. Un mensaje nuevo mueve
+    ``last_activity_at``; un cambio de estado de un mensaje no, por eso solo se
+    guarda lo que ya esta en un estado final para este barrido.
+    """
+    messages = entry.get("messages")
+    if not isinstance(messages, list):
+        return False
+    for message in messages:
+        if not isinstance(message, dict):
+            return False
+        if message.get("status") == "failed":
+            return False
+        if touch_kind(message) is not None and message.get("status") not in DELIVERED_STATUSES:
+            return False
+    return True
+
+
 def account_hold_release_notice(
     *, inbox_id: int, released: int, account_ok_epoch: int
 ) -> NotificationCommand:
@@ -531,14 +563,15 @@ class MetaDeliveryRejectionSweeper:
         account_hold: AccountHoldConfig | None = None,
         scan_interval_seconds: float = DEFAULT_SCAN_INTERVAL_SECONDS,
         lookback_seconds: int = DEFAULT_LOOKBACK_SECONDS,
-        max_pages: int = 10,
+        max_pages: int = DEFAULT_MAX_PAGES,
         clock: Callable[[], float] = time.time,
     ) -> None:
         if (
             type(close_unreachable) is not bool
             or not scan_interval_seconds > 0
             or not 600 <= lookback_seconds <= MAX_RETRY_MAX_AGE_SECONDS
-            or not 1 <= max_pages <= 20
+            or type(max_pages) is not int
+            or not 1 <= max_pages <= MAX_CONVERSATION_SCAN_PAGES
         ):
             raise ValueError("invalid meta delivery rejection configuration")
         self._chatwoot = chatwoot
@@ -569,6 +602,9 @@ class MetaDeliveryRejectionSweeper:
         self._max_pages = max_pages
         self._clock = clock
         self._first_scan = True
+        # Las conversaciones ya leidas sin nada pendiente (el envio masivo: miles
+        # de plantillas entregadas que no cambian). Ver ``conversation_settled``.
+        self._settled = SettledConversationMemo()
         self._skips_logged: set[tuple[int, str]] = set()
         self._task: asyncio.Task[None] | None = None
         self._stopping = asyncio.Event()
@@ -636,12 +672,27 @@ class MetaDeliveryRejectionSweeper:
             # nada en espera (se repite en el siguiente).
             self._hold_marked = False
             await self._guarded_hold_step("mark", self._mark_hold_enabled, counts)
-        conversations = await self._chatwoot.list_recent_conversations_with_messages(  # type: ignore[attr-defined]
-            expected_inbox_id=self._inbox_id,
-            statuses=REJECTION_CONVERSATION_STATUSES,
-            active_since_epoch=now_epoch - lookback,
-            max_pages=self._max_pages,
-        )
+        wide = lookback > self._lookback_seconds
+        try:
+            conversations = await self._list(now_epoch - lookback, counts)
+        except ChatwootProtocolError as exc:
+            # El primer barrido de un proceso mira el techo entero (72 h). Si
+            # aun con el tope de paginas no llega al corte (un envio masivo
+            # dentro de esas 72 h), no se reintenta ancho para siempre: se
+            # registra y se sigue con la ventana normal. Lo que se pierde es lo
+            # rechazado entre el corte normal y el techo mientras el proceso no
+            # corria; la ventana normal sigue cubriendo lo nuevo.
+            if not wide or str(exc) != "conversation_scan_incomplete":
+                raise
+            self._first_scan = False
+            counts.pop("unchanged_skipped", None)
+            counts["first_scan_wide_incomplete"] += 1
+            logger.warning(
+                "meta_delivery_first_scan_wide_incomplete lookback=%s fallback=%s",
+                lookback,
+                self._lookback_seconds,
+            )
+            conversations = await self._list(now_epoch - self._lookback_seconds, counts)
         for entry in conversations:
             if self._stopping.is_set():
                 break
@@ -653,6 +704,10 @@ class MetaDeliveryRejectionSweeper:
                     self._account_ok_epoch is None or delivered > self._account_ok_epoch
                 ):
                     self._account_ok_epoch = delivered
+            if conversation_settled(entry):
+                self._settled.settle(entry.get("conversation"), SETTLED_REASON)
+        if not self._stopping.is_set():
+            self._settled.commit()
         self._first_scan = False
         if self._retry is not None:
             if self._inside_send_hours():
@@ -676,6 +731,26 @@ class MetaDeliveryRejectionSweeper:
         )
         logger.info("meta_delivery_scan %s", self._last_scan_summary)
         return dict(counts)
+
+    async def _list(
+        self, active_since_epoch: int, counts: Counter[str]
+    ) -> list[dict[str, object]]:
+        """El listado de la ventana, sin releer lo que ya quedo asentado."""
+
+        def skip_listing_item(item: dict[str, object]) -> bool:
+            if self._settled.lookup(item) is None:
+                return False
+            counts["unchanged_skipped"] += 1
+            return True
+
+        self._settled.begin()
+        return await self._chatwoot.list_recent_conversations_with_messages(  # type: ignore[attr-defined]
+            expected_inbox_id=self._inbox_id,
+            statuses=REJECTION_CONVERSATION_STATUSES,
+            active_since_epoch=active_since_epoch,
+            max_pages=self._max_pages,
+            skip_listing_item=skip_listing_item,
+        )
 
     async def _record(self, rejection: Rejection, counts: Counter[str]) -> None:
         recorded = await self._supabase.record_meta_delivery_rejection(  # type: ignore[attr-defined]

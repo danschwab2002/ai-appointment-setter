@@ -223,7 +223,8 @@ def test_enabling_the_followup_half_configured_refuses_to_start(
     [
         {"conversation_followup_interval_seconds": 0.0},
         {"conversation_followup_max_sends_per_scan": 0},
-        {"conversation_followup_max_pages": 21},
+        {"conversation_followup_max_pages": 0},
+        {"conversation_followup_max_pages": 401},
         {
             "conversation_followup_min_age_seconds": 100,
             "conversation_followup_max_age_seconds": 10,
@@ -239,6 +240,20 @@ def test_invalid_followup_configuration_refuses_to_start_even_disabled(
             supabase_client=_FakeSupabase(),  # type: ignore[arg-type]
         )
     assert "conversation followup configuration" in str(error.value)
+
+
+@pytest.mark.parametrize("pages", [1, 20, 200, 400])
+def test_the_followup_and_reactivation_page_caps_accept_a_massive_send(pages: int) -> None:
+    # Hasta 400 paginas (10.000 conversaciones): un envio masivo deja ~3.600 en
+    # la ventana. Una configuracion vieja (1-20) sigue valiendo.
+    create_app(
+        _settings(
+            conversation_followup_enabled=False,
+            conversation_followup_max_pages=pages,
+            conversation_reactivation_max_pages=pages,
+        ),
+        supabase_client=_FakeSupabase(),  # type: ignore[arg-type]
+    )
 
 
 @pytest.mark.parametrize(

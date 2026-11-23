@@ -56,6 +56,7 @@ from bridge.business_auto_reply import (
     is_button_reply,
 )
 from bridge.chatwoot import (
+    DEFAULT_CONVERSATION_SCAN_PAGES,
     MAX_CONVERSATION_SCAN_PAGES,
     ChatwootClient,
     ChatwootHistoryScanLimitError,
@@ -892,7 +893,7 @@ class Settings:
     conversation_reactivation_max_age_seconds: int = 2_592_000
     conversation_reactivation_max: int = 1
     conversation_reactivation_max_sends_per_scan: int = 10
-    conversation_reactivation_max_pages: int = 5
+    conversation_reactivation_max_pages: int = MAX_CONVERSATION_SCAN_PAGES
     conversation_followup_enabled: bool = False
     conversation_followup_template_name: str | None = None
     conversation_followup_template_language: str | None = None
@@ -902,7 +903,7 @@ class Settings:
     conversation_followup_min_age_seconds: int = 86_400
     conversation_followup_max_age_seconds: int = 259_200
     conversation_followup_max_sends_per_scan: int = 10
-    conversation_followup_max_pages: int = 5
+    conversation_followup_max_pages: int = DEFAULT_CONVERSATION_SCAN_PAGES
     # El modo de prueba del seguimiento (CONVERSATION_FOLLOWUP_ONLY_PHONE, en
     # E.164): solo ese telefono lo recibe y el resto de las candidatas se
     # cuenta como held_only_phone. None = el alcance del entrante: todo el
@@ -925,6 +926,9 @@ class Settings:
     meta_first_touch_retry_templates: frozenset[str] = frozenset()
     meta_first_touch_retry_send_hours: tuple[int, int] | None = None
     meta_delivery_scan_interval_seconds: float = 600.0
+    # META_DELIVERY_MAX_PAGES: paginas del listado por estado (25 cada una).
+    # Tras un envio masivo hay miles de conversaciones en la ventana.
+    meta_delivery_max_pages: int = DEFAULT_CONVERSATION_SCAN_PAGES
     # E-348 (P-33, decisiones de Dan del 2026-11-07): un primer contacto que
     # Meta rechazo por la cuenta (META_ACCOUNT_HOLD_CODES, default 131042)
     # espera a que la cuenta vuelva a entregar una plantilla y sale otra vez,
@@ -2026,7 +2030,10 @@ class Settings:
             )
         )
         conversation_reactivation_max_pages = int(
-            os.environ.get("CONVERSATION_REACTIVATION_MAX_PAGES", "5")
+            os.environ.get(
+                "CONVERSATION_REACTIVATION_MAX_PAGES",
+                str(MAX_CONVERSATION_SCAN_PAGES),
+            )
         )
         conversation_followup_enabled = (
             os.environ.get("CONVERSATION_FOLLOWUP_ENABLED", "false").lower()
@@ -2060,7 +2067,10 @@ class Settings:
             os.environ.get("CONVERSATION_FOLLOWUP_MAX_SENDS_PER_SCAN", "10")
         )
         conversation_followup_max_pages = int(
-            os.environ.get("CONVERSATION_FOLLOWUP_MAX_PAGES", "5")
+            os.environ.get(
+                "CONVERSATION_FOLLOWUP_MAX_PAGES",
+                str(DEFAULT_CONVERSATION_SCAN_PAGES),
+            )
         )
         conversation_followup_only_phone = (
             os.environ.get("CONVERSATION_FOLLOWUP_ONLY_PHONE", "").strip() or None
@@ -2092,6 +2102,11 @@ class Settings:
         )
         meta_delivery_scan_interval_seconds = float(
             os.environ.get("META_DELIVERY_SCAN_INTERVAL_SECONDS", "600")
+        )
+        meta_delivery_max_pages = int(
+            os.environ.get(
+                "META_DELIVERY_MAX_PAGES", str(DEFAULT_CONVERSATION_SCAN_PAGES)
+            )
         )
         meta_account_hold_codes = parse_meta_account_hold_codes(
             os.environ.get("META_ACCOUNT_HOLD_CODES", "")
@@ -2415,6 +2430,7 @@ class Settings:
             meta_first_touch_retry_templates=meta_first_touch_retry_templates,
             meta_first_touch_retry_send_hours=meta_first_touch_retry_send_hours,
             meta_delivery_scan_interval_seconds=meta_delivery_scan_interval_seconds,
+            meta_delivery_max_pages=meta_delivery_max_pages,
             meta_account_hold_retry_enabled=meta_delivery_flags[
                 "META_ACCOUNT_HOLD_RETRY_ENABLED"
             ],
@@ -4601,6 +4617,10 @@ def _validate_meta_delivery(settings: Settings) -> None:
         and 60 <= settings.meta_delivery_scan_interval_seconds <= 3600
     ):
         raise ValueError("META_DELIVERY_SCAN_INTERVAL_SECONDS must be 60-3600")
+    if not 1 <= settings.meta_delivery_max_pages <= MAX_CONVERSATION_SCAN_PAGES:
+        raise ValueError(
+            f"META_DELIVERY_MAX_PAGES must be 1-{MAX_CONVERSATION_SCAN_PAGES}"
+        )
     if settings.meta_first_touch_retry_send_hours is not None and not (
         _followup_send_hours_in_range(settings.meta_first_touch_retry_send_hours)
     ):
@@ -5787,7 +5807,9 @@ def create_app(
         < settings.conversation_reactivation_min_age_seconds
         or settings.conversation_reactivation_max < 1
         or settings.conversation_reactivation_max_sends_per_scan < 1
-        or not 1 <= settings.conversation_reactivation_max_pages <= 20
+        or not 1
+        <= settings.conversation_reactivation_max_pages
+        <= MAX_CONVERSATION_SCAN_PAGES
     ):
         raise ValueError("invalid conversation reactivation configuration")
     # Mandar una plantilla de marketing es un efecto externo irreversible:
@@ -5818,7 +5840,9 @@ def create_app(
         or settings.conversation_followup_max_age_seconds
         < settings.conversation_followup_min_age_seconds
         or settings.conversation_followup_max_sends_per_scan < 1
-        or not 1 <= settings.conversation_followup_max_pages <= 20
+        or not 1
+        <= settings.conversation_followup_max_pages
+        <= MAX_CONVERSATION_SCAN_PAGES
     ):
         raise ValueError("invalid conversation followup configuration")
     # El horario tiene su propio mensaje, que nombra la variable.
@@ -10658,6 +10682,7 @@ def create_app(
                 retry=meta_retry_config,
                 account_hold=meta_account_hold_config,
                 scan_interval_seconds=settings.meta_delivery_scan_interval_seconds,
+                max_pages=settings.meta_delivery_max_pages,
             )
             app.state.meta_delivery_sweeper = meta_delivery_sweeper
         if settings.handoff_wait_alerts_enabled:
