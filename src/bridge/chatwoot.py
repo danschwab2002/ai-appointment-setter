@@ -53,6 +53,27 @@ _CONVERSATION_STATUSES = frozenset({"open", "resolved", "pending", "snoozed"})
 # esta dentro de la ventana y ``last_activity_at`` nunca es anterior a el.
 _STALLED_LISTING_MARGIN_SECONDS = 3_600
 
+# Tope de paginas (25 conversaciones cada una) de los barridos por actividad
+# (trabadas y derivaciones sin atender). Era 20: un envio masivo deja miles de
+# abiertas con actividad reciente (Maribel, 2026-11-22: ~1.700; el del
+# 2026-11-29, ~3.600) y el barrido no llegaba nunca a su corte. 400 paginas son
+# 10.000 conversaciones; el barrido igual termina en el corte de su ventana.
+MAX_CONVERSATION_SCAN_PAGES = 400
+
+
+def _stalled_listing_item_cannot_qualify(conversation: dict[str, object]) -> bool:
+    """El item del listado ya descarta la conversacion como trabada.
+
+    Solo mira campos que el listado trae (captura del inbox 9, 2026-10-01) y
+    que el candidato exige igual en el detalle: ``can_reply`` en ``true`` y
+    sin la etiqueta ``automation_paused``. Si falta un campo o no tiene la
+    forma esperada, no descarta: el detalle decide como antes.
+    """
+    if conversation.get("can_reply") is False:
+        return True
+    labels = conversation.get("labels")
+    return isinstance(labels, list) and "automation_paused" in labels
+
 
 class ChatwootProtocolError(RuntimeError):
     """Raised when Chatwoot returns an unexpected response shape."""
@@ -291,6 +312,13 @@ class ChatwootClient:
         toma la siguiente. Por eso un ``all_count`` que cambia entre paginas
         ya no corta el barrido: con la lista ordenada, una conversacion nueva
         entra arriba y solo repite una que ya se vio.
+
+        No pide el detalle ni los mensajes de un item del listado que ya dice
+        que no puede ser candidata: ``can_reply`` en ``false`` (sin un entrante
+        en las ultimas 24 h de WhatsApp) o la etiqueta ``automation_paused``.
+        Un envio masivo deja miles de abiertas con actividad reciente y sin
+        respuesta (Maribel, inbox 13, 2026-11-22: ~1.700); leerlas una por una
+        no terminaba nunca. Un item sin esos campos se sigue leyendo entero.
         """
         if (
             not isinstance(expected_inbox_id, int)
@@ -300,7 +328,7 @@ class ChatwootClient:
             or stale_after_seconds < 0
             or not math.isfinite(max_age_seconds)
             or max_age_seconds < stale_after_seconds
-            or not 1 <= max_pages <= 20
+            or not 1 <= max_pages <= MAX_CONVERSATION_SCAN_PAGES
             or not isinstance(allow_any_scoped_sender, bool)
         ):
             raise ValueError("invalid stalled conversation scan configuration")
@@ -365,6 +393,8 @@ class ChatwootClient:
                     if conversation_id in seen_conversations:
                         continue
                     seen_conversations.add(conversation_id)
+                    if _stalled_listing_item_cannot_qualify(conversation):
+                        continue
                     details_path = (
                         f"/api/v1/accounts/{self._account_id}"
                         f"/conversations/{conversation_id}"
@@ -3017,7 +3047,7 @@ class ChatwootClient:
             or not isinstance(active_since_epoch, int)
             or isinstance(active_since_epoch, bool)
             or active_since_epoch <= 0
-            or not 1 <= max_pages <= 20
+            or not 1 <= max_pages <= MAX_CONVERSATION_SCAN_PAGES
             or not isinstance(messages_limit, int)
             or isinstance(messages_limit, bool)
             or messages_limit <= 0

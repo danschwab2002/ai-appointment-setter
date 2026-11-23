@@ -56,6 +56,7 @@ from bridge.business_auto_reply import (
     is_button_reply,
 )
 from bridge.chatwoot import (
+    MAX_CONVERSATION_SCAN_PAGES,
     ChatwootClient,
     ChatwootHistoryScanLimitError,
     ChatwootProtocolError,
@@ -969,7 +970,7 @@ class Settings:
     chatwoot_stalled_monitor_interval_seconds: float = 60.0
     chatwoot_stalled_after_seconds: float = 120.0
     chatwoot_stalled_max_age_seconds: float = 86_400.0
-    chatwoot_stalled_max_pages: int = 5
+    chatwoot_stalled_max_pages: int = 200
     chatwoot_stalled_recovery_cooldown_seconds: float = 300.0
     chatwoot_stalled_max_recovery_admissions: int = 3
     # G3 de Maribel (E-177), en los remitentes del despachador (el primer
@@ -1480,7 +1481,7 @@ class Settings:
             os.getenv("CHATWOOT_STALLED_MAX_AGE_SECONDS", "86400")
         )
         chatwoot_stalled_max_pages = int(
-            os.getenv("CHATWOOT_STALLED_MAX_PAGES", "5")
+            os.getenv("CHATWOOT_STALLED_MAX_PAGES", "200")
         )
         chatwoot_stalled_recovery_cooldown_seconds = float(
             os.getenv("CHATWOOT_STALLED_RECOVERY_COOLDOWN_SECONDS", "300")
@@ -5774,7 +5775,7 @@ def create_app(
         or settings.chatwoot_stalled_max_age_seconds
         < settings.chatwoot_stalled_after_seconds
         or settings.chatwoot_stalled_recovery_cooldown_seconds <= 0
-        or not 1 <= settings.chatwoot_stalled_max_pages <= 20
+        or not 1 <= settings.chatwoot_stalled_max_pages <= MAX_CONVERSATION_SCAN_PAGES
         or settings.chatwoot_stalled_max_recovery_admissions < 1
     ):
         raise ValueError("invalid stalled conversation monitor configuration")

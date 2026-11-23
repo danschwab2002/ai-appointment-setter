@@ -3939,7 +3939,15 @@ def test_stalled_scan_lists_by_activity_and_stops_at_its_window(tmp_path: Path) 
     ]
     # 18 de las 26 abiertas entran en la ventana; la 26 queda en la pagina 2.
     assert len(expected) == 18 and pages["open"]["meta"]["all_count"] == 26
-    assert _detail_ids(requests) == expected
+    # Solo se lee el detalle de las que el listado no descarta: con can_reply
+    # en false o pausadas no pueden ser candidatas (ver el test de abajo).
+    assert _detail_ids(requests) == [
+        item["id"]
+        for item in pages["open"]["payload"]
+        if item["last_activity_at"] >= RECENT_CUTOFF
+        and item["can_reply"] is True
+        and "automation_paused" not in item["labels"]
+    ] == [214, 197]
     # Con una sola pagina alcanza: el barrido ya no depende del total de abiertas.
     assert _stalled_listings(requests) == [("open", "1")]
 
@@ -3950,7 +3958,12 @@ def test_stalled_scan_tolerates_a_count_that_changes_between_pages(
     # Una conversacion nueva entra arriba de la lista mientras se pagina: con el
     # orden por actividad solo repite una que ya se vio, no esconde ninguna.
     pages = _recent_pages()
-    first = pages["open"]["payload"][:2]
+    # Dos que se pueden responder y sin pausa: el listado no las descarta.
+    first = [
+        item
+        for item in pages["open"]["payload"]
+        if item["can_reply"] is True and "automation_paused" not in item["labels"]
+    ][:2]
     requests: list[httpx.Request] = []
     captured = RECENT_FIXTURE["conversation"]
 
@@ -4025,6 +4038,106 @@ def test_stalled_scan_that_runs_out_of_pages_before_its_window_fails_closed(
             )
         )
     assert str(raised.value) == "conversation_scan_incomplete"
+
+
+# --- envio masivo: miles de abiertas con actividad reciente (2026-11-22) ------
+#
+# Maribel, inbox 13: un envio masivo dejo ~1.700 abiertas con la plantilla y sin
+# respuesta; el 2026-11-29 vienen ~3.600. Las paginas se arman repitiendo los
+# items capturados del listado (inbox 9, 2026-10-01) con ids y actividad
+# corridos: la forma de cada item es la capturada.
+
+
+def _massive_open_pages(total: int, *, now: int) -> list[list[dict]]:
+    captured = _recent_pages()["open"]["payload"]
+    silent = next(
+        item
+        for item in captured
+        if item["can_reply"] is False and "automation_paused" not in item["labels"]
+    )
+    replyable = next(
+        item
+        for item in captured
+        if item["can_reply"] is True and "automation_paused" not in item["labels"]
+    )
+    items = []
+    for index in range(total):
+        # Una sola que se puede responder, al fondo de la lista: la persona
+        # escribio antes del envio masivo y quedo debajo de todas las plantillas.
+        base = replyable if index == total - 1 else silent
+        items.append({**base, "id": 10_000 + index, "last_activity_at": now - 60 - index})
+    return [items[start : start + 25] for start in range(0, total, 25)]
+
+
+def _massive_handler(pages: list[list[dict]], requests: list[httpx.Request]):
+    captured = RECENT_FIXTURE["conversation"]
+    total = sum(len(page) for page in pages)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        path = request.url.path
+        if path == "/api/v1/accounts/1/conversations":
+            page = int(request.url.params["page"])
+            payload = pages[page - 1] if page <= len(pages) else []
+            return httpx.Response(
+                200, json={"data": {"meta": {"all_count": total}, "payload": payload}}
+            )
+        prefix = "/api/v1/accounts/1/conversations/"
+        if path.endswith("/messages"):
+            return httpx.Response(200, json={"payload": captured["messages"]})
+        return httpx.Response(
+            200, json={**captured["conversation"], "id": int(path.removeprefix(prefix))}
+        )
+
+    return handler
+
+
+def test_stalled_scan_finishes_after_a_massive_send(tmp_path: Path) -> None:
+    now = STALLED_NOW
+    pages = _massive_open_pages(3_600, now=now)
+    requests: list[httpx.Request] = []
+    client = _reactivation_client(_massive_handler(pages, requests), tmp_path)
+    asyncio.run(
+        client.list_stalled_conversations(
+            expected_inbox_id=9,
+            max_age_seconds=STALLED_MAX_AGE,
+            max_pages=200,
+            now_epoch=now,
+        )
+    )
+    # Llega al final de las 144 paginas y lee el detalle de una sola: la que se
+    # puede responder. Las 3.599 plantillas sin respuesta se descartan del listado.
+    assert len(_stalled_listings(requests)) == 144
+    assert _detail_ids(requests) == [10_000 + 3_599]
+
+
+def test_the_default_stalled_page_cap_reaches_a_massive_send() -> None:
+    from bridge.app import Settings
+    from bridge.chatwoot import MAX_CONVERSATION_SCAN_PAGES
+
+    assert Settings.__dataclass_fields__["chatwoot_stalled_max_pages"].default * 25 >= 3_600
+    assert MAX_CONVERSATION_SCAN_PAGES * 25 >= 3_600
+
+
+def test_recent_listing_without_messages_finishes_after_a_massive_send(
+    tmp_path: Path,
+) -> None:
+    # El aviso de derivaciones lista la semana entera sin pedir detalles.
+    now = STALLED_NOW
+    pages = _massive_open_pages(3_600, now=now)
+    requests: list[httpx.Request] = []
+    client = _reactivation_client(_massive_handler(pages, requests), tmp_path)
+    entries = asyncio.run(
+        client.list_recent_conversations_with_messages(
+            expected_inbox_id=9,
+            statuses=("open",),
+            active_since_epoch=now - 7 * 86_400,
+            max_pages=200,
+            include_messages=False,
+        )
+    )
+    assert len(entries) == 3_600
+    assert _detail_ids(requests) == []
 
 
 def test_sync_inbox_templates_posts_to_the_inbox_and_raises_on_failure(tmp_path: Path) -> None:

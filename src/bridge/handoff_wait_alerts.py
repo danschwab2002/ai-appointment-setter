@@ -58,7 +58,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from bridge.chatwoot import ChatwootProtocolError
+from bridge.chatwoot import MAX_CONVERSATION_SCAN_PAGES, ChatwootProtocolError
 from bridge.slack_notifications import NotificationProducer
 from slack_correlation.catalog import NotificationCommand
 from slack_correlation.producer import ConnectorRejected, ConnectorSemanticConflict
@@ -86,7 +86,11 @@ WINDOW_WARNING_SECONDS = DEFAULT_WINDOW_WARNING_HOURS * 3600
 DEFAULT_AFTER_HOURS = 2
 DEFAULT_MAX_AGE_HOURS = 168
 DEFAULT_SCAN_INTERVAL_SECONDS = 600.0
-DEFAULT_MAX_PAGES = 10
+# El listado (sin detalle) de las abiertas con actividad en la semana. Un envio
+# masivo deja miles (Maribel, 2026-11-22: ~1.700; el del 2026-11-29, ~3.600) y
+# con 10 paginas el aviso quedaba ciego la semana siguiente. Es un tope: el
+# barrido termina en el corte de la ventana o al final de la lista.
+DEFAULT_MAX_PAGES = MAX_CONVERSATION_SCAN_PAGES
 DEFAULT_MAX_CONVERSATIONS_PER_SCAN = 60
 PAUSED_REPLY_REASON = "automation_paused"
 _NAMESPACE = uuid.UUID("5d0f3a52-6c1e-4f6b-9b51-0e3f8f7c2a09")
@@ -382,7 +386,7 @@ class HandoffWaitAlertSweeper:
             or not isinstance(scan_interval_seconds, (int, float))
             or not math.isfinite(scan_interval_seconds)
             or not 60 <= scan_interval_seconds <= 3600
-            or not 1 <= max_pages <= 20
+            or not 1 <= max_pages <= MAX_CONVERSATION_SCAN_PAGES
             or not 1 <= max_conversations_per_scan <= 200
         ):
             raise ValueError("invalid handoff wait alert configuration")
