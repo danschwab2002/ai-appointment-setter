@@ -12,6 +12,10 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Corregido
+
+- **Los monitores de trabadas y de derivaciones terminan su barrido después de un envío masivo.** El envío masivo del 22/11 en Maribel dejó ~1.700 conversaciones abiertas con actividad reciente en el inbox 13, y desde entonces `chatwoot_stalled_monitor` y `handoff_wait_alerts` daban `error` en cada pasada (`conversation_scan_incomplete`): el de trabadas pedía el detalle y los mensajes de cada una y se quedaba sin páginas (`CHATWOOT_STALLED_MAX_PAGES=10`, tope de código 20), y el de derivaciones lista la semana entera con 10 páginas fijas. Ahora el de trabadas no pide el detalle de un item del listado con `can_reply` en `false` o con `automation_paused` (no pueden ser candidatas; un item sin esos campos se lee como antes), el tope de páginas de los dos barridos sube de 20 a 400, el default de `CHATWOOT_STALLED_MAX_PAGES` pasa de 5 a 200 y el de derivaciones lista hasta 400 páginas. **Qué hacer al actualizar:** en la instancia que fije `CHATWOOT_STALLED_MAX_PAGES` (Maribel: 10), sacarla o subirla a 200.
+
 ## [1.40.5] - 2026-11-18
 
 Un parche sobre la 1.40.4, con 6 PR (#489, #490, #491, #492, #493 y #494) y 3 migraciones. **La repetición de un flujo de audiencia cuenta solo a quien arrancó** (#489, E-665); además, la página de envíos dice quién arrancó, quién no y por qué (#490, E-666), las propuestas con varios flujos nuevos y las versiones de un flujo de audiencia se simulan y se publican (#491 y #492, E-657 y E-668), el primer contacto sale con un saludo sin nombre cuando el nombre no es seguro (#493, E-664) y los avisos de decisión del correlador llevan el número de conversación (#494, E-656). Sin variables nuevas ni cambios de profile.

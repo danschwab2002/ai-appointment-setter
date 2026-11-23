@@ -800,7 +800,7 @@ def test_app_wires_enabled_stalled_monitor_and_reports_readiness(
             "expected_inbox_id": 7,
             "stale_after_seconds": 120.0,
             "max_age_seconds": 86_400.0,
-            "max_pages": 5,
+            "max_pages": 200,  # default de CHATWOOT_STALLED_MAX_PAGES desde el envio masivo
             "allow_any_scoped_sender": False,
         }
 

@@ -516,3 +516,23 @@ def test_an_impossible_window_reminder_is_rejected(window: object) -> None:
     details, messages = _until(2839)
     with pytest.raises(ValueError):
         _evaluate(details, messages, handoff=_handoff(), now=1791668934, window=window)
+
+
+def test_the_sweeper_lists_enough_pages_for_two_massive_sends() -> None:
+    # Maribel, inbox 13: ~1.700 abiertas del envio masivo del 2026-11-22 y ~3.600
+    # del 2026-11-29, todas dentro de la ventana de una semana. Con 10 paginas
+    # (250 conversaciones) el barrido cortaba con conversation_scan_incomplete.
+    seen: list[dict] = []
+
+    class _Recording(_Chatwoot):
+        async def list_recent_conversations_with_messages(self, **kwargs):
+            seen.append(kwargs)
+            return await super().list_recent_conversations_with_messages(**kwargs)
+
+    chatwoot = _Recording(entries={}, reads=[])
+    sweeper = _sweeper(
+        chatwoot, _Supabase(handoffs=[], calls=[]), _Producer(), _mx("2026-11-30 12:00")
+    )
+    asyncio.run(sweeper.run_once())
+    assert seen[0]["max_pages"] * 25 >= 1_700 + 3_600
+    assert sweeper.last_scan_state == "healthy"
