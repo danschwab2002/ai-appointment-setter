@@ -12,6 +12,24 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.40.7] - 2026-11-23
+
+Un parche sobre la 1.40.6, con un PR (#498) y sin migraciones. **El seguimiento con cupón, el silencio nativo, la reactivación y el registro de rechazos de Meta terminan su barrido después de un envío masivo** (#498, E-701). Sin cambios de profile; cambian dos defaults y sus rangos, y hay una variable nueva con default.
+
+### Corregido
+
+- **El seguimiento con cupón, su barrido nativo de silencio, la reactivación y el registro de rechazos de Meta terminan su barrido después de un envío masivo (#498, E-701).** El masivo del 22/11 en Maribel (~3.600 plantillas, 1.882 abiertas en el inbox 13) dejó a esos cuatro barridos fallando en cada vuelta con `ChatwootProtocolError` (`conversation_scan_incomplete`): su tope de 20 páginas (500 conversaciones) no llegaba al corte de su ventana. El registro de rechazos de Meta, además, quedó trabado desde el reinicio de la 1.40.6 en su primer barrido ancho de 72 h. Mismo criterio que la 1.40.6 (#496): el tope de páginas sube a 400 en los cuatro; cada barrido descarta desde el listado, sin pedir el detalle, lo que por sus campos no puede calificar (de listados capturados); y una memoria por proceso no relee una conversación ya leída mientras su `last_activity_at` no cambie. Si el primer barrido ancho de Meta no cierra, se registra `meta_delivery_first_scan_wide_incomplete` y esa vuelta sigue con la ventana normal de 6 h (se pierden los rechazos de 6 a 72 h atrás ocurridos con el proceso apagado). La primera vuelta tras un reinicio hace del orden de 7.300 llamadas a Chatwoot con 3.600 conversaciones; las siguientes, ~150 más 2 por conversación con actividad nueva.
+
+### Qué hace quien actualiza
+
+- **Sin migraciones.** La base queda como la dejó la 1.40.6.
+- **`CONVERSATION_FOLLOWUP_MAX_PAGES`:** el default pasa de 5 a 200 y el rango que acepta el arranque, de 1-20 a 1-400. Lo usan el seguimiento con cupón y su barrido nativo de silencio. Una instancia que la fije (Maribel: 10) la sube a 200 o la saca. Con más de 20, un bridge de la 1.40.6 o anterior no arranca (`invalid conversation followup configuration`): la vuelta atrás de la imagen lleva también el archivo de variables de antes.
+- **`CONVERSATION_REACTIVATION_MAX_PAGES`:** el default pasa de 5 a 400 (la ventana es de 30 días y entran los masivos de varias semanas) y el rango, de 1-20 a 1-400. La reactivación ahora lista solo las abiertas con actividad dentro de su ventana, de la más reciente a la más vieja.
+- **`META_DELIVERY_MAX_PAGES` (nueva):** el tope de páginas del registro de rechazos de Meta, antes 10 fijo. Default 200, rango 1-400. Sin declararla, vale el default.
+- **`ChatwootLabelIndex`** (las audiencias por etiqueta) lista hasta 400 páginas; no tiene variable.
+- **Las tres imágenes salen del tag**, como siempre. Solo el bridge cambia de código; el conector de Slack y la revisión diaria llevan la versión nueva sin cambios de código.
+- **`/ready`:** cambia `instance_product_version`; `conversation_followup`, `flow_engine_native_silence_scan` y `meta_delivery_rejections` dejan de dar `error` con miles de abiertas. El primer barrido después del reinicio tarda (del orden de 7.300 llamadas a Chatwoot con 3.600 conversaciones): hasta que termina, el estado dice `never`.
+
 ## [1.40.6] - 2026-11-23
 
 Un parche sobre la 1.40.5, con un PR (#496) y sin migraciones. **Los monitores de trabadas y de derivaciones terminan su barrido después de un envío masivo** (#496, E-700). Sin variables nuevas ni cambios de profile; cambia el default de una variable existente y su rango.
