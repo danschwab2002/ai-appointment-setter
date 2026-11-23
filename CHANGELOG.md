@@ -12,9 +12,22 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.40.6] - 2026-11-23
+
+Un parche sobre la 1.40.5, con un PR (#496) y sin migraciones. **Los monitores de trabadas y de derivaciones terminan su barrido después de un envío masivo** (#496, E-700). Sin variables nuevas ni cambios de profile; cambia el default de una variable existente y su rango.
+
 ### Corregido
 
-- **Los monitores de trabadas y de derivaciones terminan su barrido después de un envío masivo.** El envío masivo del 22/11 en Maribel dejó ~1.700 conversaciones abiertas con actividad reciente en el inbox 13, y desde entonces `chatwoot_stalled_monitor` y `handoff_wait_alerts` daban `error` en cada pasada (`conversation_scan_incomplete`): el de trabadas pedía el detalle y los mensajes de cada una y se quedaba sin páginas (`CHATWOOT_STALLED_MAX_PAGES=10`, tope de código 20), y el de derivaciones lista la semana entera con 10 páginas fijas. Ahora el de trabadas no pide el detalle de un item del listado con `can_reply` en `false` o con `automation_paused` (no pueden ser candidatas; un item sin esos campos se lee como antes), el tope de páginas de los dos barridos sube de 20 a 400, el default de `CHATWOOT_STALLED_MAX_PAGES` pasa de 5 a 200 y el de derivaciones lista hasta 400 páginas. **Qué hacer al actualizar:** en la instancia que fije `CHATWOOT_STALLED_MAX_PAGES` (Maribel: 10), sacarla o subirla a 200.
+- **Los monitores de trabadas y de derivaciones terminan su barrido después de un envío masivo (#496, E-700).** El envío masivo del 22/11 en Maribel dejó ~1.700 conversaciones abiertas con actividad reciente en el inbox 13, y desde entonces `chatwoot_stalled_monitor` y `handoff_wait_alerts` daban `error` en cada pasada (`conversation_scan_incomplete`): el de trabadas pedía el detalle y los mensajes de cada una y se quedaba sin páginas (`CHATWOOT_STALLED_MAX_PAGES=10`, tope de código 20), y el de derivaciones lista la semana entera con 10 páginas fijas. Ahora el de trabadas no pide el detalle de un item del listado con `can_reply` en `false` o con `automation_paused` (no pueden ser candidatas; un item sin esos campos se lee como antes), el tope de páginas de los dos barridos sube de 20 a 400, el default de `CHATWOOT_STALLED_MAX_PAGES` pasa de 5 a 200 y el de derivaciones lista hasta 400 páginas. **Qué hacer al actualizar:** en la instancia que fije `CHATWOOT_STALLED_MAX_PAGES` (Maribel: 10), sacarla o subirla a 200.
+
+### Qué hace quien actualiza
+
+- **Sin migraciones.** La base queda como la dejó la 1.40.5.
+- **`CHATWOOT_STALLED_MAX_PAGES`:** el default pasa de 5 a 200 y el rango que acepta el arranque, de 1-20 a 1-400. Una instancia que la fije (Maribel: 10) la sube a 200 o la saca. Con más de 20, un bridge de la 1.40.5 o anterior no arranca (`invalid stalled conversation monitor configuration`): la vuelta atrás de la imagen lleva también el archivo de variables de antes.
+- **`CHATWOOT_STALLED_MONITOR_INTERVAL_SECONDS`:** no cambia en el producto (default 60). Con miles de abiertas, una pasada hace del orden de cien pedidos a Chatwoot: conviene espaciarla (Maribel: 300).
+- **El aviso de derivaciones sin atender** lista hasta 400 páginas por barrido; no tiene variable nueva.
+- **Las tres imágenes salen del tag**, como siempre. Solo el bridge cambia de código; el conector de Slack y la revisión diaria llevan la versión nueva sin cambios de código.
+- **`/ready`:** cambia `instance_product_version`; `chatwoot_stalled_monitor` y `handoff_wait_alerts` dejan de dar `error` con miles de abiertas.
 
 ## [1.40.5] - 2026-11-18
 
