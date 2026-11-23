@@ -571,7 +571,7 @@ def test_enabling_reactivation_without_a_bounded_sender_refuses_to_start() -> No
         {"conversation_reactivation_max": 0},
         {"conversation_reactivation_max_sends_per_scan": 0},
         {"conversation_reactivation_max_pages": 0},
-        {"conversation_reactivation_max_pages": 21},
+        {"conversation_reactivation_max_pages": 401},
         {
             "conversation_reactivation_min_age_seconds": 100,
             "conversation_reactivation_max_age_seconds": 10,
@@ -640,7 +640,7 @@ def test_the_reactivation_configuration_is_validated_even_when_disabled() -> Non
         create_app(
             _settings(
                 conversation_reactivation_enabled=False,
-                conversation_reactivation_max_pages=99,
+                conversation_reactivation_max_pages=401,
             ),
             supabase_client=_FakeSupabase(),  # type: ignore[arg-type]
         )
