@@ -1,0 +1,149 @@
+{
+  "_fixture": {
+    "origen": "armado por tests/test_bulk_send_vetoes.py (escenario principal, 2026-11-25): 16 personas sinteticas, los items del listado de Chatwoot capturados de Maribel (inbox 13, 29/10) y un doble de la base del setter",
+    "para_que": "el mismo p_exclusions lo aplica PGlite a apply_bulk_list_vetoes_v1 real (tests/sql/followup_engine/validate_bulk_send_vetoes.mjs): si el armado o la base cambian, se rompe uno de los dos"
+  },
+  "members": 16,
+  "rows": [
+    {
+      "phone": "5215500000000",
+      "first_name": null,
+      "email": null
+    },
+    {
+      "phone": "5215500000001",
+      "first_name": null,
+      "email": null
+    },
+    {
+      "phone": "5215500000002",
+      "first_name": null,
+      "email": null
+    },
+    {
+      "phone": "5215500000003",
+      "first_name": null,
+      "email": null
+    },
+    {
+      "phone": "5215500000004",
+      "first_name": null,
+      "email": null
+    },
+    {
+      "phone": "5215500000005",
+      "first_name": null,
+      "email": null
+    },
+    {
+      "phone": "5215500000006",
+      "first_name": null,
+      "email": null
+    },
+    {
+      "phone": "5215500000007",
+      "first_name": null,
+      "email": null
+    },
+    {
+      "phone": "5215500000008",
+      "first_name": null,
+      "email": null
+    },
+    {
+      "phone": "5215500000009",
+      "first_name": null,
+      "email": null
+    },
+    {
+      "phone": "5215500000010",
+      "first_name": null,
+      "email": null
+    },
+    {
+      "phone": "5215500000011",
+      "first_name": null,
+      "email": null
+    },
+    {
+      "phone": "5215500000012",
+      "first_name": null,
+      "email": null
+    },
+    {
+      "phone": "5215500000013",
+      "first_name": null,
+      "email": null
+    },
+    {
+      "phone": "5215500000014",
+      "first_name": null,
+      "email": null
+    },
+    {
+      "phone": "5215500000015",
+      "first_name": null,
+      "email": null
+    }
+  ],
+  "p_exclusions": [
+    {
+      "position": 0,
+      "reason": "clienta"
+    },
+    {
+      "position": 1,
+      "reason": "baja"
+    },
+    {
+      "position": 2,
+      "reason": "con_equipo"
+    },
+    {
+      "position": 3,
+      "reason": "con_equipo"
+    },
+    {
+      "position": 5,
+      "reason": "bloqueado"
+    },
+    {
+      "position": 6,
+      "reason": "escribio_hace_poco"
+    },
+    {
+      "position": 8,
+      "reason": "escribio_hace_poco"
+    },
+    {
+      "position": 9,
+      "reason": "baja_ghl"
+    },
+    {
+      "position": 10,
+      "reason": "baja_ghl"
+    },
+    {
+      "position": 11,
+      "reason": "baja"
+    },
+    {
+      "position": 12,
+      "reason": "compro"
+    },
+    {
+      "position": 13,
+      "reason": "compro"
+    }
+  ],
+  "excluded_by_reason": {
+    "baja": 2,
+    "baja_ghl": 2,
+    "bloqueado": 1,
+    "clienta": 1,
+    "compro": 2,
+    "con_equipo": 2,
+    "escribio_hace_poco": 2
+  },
+  "eligible": 4
+}
