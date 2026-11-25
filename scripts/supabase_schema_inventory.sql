@@ -7659,6 +7659,36 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'flow_engine_admission_identity_mismatch'
+    union all
+    select
+        '20261125000200',
+        '20261125000200_bulk_send_store_v1.sql',
+        -- El almacen del masivo: las cuatro tablas, con RLS ...
+        (
+            select count(*) = 4
+            from pg_class c
+            where c.oid in (to_regclass('public.bulk_sends'), to_regclass('public.bulk_lists'),
+                            to_regclass('public.bulk_list_members'), to_regclass('public.bulk_send_recipients'))
+              and c.relrowsecurity
+        )::int
+        -- ... el registro idempotente por persona y envio, solo de service_role ...
+        + coalesce((
+            select has_function_privilege('service_role', oid, 'EXECUTE')::int
+            from functions
+            where oid = to_regprocedure('public.reserve_bulk_send_recipient_v1(uuid,integer,boolean)')
+        ), 0)
+        -- ... y la confirmacion de la pagina, sin execute para la API ni para service_role.
+        + coalesce((
+            select (prosecdef
+                    and not has_function_privilege('anon', oid, 'EXECUTE')
+                    and not has_function_privilege('authenticated', oid, 'EXECUTE')
+                    and not has_function_privilege('service_role', oid, 'EXECUTE'))::int
+            from functions
+            where oid = to_regprocedure(
+                'public.approver_confirm_bulk_send_v1(jsonb,text,uuid,integer,boolean,text,boolean)')
+        ), 0),
+        3,
+        'bulk_send_store'
 )
 select
     version,

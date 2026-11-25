@@ -132,4 +132,4 @@ def test_the_migration_replaces_only_the_rows_reading_with_a_guard() -> None:
 
 def test_the_new_validator_runs_with_npm_test() -> None:
     package = json.loads((ROOT / "tests/sql/followup_engine/package.json").read_text(encoding="utf-8"))
-    assert package["scripts"]["test"].endswith(" && node validate_flow_audience_start_reasons.mjs --check && node validate_flow_engine_admission_identity_mismatch.mjs")
+    assert package["scripts"]["test"].endswith(" && node validate_flow_audience_start_reasons.mjs --check && node validate_flow_engine_admission_identity_mismatch.mjs && node validate_bulk_send_store.mjs")

@@ -73,7 +73,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026111221010
     // El numero de conversacion de los avisos del correlador (20261118000300, E-656).
     '20261118000300_identity_link_conversation_number_account_v1.sql',
     // El choque de identidad en la admision es un rechazo con nombre (20261125000100).
-    '20261125000100_flow_engine_admission_identity_mismatch_v1.sql'])) {
+    '20261125000100_flow_engine_admission_identity_mismatch_v1.sql',
+    // El almacen del masivo (20261125000200).
+    '20261125000200_bulk_send_store_v1.sql'])) {
   fail(`despues de ${MIGRATION} van solo las de C8 y C7`, names.slice(position + 1));
 }
 
