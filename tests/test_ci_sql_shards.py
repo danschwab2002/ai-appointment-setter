@@ -34,6 +34,9 @@ POSTGRES_PROBES = (
     "tests/sql/followup_engine/real_postgres_portable_precheckout_first_contact.py",
     "tests/sql/followup_engine/real_postgres_portable_inbound_adoption.py",
     "tests/sql/followup_engine/real_postgres_flow_store.py",
+    # El masivo por el AE de punta a punta (encargo 11): sin su base, pytest lo saltea.
+    "BULK_SEND_E2E_DATABASE_URL",
+    "tests/test_bulk_send_e2e_postgres.py",
 )
 SHARD_RUN = re.compile(r"node run_shard\.mjs --shard \$\{\{ matrix\.shard \}\} --of (\d+)")
 
