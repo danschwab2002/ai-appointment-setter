@@ -51,6 +51,8 @@ const A_MIGRATION = '20261114000100_identity_link_decider_v1.sql';
 const B_MIGRATION = '20261114000150_identity_link_question_v1.sql';
 // El numero de conversacion de los avisos encuentra la identidad 'chatwoot:<n>' (20261118000300, E-656).
 const C_MIGRATION = '20261118000300_identity_link_conversation_number_account_v1.sql';
+// El choque de identidad en la admision es un rechazo con nombre (20261125000100): va despues y no toca el correlador.
+const D_MIGRATION = '20261125000100_flow_engine_admission_identity_mismatch_v1.sql';
 const CHANGED_A = [
   'plan_lancemos_pilot_cart_recovery(uuid,uuid,text,text,text,text,integer,timestamp with time zone,bigint,bigint,text,text,integer)',
   '_portable_cart_audience_checks(text,integer,uuid,uuid,text,text)',
@@ -95,7 +97,7 @@ if (JSON.stringify(names.slice(position + 2)) !== JSON.stringify(['2026111400030
     // Los motivos de quien no arranco en un envio a una audiencia (20261117000700, E-666).
     '20261117000700_flow_audience_start_reasons_v1.sql',
     // El numero de conversacion de los avisos (20261118000300, E-656).
-    C_MIGRATION])) fail('despues de la pregunta van solo la de E-565, la de E-569, la de E-575, la de E-622, la de E-627, la de E-661, la de E-665, la de E-666 y la de E-656', names.slice(position + 2));
+    C_MIGRATION, D_MIGRATION])) fail('despues de la pregunta van solo la de E-565, la de E-569, la de E-575, la de E-622, la de E-627, la de E-661, la de E-665, la de E-666 y la de E-656', names.slice(position + 2));
 const readMigration = (name) => readFileSync(join(root, 'supabase/migrations', name), 'utf8')
   .replace(/create extension if not exists pgcrypto;/gi, '-- pgcrypto is built into PGlite');
 
