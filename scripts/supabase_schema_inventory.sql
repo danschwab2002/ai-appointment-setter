@@ -7638,6 +7638,27 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'identity_link_conversation_number_account'
+    union all
+    select
+        '20261125000100',
+        '20261125000100_flow_engine_admission_identity_mismatch_v1.sql',
+        -- La admision de un evento guarda el choque de identidad con nombre ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_flow_engine_event_v1(jsonb,jsonb)')
+              and position('sqlerrm = ''channel_identity_contact_mismatch''' in definition) > 0
+              and position('''no_entra:identidad_de_otro_contacto''' in definition) > 0
+        )::int
+        -- ... y todo otro error sigue siendo error_interno:<sqlstate>.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_flow_engine_event_v1(jsonb,jsonb)')
+              and position('''error_interno:'' || lower(v_sqlstate)' in definition) > 0
+        )::int,
+        2,
+        'flow_engine_admission_identity_mismatch'
 )
 select
     version,

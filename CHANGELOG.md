@@ -12,6 +12,10 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Corregido
+
+- **El choque de identidad al admitir un evento queda como `no_entra:identidad_de_otro_contacto`, no como `error_interno:23514`.** Cuando la identidad de WhatsApp del destino es de otro contacto (la persona escribió primero por WhatsApp y el evento de Hotmart es del contacto de su mail), la admisión nativa aborta con `channel_identity_contact_mismatch` y `admit_flow_engine_event_v1` lo guardaba como `error_interno:23514`, que se lee y se avisa (MOT-002) como una falla del motor (Maribel, 23 y 24/11: 7 filas). La migración `20261125000100` cambia, con un reemplazo contado, solo el bloque que atrapa el error de cada flujo: con ese error el motivo tiene nombre, y cualquier otro sigue siendo `error_interno:<sqlstate>`. El flujo sigue sin arrancar y el evento queda `failed` con `flow_engine_no_start:<motivo>`, como antes; deja de avisarse como falla del motor. La entrada del formulario y el disparo por audiencia no cambian. Atar los dos contactos es del correlador y no cambia. Qué hace quien actualiza: aplicar la migración `20261125000100` (sin paso manual; con una definición que no conoce aborta sin cambiar nada).
+
 ## [1.40.7] - 2026-11-23
 
 Un parche sobre la 1.40.6, con un PR (#498) y sin migraciones. **El seguimiento con cupón, el silencio nativo, la reactivación y el registro de rechazos de Meta terminan su barrido después de un envío masivo** (#498, E-701). Sin cambios de profile; cambian dos defaults y sus rangos, y hay una variable nueva con default.

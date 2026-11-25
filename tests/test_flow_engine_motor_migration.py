@@ -200,6 +200,8 @@ def test_it_is_one_transaction_and_comes_before_the_bridge_reads() -> None:
         "20261117000700_flow_audience_start_reasons_v1.sql",
         # El numero de conversacion de los avisos del correlador (20261118000300, E-656).
         "20261118000300_identity_link_conversation_number_account_v1.sql",
+        # El choque de identidad en la admision es un rechazo con nombre (20261125000100).
+        "20261125000100_flow_engine_admission_identity_mismatch_v1.sql",
     ]
     later = (MIGRATIONS / names[position + 1]).read_text(encoding="utf-8")
     assert "create or replace" not in later.lower()

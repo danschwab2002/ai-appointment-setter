@@ -196,6 +196,8 @@ def test_it_is_one_transaction_and_comes_right_after_the_t4b() -> None:
         "20261117000700_flow_audience_start_reasons_v1.sql",
         # El numero de conversacion de los avisos del correlador (20261118000300, E-656).
         "20261118000300_identity_link_conversation_number_account_v1.sql",
+        # El choque de identidad en la admision es un rechazo con nombre (20261125000100).
+        "20261125000100_flow_engine_admission_identity_mismatch_v1.sql",
     ]
 
 
