@@ -1,0 +1,9 @@
+[
+  {"nombre": "Nora Quince", "telefono": "+52 1 55 0000 0021", "correo": "nora@example.com", "extra": {"origen": "formulario"}},
+  {"nombre": "Omar", "telefono": 5215500000021, "correo": null},
+  {"nombre": "Pía", "telefono": 3000000022, "correo": "pia@example.com"},
+  {"nombre": "Quique", "telefono": "+54 9 351 000 0023", "correo": "no-es-un-mail"},
+  {"nombre": "", "telefono": "+57 300 000 0024"},
+  {"nombre": "Rita", "telefono": ["+57 300 000 0025"]},
+  {"nombre": "Sol", "telefono": "+57 1 0000025"}
+]
