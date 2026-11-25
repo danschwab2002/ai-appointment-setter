@@ -387,11 +387,32 @@ def test_no_route_confirms_starts_or_brakes() -> None:
 # ------------------------------------------------------------------ el flag en create_app
 
 
-def _create_app(*, enabled: bool) -> tuple[TestClient, Db]:
+# Lo que el masivo pide prendido ademas de las rutas del AE (bulk_send_wiring.build_bulk_send): el AgentBot,
+# el token de control, Meta y, del entorno, la clave de la instancia, el candado y la salud del portfolio.
+BULK_WIRING = {"chatwoot_agent_bot_access_token": "bot-token", "chatwoot_control_api_access_token": "control-token",
+               "meta_templates_access_token": "EAA" + "x" * 40, "meta_waba_id": "1234567890123"}
+
+
+def bulk_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    lock = tmp_path / "portfolio"
+    lock.mkdir(exist_ok=True)
+    health = tmp_path / "estado.json"
+    health.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("BULK_SEND_INSTANCE_KEY", "att1")
+    monkeypatch.setenv("BULK_SEND_PORTFOLIO_LOCK_DIR", str(lock))
+    monkeypatch.setenv("BULK_SEND_PORTFOLIO_NUMBERS", "att1=100000000002,maribel=100000000001")
+    monkeypatch.setenv("BULK_SEND_META_HEALTH_PATH", str(health))
+
+
+def _create_app(*, enabled: bool, monkeypatch: pytest.MonkeyPatch | None = None,
+                tmp_path: Path | None = None) -> tuple[TestClient, Db]:
     db = Db()
     store = flow_change_api.BulkSendStore(base_url="https://att1-rest.internal", db_key=SERVICE_KEY,
                                           transport=httpx.MockTransport(db.handler))
-    settings = _settings(flow_approval_enabled=True, **CHANGE, bulk_send_enabled=enabled)
+    if enabled:
+        assert monkeypatch is not None and tmp_path is not None
+        bulk_environment(monkeypatch, tmp_path)
+    settings = _settings(flow_approval_enabled=True, **CHANGE, **BULK_WIRING, bulk_send_enabled=enabled)
     app = create_app(settings, supabase_client=_NoSupabase(),  # type: ignore[arg-type]
                      chatwoot_client=Chatwoot(), bulk_send_store=store)  # type: ignore[arg-type]
     return TestClient(app, base_url=ORIGIN), db
@@ -411,8 +432,8 @@ def test_with_the_flag_off_the_routes_do_not_exist_and_the_base_hears_nothing() 
     assert not [route for route in client.app.routes if "/bulk-sends" in getattr(route, "path", "")]
 
 
-def test_with_the_flag_on_create_app_registers_the_routes() -> None:
-    client, db = _create_app(enabled=True)
+def test_with_the_flag_on_create_app_registers_the_routes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    client, db = _create_app(enabled=True, monkeypatch=monkeypatch, tmp_path=tmp_path)
     listed = _ae(client, "GET", "")
     assert listed.status_code == 200 and listed.json()["data"] == {"bulk_sends": []}
     assert db.calls == ["read_bulk_sends_v1"]

@@ -183,6 +183,7 @@ from bridge import agent_campaign_api, agent_campaigns, campaign_approval
 from bridge import agent_product_api
 from bridge import flow_audience_page
 from bridge.flow_audience_wiring import FlowAudience, build_flow_audience
+from bridge.bulk_send_wiring import BulkSend, build_bulk_send
 from bridge.meta_templates import MetaTemplatesClient
 from bridge.template_status import MetaTemplateStatusWorker, TemplateStatusStore, slack_token_problem
 from slack_correlation.client import SlackClient
@@ -7380,6 +7381,9 @@ def create_app(
     # E-484 (flow-audience-trigger-v1): fecha, cada y manual. Sin
     # FLOW_AUDIENCE_TRIGGERS_ENABLED no existe.
     flow_audience: FlowAudience | None = None
+    # El masivo manejado por el AE (bulk_send_wiring): la pagina, el motor y la
+    # purga. Sin BULK_SEND_ENABLED no existe.
+    bulk_send: BulkSend | None = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
@@ -7451,6 +7455,8 @@ def create_app(
                 await native_silence_sweepers.start()
             if flow_audience is not None:
                 await flow_audience.start()
+            if bulk_send is not None:
+                await bulk_send.start()
             if flow_engine_divergence_notifier is not None:
                 await flow_engine_divergence_notifier.start()
             if flow_engine_rejection_notifier is not None:
@@ -7498,6 +7504,7 @@ def create_app(
                 ("resolution", resolution_worker),
                 ("agent_campaigns", agent_campaign_live),
                 ("flow_audience", flow_audience),
+                ("bulk_send", bulk_send),
             ):
                 if worker is None:
                     continue
@@ -10827,6 +10834,40 @@ def create_app(
     )
     app.state.flow_audience = flow_audience
 
+    # El masivo manejado por el AE: la base, la pagina y el motor. Todo el armado
+    # vive en bulk_send_wiring; aca solo se crea. Apagado devuelve None.
+    bulk_send = build_bulk_send(
+        enabled=settings.bulk_send_enabled,
+        environ=None,
+        supabase_base_url=settings.supabase_base_url,
+        supabase_service_role_key=settings.supabase_service_role_key,
+        tenant_ref=settings.instance_manifest.tenant_ref if settings.instance_manifest else None,
+        ally_ref=settings.instance_manifest.ally_ref if settings.instance_manifest else None,
+        time_zone=settings.instance_manifest.time_zone if settings.instance_manifest else None,
+        chatwoot_base_url=settings.chatwoot_base_url,
+        chatwoot_account_id=settings.chatwoot_account_id or (
+            settings.instance_manifest.chatwoot_account_id if settings.instance_manifest else None),
+        chatwoot_inbox_id=settings.chatwoot_inbox_id or (
+            settings.instance_manifest.chatwoot_inbox_id if settings.instance_manifest else None),
+        chatwoot_control_token=settings.chatwoot_control_api_access_token,
+        agent_bot_ready=(
+            settings.chatwoot_agent_bot_access_token is not None
+            and settings.agent_bot_id is not None
+        ),
+        control_client=control_client,
+        meta_access_token=settings.meta_templates_access_token,
+        meta_waba_id=settings.meta_waba_id,
+        meta_graph_version=settings.meta_graph_api_version,
+        producer=slack_runtime.producer if slack_runtime is not None else None,
+        campaigns=(
+            (lambda: segment_catalog.segments)
+            if segment_catalog is not None
+            else None
+        ),
+        meta_client=meta_templates_client,
+    )
+    app.state.bulk_send = bulk_send
+
     if settings.operator_correlation_read_enabled:
         operator_token = settings.operator_correlation_read_token
         operator_tenant = settings.operator_correlation_tenant_ref
@@ -11299,6 +11340,8 @@ def create_app(
                 # E-484: ver cuantos van a salir y confirmar un envio manual.
                 flow_audience_page.routes(sweeper=flow_audience.sweeper)
                 if flow_audience is not None else None,
+                # El masivo: subir la lista, ver, confirmar y frenar.
+                bulk_send.page if bulk_send is not None else None,
             ),
         )
 
@@ -11961,6 +12004,12 @@ def create_app(
             stalled_monitor_readiness = {
                 **stalled_monitor_readiness,
                 **flow_audience.readiness(),
+            }
+        if bulk_send is not None:
+            # El masivo: de lo que ya esta en memoria; ninguna clave da 503.
+            stalled_monitor_readiness = {
+                **stalled_monitor_readiness,
+                **bulk_send.readiness(),
             }
         if native_silence_sweepers is not None:
             # El barrido nativo del seguimiento (E-269): de lo que ya esta en

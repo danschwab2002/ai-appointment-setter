@@ -31,13 +31,12 @@ el bridge). Si el listado no se puede leer entero, o una conversacion con una
 marca de veto no trae telefono, no se arma nada: ``BulkVetoesUnavailable``
 (falla cerrado, la misma regla que la audiencia).
 
-La parte de la base (``BaseVetoReader``) no tiene todavia una funcion en la base:
-``contact_opt_out_events`` y las compras no se leen desde ``service_role``. El
-adaptador llama a ``read_bulk_list_base_vetoes_v1``, que se propone para un
-encargo aparte; mientras no exista, la llamada falla cerrado.
+La parte de la base (``BaseVetoReader``) es ``read_bulk_list_base_vetoes_v1``
+(20261125000300): las bajas y las compras del producto del envio, que
+``service_role`` no lee de las tablas. El producto sale de la columna del envio.
 
-Nada de esto imprime un telefono: los logs llevan ids de lista y conteos. Nada lo
-usa todavia (escalon abierto, sin ``BULK_SEND_ENABLED``).
+Nada de esto imprime un telefono: los logs llevan ids de lista y conteos. Lo usan la
+pagina y el motor del masivo, solo con ``BULK_SEND_ENABLED`` (``bulk_send_wiring``).
 """
 
 from __future__ import annotations
@@ -305,9 +304,9 @@ class SupabaseBulkVetoStore:
 
     * ``apply``: ``apply_bulk_list_vetoes_v1`` (20261125000200), que reemplaza las
       exclusiones y deja la lista revisada.
-    * ``base_vetoes``: ``read_bulk_list_base_vetoes_v1``, PROPUESTA y todavia sin
-      migracion (ver el docstring del modulo). Hasta que exista, la base contesta
-      404 y esto es ``BulkVetoesUnavailable``: la lista no se revisa.
+    * ``base_vetoes``: ``read_bulk_list_base_vetoes_v1`` (20261125000300). Sin
+      ``product_refs`` la base usa los del envio; si la base no contesta, esto es
+      ``BulkVetoesUnavailable``: la lista no se revisa.
 
     Un error de estado vuelve como ``{"ok": false, "reason_code"}``; 22023 y P0002
     son ``BulkVetoesRejected``; lo demas, ``BulkVetoesUnavailable``.
@@ -386,11 +385,13 @@ async def build_list_vetoes(*, list_id: str, members: Sequence[VetoMember], prod
                             ghl_opt_out_phones: Iterable[str] = ()) -> VetoResult:
     """Los vetos de ``members`` (la lista entera, o una tanda del envio), sin escribir nada.
 
-    ``product_refs``: los productos del envio, para «compro». Vacio no se acepta: un masivo
-    sin producto no sabe a quien no mandarle.
+    ``product_refs``: los productos del envio, para «compro». Vacio quiere decir «los del envio»: la
+    base usa ``bulk_sends.product_refs`` (20261125000300, que el AE fija en el borrador), y sin ninguno
+    falla con ``bulk_send_products_missing`` (un masivo sin producto no sabe a quien no mandarle). Si
+    llegan, tienen que ser los mismos de la columna (``bulk_send_products_mismatch``).
     """
-    if not product_refs or not all(isinstance(p, str) and p.strip() for p in product_refs):
-        raise ValueError("product_refs required")
+    if not all(isinstance(p, str) and p.strip() for p in product_refs):
+        raise ValueError("invalid product_refs")
     by_phone: dict[str, list[VetoMember]] = {}
     positions: set[int] = set()
     for member in members:
