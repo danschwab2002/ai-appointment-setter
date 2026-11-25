@@ -213,11 +213,12 @@ def calls_in(source: str) -> tuple[list[tuple[str, str]], list[tuple[str, str]],
     return verbs, http_gets, paths, indirect
 
 
-def test_the_module_has_three_calls_one_write_and_no_edit_or_delete() -> None:
+def test_the_module_has_four_calls_one_write_and_no_edit_or_delete() -> None:
     # El guardrail de §4: si alguien suma una ruta o un verbo, esto falla, se llame como se llame el cliente.
+    # La cuarta (masivo, encargo 9) es solo de lectura: la salud del numero.
     verbs, http_gets, paths, indirect = calls_in(Path(meta_templates.__file__).read_text(encoding="utf-8"))
     assert verbs == [("create", "post")]
-    assert sorted(http_gets) == [("find", "get"), ("read", "get")]
+    assert sorted(http_gets) == [("find", "get"), ("read", "get"), ("read_phone_health", "get")]
     assert sorted(set(paths)) == ["/{}/{}", "/{}/{}/message_templates"]
     assert indirect == []
 
@@ -236,3 +237,46 @@ def test_the_guardrail_sees_a_forbidden_verb_with_any_receiver(code: str) -> Non
 def test_the_guardrail_sees_a_verb_reached_through_getattr() -> None:
     _, _, _, indirect = calls_in("async def x(self, c):\n    await getattr(c, 'delete')('/a')\n")
     assert indirect == ["x"]
+
+
+HEALTH = json.loads((FIXTURES / "bulk_send_worker" / "meta_phone_health_att1_maribel_20261125.json")
+                    .read_text(encoding="utf-8"))
+
+
+def test_read_phone_health_asks_for_one_number_with_the_fields_of_salud_meta() -> None:
+    # La lectura de produccion de meta_salud.py (OS, 2026-11-25), con la forma cruda reconstruida campo a campo.
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=HEALTH["crudas"]["att1"])
+
+    health = _run(_client(handler).read_phone_health("100000000002"))
+    expected = HEALTH["normalizadas"]["att1"]
+    assert health.as_reading() == {"calidad": expected["calidad"], "limite": expected["limite"],
+                                   "estado_numero": expected["estado_numero"],
+                                   "puede_enviar": expected["puede_enviar"]}
+    request = seen[0]
+    assert request.method == "GET" and request.url.path == "/v23.0/100000000002"
+    assert request.url.params["fields"] == meta_templates.PHONE_HEALTH_FIELDS
+    assert request.headers["Authorization"] == f"Bearer {TOKEN}" and TOKEN not in str(request.url)
+
+
+def test_the_phone_health_takes_the_worst_entity_and_ignores_the_sip_errors() -> None:
+    raw = {"quality_rating": "GREEN", "health_status": {"entities": [
+        {"entity_type": "PHONE_NUMBER", "can_send_message": "AVAILABLE",
+         "errors": [{"error_code": 138024, "error_description": "sip"}]},
+        {"entity_type": "WABA", "can_send_message": "BLOCKED"}]}}
+    health = meta_templates.phone_health_of(raw)
+    assert health is not None and health.can_send == "BLOCKED" and health.messaging_limit == "?"
+    assert meta_templates.phone_health_of([]) is None
+
+
+def test_read_phone_health_rejects_a_bad_id_and_closes_errors_to_codes() -> None:
+    with pytest.raises(MetaTemplatesError) as bad:
+        _run(_client(lambda request: httpx.Response(200, json={})).read_phone_health("../x"))
+    assert bad.value.code == "meta_phone_number_id_invalid"
+    with pytest.raises(MetaTemplatesError) as error:
+        _run(_client(lambda request: httpx.Response(400, json={"error": {"code": 100, "message": "secreto"}}))
+             .read_phone_health("100000000002"))
+    assert error.value.code == "meta:100"
