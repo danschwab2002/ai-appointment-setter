@@ -92,6 +92,20 @@ class BulkListMember:
 
 
 @dataclass(frozen=True)
+class BulkListRejection:
+    """One row that was left out: its number among the data rows (1 is the first
+    row after the header), the phone as it was written and the reason (one of
+    ``BULK_PHONE_REASONS`` or ``"duplicado"``). ``repr`` hides the phone."""
+
+    row: int
+    raw_phone: str = field(repr=False)
+    reason: str
+
+
+DUPLICATE_REASON = "duplicado"
+
+
+@dataclass(frozen=True)
 class BulkListImport:
     format: str
     columns: Mapping[str, str | None]
@@ -99,6 +113,10 @@ class BulkListImport:
     members: tuple[BulkListMember, ...] = field(repr=False)
     rejected: Mapping[str, int]
     duplicates: int
+    # Only with ``collect_rejections``: the rows left out, for the person who
+    # uploaded the file to download them (the page of the bulk send). Never
+    # for the Automation Expert or a log.
+    rejections: tuple[BulkListRejection, ...] = field(default=(), repr=False)
 
     def summary(self) -> dict[str, object]:
         """The counts, safe to show to the Automation Expert or to log."""
@@ -124,6 +142,7 @@ def read_bulk_list(
     email_column: str | None = None,
     max_bytes: int = DEFAULT_MAX_BYTES,
     max_rows: int = DEFAULT_MAX_ROWS,
+    collect_rejections: bool = False,
 ) -> BulkListImport:
     """Read a CSV, JSON or XLSX list and return the people it can reach.
 
@@ -132,7 +151,9 @@ def read_bulk_list(
     JSON, the rest CSV). A column can be forced by its exact header; otherwise
     it is detected. A row whose phone is left out counts under its reason; a
     phone that repeats counts as a duplicate and keeps the first row (its name,
-    if the first one had none, comes from the repeat).
+    if the first one had none, comes from the repeat). With
+    ``collect_rejections`` every row left out also comes in ``rejections``,
+    with the phone as written.
     """
     if not data:
         raise BulkImportError("vacio")
@@ -154,16 +175,21 @@ def read_bulk_list(
     if columns["phone"] is None:
         raise BulkImportError("sin_columna_telefono", headers=headers)
     rejected: dict[str, int] = {}
+    rejections: list[BulkListRejection] = []
     seen: dict[str, dict[str, str | None]] = {}
     duplicates = 0
-    for row in rows:
+    for number, row in enumerate(rows, start=1):
         verdict = normalize_bulk_phone(row.get(columns["phone"]), country_code)
         if verdict.reason != BULK_PHONE_OK or verdict.phone is None:
             rejected[verdict.reason] = rejected.get(verdict.reason, 0) + 1
+            if collect_rejections:
+                rejections.append(BulkListRejection(number, row.get(columns["phone"]) or "", verdict.reason))
             continue
         name = first_name(row.get(columns["name"])) if columns["name"] else None
         if verdict.phone in seen:
             duplicates += 1
+            if collect_rejections:
+                rejections.append(BulkListRejection(number, row.get(columns["phone"]) or "", DUPLICATE_REASON))
             kept = seen[verdict.phone]
             if not kept["first_name"]:
                 kept["first_name"] = name
@@ -185,6 +211,7 @@ def read_bulk_list(
         members=members,
         rejected=rejected,
         duplicates=duplicates,
+        rejections=tuple(rejections),
     )
 
 
