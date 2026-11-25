@@ -320,6 +320,17 @@ def test_apply_sends_the_exclusions_with_the_instance() -> None:
     assert rest.calls[1][1] == {"p_instance": INSTANCE, "p_list_id": LIST_ID, "p_exclusions": golden["p_exclusions"]}
 
 
+def test_without_product_refs_the_base_reads_the_products_of_the_send() -> None:
+    """El producto lo fija el AE en el borrador (``bulk_sends.product_refs``, 20261125000300): el bridge no lo
+    repite, la base recibe una lista vacia y usa la columna (``nullif(p_product_refs, '{}')``)."""
+    rest = FakePostgrest(base_rows=[{"position": p, "reason": r} for p, r in BASE_ROWS.items()])
+    out = asyncio.run(bv.apply_list_vetoes(store=rest.store(), list_id=LIST_ID, members=MEMBERS,
+                                           product_refs=(), chatwoot=reader(main_scenario()),
+                                           ghl_opt_out_phones=GHL_FILE))
+    assert out["ok"] is True and out["excluded"] == len(EXPECTED)
+    assert rest.calls[0][1] == {"p_instance": INSTANCE, "p_list_id": LIST_ID, "p_product_refs": []}
+
+
 def test_without_the_base_function_nothing_is_written() -> None:
     rest = FakePostgrest(base_rows=None)
     fake = main_scenario()
@@ -370,7 +381,7 @@ def test_the_inputs_that_cannot_be_read_stop_the_review() -> None:
                                          ghl_opt_out_phones=["sin numero"]))
     assert error.value.reason == "baja_ghl_ilegible"
     for members, products in (([bv.VetoMember(0, _phone(0)), bv.VetoMember(0, _phone(1))], PRODUCTS),
-                              ([bv.VetoMember(0, "abc")], PRODUCTS), (MEMBERS, ())):
+                              ([bv.VetoMember(0, "abc")], PRODUCTS), (MEMBERS, ("",)), (MEMBERS, (" ",))):
         with pytest.raises(ValueError):
             asyncio.run(bv.build_list_vetoes(list_id=LIST_ID, members=members, product_refs=products,
                                              base=FakeBase({}), chatwoot=reader(fake)))
