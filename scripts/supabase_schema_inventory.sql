@@ -7723,6 +7723,29 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         ), 0),
         4,
         'bulk_send_prepared_and_base_vetoes'
+    union all
+    select
+        '20261125000400',
+        '20261125000400_bulk_send_recipients_read_v1.sql',
+        -- El registro por persona del envio para el reporte, solo de service_role ...
+        coalesce((
+            select (prosecdef
+                    and has_function_privilege('service_role', oid, 'EXECUTE')
+                    and not has_function_privilege('anon', oid, 'EXECUTE')
+                    and not has_function_privilege('authenticated', oid, 'EXECUTE'))::int
+            from functions
+            where oid = to_regprocedure('public.read_bulk_send_recipients_v1(uuid,integer,integer)')
+        ), 0)
+        -- ... y la hora de las compras, una auxiliar de nadie.
+        + coalesce((
+            select (not has_function_privilege('service_role', oid, 'EXECUTE')
+                    and not has_function_privilege('anon', oid, 'EXECUTE')
+                    and not has_function_privilege('authenticated', oid, 'EXECUTE'))::int
+            from functions
+            where oid = to_regprocedure('public._bulk_send_purchase_times(text)')
+        ), 0),
+        2,
+        'bulk_send_recipients_read'
 )
 select
     version,

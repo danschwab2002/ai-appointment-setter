@@ -193,6 +193,8 @@ def test_it_is_one_transaction_and_comes_before_the_flow_engine_routes() -> None
         "20261125000200_bulk_send_store_v1.sql",
         # Preparar y los vetos de la base del masivo (20261125000300).
         "20261125000300_bulk_send_prepared_and_base_vetoes_v1.sql",
+        # El registro por persona del masivo (20261125000400).
+        "20261125000400_bulk_send_recipients_read_v1.sql",
     ]
 
 

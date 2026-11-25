@@ -214,6 +214,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261125000200",
         # Preparar y los vetos de la base del masivo (20261125000300).
         "20261125000300",
+        # El registro por persona del masivo (20261125000400).
+        "20261125000400",
     ]
 
     sql = _sql()

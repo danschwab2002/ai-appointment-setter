@@ -488,7 +488,8 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261116000200 (el registro de permiso de WhatsApp, E-627) suma sus cuatro.
     # 20261125000200 (el almacen del masivo, encargo 3) suma sus diez.
     # 20261125000300 (preparar y los vetos de la base del masivo, encargo 3b) suma sus cuatro.
-    assert len(allowlisted) == 253
+    # 20261125000400 (el registro por persona del masivo, D10 del #511) suma la suya.
+    assert len(allowlisted) == 254
     assert "record_permission_grant_v1(jsonb)" in allowlisted
     assert "close_permission_notice_v1(text, text, timestamp with time zone)" in allowlisted
     assert "record_hotmart_unknown_offer_v1(text, bigint, text, text, text, text, text, uuid)" in allowlisted
@@ -2478,15 +2479,28 @@ def test_bulk_send_store_fingerprint_counts_the_rows() -> None:
     assert "nothas_function_privilege('service_role',oid,'EXECUTE')" in compact
 
 
-def test_bulk_send_prepared_and_base_vetoes_fingerprint_is_last() -> None:
+def test_bulk_send_prepared_and_base_vetoes_fingerprint_counts_the_rows() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261125000300: lo preparado con RLS, el producto del envio, los vetos de la base solo de
     # service_role y la purga que borra lo preparado.
-    row = sql.split("'20261125000300'", 1)[1].split("select\n    version,", 1)[0]
+    row = sql.split("'20261125000300'", 1)[1].split("'20261125000400'", 1)[0].rsplit("union all", 1)[0]
     compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
 
-    assert compact.endswith(",4,'bulk_send_prepared_and_base_vetoes')")
+    assert compact.endswith(",4,'bulk_send_prepared_and_base_vetoes'")
     assert "to_regclass('public.bulk_send_prepared')" in compact
     assert "a.attname='product_refs'" in compact
     assert "read_bulk_list_base_vetoes_v1(jsonb,uuid,text[])" in compact
     assert "deletefrompublic.bulk_send_prepared" in compact
+
+
+def test_bulk_send_recipients_read_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261125000400: el registro por persona para el reporte, solo de service_role, y la hora de
+    # las compras, de nadie.
+    row = sql.split("'20261125000400'", 1)[1].split("select\n    version,", 1)[0]
+    compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
+
+    assert compact.endswith(",2,'bulk_send_recipients_read')")
+    assert "read_bulk_send_recipients_v1(uuid,integer,integer)" in compact
+    assert "_bulk_send_purchase_times(text)" in compact
+    assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact

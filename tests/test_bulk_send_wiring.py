@@ -16,7 +16,9 @@ prueba aca es el cableado, no el criterio de cada pieza (eso lo prueban sus test
   ``chatwoot_v4_13_bulk_prepare_documentacion_20261125.json`` (fixture de documentacion de Chatwoot 4.13:
   ``labels/create.json.jbuilder``; el index usa la misma forma ``{"payload": [titulos]}``);
 * que el motor real, con la base real por HTTP, frene y avise un envio con una plantilla de reintento;
-* la purga.
+* la purga;
+* el reporte (D10 del #511): el registro de ``read_bulk_send_recipients_v1`` (20261125000400) por cursor,
+  la conversacion capturada leida con el ``ChatwootClient`` real, la cache y que falle cerrado.
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ from bridge import bulk_send_wiring as wiring
 from bridge.app import create_app
 from bridge.bulk_send_page import ListMember
 from bridge.bulk_send_prepare import BulkMember, PreparedConversation
+from bridge.bulk_send_report import ChatwootBulkSendReader
 from bridge.bulk_send_vetoes import SupabaseBulkVetoStore
 from bridge.bulk_send_worker import BulkSendConfigError, BulkSendWorker
 from bridge.chatwoot import ChatwootClient
@@ -541,3 +544,143 @@ def test_nothing_here_writes_a_phone_to_the_log(tmp_path, caplog) -> None:
     _build(tmp_path)
     assert "573001234560" not in caplog.text and "100000000002" not in caplog.text
     assert "bulk_send_enabled instance=att1 numbers=att1,johanna,maribel" in caplog.text
+
+
+# ------------------------------------------------------------------ el reporte (D10)
+#
+# La fila de ``read_bulk_send_recipients_v1`` (20261125000400) tiene la forma de la funcion; lo que la base
+# devuelve de verdad lo prueba ``validate_bulk_send_recipients_read.mjs``. La conversacion que se lee es la
+# capturada de ATT1 (``chatwoot_conversation_inbox_11_conv_50_opt_out_paused_20261017.json``: cuenta 2,
+# bandeja 11, 2026-10-17, anonimizada), servida por el ``ChatwootClient`` real como en
+# ``test_bulk_send_report_chatwoot.py``.
+
+CONV_50 = json.loads((FIXTURES / "chatwoot_conversation_inbox_11_conv_50_opt_out_paused_20261017.json")
+                     .read_text("utf-8"))["conversation"]
+TEMPLATE_50 = next(m for m in CONV_50["messages"] if m["id"] == 2820)
+
+
+def _iso(epoch: int) -> str:
+    return datetime.fromtimestamp(epoch, UTC).isoformat()
+
+
+def recipient_row(position: int, state: str, **changes: Any) -> dict[str, Any]:
+    out: dict[str, Any] = {"position": position, "phone": f"52155000000{position:02d}", "state": state,
+                           "chatwoot_conversation_id": None, "chatwoot_message_id": None, "meta_error_code": None,
+                           "closed_at": None, "purchased_at": None}
+    out.update(changes)
+    return out
+
+
+REGISTER = [
+    # La plantilla de la conversacion 50: leida, contesto, pidio la baja y esta con el equipo; despues compro.
+    recipient_row(0, "enviado", chatwoot_conversation_id=50, chatwoot_message_id=2820,
+                  closed_at=_iso(TEMPLATE_50["created_at"]), purchased_at=_iso(TEMPLATE_50["created_at"] + 3600)),
+    recipient_row(1, "fallido", closed_at=_iso(TEMPLATE_50["created_at"])),
+    recipient_row(2, "pendiente"),
+    # Un enviado sin conversacion no se puede leer: dudoso, nunca entregado.
+    recipient_row(3, "enviado", chatwoot_message_id=2821, closed_at=_iso(TEMPLATE_50["created_at"]),
+                  purchased_at=_iso(TEMPLATE_50["created_at"] + 60)),
+    recipient_row(4, "reservado"),
+]
+
+
+class _Conversation50:
+    def __init__(self) -> None:
+        self.requests: list[httpx.Request] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        base = "/api/v1/accounts/2/conversations/50"
+        if request.url.path == base:
+            return httpx.Response(200, json=CONV_50["conversation"])
+        if request.url.path == base + "/messages":
+            before = request.url.params.get("before")
+            older = [m for m in sorted(CONV_50["messages"], key=lambda m: m["id"])
+                     if before is None or m["id"] < int(before)]
+            return httpx.Response(200, json={"meta": {}, "payload": older[-20:]})
+        return httpx.Response(404, json={"error": "not found"})
+
+
+def _paged(register: list[dict[str, Any]], size: int):
+    def answer(body: dict[str, Any]) -> list[dict[str, Any]]:
+        assert body["p_send_id"] == SEND_ID and body["p_limit"] == size
+        return [r for r in register if r["position"] > body["p_after_position"]][:size]
+    return answer
+
+
+def _report_source(rest: Rest, chatwoot: _Conversation50, clock: Any = lambda: CENTER) -> wiring.BulkSendRecipientsReport:
+    client = ChatwootClient(base_url="https://chatwoot.invalid", account_id=2, access_token="token-de-prueba",
+                            transport=httpx.MockTransport(chatwoot.handler))
+    return wiring.BulkSendRecipientsReport(store=rest.store(), chatwoot=ChatwootBulkSendReader(client, inbox_id=11),
+                                           clock=clock)
+
+
+def test_the_report_reads_the_whole_register_by_cursor_and_the_captured_conversation(monkeypatch) -> None:
+    monkeypatch.setattr(wiring, "RECIPIENTS_PAGE", 2)
+    rest = Rest({"read_bulk_send_recipients_v1": _paged(REGISTER, 2)})
+    chatwoot = _Conversation50()
+
+    report = run(_report_source(rest, chatwoot).report(SEND_ID))
+
+    assert [c[1]["p_after_position"] for c in rest.calls] == [-1, 1, 3]
+    assert (report.sent, report.delivered, report.read, report.failed) == (1, 1, 1, 0)
+    assert (report.replies, report.opt_outs, report.handoffs, report.purchases) == (1, 1, 1, 1)
+    assert report.not_sent == {"dubious": 1, "pending": 2, "send_failed": 1}
+    # Solo se leyo la conversacion mandada, por su id: nunca se buscan contactos.
+    assert {r.url.path for r in chatwoot.requests} == {"/api/v1/accounts/2/conversations/50",
+                                                      "/api/v1/accounts/2/conversations/50/messages"}
+
+
+def test_the_report_is_kept_for_a_while_and_then_read_again() -> None:
+    now = [CENTER]
+    rest = Rest({"read_bulk_send_recipients_v1": _paged(REGISTER, wiring.RECIPIENTS_PAGE)})
+    source = _report_source(rest, _Conversation50(), clock=lambda: now[0])
+
+    first = run(source.report(SEND_ID))
+    again = run(source.report(SEND_ID))
+    assert again is first and len(rest.calls) == 1
+    now[0] = CENTER + wiring.REPORT_TTL
+    run(source.report(SEND_ID))
+    assert len(rest.calls) == 2
+
+
+@pytest.mark.parametrize("row", [
+    recipient_row(0, "entregado"),
+    recipient_row(-1, "pendiente"),
+    recipient_row(0, "enviado", chatwoot_conversation_id=0, chatwoot_message_id=1, closed_at=_iso(1)),
+    recipient_row(0, "enviado", chatwoot_conversation_id=5, chatwoot_message_id=1, closed_at="2026-11-29T20:00:00"),
+    recipient_row(0, "pendiente", phone=5215500000000),
+    "no es una fila",
+])
+def test_a_register_row_without_the_shape_fails_closed(row) -> None:
+    rest = Rest({"read_bulk_send_recipients_v1": [row]})
+    with pytest.raises(wiring.BulkSendStoreUnavailable, match="read_bulk_send_recipients_v1_invalid_row"):
+        run(_report_source(rest, _Conversation50()).report(SEND_ID))
+
+
+def test_a_cursor_that_does_not_advance_fails_closed(monkeypatch) -> None:
+    monkeypatch.setattr(wiring, "RECIPIENTS_PAGE", 2)
+    rest = Rest({"read_bulk_send_recipients_v1": [recipient_row(0, "pendiente"), recipient_row(1, "pendiente")]})
+    with pytest.raises(wiring.BulkSendStoreUnavailable, match="cursor_did_not_advance"):
+        run(_report_source(rest, _Conversation50()).report(SEND_ID))
+
+
+def test_a_purged_list_still_reports_without_phones() -> None:
+    recipient, purchase = wiring.recipient_of(recipient_row(7, "vetado", phone=None, closed_at=_iso(1)))
+    assert (recipient.recipient_id, recipient.phone, recipient.state, purchase) == ("7", "", "vetoed", None)
+    # Una compra de quien no salio no se ata.
+    _, purchase = wiring.recipient_of(recipient_row(8, "fallido", closed_at=_iso(1), purchased_at=_iso(2)))
+    assert purchase is None
+
+
+def test_the_page_gets_the_report(tmp_path, monkeypatch) -> None:
+    seen: dict[str, Any] = {}
+    real = wiring.page_routes
+
+    def capture(**kwargs: Any) -> Any:
+        seen.update(kwargs)
+        return real(**kwargs)
+
+    monkeypatch.setattr(wiring, "page_routes", capture)
+    assert _build(tmp_path) is not None
+    assert isinstance(seen["report"], wiring.BulkSendRecipientsReport)

@@ -121,6 +121,8 @@ const DERIVED_FROM_MIGRATION = [
   '20261125000200_bulk_send_store_v1.sql',
   // Preparar y los vetos de la base del masivo (20261125000300): exige el almacen de 20261125000200.
   '20261125000300_bulk_send_prepared_and_base_vetoes_v1.sql',
+  // El registro por persona del masivo (20261125000400): exige lo preparado de 20261125000300.
+  '20261125000400_bulk_send_recipients_read_v1.sql',
 ];
 for (const name of DERIVED_FROM_MIGRATION) {
   if (!MIGRATIONS.includes(name) || name <= MIGRATION) {
