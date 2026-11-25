@@ -1,6 +1,6 @@
 """El cliente cerrado de la API de plantillas de Meta (template-request-v1, F-146 parte 3).
 
-Es todo lo que el bridge le pide a Meta, y son tres llamadas:
+Es todo lo que el bridge le pide a Meta, y son cuatro llamadas:
 
 * ``create``: ``POST /{version}/{waba}/message_templates``. El unico verbo de
   escritura. Crea una plantilla; no edita ni borra.
@@ -9,8 +9,13 @@ Es todo lo que el bridge le pide a Meta, y son tres llamadas:
   lo que el anterior llego a crear y no crea otra.
 * ``read``: ``GET /{version}/{template_id}``, el estado de una plantilla (lo usa
   el sondeo de la parte 4).
+* ``read_phone_health``: ``GET /{version}/{phone_number_id}``, la salud del
+  numero (calidad, limite de mensajeria, estado y ``health_status``), con los
+  mismos campos que lee ``despliegue/salud-meta/salud_meta.py`` del repo de la
+  instancia. Solo lee. La usa el motor del masivo (``bulk_send_worker.py``) para
+  frenar si la salud empeora en el medio de un envio.
 
-Nada sobre el numero, los webhooks ni la suscripcion, aunque el permiso
+Nada mas sobre el numero, ni los webhooks ni la suscripcion, aunque el permiso
 ``whatsapp_business_management`` los alcance. Una prueba mira el modulo y falla
 si aparece otra ruta u otro verbo (tests/test_meta_templates.py).
 
@@ -38,11 +43,13 @@ import httpx
 
 __all__ = [
     "DEFAULT_GRAPH_VERSION",
+    "MetaPhoneHealth",
     "MetaTemplate",
     "MetaTemplatesClient",
     "MetaTemplatesError",
     "body_of",
     "content_of",
+    "phone_health_of",
 ]
 
 GRAPH_ORIGIN = "https://graph.facebook.com"
@@ -56,6 +63,14 @@ FIELDS = "id,name,language,status,category,components"
 _TEMPLATE_ID = re.compile(r"^[0-9]{1,32}$")
 _WABA_ID = re.compile(r"^[0-9]{6,32}$")
 _GRAPH_VERSION = re.compile(r"^v[0-9]{1,3}\.[0-9]{1,2}$")
+_PHONE_NUMBER_ID = re.compile(r"^[0-9]{6,32}$")
+# Los campos de ``salud_meta.py`` (repo de la instancia, ``leer_meta``).
+PHONE_HEALTH_FIELDS = ("quality_rating,whatsapp_business_manager_messaging_limit,status,name_status,"
+                       "throughput,health_status")
+# El peor ``can_send_message`` de las entidades de ``health_status`` gana (``ORDEN_ENVIO`` de salud_meta.py).
+SEND_STATE_ORDER = ("AVAILABLE", "LIMITED", "BLOCKED")
+# Los errores de llamadas por SIP no cuentan: no se usan (``ERRORES_IGNORADOS`` de salud_meta.py).
+IGNORED_HEALTH_ERRORS = frozenset({138024, 138025})
 
 
 class MetaTemplatesError(Exception):
@@ -78,6 +93,54 @@ class MetaTemplate:
     body: str | None = None
     rejected_reason: str | None = None
     content: tuple[Any, ...] | None = None
+
+
+@dataclass(frozen=True)
+class MetaPhoneHealth:
+    """La salud de un numero, normalizada. ``"?"`` en lo que la respuesta no trae."""
+
+    quality: str
+    messaging_limit: str
+    status: str
+    can_send: str
+
+    def as_reading(self) -> dict[str, str]:
+        """La forma de ``normalizar`` de ``salud_meta.py``, que es la que leen los frenos del masivo."""
+        return {"calidad": self.quality, "limite": self.messaging_limit,
+                "estado_numero": self.status, "puede_enviar": self.can_send}
+
+
+def phone_health_of(raw: object) -> MetaPhoneHealth | None:
+    """De la respuesta de ``GET /{phone_number_id}`` a la salud; None si no es un objeto.
+
+    ``can_send`` es el peor ``can_send_message`` entre las entidades (un ``BLOCKED`` de una
+    entidad cuenta aunque las demas esten bien); sin entidades, ``"?"``.
+    """
+    if not isinstance(raw, Mapping):
+        return None
+
+    def text(key: str) -> str:
+        value = raw.get(key)
+        return value.strip().upper() if isinstance(value, str) and value.strip() else "?"
+
+    states: list[str] = []
+    health = raw.get("health_status")
+    entities = health.get("entities") if isinstance(health, Mapping) else None
+    for entity in entities if isinstance(entities, list) else ():
+        if not isinstance(entity, Mapping):
+            continue
+        errors = entity.get("errors")
+        relevant = [e for e in errors if isinstance(e, Mapping) and e.get("error_code") not in IGNORED_HEALTH_ERRORS] \
+            if isinstance(errors, list) else []
+        state = entity.get("can_send_message")
+        if isinstance(state, str) and state.strip():
+            states.append(state.strip().upper())
+        elif relevant:
+            states.append("?")
+    known = [s for s in states if s in SEND_STATE_ORDER]
+    can_send = max(known, key=SEND_STATE_ORDER.index) if known else "?"
+    return MetaPhoneHealth(quality=text("quality_rating"), messaging_limit=text("whatsapp_business_manager_messaging_limit"),
+                           status=text("status"), can_send=can_send)
 
 
 def body_of(components: object) -> str | None:
@@ -153,7 +216,8 @@ def _error_code(response: httpx.Response) -> str:
 
 
 class MetaTemplatesClient:
-    """Las tres llamadas. Lo crea el bridge solo con ``META_TEMPLATES_ENABLED``."""
+    """Las cuatro llamadas. Lo crea el bridge con ``META_TEMPLATES_ENABLED`` (plantillas) o el motor del
+    masivo (solo ``read_phone_health``)."""
 
     def __init__(self, *, access_token: str, waba_id: str, graph_version: str = DEFAULT_GRAPH_VERSION,
                  transport: httpx.AsyncBaseTransport | None = None, timeout_seconds: float = 20.0) -> None:
@@ -254,6 +318,21 @@ class MetaTemplatesClient:
         except httpx.HTTPError:
             raise MetaTemplatesError("meta_unreachable") from None
         found = _template(self._parsed(response))
+        if found is None:
+            raise MetaTemplatesError("meta_unexpected_answer")
+        return found
+
+    async def read_phone_health(self, phone_number_id: str) -> MetaPhoneHealth:
+        """La salud de un numero por su id. Solo lee; un error es solo su codigo."""
+        if not isinstance(phone_number_id, str) or not _PHONE_NUMBER_ID.fullmatch(phone_number_id):
+            raise MetaTemplatesError("meta_phone_number_id_invalid")
+        try:
+            async with self._http() as client:
+                response = await client.get(f"/{self._graph_version}/{phone_number_id}",
+                                            params={"fields": PHONE_HEALTH_FIELDS})
+        except httpx.HTTPError:
+            raise MetaTemplatesError("meta_unreachable") from None
+        found = phone_health_of(self._parsed(response))
         if found is None:
             raise MetaTemplatesError("meta_unexpected_answer")
         return found

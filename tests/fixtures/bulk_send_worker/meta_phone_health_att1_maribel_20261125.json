@@ -1,0 +1,96 @@
+{
+  "_origen": "Lectura normalizada de produccion que dejo meta_salud.py (el monitor de la salud de Meta del OS, por la Graph API v23.0 con el token de cada instancia) en .claude/data/meta-salud/estado.json, copiada el 2026-11-25 por Andy. Solo los campos que leen los frenos del masivo: calidad, limite, estado_numero, puede_enviar y por_entidad (can_send_message de cada entidad de health_status). Sin telefonos, sin ids de numero ni de cuenta, sin avisos de texto de Meta.",
+  "_respuesta_cruda": "La forma cruda de GET /v23.0/{phone_number_id}?fields=quality_rating,whatsapp_business_manager_messaging_limit,status,name_status,throughput,health_status se RECONSTRUYE desde la lectura normalizada (normalizar de salud_meta.py es una funcion directa campo a campo), con la forma del crudo de su selftest (salud_meta.py:959). Deuda: capturar la respuesta cruda en la primera lectura real del motor (ensayo M4).",
+  "normalizadas": {
+    "att1": {
+      "calidad": "GREEN",
+      "limite": "TIER_100K",
+      "estado_numero": "CONNECTED",
+      "nombre_visible": "DECLINED",
+      "throughput": "STANDARD",
+      "puede_enviar": "LIMITED",
+      "por_entidad": {
+        "PHONE_NUMBER": "LIMITED",
+        "WABA": "AVAILABLE",
+        "BUSINESS": "LIMITED",
+        "APP": "AVAILABLE"
+      }
+    },
+    "maribel": {
+      "calidad": "GREEN",
+      "limite": "TIER_100K",
+      "estado_numero": "CONNECTED",
+      "nombre_visible": "APPROVED",
+      "throughput": "STANDARD",
+      "puede_enviar": "LIMITED",
+      "por_entidad": {
+        "PHONE_NUMBER": "AVAILABLE",
+        "WABA": "AVAILABLE",
+        "BUSINESS": "LIMITED",
+        "APP": "AVAILABLE"
+      }
+    }
+  },
+  "crudas": {
+    "att1": {
+      "quality_rating": "GREEN",
+      "whatsapp_business_manager_messaging_limit": "TIER_100K",
+      "status": "CONNECTED",
+      "name_status": "DECLINED",
+      "throughput": {
+        "level": "STANDARD"
+      },
+      "health_status": {
+        "can_send_message": "LIMITED",
+        "entities": [
+          {
+            "entity_type": "PHONE_NUMBER",
+            "can_send_message": "LIMITED"
+          },
+          {
+            "entity_type": "WABA",
+            "can_send_message": "AVAILABLE"
+          },
+          {
+            "entity_type": "BUSINESS",
+            "can_send_message": "LIMITED"
+          },
+          {
+            "entity_type": "APP",
+            "can_send_message": "AVAILABLE"
+          }
+        ]
+      }
+    },
+    "maribel": {
+      "quality_rating": "GREEN",
+      "whatsapp_business_manager_messaging_limit": "TIER_100K",
+      "status": "CONNECTED",
+      "name_status": "APPROVED",
+      "throughput": {
+        "level": "STANDARD"
+      },
+      "health_status": {
+        "can_send_message": "LIMITED",
+        "entities": [
+          {
+            "entity_type": "PHONE_NUMBER",
+            "can_send_message": "AVAILABLE"
+          },
+          {
+            "entity_type": "WABA",
+            "can_send_message": "AVAILABLE"
+          },
+          {
+            "entity_type": "BUSINESS",
+            "can_send_message": "LIMITED"
+          },
+          {
+            "entity_type": "APP",
+            "can_send_message": "AVAILABLE"
+          }
+        ]
+      }
+    }
+  }
+}

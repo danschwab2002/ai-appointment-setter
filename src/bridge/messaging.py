@@ -1121,16 +1121,22 @@ class ChatwootMessageSender:
         content: str,
         delivery_id: str,
         greeting_name: str | None = None,
+        template_params: dict[str, object] | None = None,
     ) -> FirstTouchResult:
-        """Send a first-touch template in an existing canonical conversation."""
+        """Send a first-touch template in an existing canonical conversation.
+
+        ``template_params`` (masivo por el AE, encargo 9): los parametros ya armados
+        de una plantilla que no es la del manifiesto (la del masivo, con sus
+        variables fijas y su imagen), como en ``send_first_touch``. Con ellos no
+        hace falta la plantilla del sender ni el nombre. Sin ellos, nada cambia.
+        """
         if not self._is_target_allowed(phone):
             return FirstTouchResult("blocked", None, None, "target_not_allowed")
         if (
             not isinstance(conversation_id, int)
             or isinstance(conversation_id, bool)
             or conversation_id < 1
-            or not buyer_name.strip()
-            or self._template is None
+            or (template_params is None and (not buyer_name.strip() or self._template is None))
         ):
             return FirstTouchResult(
                 "blocked", conversation_id, None, "invalid_first_touch"
@@ -1140,10 +1146,14 @@ class ChatwootMessageSender:
                 conversation_id=conversation_id,
                 content=content,
                 delivery_id=delivery_id,
-                template_params=self._template.params(
-                    content=content,
-                    followup=False,
-                    buyer_name=_template_name(greeting_name, buyer_name),
+                template_params=(
+                    template_params
+                    if template_params is not None
+                    else self._template.params(  # type: ignore[union-attr]
+                        content=content,
+                        followup=False,
+                        buyer_name=_template_name(greeting_name, buyer_name),
+                    )
                 ),
             )
         except ChatwootProtocolError:
