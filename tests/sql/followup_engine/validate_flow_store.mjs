@@ -699,6 +699,10 @@ check(sameJson([...lockTimeouts].sort(), [
   // Publicar, pausar, reanudar y cerrar el producto desde la pagina (20261115000200, E-575).
   'approver_close_agent_product_v1', 'approver_pause_agent_product_v1', 'approver_publish_agent_product_v1',
   'approver_resume_agent_product_v1',
+  // El almacen del masivo: la pagina, los vetos, el motor, el registro por persona y la purga (20261125000200).
+  'apply_bulk_list_vetoes_v1', 'approver_brake_bulk_send_v1', 'approver_confirm_bulk_send_v1',
+  'approver_create_bulk_list_v1', 'close_bulk_send_recipient_v1', 'expire_bulk_send_reservations_v1',
+  'purge_bulk_list_phones_v1', 'reserve_bulk_send_recipient_v1', 'transition_bulk_send_v1',
 ].sort()), '2: lock_timeout de 5 s en las que esperan locks', lockTimeouts);
 
 // ===========================================================================

@@ -337,7 +337,18 @@ const rows = await db.query(`
       ('register_permission_notice_v1(jsonb)'),
       ('close_permission_notice_v1(text,text,timestamp with time zone)'),
       ('record_permission_grant_v1(jsonb)'),
-      ('revoke_permission_grant_v1(uuid,text)')
+      ('revoke_permission_grant_v1(uuid,text)'),
+      -- 20261125000200: el almacen del masivo manejado por el AE (encargo 3).
+      ('create_bulk_send_v1(jsonb,jsonb)'),
+      ('apply_bulk_list_vetoes_v1(jsonb,uuid,jsonb)'),
+      ('transition_bulk_send_v1(jsonb,uuid,text,text)'),
+      ('reserve_bulk_send_recipient_v1(uuid,integer,boolean)'),
+      ('close_bulk_send_recipient_v1(uuid,integer,jsonb)'),
+      ('expire_bulk_send_reservations_v1(uuid,integer)'),
+      ('read_bulk_send_batch_v1(uuid,integer)'),
+      ('read_bulk_send_v1(jsonb,uuid)'),
+      ('read_bulk_sends_v1(jsonb,integer)'),
+      ('purge_bulk_list_phones_v1(timestamp with time zone)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -376,6 +387,7 @@ const result = rows.rows[0];
 // 20261114000300 (las ofertas huerfanas de Hotmart, E-565) suma sus dos: 234.
 // 20261115000200 (publicar el producto del AE, E-575) suma la lectura en vivo: 235.
 // 20261116000200 (el registro de permiso de WhatsApp, E-627) suma sus cuatro: 239.
+// 20261125000200 (el almacen del masivo, encargo 3) suma sus diez: 249.
 // Historical baseline guard was `result.expected_count !== 63`; the current
 // baseline is 68 RPCs, daily feedback adds fourteen, payment links add three,
 // the one-shot operator disposition adds one, and correlation event context
@@ -427,7 +439,7 @@ const result = rows.rows[0];
 // claim, settle and block the retry, and mark the 131026 notice.
 // The personal coupon of a native step (20261112210500, E-483, C2) adds the read of the bridge.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 239) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 249) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

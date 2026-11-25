@@ -43,7 +43,10 @@ const results = {};
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-if (position !== names.length - 1) fail(`${MIGRATION} tiene que ser la ultima`, names.slice(position + 1));
+// Despues va solo el almacen del masivo (20261125000200), que no toca la admision.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261125000200_bulk_send_store_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la del masivo`, names.slice(position + 1));
+}
 if (shape.rechazos.reason !== 'error_interno:23514' || shape.identidad_del_destino.es_de_otro_contacto !== true
     || shape.identidad_del_destino.su_contacto.email !== null || shape.identidad_del_destino.su_contacto.phone !== null) {
   fail('el fixture no es la forma capturada', shape);

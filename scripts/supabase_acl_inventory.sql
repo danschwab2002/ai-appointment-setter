@@ -273,7 +273,18 @@ expected_service_role(signature) as (
         ('public.register_permission_notice_v1(jsonb)'),
         ('public.close_permission_notice_v1(text, text, timestamp with time zone)'),
         ('public.record_permission_grant_v1(jsonb)'),
-        ('public.revoke_permission_grant_v1(uuid, text)')
+        ('public.revoke_permission_grant_v1(uuid, text)'),
+        -- 20261125000200: el almacen del masivo manejado por el AE (encargo 3).
+        ('public.create_bulk_send_v1(jsonb, jsonb)'),
+        ('public.apply_bulk_list_vetoes_v1(jsonb, uuid, jsonb)'),
+        ('public.transition_bulk_send_v1(jsonb, uuid, text, text)'),
+        ('public.reserve_bulk_send_recipient_v1(uuid, integer, boolean)'),
+        ('public.close_bulk_send_recipient_v1(uuid, integer, jsonb)'),
+        ('public.expire_bulk_send_reservations_v1(uuid, integer)'),
+        ('public.read_bulk_send_batch_v1(uuid, integer)'),
+        ('public.read_bulk_send_v1(jsonb, uuid)'),
+        ('public.read_bulk_sends_v1(jsonb, integer)'),
+        ('public.purge_bulk_list_phones_v1(timestamp with time zone)')
 ),
 functions as (
     select
