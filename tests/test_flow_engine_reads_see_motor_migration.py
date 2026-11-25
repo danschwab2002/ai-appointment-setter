@@ -199,6 +199,8 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
         "20261125000200_bulk_send_store_v1.sql",
         # Preparar y los vetos de la base del masivo (20261125000300).
         "20261125000300_bulk_send_prepared_and_base_vetoes_v1.sql",
+        # El registro por persona del masivo (20261125000400).
+        "20261125000400_bulk_send_recipients_read_v1.sql",
     ]
     native = (MIGRATIONS / "20261024000200_flow_engine_native_v1.sql").read_text(encoding="utf-8")
     assert "read_automation_expert_flows_v1" not in native

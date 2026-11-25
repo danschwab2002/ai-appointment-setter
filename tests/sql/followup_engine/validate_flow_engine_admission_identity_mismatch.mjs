@@ -45,7 +45,9 @@ const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Despues van solo las del masivo (20261125000200 y 20261125000300), que no tocan la admision.
 if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261125000200_bulk_send_store_v1.sql',
-  '20261125000300_bulk_send_prepared_and_base_vetoes_v1.sql'])) {
+  '20261125000300_bulk_send_prepared_and_base_vetoes_v1.sql',
+    // El registro por persona del masivo (20261125000400).
+    '20261125000400_bulk_send_recipients_read_v1.sql'])) {
   fail(`despues de ${MIGRATION} van solo las del masivo`, names.slice(position + 1));
 }
 if (shape.rechazos.reason !== 'error_interno:23514' || shape.identidad_del_destino.es_de_otro_contacto !== true

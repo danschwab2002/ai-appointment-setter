@@ -353,7 +353,9 @@ const rows = await db.query(`
       ('record_bulk_send_prepared_v1(uuid,integer,jsonb)'),
       ('read_bulk_send_prepared_v1(uuid,integer[])'),
       ('read_bulk_send_members_v1(uuid,integer,integer)'),
-      ('read_bulk_list_base_vetoes_v1(jsonb,uuid,text[])')
+      ('read_bulk_list_base_vetoes_v1(jsonb,uuid,text[])'),
+      -- 20261125000400: el registro por persona del masivo, para el reporte (D10 del #511).
+      ('read_bulk_send_recipients_v1(uuid,integer,integer)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -394,6 +396,7 @@ const result = rows.rows[0];
 // 20261116000200 (el registro de permiso de WhatsApp, E-627) suma sus cuatro: 239.
 // 20261125000200 (el almacen del masivo, encargo 3) suma sus diez: 249.
 // 20261125000300 (preparar y los vetos de la base del masivo, encargo 3b) suma sus cuatro: 253.
+// 20261125000400 (el registro por persona del masivo, D10 del #511) suma la suya: 254.
 // Historical baseline guard was `result.expected_count !== 63`; the current
 // baseline is 68 RPCs, daily feedback adds fourteen, payment links add three,
 // the one-shot operator disposition adds one, and correlation event context
@@ -445,7 +448,7 @@ const result = rows.rows[0];
 // claim, settle and block the retry, and mark the 131026 notice.
 // The personal coupon of a native step (20261112210500, E-483, C2) adds the read of the bridge.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 253) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 254) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

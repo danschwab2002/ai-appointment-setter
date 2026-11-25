@@ -97,7 +97,7 @@ if (JSON.stringify(names.slice(position + 2)) !== JSON.stringify(['2026111400030
     // Los motivos de quien no arranco en un envio a una audiencia (20261117000700, E-666).
     '20261117000700_flow_audience_start_reasons_v1.sql',
     // El numero de conversacion de los avisos (20261118000300, E-656).
-    C_MIGRATION, D_MIGRATION, '20261125000200_bulk_send_store_v1.sql', '20261125000300_bulk_send_prepared_and_base_vetoes_v1.sql'])) fail('despues de la pregunta van solo la de E-565, la de E-569, la de E-575, la de E-622, la de E-627, la de E-661, la de E-665, la de E-666 y la de E-656', names.slice(position + 2));
+    C_MIGRATION, D_MIGRATION, '20261125000200_bulk_send_store_v1.sql', '20261125000300_bulk_send_prepared_and_base_vetoes_v1.sql', '20261125000400_bulk_send_recipients_read_v1.sql'])) fail('despues de la pregunta van solo la de E-565, la de E-569, la de E-575, la de E-622, la de E-627, la de E-661, la de E-665, la de E-666 y la de E-656', names.slice(position + 2));
 const readMigration = (name) => readFileSync(join(root, 'supabase/migrations', name), 'utf8')
   .replace(/create extension if not exists pgcrypto;/gi, '-- pgcrypto is built into PGlite');
 

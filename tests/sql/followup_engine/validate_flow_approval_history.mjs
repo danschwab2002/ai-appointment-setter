@@ -128,7 +128,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026110300070
     // El almacen del masivo (20261125000200).
     '20261125000200_bulk_send_store_v1.sql',
     // Preparar y los vetos del masivo (20261125000300).
-    '20261125000300_bulk_send_prepared_and_base_vetoes_v1.sql'])) {
+    '20261125000300_bulk_send_prepared_and_base_vetoes_v1.sql',
+    // El registro por persona del masivo (20261125000400).
+    '20261125000400_bulk_send_recipients_read_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de si la persona ya es cliente`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(

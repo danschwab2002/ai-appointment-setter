@@ -289,7 +289,9 @@ expected_service_role(signature) as (
         ('public.record_bulk_send_prepared_v1(uuid, integer, jsonb)'),
         ('public.read_bulk_send_prepared_v1(uuid, integer[])'),
         ('public.read_bulk_send_members_v1(uuid, integer, integer)'),
-        ('public.read_bulk_list_base_vetoes_v1(jsonb, uuid, text[])')
+        ('public.read_bulk_list_base_vetoes_v1(jsonb, uuid, text[])'),
+        -- 20261125000400: el registro por persona del masivo, para el reporte (D10 del #511).
+        ('public.read_bulk_send_recipients_v1(uuid, integer, integer)')
 ),
 functions as (
     select

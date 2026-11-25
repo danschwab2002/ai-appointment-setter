@@ -3,7 +3,7 @@
 Mapa: ``OS/productos/soporte-infoproductores/documentacion/2026-11-25-mapa-masivo-por-el-ae.md``. Las
 piezas ya estan en sus modulos (``bulk_import``, ``bulk_send_vetoes``, ``bulk_send_page``,
 ``bulk_send_prepare``, ``bulk_send_brakes``, ``bulk_send_worker``) y las dos migraciones
-(``20261125000200`` y ``20261125000300``). Aca vive lo que las conecta, para que ``app.py`` solo lo
+(``20261125000200``, ``20261125000300`` y ``20261125000400``). Aca vive lo que las conecta, para que ``app.py`` solo lo
 llame (crear, arrancar, parar, ``/ready`` y la seccion de la pagina), como ``flow_audience_wiring``:
 
 * ``SupabaseBulkSendStore``: las funciones de ``service_role`` del motor (``BulkSendStore`` de
@@ -16,6 +16,8 @@ llame (crear, arrancar, parar, ``/ready`` y la seccion de la pagina), como ``flo
   AgentBot: el webhook lo clasifica ``automation_outgoing`` y no pausa al agente), que a una persona sin
   preparar le pone la etiqueta de la campana justo antes de la plantilla (``before_send``, como el
   segmento del motor nativo, E-316).
+* ``BulkSendRecipientsReport``: el reporte de la pagina (D10 del #511): el registro por persona de
+  ``read_bulk_send_recipients_v1`` (``20261125000400``), lo leido de Chatwoot y ``build_report``.
 * ``build_bulk_send``: con ``BULK_SEND_ENABLED`` arma todo, y si falta algo que lo hace seguro no
   arranca el bridge (``BulkSendConfigError``). Apagado devuelve None y nada de esto existe.
 
@@ -65,6 +67,20 @@ from bridge.bulk_send_prepare import (
     SendSnapshot,
     prepare_bulk_send,
     revalidate_prepared,
+)
+from bridge.bulk_send_report import (
+    RECIPIENT_DUBIOUS,
+    RECIPIENT_PENDING,
+    RECIPIENT_SEND_FAILED,
+    RECIPIENT_SENT,
+    RECIPIENT_VETOED,
+    BulkSendChatwootReader,
+    BulkSendPurchase,
+    BulkSendRecipient,
+    BulkSendReport,
+    ChatwootBulkSendReader,
+    build_report,
+    read_conversations,
 )
 from bridge.bulk_send_vetoes import (
     ChatwootVetoReader,
@@ -234,6 +250,12 @@ class SupabaseBulkSendStore:
             "p_prepared": {"contact_id": prepared.contact_id, "conversation_id": prepared.conversation_id,
                            "source_id": prepared.source_id, "label": prepared.label, "how": prepared.how}},
             shape=dict)
+
+    # -- el reporte (D10) ---------------------------------------------------------
+
+    async def read_recipients(self, send_id: str, *, after_position: int, limit: int) -> Sequence[Mapping[str, Any]]:
+        return await self._rpc("read_bulk_send_recipients_v1", {
+            "p_send_id": send_id, "p_after_position": after_position, "p_limit": limit}, shape=list)
 
     # -- la purga (decision 9) ---------------------------------------------------
 
@@ -429,6 +451,125 @@ def conversation_labeler(*, control: Any, prepare: BulkPrepareChatwoot) -> Calla
 
 
 # ---------------------------------------------------------------------------
+# El reporte (D10 del #511): el registro por persona de la base y lo leido de Chatwoot.
+# ---------------------------------------------------------------------------
+
+# El estado del registro (read_bulk_send_recipients_v1) visto desde bulk_send_report. Lo reservado sin cierre
+# esta saliendo (o el bridge se cayo y lo va a vencer a dudoso): todavia no salio.
+_RECIPIENT_STATES = {"enviado": RECIPIENT_SENT, "fallido": RECIPIENT_SEND_FAILED, "dudoso": RECIPIENT_DUBIOUS,
+                     "vetado": RECIPIENT_VETOED, "reservado": RECIPIENT_PENDING, "pendiente": RECIPIENT_PENDING}
+RECIPIENTS_PAGE = 500
+# El tope de personas de un envio (bulk_sends.recipient_cap, check de 20261125000200): mas paginas es un error.
+MAX_RECIPIENTS = 20_000
+# Lo que dura un reporte armado: cada vista de la pagina no relee miles de conversaciones de Chatwoot.
+REPORT_TTL = timedelta(minutes=5)
+
+
+def _epoch(value: object, function: str) -> int | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise BulkSendStoreUnavailable(f"{function}_invalid_row")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as error:
+        raise BulkSendStoreUnavailable(f"{function}_invalid_row") from error
+    if parsed.tzinfo is None:
+        raise BulkSendStoreUnavailable(f"{function}_invalid_row")
+    return int(parsed.timestamp())
+
+
+def _optional_id(value: object, function: str) -> int | None:
+    if value is None:
+        return None
+    if not _positive_int(value):
+        raise BulkSendStoreUnavailable(f"{function}_invalid_row")
+    return int(value)  # type: ignore[call-overload]
+
+
+def recipient_of(row: object) -> tuple[BulkSendRecipient, BulkSendPurchase | None]:
+    """Una fila de ``read_bulk_send_recipients_v1`` como la persona del reporte y su compra.
+
+    Falla cerrado ante una fila sin la forma de la funcion. Un ``enviado`` sin conversacion (la base solo
+    exige el mensaje) no se puede leer en Chatwoot: cuenta como dudoso, nunca como entregado.
+    """
+    function = "read_bulk_send_recipients_v1"
+    if not isinstance(row, dict):
+        raise BulkSendStoreUnavailable(f"{function}_invalid_row")
+    position, phone, state = row.get("position"), row.get("phone"), row.get("state")
+    if (not isinstance(position, int) or isinstance(position, bool) or position < 0
+            or (phone is not None and not isinstance(phone, str)) or state not in _RECIPIENT_STATES):
+        raise BulkSendStoreUnavailable(f"{function}_invalid_row")
+    conversation = _optional_id(row.get("chatwoot_conversation_id"), function)
+    message = _optional_id(row.get("chatwoot_message_id"), function)
+    closed_at = _epoch(row.get("closed_at"), function)
+    purchased_at = _epoch(row.get("purchased_at"), function)
+    mapped = _RECIPIENT_STATES[state]
+    if mapped == RECIPIENT_SENT and (conversation is None or message is None or closed_at is None):
+        mapped = RECIPIENT_DUBIOUS
+    recipient = BulkSendRecipient(
+        recipient_id=str(position), phone=phone or "", state=mapped, conversation_id=conversation,
+        message_id=message if mapped == RECIPIENT_SENT else None,
+        sent_at=closed_at if mapped == RECIPIENT_SENT else None)
+    purchase = (BulkSendPurchase(recipient_id=str(position), purchased_at=purchased_at)
+                if purchased_at is not None and mapped == RECIPIENT_SENT else None)
+    return recipient, purchase
+
+
+class BulkSendRecipientsReport:
+    """El ``BulkSendReportSource`` de la pagina: el registro de la base, Chatwoot y ``build_report``.
+
+    Lee el registro entero de a ``RECIPIENTS_PAGE`` (cursor por posicion, que tiene que avanzar), lee una
+    vez cada conversacion mandada con ``read_conversations`` (poca concurrencia: el cupo de Chatwoot lo
+    comparte el bridge) y arma el reporte. Lo guarda ``REPORT_TTL`` por envio, y dos vistas a la vez del
+    mismo envio esperan la misma lectura. Si la base no contesta o contesta otra forma, levanta y la pagina
+    no muestra la seccion (``bulk_send_page``: ``report=unavailable``).
+    """
+
+    def __init__(self, *, store: SupabaseBulkSendStore, chatwoot: BulkSendChatwootReader,
+                 clock: Callable[[], datetime], ttl: timedelta = REPORT_TTL, max_concurrency: int = 4) -> None:
+        self._store = store
+        self._chatwoot = chatwoot
+        self._clock = clock
+        self._ttl = ttl
+        self._max_concurrency = max_concurrency
+        self._cache: dict[str, tuple[datetime, BulkSendReport]] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    async def _recipients(self, send_id: str) -> tuple[list[BulkSendRecipient], list[BulkSendPurchase]]:
+        recipients: list[BulkSendRecipient] = []
+        purchases: list[BulkSendPurchase] = []
+        after = -1
+        while True:
+            rows = await self._store.read_recipients(send_id, after_position=after, limit=RECIPIENTS_PAGE)
+            for row in rows:
+                recipient, purchase = recipient_of(row)
+                position = int(recipient.recipient_id)
+                if position <= after:
+                    raise BulkSendStoreUnavailable("read_bulk_send_recipients_v1_cursor_did_not_advance")
+                after = position
+                recipients.append(recipient)
+                if purchase is not None:
+                    purchases.append(purchase)
+            if len(rows) < RECIPIENTS_PAGE:
+                return recipients, purchases
+            if len(recipients) >= MAX_RECIPIENTS:
+                raise BulkSendStoreUnavailable("read_bulk_send_recipients_v1_too_many")
+
+    async def report(self, send_id: str) -> BulkSendReport:
+        lock = self._locks.setdefault(send_id, asyncio.Lock())
+        async with lock:
+            cached = self._cache.get(send_id)
+            if cached is not None and self._clock() - cached[0] < self._ttl:
+                return cached[1]
+            recipients, purchases = await self._recipients(send_id)
+            readings = await read_conversations(self._chatwoot, recipients, max_concurrency=self._max_concurrency)
+            built = build_report(recipients, readings, purchases)
+            self._cache[send_id] = (self._clock(), built)
+            return built
+
+
+# ---------------------------------------------------------------------------
 # El armado.
 # ---------------------------------------------------------------------------
 
@@ -594,14 +735,16 @@ def build_bulk_send(*, enabled: bool, environ: Mapping[str, str] | None, supabas
         chatwoot=control_client, inbox_id=chatwoot_inbox_id, country_code=country_code_for_time_zone(time_zone),
         sending_key=config.instance_key, portfolio_keys=tuple(numbers), health=file_health_reader(Path(health_path)),
         reviewer=BulkListVetoReviewer(store=veto_store, chatwoot=control_client, inbox_id=chatwoot_inbox_id),
+        report=BulkSendRecipientsReport(
+            store=store, chatwoot=ChatwootBulkSendReader(control_client, inbox_id=chatwoot_inbox_id), clock=now),
         campaigns=campaigns)
     logger.info("bulk_send_enabled instance=%s numbers=%s", config.instance_key, ",".join(sorted(numbers)))
     return BulkSend(worker=worker, store=store, page=page, config=config, clock=now)
 
 
 __all__ = [
-    "BulkListVetoReviewer", "BulkSend", "BulkSendStoreRejected", "BulkSendStoreUnavailable",
+    "BulkListVetoReviewer", "BulkSend", "BulkSendRecipientsReport", "BulkSendStoreRejected", "BulkSendStoreUnavailable",
     "CampaignLabelSender", "ENV_VARIABLES", "HEALTH_PATH_VARIABLE", "SupabaseBulkSendStore",
     "SupabasePrepareStore", "base_vetoes_for_prepare", "build_bulk_send", "campaign_labels",
-    "conversation_labeler",
+    "conversation_labeler", "recipient_of",
 ]

@@ -54,8 +54,10 @@ const sha = (text) => createHash('sha256').update(text).digest('hex');
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
+// El registro por persona para el reporte (D10 del #511): solo lee, no cambia nada de lo que se prueba aca.
+const KNOWN_LATER = ['20261125000400_bulk_send_recipients_read_v1.sql'];
 for (const name of names.slice(position + 1)) {
-  if (readFileSync(join(root, 'supabase/migrations', name), 'utf8').includes('bulk_')) {
+  if (!KNOWN_LATER.includes(name) && readFileSync(join(root, 'supabase/migrations', name), 'utf8').includes('bulk_')) {
     fail(`${name} toca el masivo: revisar esta prueba`);
   }
 }
