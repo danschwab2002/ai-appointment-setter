@@ -1,0 +1,116 @@
+{
+  "_fixture": {
+    "written_at": "2026-11-25",
+    "kind": "FIXTURE DE DOCUMENTACION, FALTA CAPTURA REAL. Ninguna de estas respuestas se leyo de un Chatwoot: son escrituras (crear un contacto, una conversacion, poner una etiqueta) y capturarlas en produccion seria tocar Chatwoot. La forma sale del codigo publico de Chatwoot v4.13.0 (la version de las instancias, docs/current-state.md), leido el 2026-11-25 en raw.githubusercontent.com/chatwoot/chatwoot/v4.13.0: app/controllers/api/v1/accounts/contacts_controller.rb (create con build_contact_inbox; filter con Contacts::FilterService), app/views/api/v1/accounts/contacts/create.json.jbuilder (payload.contact + payload.contact_inbox.source_id), app/views/api/v1/accounts/contacts/filter.json.jbuilder (meta.count + payload), app/views/api/v1/models/_contact.json.jbuilder y _contact_inbox.json.jbuilder, app/services/contacts/filter_service.rb (phone_number equal_to compara exacto contra '+' + digitos), app/models/contact.rb (phone_number unico por cuenta), app/controllers/concerns/request_exception_handler.rb (el 422 de un RecordInvalid: message + attributes), app/views/api/v1/conversations/partials/_conversation.json.jbuilder (id = display_id), app/controllers/api/v1/accounts/conversations/labels_controller.rb y labels/create.json.jbuilder (el POST REEMPLAZA la lista y devuelve {payload: [titulos]}), config/initializers/rack_attack.rb (solo /contacts/search tiene tope propio, 100/min por cuenta; /contacts/filter cuenta solo contra los 3.000/min por IP).",
+    "what_is_real": "La forma que parsea masivo.py (leer_creado: payload.contact.id y payload.contact_inbox.source_id; el 422 con 'phone_number' en attributes) corrio contra el Chatwoot de Maribel en el masivo del Black del 22/11 y en el preparar del 23/11 (coordinacion/etapa-1/scripts-2026-11-21/black-domingo/masivo/LEEME.md). Las conversaciones de un contacto NO estan aca: los tests usan la captura real tests/fixtures/chatwoot_contact_conversations_inbox_13_contact_767_20261029.json. El index de etiquetas sale de tests/fixtures/automation_expert_chatwoot/chatwoot_v4_13_labels_macros_documentacion_20261101.json. Telefonos, nombres y source_id son sinteticos.",
+    "debt": "Capturar en el ensayo con numeros del equipo (encargo 12, M4), con la etiqueta de prueba y en solo una instancia: la respuesta de POST /contacts/filter, POST /contacts (y su 422), POST /conversations y POST /conversations/<id>/labels, sacando nombre, telefono y source_id.",
+    "why": "src/bridge/bulk_send_prepare.py (encargo 7 del masivo por el AE) deja contacto, conversacion y etiqueta sin mandar y sin pasar nunca por /contacts/search."
+  },
+  "contact_filter_request": {
+    "path": "/api/v1/accounts/3/contacts/filter",
+    "body": {
+      "payload": [
+        {
+          "attribute_key": "phone_number",
+          "filter_operator": "equal_to",
+          "values": ["+573000000001"],
+          "query_operator": null
+        }
+      ]
+    }
+  },
+  "contact_filter_none": {
+    "status": 200,
+    "body": {
+      "meta": {"count": 0, "current_page": 1},
+      "payload": []
+    }
+  },
+  "contact_filter_one": {
+    "status": 200,
+    "body": {
+      "meta": {"count": 1, "current_page": 1},
+      "payload": [
+        {
+          "additional_attributes": {},
+          "availability_status": "offline",
+          "email": null,
+          "id": 767,
+          "name": "Persona Sintetica",
+          "phone_number": "+573000000001",
+          "blocked": false,
+          "identifier": null,
+          "thumbnail": "",
+          "custom_attributes": {},
+          "last_activity_at": 1793210727,
+          "created_at": 1793157000,
+          "contact_inboxes": [
+            {
+              "source_id": "573000000001",
+              "inbox": {"id": 13, "avatar_url": "", "channel_id": 4, "name": "WhatsApp sintetico", "channel_type": "Channel::Whatsapp", "provider": "whatsapp_cloud"}
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "contact_create": {
+    "status": 200,
+    "body": {
+      "payload": {
+        "contact": {
+          "additional_attributes": {},
+          "availability_status": "offline",
+          "email": null,
+          "id": 901,
+          "name": "Ana",
+          "phone_number": "+573000000002",
+          "blocked": false,
+          "identifier": null,
+          "thumbnail": "",
+          "custom_attributes": {},
+          "created_at": 1795600000,
+          "contact_inboxes": [
+            {
+              "source_id": "573000000002",
+              "inbox": {"id": 13, "avatar_url": "", "channel_id": 4, "name": "WhatsApp sintetico", "channel_type": "Channel::Whatsapp", "provider": "whatsapp_cloud"}
+            }
+          ]
+        },
+        "contact_inbox": {
+          "inbox": {"id": 13, "channel_id": 4, "name": "WhatsApp sintetico", "channel_type": "Channel::Whatsapp"},
+          "source_id": "573000000002"
+        }
+      }
+    }
+  },
+  "contact_create_phone_taken": {
+    "status": 422,
+    "body": {
+      "message": "Phone number has already been taken",
+      "attributes": ["phone_number"]
+    }
+  },
+  "conversation_create": {
+    "status": 200,
+    "body": {
+      "meta": {
+        "sender": {"id": 901, "name": "Ana", "phone_number": "+573000000002", "blocked": false},
+        "channel": "Channel::Whatsapp",
+        "hmac_verified": false
+      },
+      "id": 4021,
+      "messages": [],
+      "account_id": 3,
+      "inbox_id": 13,
+      "status": "pending",
+      "labels": [],
+      "can_reply": false,
+      "last_activity_at": 1795600001
+    }
+  },
+  "conversation_labels_post": {
+    "status": 200,
+    "body": {"payload": ["vivo-29-11"]}
+  }
+}
