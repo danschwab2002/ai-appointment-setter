@@ -1,0 +1,43 @@
+{
+  "_capture": {
+    "origen": "Maribel (maribel_db), lectura en solo lectura del 2026-11-25: flow_engine_start_rejections con reason error_interno:23514 cruzada con webhook_events (por source_ref), contacts (por el mail del comprador) y channel_identities (por los digitos del telefono del comprador). Solo la forma: sin ids, mails, telefonos ni nombres.",
+    "encargo": "claude-flow-admission-identity-mismatch-v1",
+    "usa": "tests/sql/followup_engine/validate_flow_engine_admission_identity_mismatch.mjs",
+    "definicion_vigente": "pg_get_functiondef de admit_flow_engine_event_v1(jsonb,jsonb) igual en Maribel y en ATT1 (md5 030e0fb27da0aa19e130ecfcf435e559), con el bloque que atrapa el error de cada flujo en error_interno:<sqlstate>"
+  },
+  "rechazos": {
+    "reason": "error_interno:23514",
+    "phase": "admision",
+    "filas": 7,
+    "desde": "2026-11-23",
+    "hasta": "2026-11-24",
+    "por_evento": {
+      "PURCHASE_OUT_OF_SHOPPING_CART": 3,
+      "PURCHASE_CANCELED": 1,
+      "PURCHASE_APPROVED": 3
+    },
+    "processing_error_del_evento": {
+      "PURCHASE_OUT_OF_SHOPPING_CART": "flow_engine_no_start:error_interno:23514",
+      "PURCHASE_CANCELED": "flow_engine_no_start:error_interno:23514",
+      "PURCHASE_APPROVED": "purchase_correlation_contact_not_found"
+    }
+  },
+  "contacto_del_evento": {
+    "por_mail": 1,
+    "email": "presente",
+    "phone": "presente"
+  },
+  "identidad_del_destino": {
+    "channel": "whatsapp",
+    "account_id": "chatwoot:<n>",
+    "identity_status": "active",
+    "metadata_keys": ["inbox_id"],
+    "external_user_id": "solo digitos, sin +",
+    "es_de_otro_contacto": true,
+    "creada_antes_que_el_contacto_del_evento": true,
+    "su_contacto": {
+      "email": null,
+      "phone": null
+    }
+  }
+}
