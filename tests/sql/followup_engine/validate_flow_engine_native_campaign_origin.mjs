@@ -71,7 +71,9 @@ const REVIEWED = new Set(['20261112210400_e483_payment_failure_by_phone_v1.sql',
     // El numero de conversacion de los avisos del correlador (20261118000300, E-656).
     '20261118000300_identity_link_conversation_number_account_v1.sql',
     // El choque de identidad en la admision es un rechazo con nombre (20261125000100).
-    '20261125000100_flow_engine_admission_identity_mismatch_v1.sql']);
+    '20261125000100_flow_engine_admission_identity_mismatch_v1.sql',
+    // El almacen del masivo (20261125000200).
+    '20261125000200_bulk_send_store_v1.sql']);
 for (const name of names.slice(position + 1).filter((candidate) => !REVIEWED.has(candidate))) {
   const text = readFileSync(join(root, 'supabase/migrations', name), 'utf8');
   if (text.includes('flow_engine_native_campaign_origin') || text.includes('audience_purchase_intent_id')) {

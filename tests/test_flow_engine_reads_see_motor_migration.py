@@ -195,6 +195,8 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
         "20261118000300_identity_link_conversation_number_account_v1.sql",
         # El choque de identidad en la admision es un rechazo con nombre (20261125000100).
         "20261125000100_flow_engine_admission_identity_mismatch_v1.sql",
+        # El almacen del masivo (20261125000200).
+        "20261125000200_bulk_send_store_v1.sql",
     ]
     native = (MIGRATIONS / "20261024000200_flow_engine_native_v1.sql").read_text(encoding="utf-8")
     assert "read_automation_expert_flows_v1" not in native
