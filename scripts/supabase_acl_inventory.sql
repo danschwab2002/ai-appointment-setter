@@ -284,7 +284,12 @@ expected_service_role(signature) as (
         ('public.read_bulk_send_batch_v1(uuid, integer)'),
         ('public.read_bulk_send_v1(jsonb, uuid)'),
         ('public.read_bulk_sends_v1(jsonb, integer)'),
-        ('public.purge_bulk_list_phones_v1(timestamp with time zone)')
+        ('public.purge_bulk_list_phones_v1(timestamp with time zone)'),
+        -- 20261125000300: preparar y los vetos de la base del masivo (encargo 3b).
+        ('public.record_bulk_send_prepared_v1(uuid, integer, jsonb)'),
+        ('public.read_bulk_send_prepared_v1(uuid, integer[])'),
+        ('public.read_bulk_send_members_v1(uuid, integer, integer)'),
+        ('public.read_bulk_list_base_vetoes_v1(jsonb, uuid, text[])')
 ),
 functions as (
     select

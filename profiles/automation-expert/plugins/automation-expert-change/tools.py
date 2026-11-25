@@ -31,6 +31,12 @@ acotada de Chatwoot: leer y crear etiquetas, sumarle una a una conversacion y
 leer los macros. No borra, no saca etiquetas y no manda mensajes; la lista
 cerrada de rutas de Chatwoot la aplica el bridge.
 
+Desde la 0.9.0 (encargo 6 del masivo manejado por el AE) suma el masivo: el borrador
+(``propose_bulk_send``, que devuelve el link de la pagina para subir la lista) y su lectura
+(``get_bulk_send``, ``list_bulk_sends``). La lista se sube en la pagina, nunca en el chat, y el envio lo
+confirma, lo arranca y lo frena un aprobador ahi. Sin ``BULK_SEND_ENABLED`` el bridge no tiene esas rutas:
+``bulk_send_not_enabled``.
+
 Con el canal del link prendido (ciclo 1.9.0), una validacion que deja la
 propuesta ``validada`` postea el boton «Revisar y aprobar» en el mismo DM
 (``approval_button.py``). El boton es un link a la pagina del bridge: tampoco
@@ -133,6 +139,26 @@ _BRIDGE_ERRORS = frozenset({
     "flow_cohort_full",
     "flow_cohort_needs_native_flow",
     "flow_cohort_flow_not_in_cohort",
+    # El masivo (encargo 6 del masivo manejado por el AE): el borrador y su lectura.
+    "invalid_bulk_send_id",
+    "bulk_send_invalid",
+    "bulk_send_variable_invalid",
+    "bulk_send_variables_invalid",
+    "bulk_send_variables_mismatch",
+    "bulk_send_not_found",
+    "bulk_send_read_invalid",
+    "bulk_send_template_not_found",
+    "bulk_send_template_language_ambiguous",
+    "bulk_send_template_not_approved",
+    "bulk_send_template_without_opt_out",
+    "bulk_send_template_header_unsupported",
+    "bulk_send_template_per_person_parts",
+    "bulk_send_image_required",
+    "bulk_send_image_not_allowed",
+    "bulk_send_image_invalid",
+    "bulk_send_schedule_invalid",
+    "bulk_send_product_required",
+    "bulk_send_product_invalid",
 })
 
 
@@ -286,6 +312,9 @@ def _request(method: str, path: str, body: dict[str, object] | None = None) -> d
         # Lo mismo con las campanas: sin AGENT_CAMPAIGNS_ENABLED sus rutas no existen.
         if exc.code == 404 and detail == "Not Found" and path.startswith(CAMPAIGNS):
             return {"error": "campaigns_not_enabled"}
+        # Y con el masivo: sin BULK_SEND_ENABLED sus rutas no existen.
+        if exc.code in (404, 405) and detail in ("Not Found", "Method Not Allowed") and path.startswith(BULK_SENDS):
+            return {"error": "bulk_send_not_enabled"}
         return {"error": "automation_expert_change_unavailable"}
     except (URLError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError, OSError):
         return {"error": "automation_expert_change_unavailable"}
@@ -694,3 +723,60 @@ def add_to_test_group(params: dict[str, object], **kwargs: object) -> str:
         if type(value) is int and 0 <= value <= 100:
             result[key] = value
     return _dumps(result)
+
+
+# El masivo manejado por el AE (encargo 6, piezas 7 y 11 del mapa del 2026-11-25). El agente arma el
+# borrador y lee el estado; la lista la sube una persona en la pagina (el link que devuelve el borrador) y
+# el envio lo confirma, lo arranca y lo frena un aprobador ahi. Ninguna respuesta trae un telefono.
+BULK_SENDS = f"{PREFIX}/bulk-sends"
+_BULK_KEYS = ("template_name", "template_language", "template_variables", "header_image_url", "scheduled_at",
+              "campaign_label", "product_refs", "window_mode")
+# Lo que el agente ofrece cuando la plantilla no tiene el boton de baja: es texto fijo, no del modelo.
+BULK_WITHOUT_OPT_OUT_NEXT = {
+    "skill": "pedir-plantilla-a-meta",
+    "note": ("Un masivo solo sale con una plantilla aprobada que tenga la respuesta rápida «No más mensajes»: "
+             "tocarla deja la baja registrada. Ofrecé pedir una a Meta con la guía pedir-plantilla-a-meta "
+             "(el mismo texto con ese botón) o elegir otra del catálogo que lo tenga."),
+}
+
+
+def propose_bulk_send(params: dict[str, object], **kwargs: object) -> str:
+    """Guarda el borrador de un masivo y devuelve el link de la pagina para subir la lista. No manda nada."""
+    del kwargs
+    try:
+        requested_by = _requested_by()
+    except ValueError as exc:
+        return _dumps({"error": str(exc)})
+    extra = set(params) - set(_BULK_KEYS)
+    if extra or not isinstance(params.get("template_name"), str) or not isinstance(params.get("scheduled_at"), str):
+        return _dumps({"error": "invalid_body"})
+    variables = params.get("template_variables")
+    if variables is not None and not isinstance(variables, list):
+        return _dumps({"error": "bulk_send_variables_invalid"})
+    for value in variables or ():
+        if isinstance(value, str) and looks_like_identifier(value):
+            return _dumps({"error": "identifier_not_allowed"})
+    body: dict[str, object] = {key: params[key] for key in _BULK_KEYS if params.get(key) is not None}
+    body["requested_by"] = requested_by
+    out = _request("POST", BULK_SENDS, body)
+    if out.get("error") == "bulk_send_template_without_opt_out":
+        out["next"] = dict(BULK_WITHOUT_OPT_OUT_NEXT)
+    return _dumps(out)
+
+
+def get_bulk_send(params: dict[str, object], **kwargs: object) -> str:
+    """Un masivo: estado y conteos, sin telefonos. Solo lee."""
+    del kwargs
+    send_id = _uuid(params.get("send_id"))
+    if send_id is None:
+        return _dumps({"error": "invalid_bulk_send_id"})
+    return _dumps(_request("GET", f"{BULK_SENDS}/{send_id}"))
+
+
+def list_bulk_sends(params: dict[str, object], **kwargs: object) -> str:
+    """Los masivos de la instancia, del mas nuevo al mas viejo. Solo lee."""
+    del kwargs
+    limit = params.get("limit", 20)
+    if type(limit) is not int or not 1 <= limit <= 50:
+        return _dumps({"error": "invalid_query"})
+    return _dumps(_request("GET", f"{BULK_SENDS}?limit={limit}"))

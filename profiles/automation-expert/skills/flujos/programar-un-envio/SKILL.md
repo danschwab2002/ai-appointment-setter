@@ -40,7 +40,7 @@ Las reglas de la charla son las de `crear-un-flujo` (lenguaje de negocio, rondas
 ## Lo que todavía no se puede
 
 - Si al validar el sistema dice que este disparo **todavía no lo corre**, decilo así, en una frase: el envío queda armado pero no se puede publicar hasta que el sistema nuevo lo ejecute; ofrecé dejarlo listo como propuesta. No lo armes por el sistema anterior.
-- Un envío a gente que no dejó el formulario ni compró (por ejemplo, una lista comprada o de otro lado) no se puede: decilo en la primera ronda.
+- Un envío a gente que no dejó el formulario ni compró (por ejemplo, una lista de otro lado) no es esta guía: cargá `envio-masivo`, que lo arma con la lista que sube una persona en la página.
 - Varios mensajes seguidos en un envío, o una condición («si no contesta, mandale otro»), siguen las reglas de `crear-un-flujo`.
 
 ## El resumen

@@ -104,7 +104,8 @@ def test_the_distribution_copies_the_plugin_and_names_its_variables() -> None:
                                         "add_chatwoot_label_to_conversation", "list_chatwoot_macros",
                                         "create_chatwoot_label_macro", "preview_campaign", "propose_campaign",
                                         "validate_campaign", "get_campaign", "list_campaigns",
-                                        "get_approval_page", "add_to_test_group"]
+                                        "get_approval_page", "add_to_test_group",
+                                        "propose_bulk_send", "get_bulk_send", "list_bulk_sends"]
 
 
 def test_the_soul_sends_the_approval_page_without_a_proposal() -> None:
@@ -130,7 +131,7 @@ def _skill(path: str) -> str:
 
 
 SKILLS = ("flujos/armar-una-campana", "flujos/crear-un-flujo", "flujos/cambiar-un-flujo", "flujos/pasar-flujo-al-sistema-nuevo",
-          "flujos/pedir-plantilla-a-meta", "flujos/programar-un-envio",
+          "flujos/pedir-plantilla-a-meta", "flujos/programar-un-envio", "flujos/envio-masivo",
           "plataformas/hotmart", "plataformas/ghl-formularios", "plataformas/chatwoot-whatsapp")
 
 
