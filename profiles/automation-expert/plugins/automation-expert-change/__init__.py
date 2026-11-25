@@ -56,6 +56,10 @@ from .tools import get_approval_page  # noqa: E402
 from .schemas import ADD_TO_TEST_GROUP  # noqa: E402
 from .tools import add_to_test_group  # noqa: E402
 
+# Encargo 6 del masivo: el borrador y su lectura. Confirmar, arrancar y frenar son de la pagina.
+from .schemas import GET_BULK_SEND, LIST_BULK_SENDS, PROPOSE_BULK_SEND  # noqa: E402
+from .tools import get_bulk_send, list_bulk_sends, propose_bulk_send  # noqa: E402
+
 _TEMPLATE_TOOLS = frozenset({"propose_template", "validate_template", "list_template_requests",
                              "get_template_request"})
 _TOOLS = frozenset({"get_flow_definitions", "propose_flow_change", "validate_flow_change", "get_flow_change",
@@ -68,7 +72,9 @@ _TOOLS = frozenset({"get_flow_definitions", "propose_flow_change", "validate_flo
                     # E-465: el link de la pagina de aprobacion.
                     "get_approval_page",
                     # E-486: el grupo de prueba, solo agregar y solo un aprobador.
-                    "add_to_test_group"})
+                    "add_to_test_group",
+                    # Encargo 6: el masivo, solo el borrador y su lectura.
+                    "propose_bulk_send", "get_bulk_send", "list_bulk_sends"})
 
 
 def make_profile_guard(profile_name):
@@ -110,6 +116,9 @@ def register(ctx):
         ("list_campaigns", LIST_CAMPAIGNS, list_campaigns),
         ("get_approval_page", GET_APPROVAL_PAGE, get_approval_page),
         ("add_to_test_group", ADD_TO_TEST_GROUP, add_to_test_group),
+        ("propose_bulk_send", PROPOSE_BULK_SEND, propose_bulk_send),
+        ("get_bulk_send", GET_BULK_SEND, get_bulk_send),
+        ("list_bulk_sends", LIST_BULK_SENDS, list_bulk_sends),
     ):
         ctx.register_tool(name=name, toolset="automation_expert_change", schema=schema, handler=handler)
     ctx.register_hook("pre_tool_call", make_profile_guard(getattr(ctx, "profile_name", None)))

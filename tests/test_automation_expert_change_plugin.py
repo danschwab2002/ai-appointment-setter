@@ -38,7 +38,9 @@ TOOLS = ["get_flow_definitions", "propose_flow_change", "validate_flow_change", 
          # E-465: el link de la pagina de aprobacion, sin propuesta.
          "get_approval_page",
          # E-486 (8d): sumar a alguien al grupo de prueba; solo agrega.
-         "add_to_test_group"]
+         "add_to_test_group",
+         # Encargo 6 del masivo: el borrador y su lectura; confirmar, arrancar y frenar son de la pagina.
+         "propose_bulk_send", "get_bulk_send", "list_bulk_sends"]
 
 
 def _load_plugin() -> ModuleType:
@@ -81,8 +83,11 @@ def test_no_tool_approves_publishes_or_pauses() -> None:
     names = {value["name"] for value in vars(schemas).values() if isinstance(value, dict) and "name" in value}
     assert names == set(TOOLS)
     assert not any(word in name for name in names for word in ("approve", "publish", "pause", "discard"))
-    # Ninguna borra, saca, ejecuta ni manda (F-143: lectura y creacion si, borrado no).
-    assert not any(word in name for name in names for word in ("delete", "remove", "execute", "send"))
+    # Ninguna borra, saca, ejecuta ni manda (F-143: lectura y creacion si, borrado no). «bulk_send» es el
+    # sustantivo (el masivo, encargo 6): ninguna de sus tres lo manda, lo confirma, lo arranca ni lo frena.
+    nouns = {name.replace("bulk_sends", "masivos").replace("bulk_send", "masivo") for name in names}
+    assert not any(word in name for name in nouns for word in ("delete", "remove", "execute", "send"))
+    assert not any(word in name for name in names for word in ("confirm", "start", "brake", "stop", "launch"))
 
 
 class _Bridge(BaseHTTPRequestHandler):
