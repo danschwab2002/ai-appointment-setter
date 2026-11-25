@@ -57,7 +57,7 @@ const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Despues va solo el numero de conversacion de los avisos del correlador (20261118000300, E-656), que no toca
 // las ocurrencias.
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261118000300_identity_link_conversation_number_account_v1.sql'])) {
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261118000300_identity_link_conversation_number_account_v1.sql', '20261125000100_flow_engine_admission_identity_mismatch_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de E-656`, names.slice(position + 1));
 }
 

@@ -122,7 +122,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026110300070
     // Los motivos de quien no arranco en un envio a una audiencia (20261117000700, E-666).
     '20261117000700_flow_audience_start_reasons_v1.sql',
     // El numero de conversacion de los avisos del correlador (20261118000300, E-656).
-    '20261118000300_identity_link_conversation_number_account_v1.sql'])) {
+    '20261118000300_identity_link_conversation_number_account_v1.sql',
+    // El choque de identidad en la admision es un rechazo con nombre (20261125000100).
+    '20261125000100_flow_engine_admission_identity_mismatch_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de si la persona ya es cliente`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(
