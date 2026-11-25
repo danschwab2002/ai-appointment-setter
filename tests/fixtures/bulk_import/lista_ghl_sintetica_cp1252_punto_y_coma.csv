@@ -1,0 +1,17 @@
+First Name;Last Name;Phone;Email;Tags
+Ana;Uno;+57 300 000 0001;ana@example.com;black-2026
+Beto;Dos;3000000002;BETO@Example.com;black-2026
+Ana;Uno;573000000001;;black-2026
+Cami;Tres;601 555;cami@example.com;black-2026
+Dani;Cuatro;+57 601 0000004;;black-2026
+
+Eli;Cinco;+52 55 0000 0005;;black-2026
+Fede;Seis;+54 9 11 0000 0006;fede@example.com;black-2026
+Gabi;Siete;+52 1 55 0000 00071;;black-2026
+Hugo;Ocho;+54 11 0000 00081;;black-2026
+Ines;Nueve;;ines@example.com;black-2026
+José María;Diez;+34 612 000 010;jose@example.com;black-2026
+Karen;Once;+34 910 000 011;;black-2026
+12345;Doce;+1 305 555 0112;;black-2026
+Lu;Trece;+999 1;;black-2026
+Mia;Catorce;sin telefono;;black-2026
