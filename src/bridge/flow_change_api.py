@@ -70,6 +70,8 @@ from .flow_definition import (
 from .flow_validator import FlowValidationInputError, validate
 
 __all__ = [
+    "BULK_SEND_PAGE_PATH",
+    "BulkSendStore",
     "CONTRACT",
     "CONTRACT_VERSION",
     "DB_ROLE",
@@ -77,9 +79,13 @@ __all__ = [
     "FlowChangeStore",
     "StoreRejected",
     "StoreUnavailable",
+    "bulk_send_page_url",
+    "check_bulk_send_settings",
     "check_settings",
     "looks_like_identifier",
+    "register_bulk_send_routes",
     "register_flow_change_routes",
+    "template_has_opt_out_button",
 ]
 
 logger = logging.getLogger(__name__)
@@ -155,7 +161,7 @@ class FlowChangeStore:
         self._transport = transport
         self._timeout_seconds = timeout_seconds
 
-    async def _rpc(self, function: str, payload: Mapping[str, Any]) -> Any:
+    async def _rpc(self, function: str, payload: Mapping[str, Any], *, list_ok: bool = False) -> Any:
         headers = {"apikey": self._db_key, "Authorization": f"Bearer {self._db_key}",
                    "Content-Type": "application/json"}
         try:
@@ -171,7 +177,8 @@ class FlowChangeStore:
         except ValueError as error:
             raise StoreUnavailable() from error
         if response.status_code == 200:
-            if not isinstance(body, dict):
+            # Una funcion que devuelve una lista (read_bulk_sends_v1) la pide con list_ok.
+            if not isinstance(body, dict) and not (list_ok and isinstance(body, list)):
                 raise StoreUnavailable()
             return body
         sqlstate = body.get("code") if isinstance(body, dict) else None
@@ -800,3 +807,408 @@ def register_flow_change_routes(app: FastAPI, *, token: str, store: FlowChangeSt
         validation = proposal.get("validation")
         data["preview"] = validation.get("preview") if isinstance(validation, Mapping) else None
         return envelope(data)
+
+
+# ===========================================================================
+# El masivo manejado por el Automation Expert (encargo 6 del mapa del 2026-11-25, piezas 7 y 11).
+# ===========================================================================
+#
+# Tres rutas, detras de ``BULK_SEND_ENABLED`` (apagado por defecto: sin el flag no existen y dan 404):
+#
+# * ``POST {PREFIX}/bulk-sends``: el borrador de un masivo (plantilla, variables, imagen, hora central,
+#   etiqueta de la campana y producto) con ``create_bulk_send_v1`` (20261125000200). Antes de guardar mira
+#   el catalogo de la bandeja: la plantilla tiene que estar ``APPROVED`` y tener la respuesta rapida
+#   «No más mensajes» (la regla del boton de baja, pieza 11). Devuelve el link de la pagina para subir la
+#   lista: la lista nunca pasa por el agente (decision 1).
+# * ``GET {PREFIX}/bulk-sends/{id}``: el estado y los conteos (``read_bulk_send_v1``).
+# * ``GET {PREFIX}/bulk-sends``: los masivos de la instancia (``read_bulk_sends_v1``).
+#
+# Ninguna confirma, arranca ni frena: eso lo hace un aprobador en la pagina. Ninguna respuesta lleva un
+# telefono, ni enmascarado: de la vista de la base pasan solo los conteos y los datos del envio (los
+# ejemplos enmascarados son de la pagina).
+#
+# **La clave.** Las funciones del masivo son de ``service_role`` (la migracion no le dio ninguna al rol del
+# AE), asi que este cliente usa esa clave y solo llama a esas tres funciones. El agente no la ve: entra con
+# ``AUTOMATION_EXPERT_CHANGE_TOKEN`` como las demas rutas.
+
+BULK_SEND_ENV = "BULK_SEND_ENABLED"
+BULK_SENDS = f"{PREFIX}/bulk-sends"
+# La pagina para subir la lista de un masivo, bajo la pagina de aprobacion (como /flow-approval/envios de
+# la audiencia y /flow-approval/p/<id> de una propuesta). La sirve el encargo 5 (bulk_send_page.py): hasta
+# entonces el link no abre nada, y con el flag apagado no se arma.
+BULK_SEND_PAGE_PATH = "/flow-approval/masivos"
+BULK_SEND_UPLOAD_NOTE = (
+    "Este link abre la página para subir la lista (CSV, Excel o JSON). Entra un aprobador con «Entrar con "
+    "Slack», sube el archivo y ahí ve cuántas personas sirven y cuántas quedaron afuera y por qué. El envío "
+    "lo confirma un aprobador en esa misma página, escribiendo el número de personas: nunca sale desde este chat."
+)
+BULK_LIST_DEFAULT_LIMIT = 20
+BULK_LIST_MAX_LIMIT = 50
+# La hora central: preparar necesita al menos una hora antes (pieza 8), y mas de 30 dias no es un masivo.
+BULK_SCHEDULE_MIN_AHEAD = timedelta(hours=1)
+BULK_SCHEDULE_MAX_AHEAD = timedelta(days=30)
+BULK_VARIABLE_MAX_CHARS = 200
+_BULK_TEMPLATE_NAME = re.compile(r"^[a-z0-9_]{1,512}$")
+_BULK_LANGUAGE = re.compile(r"^[a-z]{2,3}(_[A-Z]{2})?$")
+_BULK_LABEL = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_BULK_PRODUCT = re.compile(r"^[a-z0-9_-]{1,100}$")
+_BULK_MARKER = re.compile(r"\{\{\s*([A-Za-z0-9_]+)\s*\}\}")
+_BULK_FIRST_NAME = {"de": "nombre"}
+_BULK_WINDOW_MODES = ("centrada", "desde_la_hora")
+# Lo que la base devuelve de un envio y llega al agente. Afuera a proposito: los ejemplos (telefono
+# enmascarado e inicial), quien subio y quien confirmo (IDs de Slack), la huella del archivo y la nota libre
+# del origen (la escribe una persona y puede traer un telefono).
+_BULK_SEND_KEYS = ("send_id", "state", "template_name", "template_language", "template_variables",
+                   "header_image_url", "campaign_label", "product_refs", "scheduled_at", "window_mode",
+                   "rate_millis", "recipient_cap", "created_at", "confirmed_at", "confirmed_count",
+                   "confirmed_health", "started_at", "finished_at", "brake_reason", "braked_at")
+_BULK_LIST_KEYS = ("state", "uploaded_at", "source_kind", "notice_declared", "rejected_counts", "member_count",
+                   "retention_days", "vetted_at", "purged_at", "eligible_count", "excluded_by_reason")
+_BULK_COUNT_KEY = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
+_BULK_RAISED = {"bulk_send_invalid", "bulk_send_variable_invalid", "bulk_send_not_found", "bulk_send_read_invalid"}
+
+
+def bulk_send_page_url(origin: str, send_id: str) -> str:
+    """El link de la pagina del masivo: el dominio de la pagina de aprobacion y el UUID canonico al final."""
+    return f"{origin.strip().rstrip('/')}{BULK_SEND_PAGE_PATH}/{UUID(send_id)}"
+
+
+def template_has_opt_out_button(template: Mapping[str, Any]) -> bool:
+    """La regla del boton de baja (pieza 11): una respuesta rapida que, tocada, ya registra la baja.
+
+    Es la de ``FOLLOWUP_OPT_OUT_BUTTON`` («No más mensajes»). Vale tambien el mismo texto sin tilde («No mas
+    mensajes», como la de Maribel que viene de GHL): tocarla manda ese texto y ``detect_explicit_opt_out``
+    lo registra como la misma baja (``stop_receiving_messages``). Una respuesta rapida con otro texto, o un
+    boton de URL con ese texto, no cuenta.
+    """
+    from .flow_validator import FOLLOWUP_OPT_OUT_BUTTON
+    from .opt_out import detect_explicit_opt_out
+
+    for component in template.get("components") or ():
+        if not isinstance(component, Mapping) or component.get("type") != "BUTTONS":
+            continue
+        for button in component.get("buttons") or ():
+            if not isinstance(button, Mapping) or button.get("type") != "QUICK_REPLY":
+                continue
+            text = button.get("text")
+            # Meta corta el texto de una respuesta rapida a 25 caracteres.
+            if not isinstance(text, str) or not text.strip() or len(text) > 25:
+                continue
+            if text == FOLLOWUP_OPT_OUT_BUTTON:
+                return True
+            match = detect_explicit_opt_out([text])
+            if match is not None and match.rule_key == "stop_receiving_messages":
+                return True
+    return False
+
+
+def _bulk_template_shape(template: Mapping[str, Any]) -> dict[str, Any]:
+    """Lo que el masivo necesita saber de una plantilla: marcadores del cuerpo, encabezado y botones."""
+    body_markers: set[str] = set()
+    header_format: str | None = None
+    header_markers = False
+    dynamic_url = False
+    for component in template.get("components") or ():
+        if not isinstance(component, Mapping):
+            continue
+        kind = component.get("type")
+        if kind == "BODY" and isinstance(component.get("text"), str):
+            body_markers = set(_BULK_MARKER.findall(component["text"]))
+        elif kind == "HEADER":
+            fmt = component.get("format", "TEXT")
+            header_format = fmt if isinstance(fmt, str) else "OTRO"
+            header_markers = isinstance(component.get("text"), str) and bool(_BULK_MARKER.search(component["text"]))
+        elif kind == "BUTTONS":
+            for button in component.get("buttons") or ():
+                url = button.get("url") if isinstance(button, Mapping) else None
+                if isinstance(url, str) and _BULK_MARKER.search(url):
+                    dynamic_url = True
+    return {"markers": len(body_markers), "header_format": header_format, "header_markers": header_markers,
+            "dynamic_url": dynamic_url}
+
+
+def _bulk_refused(code: str, field_name: str, problem: str | None = None) -> EntryRefused:
+    reason: dict[str, Any] = {"field": field_name}
+    if problem is not None:
+        reason["problem"] = problem
+    return EntryRefused(code, reason)
+
+
+def _bulk_pick_template(catalog: TemplateCatalog, name: str, language: str | None) -> Mapping[str, Any]:
+    named = catalog.named(name)
+    if language is not None:
+        named = tuple(t for t in named if isinstance(t.get("language"), str) and t["language"].strip() == language)
+    if not named:
+        raise _bulk_refused("bulk_send_template_not_found", "template_name")
+    languages = {t["language"].strip() for t in named if isinstance(t.get("language"), str)}
+    if len(languages) != 1:
+        raise _bulk_refused("bulk_send_template_language_ambiguous", "template_language")
+    approved = [t for t in named if t.get("status") == "APPROVED"]
+    if not approved:
+        raise _bulk_refused("bulk_send_template_not_approved", "template_name")
+    return approved[0]
+
+
+def _bulk_variables(value: Any, markers: int) -> list[Any]:
+    if value is None:
+        value = []
+    if not isinstance(value, list):
+        raise _bulk_refused("bulk_send_variables_invalid", "template_variables", "not_list")
+    variables: list[Any] = []
+    for entry in value:
+        if isinstance(entry, Mapping) and dict(entry) == _BULK_FIRST_NAME:
+            variables.append(dict(_BULK_FIRST_NAME))
+        elif isinstance(entry, str) and 1 <= len(entry.strip()) <= BULK_VARIABLE_MAX_CHARS:
+            if looks_like_identifier(entry):
+                raise _bulk_refused("identifier_not_allowed", "template_variables")
+            variables.append(entry.strip())
+        else:
+            raise _bulk_refused("bulk_send_variables_invalid", "template_variables", "text_or_first_name")
+    if len(variables) != markers:
+        raise _bulk_refused("bulk_send_variables_mismatch", "template_variables",
+                            "fewer_than_markers" if len(variables) < markers else "more_than_markers")
+    return variables
+
+
+def _bulk_schedule(value: Any, now: datetime) -> str:
+    if not isinstance(value, str) or len(value) > 40:
+        raise _bulk_refused("bulk_send_schedule_invalid", "scheduled_at", "not_iso")
+    try:
+        moment = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        raise _bulk_refused("bulk_send_schedule_invalid", "scheduled_at", "not_iso") from None
+    if moment.tzinfo is None:
+        raise _bulk_refused("bulk_send_schedule_invalid", "scheduled_at", "without_zone")
+    if moment < now + BULK_SCHEDULE_MIN_AHEAD:
+        raise _bulk_refused("bulk_send_schedule_invalid", "scheduled_at", "less_than_1_hour_ahead")
+    if moment > now + BULK_SCHEDULE_MAX_AHEAD:
+        raise _bulk_refused("bulk_send_schedule_invalid", "scheduled_at", "more_than_30_days_ahead")
+    return moment.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _bulk_products(value: Any, known: frozenset[str]) -> list[str]:
+    if value is None:
+        if len(known) == 1:
+            return sorted(known)
+        raise _bulk_refused("bulk_send_product_required", "product_refs")
+    if (not isinstance(value, list) or not 1 <= len(value) <= 20
+            or not all(isinstance(p, str) and _BULK_PRODUCT.fullmatch(p) for p in value)
+            or len(set(value)) != len(value)):
+        raise _bulk_refused("bulk_send_product_invalid", "product_refs", "list_of_products")
+    if not set(value) <= known:
+        raise _bulk_refused("bulk_send_product_invalid", "product_refs", "not_of_this_instance")
+    return list(value)
+
+
+def _bulk_counts(value: Any) -> dict[str, int]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {key: count for key, count in value.items()
+            if isinstance(key, str) and _BULK_COUNT_KEY.fullmatch(key) and type(count) is int and count >= 0}
+
+
+def bulk_send_ae_view(view: Mapping[str, Any], *, origin: str) -> dict[str, Any]:
+    """Lo que el agente ve de un envio: los datos del envio y los conteos. Nunca un telefono ni un ID de persona."""
+    out: dict[str, Any] = {key: view.get(key) for key in _BULK_SEND_KEYS}
+    variables = out.get("template_variables")
+    out["template_variables"] = [v for v in variables if isinstance(v, str) or v == _BULK_FIRST_NAME] \
+        if isinstance(variables, list) else []
+    listed = view.get("list")
+    if isinstance(listed, Mapping):
+        out["list"] = {key: listed.get(key) for key in _BULK_LIST_KEYS}
+        out["list"]["rejected_counts"] = _bulk_counts(listed.get("rejected_counts"))
+        out["list"]["excluded_by_reason"] = _bulk_counts(listed.get("excluded_by_reason"))
+    else:
+        out["list"] = None
+    out["recipients_by_state"] = _bulk_counts(view.get("recipients_by_state"))
+    send_id = _uuid_or_none(view.get("send_id"))
+    out["send_id"] = send_id
+    # El link de la pagina del masivo: para subir la lista o, ya subida, para revisarla y confirmar.
+    out["page_url"] = bulk_send_page_url(origin, send_id) if send_id is not None else None
+    return out
+
+
+class BulkSendStore(FlowChangeStore):
+    """Las tres funciones del masivo que usa el agente (20261125000200), con la clave de ``service_role``."""
+
+    async def create_bulk_send(self, instance: Mapping[str, str], send: Mapping[str, Any]) -> dict[str, Any]:
+        return await self._rpc("create_bulk_send_v1", {"p_instance": instance, "p_send": send})
+
+    async def read_bulk_send(self, instance: Mapping[str, str], send_id: str) -> dict[str, Any]:
+        return await self._rpc("read_bulk_send_v1", {"p_instance": instance, "p_send_id": send_id})
+
+    async def read_bulk_sends(self, instance: Mapping[str, str], *, limit: int) -> list[Any]:
+        listed = await self._rpc("read_bulk_sends_v1", {"p_instance": instance, "p_limit": limit}, list_ok=True)
+        if not isinstance(listed, list):
+            raise StoreUnavailable()
+        return listed
+
+
+def check_bulk_send_settings(settings: Any) -> None:
+    """Lo que exige ``BULK_SEND_ENABLED`` al arrancar: las rutas del AE, la pagina (el link) y la base."""
+    if not getattr(settings, "bulk_send_enabled", False):
+        return
+    if not getattr(settings, "automation_expert_change_enabled", False):
+        raise ValueError(f"{BULK_SEND_ENV} requires AUTOMATION_EXPERT_CHANGE_ENABLED")
+    if not getattr(settings, "flow_approval_enabled", False) or not getattr(settings, "flow_approval_base_url", None):
+        raise ValueError(f"{BULK_SEND_ENV} requires FLOW_APPROVAL_ENABLED and FLOW_APPROVAL_BASE_URL")
+    if getattr(settings, "instance_manifest", None) is None:
+        raise ValueError(f"{BULK_SEND_ENV} requires an instance manifest")
+    if not getattr(settings, "supabase_base_url", None) or not getattr(settings, "supabase_service_role_key", None):
+        raise ValueError(f"{BULK_SEND_ENV} requires SUPABASE_BASE_URL and SUPABASE_SERVICE_ROLE_KEY")
+
+
+def register_bulk_send_routes(app: FastAPI, *, token: str, store: BulkSendStore, chatwoot: Any, tenant_ref: str,
+                              ally_ref: str, inbox_id: int, product_refs: frozenset[str], approval_origin: str,
+                              git_sha: str | None = None, clock: Callable[[], datetime] | None = None) -> None:
+    """Las tres rutas del masivo, detras del flag (lo mira quien llama: apagado no existen).
+
+    ``product_refs``: los productos de la instancia (los ``funnel_ref`` del manifiesto); el masivo sale
+    para uno o varios de ellos y los vetos sacan a quien ya los compro. ``approval_origin``: el dominio de
+    la pagina de aprobacion, para el link de la lista.
+    """
+    instance = {"tenant_ref": tenant_ref, "ally_ref": ally_ref}
+    sha = git_sha or os.environ.get("GIT_SHA", "") or "unknown"
+    now = clock or (lambda: datetime.now(UTC))
+    slots = asyncio.Semaphore(2)
+
+    def authenticate(authorization: str | None) -> None:
+        expected = f"Bearer {token}"
+        if authorization is None or not hmac.compare_digest(authorization.encode("utf-8"),
+                                                            expected.encode("utf-8")):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                                detail="automation_expert_change_authentication_required",
+                                headers={"WWW-Authenticate": "Bearer"})
+
+    def busy() -> None:
+        if slots.locked():
+            raise HTTPException(status_code=503, detail="automation_expert_change_busy")
+
+    def envelope(data: Mapping[str, Any]) -> dict[str, Any]:
+        return {"contract": CONTRACT, "contract_version": CONTRACT_VERSION, "instance": dict(instance),
+                "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                "bridge_git_sha": sha, "data": dict(data)}
+
+    def failure(error: Exception, route: str, send_id: str | None = None) -> HTTPException:
+        if isinstance(error, StoreRejected) and error.code in _BULK_RAISED:
+            code, http_status = error.code, error.http_status
+        elif isinstance(error, StoreUnavailable):
+            code, http_status = error.code, 503
+        else:
+            code, http_status = "automation_expert_change_unavailable", 503
+        logger.info("bulk_send_ae route=%s send_id=%s status=%s code=%s", route, send_id, http_status, code)
+        return HTTPException(status_code=http_status, detail=code)
+
+    def send_id_of(value: str) -> str:
+        try:
+            return str(UUID(value))
+        except (ValueError, AttributeError):
+            raise HTTPException(status_code=422, detail="invalid_bulk_send_id") from None
+
+    @app.post(BULK_SENDS, status_code=201)
+    async def propose_bulk_send(request: Request, authorization: str | None = Header(default=None)) -> Any:
+        """El borrador de un masivo. No sube la lista, no confirma y no manda."""
+        authenticate(authorization)
+        body = _check_keys(await _body(request), required={"template_name", "scheduled_at", "requested_by"},
+                           allowed={"template_name", "template_language", "template_variables", "header_image_url",
+                                    "scheduled_at", "campaign_label", "product_refs", "window_mode", "requested_by"})
+        _requested_by(body)
+        name, language = body["template_name"], body.get("template_language")
+        if not isinstance(name, str) or not _BULK_TEMPLATE_NAME.fullmatch(name):
+            raise _bulk_refused("bulk_send_template_not_found", "template_name")
+        if language is not None and (not isinstance(language, str) or not _BULK_LANGUAGE.fullmatch(language)):
+            raise _bulk_refused("bulk_send_invalid", "template_language")
+        scheduled_at = _bulk_schedule(body["scheduled_at"], now())
+        products = _bulk_products(body.get("product_refs"), product_refs)
+        label = body.get("campaign_label")
+        if label is not None and (not isinstance(label, str) or not _BULK_LABEL.fullmatch(label)):
+            raise _bulk_refused("bulk_send_invalid", "campaign_label")
+        window = body.get("window_mode", "centrada")
+        if window not in _BULK_WINDOW_MODES:
+            raise _bulk_refused("bulk_send_invalid", "window_mode")
+        image = body.get("header_image_url")
+        if image is not None and (not isinstance(image, str) or not image.startswith("https://")
+                                  or len(image) > 2048 or any(c.isspace() for c in image)):
+            raise _bulk_refused("bulk_send_image_invalid", "header_image_url", "https")
+        busy()
+        async with slots:
+            try:
+                inbox = await chatwoot.get_inbox(inbox_id=inbox_id)
+                catalog = TemplateCatalog.from_inbox_payload({"message_templates": inbox["message_templates"]})
+            except Exception:  # noqa: BLE001 - sin catalogo no se sabe si la plantilla tiene la baja
+                logger.info("bulk_send_ae route=propose status=503 code=template_catalog_unavailable")
+                raise HTTPException(status_code=503, detail="template_catalog_unavailable") from None
+            template = _bulk_pick_template(catalog, name, language)
+            # La regla del boton de baja (pieza 11): sin «No más mensajes» no hay masivo.
+            if not template_has_opt_out_button(template):
+                raise _bulk_refused("bulk_send_template_without_opt_out", "template_name", "no_opt_out_quick_reply")
+            shape = _bulk_template_shape(template)
+            if shape["header_format"] not in (None, "TEXT", "IMAGE"):
+                raise _bulk_refused("bulk_send_template_header_unsupported", "template_name")
+            if shape["header_markers"] or shape["dynamic_url"]:
+                raise _bulk_refused("bulk_send_template_per_person_parts", "template_name",
+                                    "header_or_link_changes_per_person")
+            if shape["header_format"] == "IMAGE" and image is None:
+                raise _bulk_refused("bulk_send_image_required", "header_image_url")
+            if shape["header_format"] != "IMAGE" and image is not None:
+                raise _bulk_refused("bulk_send_image_not_allowed", "header_image_url")
+            variables = _bulk_variables(body.get("template_variables"), shape["markers"])
+            send: dict[str, Any] = {
+                "template_name": name, "template_language": template["language"].strip(),
+                "template_variables": variables, "scheduled_at": scheduled_at, "window_mode": window,
+                "product_refs": products, "created_by": "automation_expert"}
+            if image is not None:
+                send["header_image_url"] = image
+            if label is not None:
+                send["campaign_label"] = label
+            try:
+                created = await store.create_bulk_send(instance, send)
+                send_id = _uuid_or_none(created.get("send_id")) if created.get("ok") is True else None
+                if send_id is None:
+                    raise StoreUnavailable()
+                view = await store.read_bulk_send(instance, send_id)
+            except (StoreUnavailable, StoreRejected) as error:
+                raise failure(error, "propose") from None
+        logger.info("bulk_send_ae route=propose send_id=%s status=201 variables=%s products=%s", send_id,
+                    len(variables), len(products))
+        return envelope({**bulk_send_ae_view(view, origin=approval_origin),
+                         "upload_url": bulk_send_page_url(approval_origin, send_id),
+                         "upload_note": BULK_SEND_UPLOAD_NOTE})
+
+    @app.get(BULK_SENDS)
+    async def list_bulk_sends(limit: str = str(BULK_LIST_DEFAULT_LIMIT),
+                              authorization: str | None = Header(default=None)) -> Any:
+        """Los masivos de la instancia, del mas nuevo al mas viejo. Solo lee."""
+        authenticate(authorization)
+        if not (limit.isascii() and limit.isdigit()) or not 1 <= int(limit) <= BULK_LIST_MAX_LIMIT:
+            raise EntryRefused("invalid_query", {"field": "limit", "problem": "between_1_and_50"})
+        busy()
+        async with slots:
+            try:
+                listed = await store.read_bulk_sends(instance, limit=int(limit))
+            except (StoreUnavailable, StoreRejected) as error:
+                raise failure(error, "list") from None
+        sends = [bulk_send_ae_view(view, origin=approval_origin) for view in listed if isinstance(view, Mapping)]
+        logger.info("bulk_send_ae route=list status=200 sends=%s", len(sends))
+        return envelope({"bulk_sends": sends})
+
+    @app.get(f"{BULK_SENDS}/{{send_id}}")
+    async def get_bulk_send(send_id: str, authorization: str | None = Header(default=None)) -> Any:
+        """Un masivo: el estado y los conteos. Solo lee."""
+        authenticate(authorization)
+        checked = send_id_of(send_id)
+        busy()
+        async with slots:
+            try:
+                view = await store.read_bulk_send(instance, checked)
+            except (StoreUnavailable, StoreRejected) as error:
+                raise failure(error, "read", checked) from None
+        logger.info("bulk_send_ae route=read send_id=%s status=200", checked)
+        return envelope(bulk_send_ae_view(view, origin=approval_origin))
+
+
+def _uuid_or_none(value: Any) -> str | None:
+    try:
+        return str(UUID(value)) if isinstance(value, str) else None
+    except ValueError:
+        return None

@@ -448,3 +448,78 @@ ADD_TO_TEST_GROUP = {
         "additionalProperties": False,
     },
 }
+
+# Encargo 6 del masivo manejado por el AE (piezas 7 y 11): el borrador y su lectura. Confirmar, arrancar y
+# frenar son de la pagina; la lista se sube ahi, nunca en el chat.
+PROPOSE_BULK_SEND = {
+    "name": "propose_bulk_send",
+    "description": (
+        "Guarda el borrador de un envío masivo a una lista que trae la persona (CSV, Excel o JSON) y devuelve "
+        "upload_url: el link de la página donde un aprobador sube la lista, la revisa y confirma el envío. "
+        "Nunca pidas la lista, un teléfono ni un mail en el chat: mandá upload_url tal cual con upload_note. "
+        "La plantilla tiene que estar aprobada (APPROVED en list_templates) y tener la respuesta rápida "
+        "«No más mensajes»; si no la tiene, vuelve bulk_send_template_without_opt_out y next dice qué ofrecer "
+        "(pedirla a Meta con pedir-plantilla-a-meta). template_variables va en el orden de los marcadores "
+        "del cuerpo: un texto fijo o {\"de\": \"nombre\"} para el primer nombre de cada persona de la lista. "
+        "scheduled_at es la hora central del envío, ISO 8601 con zona (al menos 1 hora y como mucho 30 días "
+        "adelante); el envío se reparte alrededor de esa hora (window_mode centrada, el default) o arranca a "
+        "esa hora (desde_la_hora). header_image_url solo si la plantilla tiene imagen en el encabezado. "
+        "product_refs: los productos del envío (quien ya los compró queda afuera); con un solo producto en la "
+        "instancia se puede omitir. Si el pedido no cierra, reason dice qué campo. Con bulk_send_not_enabled, "
+        "esta instancia no tiene el masivo prendido. No confirma, no arranca, no frena y no manda nada."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "template_name": {"type": "string", "description": "El nombre de la plantilla del catálogo."},
+            "template_language": {"type": "string",
+                                  "description": "Su idioma (es_MX); solo si la plantilla está en más de uno."},
+            "template_variables": {
+                "type": "array",
+                "items": {"anyOf": [
+                    {"type": "string"},
+                    {"type": "object", "properties": {"de": {"type": "string", "enum": ["nombre"]}},
+                     "required": ["de"], "additionalProperties": False},
+                ]},
+                "description": "Una por marcador del cuerpo, en orden.",
+            },
+            "header_image_url": {"type": "string", "description": "https de la imagen del encabezado."},
+            "scheduled_at": {"type": "string", "description": "La hora central, ISO 8601 con zona."},
+            "campaign_label": {"type": "string",
+                               "description": "La etiqueta de la campaña que se le pone a cada conversación."},
+            "product_refs": {"type": "array", "items": {"type": "string"},
+                             "description": "Los productos del envío."},
+            "window_mode": {"type": "string", "enum": ["centrada", "desde_la_hora"]},
+        },
+        "required": ["template_name", "scheduled_at"],
+        "additionalProperties": False,
+    },
+}
+
+GET_BULK_SEND = {
+    "name": "get_bulk_send",
+    "description": (
+        "Relee un masivo: su estado (borrador, confirmado, preparando, enviando, terminado o frenado), la "
+        "plantilla y la hora, y los conteos de la lista (cuántas personas sirven, cuántas quedaron afuera y por "
+        "qué) y del envío por estado. page_url es el link de su página. Nunca trae un teléfono. Solo lee."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"send_id": {**_FLOW_ID, "description": "El id del masivo."}},
+        "required": ["send_id"],
+        "additionalProperties": False,
+    },
+}
+
+LIST_BULK_SENDS = {
+    "name": "list_bulk_sends",
+    "description": (
+        "Los masivos de la instancia, del más nuevo al más viejo, con su estado y sus conteos. limit de 1 a 50 "
+        "(20 por defecto). Nunca trae un teléfono. Solo lee."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 50}},
+        "additionalProperties": False,
+    },
+}

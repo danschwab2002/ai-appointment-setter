@@ -459,6 +459,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # Expert, como dato (proponer, validar, listar). Portable: por instancia,
     # solo prenderlo; apagado no existen las rutas ni se llama a la base.
     "agent_products_enabled",
+    # Encargo 6 del masivo manejado por el AE: el borrador, el estado y la
+    # lista de masivos. Portable: por instancia, solo prenderlo; apagado no
+    # existen las rutas ni se llama a la base.
+    "bulk_send_enabled",
     "hotmart_purchase_worker_enabled",
     "lead_precheckout_enabled",
     # El adaptador de GHL traduce el formulario a lead.precheckout y lo manda
@@ -1119,6 +1123,11 @@ class Settings:
     # proponer, validar, obtener y listar productos. Apagado (el default) no
     # existen y el bridge no llama a ninguna RPC de productos.
     agent_products_enabled: bool = False
+    # Encargo 6 del masivo (bridge/flow_change_api.py, register_bulk_send_routes):
+    # BULK_SEND_ENABLED. Con el flag existen las rutas del AE para armar el
+    # borrador de un masivo y leer su estado. Apagado (el default) no existen y
+    # el bridge no llama a ninguna funcion del masivo.
+    bulk_send_enabled: bool = False
     precheckout_form_enabled: bool = False
     precheckout_form_token: str | None = None
     precheckout_max_age_seconds: int = 300
@@ -2651,6 +2660,10 @@ class Settings:
             ),
             agent_products_enabled=(
                 os.getenv(agent_product_api.AGENT_PRODUCTS_ENV, "false").strip().lower()
+                == "true"
+            ),
+            bulk_send_enabled=(
+                os.getenv(flow_change_api.BULK_SEND_ENV, "false").strip().lower()
                 == "true"
             ),
             precheckout_form_enabled=precheckout_form_enabled,
@@ -5215,6 +5228,7 @@ def create_app(
     template_request_store: template_request_api.TemplateRequestStore | None = None,
     agent_campaign_store: agent_campaign_api.CampaignStore | None = None,
     agent_product_store: agent_product_api.ProductStore | None = None,
+    bulk_send_store: flow_change_api.BulkSendStore | None = None,
     flow_approval_store: flow_approval.ApprovalStore | None = None,
     flow_approval_oidc: flow_approval.SlackIdTokenClient | None = None,
     meta_templates_client: MetaTemplatesClient | None = None,
@@ -5297,6 +5311,10 @@ def create_app(
             instance_readiness["flow_approval"] = "enabled"
         if settings.meta_templates_enabled:
             instance_readiness["meta_templates"] = "enabled"
+        if settings.bulk_send_enabled:
+            # El masivo por el AE (encargo 6): solo con el flag; apagado, el
+            # payload de /ready no cambia.
+            instance_readiness["bulk_send"] = "enabled"
         ghl_adapter_risk = _ghl_adapter_risk_readiness(settings.instance_manifest)
         if ghl_adapter_risk is not None:
             instance_readiness["ghl_adapter_risk"] = ghl_adapter_risk
@@ -5664,6 +5682,9 @@ def create_app(
     agent_campaign_api.check_settings(settings)
     # E-569: los productos del AE exigen sus rutas y el manifiesto.
     agent_product_api.check_settings(settings)
+    # Encargo 6 del masivo: las rutas del agente, la pagina (el link de la
+    # lista) y la base con service_role.
+    flow_change_api.check_bulk_send_settings(settings)
     pilot_fields = (
         (settings.pilot_scope_key, "LANCEMOS_PILOT_SCOPE_KEY"),
         (settings.pilot_scope_version, "LANCEMOS_PILOT_SCOPE_VERSION"),
@@ -11181,6 +11202,27 @@ def create_app(
                     db_key=settings.automation_expert_change_db_key or "",
                 ),
                 manifest=change_manifest,
+            )
+        if settings.bulk_send_enabled:
+            # Encargo 6 del masivo manejado por el AE: el agente arma el
+            # borrador y lee el estado; nunca confirma, arranca ni frena. Con
+            # el flag apagado las rutas no existen y dan 404.
+            flow_change_api.register_bulk_send_routes(
+                app,
+                token=settings.automation_expert_change_token,
+                store=bulk_send_store or flow_change_api.BulkSendStore(
+                    base_url=settings.supabase_base_url or "",
+                    db_key=settings.supabase_service_role_key or "",
+                ),
+                chatwoot=control_client,
+                tenant_ref=change_manifest.tenant_ref,
+                ally_ref=change_manifest.ally_ref,
+                inbox_id=change_manifest.chatwoot_inbox_id,
+                product_refs=frozenset(
+                    config.funnel_ref
+                    for config in change_manifest.to_commercial_ally_configs()
+                ),
+                approval_origin=settings.flow_approval_base_url or "",
             )
 
     if settings.automation_expert_chatwoot_enabled:
