@@ -210,6 +210,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261118000300",
         # El choque de identidad en la admision es un rechazo con nombre (20261125000100).
         "20261125000100",
+        # El almacen del masivo (20261125000200).
+        "20261125000200",
     ]
 
     sql = _sql()
