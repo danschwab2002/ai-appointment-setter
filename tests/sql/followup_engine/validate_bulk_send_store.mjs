@@ -70,8 +70,11 @@ const sha = (text) => createHash('sha256').update(text).digest('hex');
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
+// 20261125000300 (preparar y los vetos de la base) agrega sin cambiar lo que se prueba aca: la purga suma
+// el borrado de lo preparado y el borrador acepta product_refs (validate_bulk_send_prepared_and_base_vetoes.mjs).
+const KNOWN_LATER = ['20261125000300_bulk_send_prepared_and_base_vetoes_v1.sql'];
 for (const name of names.slice(position + 1)) {
-  if (readFileSync(join(root, 'supabase/migrations', name), 'utf8').includes('bulk_')) {
+  if (!KNOWN_LATER.includes(name) && readFileSync(join(root, 'supabase/migrations', name), 'utf8').includes('bulk_')) {
     fail(`${name} toca el masivo: revisar esta prueba`);
   }
 }

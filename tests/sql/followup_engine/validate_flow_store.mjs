@@ -703,6 +703,8 @@ check(sameJson([...lockTimeouts].sort(), [
   'apply_bulk_list_vetoes_v1', 'approver_brake_bulk_send_v1', 'approver_confirm_bulk_send_v1',
   'approver_create_bulk_list_v1', 'close_bulk_send_recipient_v1', 'expire_bulk_send_reservations_v1',
   'purge_bulk_list_phones_v1', 'reserve_bulk_send_recipient_v1', 'transition_bulk_send_v1',
+  // Anotar lo preparado del masivo (20261125000300).
+  'record_bulk_send_prepared_v1',
 ].sort()), '2: lock_timeout de 5 s en las que esperan locks', lockTimeouts);
 
 // ===========================================================================
