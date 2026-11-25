@@ -7689,6 +7689,40 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         ), 0),
         3,
         'bulk_send_store'
+    union all
+    select
+        '20261125000300',
+        '20261125000300_bulk_send_prepared_and_base_vetoes_v1.sql',
+        -- Lo preparado por persona y envio, con RLS ...
+        (
+            select count(*) = 1
+            from pg_class c
+            where c.oid = to_regclass('public.bulk_send_prepared') and c.relrowsecurity
+        )::int
+        -- ... el producto del envio en el borrador ...
+        + (
+            select count(*) = 1
+            from pg_attribute a
+            where a.attrelid = to_regclass('public.bulk_sends') and a.attname = 'product_refs'
+              and not a.attisdropped
+        )::int
+        -- ... los vetos de la base, solo de service_role ...
+        + coalesce((
+            select (prosecdef
+                    and has_function_privilege('service_role', oid, 'EXECUTE')
+                    and not has_function_privilege('anon', oid, 'EXECUTE')
+                    and not has_function_privilege('authenticated', oid, 'EXECUTE'))::int
+            from functions
+            where oid = to_regprocedure('public.read_bulk_list_base_vetoes_v1(jsonb,uuid,text[])')
+        ), 0)
+        -- ... y la purga que borra lo preparado.
+        + coalesce((
+            select (position('delete from public.bulk_send_prepared' in definition) > 0)::int
+            from functions
+            where oid = to_regprocedure('public.purge_bulk_list_phones_v1(timestamptz)')
+        ), 0),
+        4,
+        'bulk_send_prepared_and_base_vetoes'
 )
 select
     version,
