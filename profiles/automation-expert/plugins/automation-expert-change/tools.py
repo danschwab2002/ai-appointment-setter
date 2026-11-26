@@ -52,6 +52,12 @@ link de la pagina donde un aprobador baja el CSV) y su lectura (``get_contact_ex
 ni nombre pasa por el chat. Sin ``CONTACT_EXPORT_ENABLED`` el bridge no tiene esas rutas:
 ``contact_export_not_enabled``.
 
+Desde la 0.13.0 (keyword-rules-v1, Z1 3.9) suma las reglas de palabra clave: el texto de un link
+``wa.me`` que pone una etiqueta (``preview_keyword_rule``, ``propose_keyword_rule``,
+``get_keyword_rule``, ``list_keyword_rules``). Publicarla, pausarla y descartarla lo hace una persona de
+la lista en la pagina. Sin ``KEYWORD_RULES_ENABLED`` el bridge no tiene esas rutas:
+``keyword_rules_not_enabled``.
+
 Con el canal del link prendido (ciclo 1.9.0), una validacion que deja la
 propuesta ``validada`` postea el boton «Revisar y aprobar» en el mismo DM
 (``approval_button.py``). El boton es un link a la pagina del bridge: tampoco
@@ -82,7 +88,8 @@ _EMAIL_RE = re.compile(r"[^\s@]+@[^\s@]+")
 _PHONE_SEPARATORS = frozenset(" \t\n\r -.()+")
 # Los codigos que el bridge contesta; cualquier otro se cambia por uno generico.
 _DRAFT_BLOCKED = frozenset({"flow_change_draft_blocked", "template_request_draft_blocked", "campaign_draft_blocked",
-                            "temporary_instruction_blocked"})
+                            "temporary_instruction_blocked",
+                            "keyword_rule_draft_blocked"})
 _BRIDGE_ERRORS = frozenset({
     "automation_expert_change_authentication_required",
     "invalid_body",
@@ -203,6 +210,18 @@ _BRIDGE_ERRORS = frozenset({
     "agent_temporary_instruction_window_too_long",
     "agent_temporary_instruction_daily_limit",
     "agent_temporary_instruction_text_invalid",
+    # Las reglas de palabra clave (keyword-rules-v1, Z1 3.9).
+    "invalid_keyword_rule_id",
+    "keyword_rule_invalid",
+    "keyword_rule_flow_not_supported",
+    "keyword_rule_draft_blocked",
+    "keyword_rule_not_found",
+    "keyword_rule_open_limit",
+    "keyword_rule_key_taken",
+    "keyword_rule_revision_limit",
+    "keyword_rule_revision_mismatch",
+    "keyword_rule_not_draft",
+    "keyword_rule_key_is_immutable",
 })
 
 
@@ -360,6 +379,10 @@ def _request(method: str, path: str, body: dict[str, object] | None = None) -> d
         if exc.code in (404, 405) and detail in ("Not Found", "Method Not Allowed") \
                 and path.startswith(TEMPORARY_INSTRUCTIONS):
             return {"error": "temporary_instruction_not_enabled"}
+        # Y con las reglas de palabra clave: sin KEYWORD_RULES_ENABLED sus rutas no existen.
+        if exc.code in (404, 405) and detail in ("Not Found", "Method Not Allowed") \
+                and path.startswith(KEYWORD_RULES):
+            return {"error": "keyword_rules_not_enabled"}
         # Y con el masivo: sin BULK_SEND_ENABLED sus rutas no existen.
         if exc.code in (404, 405) and detail in ("Not Found", "Method Not Allowed") and path.startswith(BULK_SENDS):
             return {"error": "bulk_send_not_enabled"}
@@ -768,6 +791,49 @@ def list_temporary_instructions(params: dict[str, object], **kwargs: object) -> 
     if type(limit) is not int or not 1 <= limit <= 50:
         return _dumps({"error": "invalid_query", "reason": {"field": "limit"}})
     return _dumps(_request("GET", f"{TEMPORARY_INSTRUCTIONS}?limit={limit}"))
+
+
+# keyword-rules-v1 (Z1 3.9): la regla «texto del link -> etiqueta». No hay herramienta para publicarla,
+# pausarla ni descartarla: eso lo hace un aprobador en la pagina. Nunca dispara un flujo (v1).
+KEYWORD_RULES = f"{PREFIX}/keyword-rules"
+
+
+def preview_keyword_rule(params: dict[str, object], **kwargs: object) -> str:
+    del kwargs
+    return _dumps(_request("POST", f"{KEYWORD_RULES}/preview", {"rule": params.get("rule")}))
+
+
+def propose_keyword_rule(params: dict[str, object], **kwargs: object) -> str:
+    del kwargs
+    requested = _campaign_requester()
+    if isinstance(requested, str):
+        return requested
+    purpose = params.get("purpose")
+    if not isinstance(purpose, str) or not purpose.strip():
+        return _dumps({"error": "invalid_body"})
+    if looks_like_identifier(purpose):
+        return _dumps({"error": "identifier_not_allowed"})
+    body: dict[str, object] = {"rule": params.get("rule"), "purpose": purpose.strip(), "requested_by": requested}
+    for key in ("rule_id", "revision"):
+        if params.get(key) is not None:
+            body[key] = params[key]
+    return _dumps(_request("POST", KEYWORD_RULES, body))
+
+
+def get_keyword_rule(params: dict[str, object], **kwargs: object) -> str:
+    del kwargs
+    rule_id = _uuid(params.get("rule_id"))
+    if rule_id is None:
+        return _dumps({"error": "invalid_keyword_rule_id"})
+    return _dumps(_request("GET", f"{KEYWORD_RULES}/{rule_id}"))
+
+
+def list_keyword_rules(params: dict[str, object], **kwargs: object) -> str:
+    del kwargs
+    estado = params.get("estado", "abiertas")
+    if estado not in ("abiertas", "todas"):
+        return _dumps({"error": "invalid_query", "reason": {"field": "estado"}})
+    return _dumps(_request("GET", f"{KEYWORD_RULES}?estado={estado}"))
 
 
 # E-486 (8d, D14 y D15 aprobadas por Dan el 12/11): sumar un telefono al grupo de prueba.

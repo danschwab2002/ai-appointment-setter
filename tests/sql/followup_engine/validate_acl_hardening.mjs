@@ -364,7 +364,9 @@ const rows = await db.query(`
       -- 20261126300000: exportar contactos (1.3); las de la pagina son de flow_change_approver.
       ('create_contact_export_v1(jsonb,jsonb)'),
       ('read_contact_export_v1(jsonb,uuid)'),
-      ('read_contact_export_people_v1(jsonb,text,integer)')
+      ('read_contact_export_people_v1(jsonb,text,integer)'),
+      -- 20261126400000: las reglas de palabra clave vivas, para el bridge (Z1 3.9).
+      ('get_live_keyword_rules_v1(jsonb)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -409,6 +411,7 @@ const result = rows.rows[0];
 // 20261126100000 (la pausa del agente, 5.4) suma sus dos: 256.
 // 20261126200000 (la instruccion temporal, 5.3 de Z1) suma la lectura de la viva: 257.
 // 20261126300000 (exportar contactos, 1.3) suma sus tres del bridge: 260.
+// 20261126400000 (las reglas de palabra clave, Z1 3.9) suma la lectura de las vivas: 261.
 // Historical baseline guard was `result.expected_count !== 63`; the current
 // baseline is 68 RPCs, daily feedback adds fourteen, payment links add three,
 // the one-shot operator disposition adds one, and correlation event context
@@ -460,7 +463,7 @@ const result = rows.rows[0];
 // claim, settle and block the retry, and mark the 131026 notice.
 // The personal coupon of a native step (20261112210500, E-483, C2) adds the read of the bridge.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 260) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 261) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

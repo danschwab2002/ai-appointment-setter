@@ -48,7 +48,7 @@ def test_bundle_covers_exact_pending_tail_and_is_deterministic(tmp_path: Path) -
     # El aviso de derivaciones sin atender (20261103001000, E-309).
     # La etiqueta de un segmento en un flujo nativo (20261103001300, E-316): un reemplazo contado en la forma nativa.
     # El rechazo de la cuenta espera a que la cuenta vuelva (20261107000100, E-348): dos tablas y ocho RPC de service_role.
-    assert observed[-37] == "20261107000100_meta_account_hold_retry_v1.sql"
+    assert observed[-38] == "20261107000100_meta_account_hold_retry_v1.sql"
     # El almacen dice quien ejecuta cada flujo (20261108000100, E-353): una clave mas en read_flow_store_v1.
     # Las campanas del Automation Expert como dato (20261108005000, E-355): dos tablas y doce RPC.
     # El sondeo de Meta y el aviso en el hilo (20261109000100, E-361): dos columnas, una tabla y cuatro RPC.
@@ -56,12 +56,12 @@ def test_bundle_covers_exact_pending_tail_and_is_deterministic(tmp_path: Path) -
     # El caso se cierra cuando su ultimo toque termina sin salir (20261111000100, E-423): una funcion privada y el envoltorio.
     # Un pago pendiente que se cancela no clasifica la intencion (20261111000200, E-423): una rama del correlador portable.
     # Los numeros del tablero (20261112200000, E-507): una lectura de service_role.
-    assert observed[-29] == "20261112200000_read_results_v1.sql"
-    assert observed[-30] == "20261111000200_pending_cancel_keeps_first_contact_v1.sql"
-    assert observed[-31] == "20261111000100_close_recovery_case_without_pending_touch_v1.sql"
-    assert observed[-32] == "20261110000500_campaign_offer_checkout_issuance_v1.sql"
-    assert observed[-33] == "20261109000100_meta_template_request_notices_v1.sql"
-    assert observed[-34] == "20261108005000_agent_campaigns_v1.sql"
+    assert observed[-30] == "20261112200000_read_results_v1.sql"
+    assert observed[-31] == "20261111000200_pending_cancel_keeps_first_contact_v1.sql"
+    assert observed[-32] == "20261111000100_close_recovery_case_without_pending_touch_v1.sql"
+    assert observed[-33] == "20261110000500_campaign_offer_checkout_issuance_v1.sql"
+    assert observed[-34] == "20261109000100_meta_template_request_notices_v1.sql"
+    assert observed[-35] == "20261108005000_agent_campaigns_v1.sql"
     # El motor nativo de varios toques (20261112210000, E-483): las dos funciones de la forma nativa.
     # en_curso: cancelar en el nativo (20261112210100, E-483, C8).
     # prioridad.le_gana_a en el nativo (20261112210200, E-483, C7).
@@ -71,121 +71,124 @@ def test_bundle_covers_exact_pending_tail_and_is_deterministic(tmp_path: Path) -
     # El evento de un disparo por audiencia en el nativo (20261112210600, E-483, para E-484).
     # El disparo por audiencia y su lista congelada (20261112220000, E-484): dos tablas y diez funciones.
     # El tope por persona del nativo (20261112230000, E-483, C6): la v2 del arranque y dos reemplazos contados.
-    assert observed[-19] == "20261113200000_e528_native_payment_slip_v1.sql"
+    assert observed[-20] == "20261113200000_e528_native_payment_slip_v1.sql"
     # El correlador que decide solo y su pregunta (20261114000100 y 20261114000150, E-536).
-    assert observed[-18] == "20261114000100_identity_link_decider_v1.sql"
-    assert observed[-17] == "20261114000150_identity_link_question_v1.sql"
+    assert observed[-19] == "20261114000100_identity_link_decider_v1.sql"
+    assert observed[-18] == "20261114000150_identity_link_question_v1.sql"
     # Las ofertas huerfanas de Hotmart (20261114000300, E-565): dos tablas y dos RPC de service_role.
-    assert observed[-16] == "20261114000300_hotmart_unknown_offers_v1.sql"
+    assert observed[-17] == "20261114000300_hotmart_unknown_offers_v1.sql"
     # El producto que suma el AE (20261115000100, E-569): dos tablas y cuatro RPC del AE, ninguna de service_role.
-    assert observed[-15] == "20261115000100_agent_products_v1.sql"
+    assert observed[-16] == "20261115000100_agent_products_v1.sql"
     # Publicar con siembra el producto del AE (20261115000200, E-575): siete funciones de la pagina y el AE,
     # una lectura de service_role, dos reemplazos de campanas y una columna.
-    assert observed[-14] == "20261115000200_agent_products_publish_v1.sql"
+    assert observed[-15] == "20261115000200_agent_products_publish_v1.sql"
     # La audiencia de hoy de un flujo de audiencia (20261116000100, E-622): una lectura del rol del agente.
-    assert observed[-13] == "20261116000100_flow_audience_reach_v1.sql"
+    assert observed[-14] == "20261116000100_flow_audience_reach_v1.sql"
     # El registro de permiso de WhatsApp (20261116000200, E-627): dos tablas, cuatro RPC de service_role y la
     # segunda rama del permiso del carrito y del pago rechazado nativos.
-    assert observed[-12] == "20261116000200_permission_registry_v1.sql"
+    assert observed[-13] == "20261116000200_permission_registry_v1.sql"
     # El destinatario de un flujo nativo de audiencia (20261117000500, E-661): una columna mas en
     # get_followup_execution_context (drop y create, mismos permisos).
-    assert observed[-11] == "20261117000500_flow_engine_native_audience_recipient_v1.sql"
+    assert observed[-12] == "20261117000500_flow_engine_native_audience_recipient_v1.sql"
     # La repeticion de un flujo de audiencia cuenta solo a quien arranco (20261117000600, E-665): un reemplazo
     # contado en materialize_flow_audience_occurrence_v1 (create or replace, mismos permisos).
-    assert observed[-10] == "20261117000600_flow_audience_repeat_counts_started_v1.sql"
+    assert observed[-11] == "20261117000600_flow_audience_repeat_counts_started_v1.sql"
     # Los motivos de quien no arranco en un envio a una audiencia (20261117000700, E-666): un
     # create or replace de la lectura privada de las ocurrencias.
-    assert observed[-9] == "20261117000700_flow_audience_start_reasons_v1.sql"
+    assert observed[-10] == "20261117000700_flow_audience_start_reasons_v1.sql"
     # El numero de conversacion de los avisos del correlador (20261118000300, E-656): un reemplazo contado en
     # _identity_link_conversation_number.
-    assert observed[-8] == "20261118000300_identity_link_conversation_number_account_v1.sql"
+    assert observed[-9] == "20261118000300_identity_link_conversation_number_account_v1.sql"
     # El choque de identidad en la admision es un rechazo con nombre (20261125000100).
-    assert observed[-7] == "20261125000100_flow_engine_admission_identity_mismatch_v1.sql"
+    assert observed[-8] == "20261125000100_flow_engine_admission_identity_mismatch_v1.sql"
     # El almacen del masivo (20261125000200): cuatro tablas, diez RPC de service_role y cuatro de la pagina.
-    assert observed[-6] == "20261125000200_bulk_send_store_v1.sql"
+    assert observed[-7] == "20261125000200_bulk_send_store_v1.sql"
     # Lo que le falta al masivo para preparar y para los vetos de la base (20261125000300): una tabla, una
     # columna, cuatro RPC de service_role y tres reemplazos (create or replace, mismos permisos).
-    assert observed[-5] == "20261125000300_bulk_send_prepared_and_base_vetoes_v1.sql"
+    assert observed[-6] == "20261125000300_bulk_send_prepared_and_base_vetoes_v1.sql"
     # El registro por persona del masivo, para el reporte (20261125000400): una lectura de service_role.
-    assert observed[-4] == "20261125000400_bulk_send_recipients_read_v1.sql"
+    assert observed[-5] == "20261125000400_bulk_send_recipients_read_v1.sql"
     # La pausa del agente (20261126100000, 5.4): dos tablas, tres RPC del AE y dos de service_role.
-    assert observed[-3] == "20261126100000_agent_global_pause_v1.sql"
+    assert observed[-4] == "20261126100000_agent_global_pause_v1.sql"
     # La instruccion temporal (20261126200000, 5.3 de Z1): dos tablas, cuatro RPC del AE, tres de la pagina
     # y la lectura de la viva solo de service_role.
-    assert observed[-2] == "20261126200000_agent_temporary_instructions_v1.sql"
+    assert observed[-3] == "20261126200000_agent_temporary_instructions_v1.sql"
     # Exportar contactos (20261126300000): una tabla, tres RPC de service_role y tres de la pagina.
-    assert observed[-1] == "20261126300000_contact_export_v1.sql"
-    assert observed[-20] == "20261112230000_e483_native_person_cap_v1.sql"
-    assert observed[-21] == "20261112220000_flow_audience_triggers_v1.sql"
-    assert observed[-22] == "20261112210600_e483_native_audience_source_v1.sql"
-    assert observed[-23] == "20261112210500_e483_native_personal_coupon_v1.sql"
-    assert observed[-24] == "20261112210400_e483_payment_failure_by_phone_v1.sql"
-    assert observed[-25] == "20261112210300_e483_native_condition_after_send_v1.sql"
-    assert observed[-26] == "20261112210200_e483_native_priority_wins_v1.sql"
-    assert observed[-27] == "20261112210100_e483_native_cancel_in_flight_v1.sql"
-    assert observed[-28] == "20261112210000_e483_native_multitouch_v1.sql"
+    assert observed[-2] == "20261126300000_contact_export_v1.sql"
+    # Las reglas de palabra clave (20261126400000, Z1 3.9): dos tablas, tres RPC del AE, cinco de la pagina
+    # y una lectura de service_role.
+    assert observed[-1] == "20261126400000_keyword_rules_v1.sql"
+    assert observed[-21] == "20261112230000_e483_native_person_cap_v1.sql"
+    assert observed[-22] == "20261112220000_flow_audience_triggers_v1.sql"
+    assert observed[-23] == "20261112210600_e483_native_audience_source_v1.sql"
+    assert observed[-24] == "20261112210500_e483_native_personal_coupon_v1.sql"
+    assert observed[-25] == "20261112210400_e483_payment_failure_by_phone_v1.sql"
+    assert observed[-26] == "20261112210300_e483_native_condition_after_send_v1.sql"
+    assert observed[-27] == "20261112210200_e483_native_priority_wins_v1.sql"
+    assert observed[-28] == "20261112210100_e483_native_cancel_in_flight_v1.sql"
+    assert observed[-29] == "20261112210000_e483_native_multitouch_v1.sql"
     # La base no publica una version nativa que el motor no ejecuta (20261108004100, E-357).
-    assert observed[-35] == "20261108004100_flow_change_publish_native_version_guard_v1.sql"
-    assert observed[-36] == "20261108000100_flow_store_route_executor_v1.sql"
+    assert observed[-36] == "20261108004100_flow_change_publish_native_version_guard_v1.sql"
+    assert observed[-37] == "20261108000100_flow_store_route_executor_v1.sql"
     # El cierre del caso por el cupon de una campana (20261106000100, E-339): una RPC de service_role.
-    assert observed[-38] == "20261106000100_recovery_case_segment_coupon_close_v1.sql"
+    assert observed[-39] == "20261106000100_recovery_case_segment_coupon_close_v1.sql"
     # El origen de un recorrido nativo para la campana por landing (20261103001700, E-321): una lectura de service_role.
-    assert observed[-39] == "20261103001700_flow_engine_native_campaign_origin_v1.sql"
+    assert observed[-40] == "20261103001700_flow_engine_native_campaign_origin_v1.sql"
     # La entrada a una campana: lo que contesto cada conversacion a la pregunta (20261103001500, E-317).
-    assert observed[-40] == "20261103001500_segment_entry_answers_v1.sql"
-    assert observed[-41] == "20261103001300_flow_engine_native_segment_label_v1.sql"
-    assert observed[-42] == "20261103001000_handoff_wait_alerts_v1.sql"
-    assert observed[-43] == "20261103000900_flow_engine_native_payment_failure_branches_v1.sql"
-    assert observed[-44] == "20261103000700_customer_status_v1.sql"
-    assert observed[-45] == "20261103000600_flow_approval_history_v1.sql"
-    assert observed[-46] == "20261103000500_meta_delivery_rejections_v1.sql"
-    assert observed[-47] == "20261102000400_identity_recycle_v1.sql"
-    assert observed[-48] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
-    assert observed[-49] == "20261102000200_meta_template_requests_v1.sql"
-    assert observed[-50] == "20261102000100_recovery_coupon_by_reply_v1.sql"
-    assert observed[-51] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
+    assert observed[-41] == "20261103001500_segment_entry_answers_v1.sql"
+    assert observed[-42] == "20261103001300_flow_engine_native_segment_label_v1.sql"
+    assert observed[-43] == "20261103001000_handoff_wait_alerts_v1.sql"
+    assert observed[-44] == "20261103000900_flow_engine_native_payment_failure_branches_v1.sql"
+    assert observed[-45] == "20261103000700_customer_status_v1.sql"
+    assert observed[-46] == "20261103000600_flow_approval_history_v1.sql"
+    assert observed[-47] == "20261103000500_meta_delivery_rejections_v1.sql"
+    assert observed[-48] == "20261102000400_identity_recycle_v1.sql"
+    assert observed[-49] == "20261102000300_flow_engine_native_silence_sweep_v1.sql"
+    assert observed[-50] == "20261102000200_meta_template_requests_v1.sql"
+    assert observed[-51] == "20261102000100_recovery_coupon_by_reply_v1.sql"
+    assert observed[-52] == "20261101000300_followup_stops_after_last_touch_and_pending_payment_v1.sql"
     # Antes, el seguimiento a 24 h nativo (20261101000200, E-251).
-    assert observed[-52] == "20261101000200_flow_engine_native_silence_v1.sql"
+    assert observed[-53] == "20261101000200_flow_engine_native_silence_v1.sql"
     # Antes, el primer contacto nativo (20261101000100, E-247): el disparador intencion.
-    assert observed[-53] == "20261101000100_flow_engine_native_intent_v1.sql"
-    assert observed[-54] == "20261030000400_portable_purchase_stops_see_our_link_v1.sql"
-    assert observed[-55] == "20261030000300_flow_change_list_v1.sql"
-    assert observed[-56] == "20261030000200_flow_engine_native_payment_failure_v1.sql"
-    assert observed[-57] == "20261030000100_flow_engine_native_legacy_double_case_v1.sql"
-    assert observed[-58] == "20261028000400_purchase_by_our_link_counts_v1.sql"
-    assert observed[-59] == "20261028000300_pilot_scope_offer_append_v1.sql"
-    assert observed[-60] == "20261028000200_flow_engine_native_cart_v1.sql"
-    assert observed[-61] == "20261028000100_flow_change_slack_approver_v1.sql"
-    assert observed[-62] == "20261026000200_flow_engine_native_offer_in_context_v1.sql"
-    assert observed[-63] == "20261026000100_flow_engine_native_template_shape_v1.sql"
-    assert observed[-64] == "20261025000400_purchase_agent_pause_v1.sql"
-    assert observed[-65] == "20261025000300_handoff_link_note_v1.sql"
-    assert observed[-66] == "20261025000200_payment_failure_product_name_btrim.sql"
-    assert observed[-67] == "20261025000100_automation_expert_native_reads_v1.sql"
-    assert observed[-68] == "20261024000600_flow_change_new_flow_v1.sql"
-    assert observed[-69] == "20261024000500_flow_engine_native_bridge_v1.sql"
-    assert observed[-70] == "20261024000400_opted_out_reply_checkout_issuance.sql"
-    assert observed[-71] == "20261024000200_flow_engine_native_v1.sql"
-    assert observed[-72] == "20261024000100_portable_hotmart_listen_only_capture.sql"
-    assert observed[-73] == "20261022000300_flow_engine_reads_see_motor_v1.sql"
-    assert observed[-74] == "20261022000200_flow_engine_bridge_reads_v1.sql"
-    assert observed[-75] == "20261022000100_flow_engine_motor_carrito_v1.sql"
-    assert observed[-76] == "20261021000400_automation_expert_flows_speed_v1.sql"
-    assert observed[-77] == "20261021000300_flow_engine_history_cap_v1.sql"
-    assert observed[-78] == "20261021000200_flow_engine_routes_v1.sql"
-    assert observed[-79] == "20261021000100_automation_expert_change_v1.sql"
-    assert observed[-80] == "20261020000100_recovery_checkout_authorize_started_attempt_v1.sql"
-    assert observed[-81] == "20261019000800_portable_payment_slip_reminder_survives_reply_v1.sql"
-    assert observed[-82] == "20261019000700_payment_failure_followup_v1.sql"
-    assert observed[-83] == "20261019000600_recovery_followup_steps_v1.sql"
-    assert observed[-84] == "20261019000500_payment_failure_other_coupon_delivered_v1.sql"
-    assert observed[-85] == "20261019000400_portable_payment_slip_reminders_v1.sql"
-    assert observed[-86] == "20261019000300_portable_purchase_stops_any_offer_v1.sql"
-    assert observed[-87] == "20261019000200_portable_payment_failure_variants_v1.sql"
-    assert observed[-88] == "20261019000100_portable_payment_slip_first_contact_v1.sql"
-    assert observed[-89] == "20261018000200_recovery_checkout_issuance_v1.sql"
-    assert observed[-90] == "20261018000100_recovery_coupons_v1.sql"
-    assert observed[-91] == "20261016000400_portable_checkout_issuance_for_funnel_v1.sql"
+    assert observed[-54] == "20261101000100_flow_engine_native_intent_v1.sql"
+    assert observed[-55] == "20261030000400_portable_purchase_stops_see_our_link_v1.sql"
+    assert observed[-56] == "20261030000300_flow_change_list_v1.sql"
+    assert observed[-57] == "20261030000200_flow_engine_native_payment_failure_v1.sql"
+    assert observed[-58] == "20261030000100_flow_engine_native_legacy_double_case_v1.sql"
+    assert observed[-59] == "20261028000400_purchase_by_our_link_counts_v1.sql"
+    assert observed[-60] == "20261028000300_pilot_scope_offer_append_v1.sql"
+    assert observed[-61] == "20261028000200_flow_engine_native_cart_v1.sql"
+    assert observed[-62] == "20261028000100_flow_change_slack_approver_v1.sql"
+    assert observed[-63] == "20261026000200_flow_engine_native_offer_in_context_v1.sql"
+    assert observed[-64] == "20261026000100_flow_engine_native_template_shape_v1.sql"
+    assert observed[-65] == "20261025000400_purchase_agent_pause_v1.sql"
+    assert observed[-66] == "20261025000300_handoff_link_note_v1.sql"
+    assert observed[-67] == "20261025000200_payment_failure_product_name_btrim.sql"
+    assert observed[-68] == "20261025000100_automation_expert_native_reads_v1.sql"
+    assert observed[-69] == "20261024000600_flow_change_new_flow_v1.sql"
+    assert observed[-70] == "20261024000500_flow_engine_native_bridge_v1.sql"
+    assert observed[-71] == "20261024000400_opted_out_reply_checkout_issuance.sql"
+    assert observed[-72] == "20261024000200_flow_engine_native_v1.sql"
+    assert observed[-73] == "20261024000100_portable_hotmart_listen_only_capture.sql"
+    assert observed[-74] == "20261022000300_flow_engine_reads_see_motor_v1.sql"
+    assert observed[-75] == "20261022000200_flow_engine_bridge_reads_v1.sql"
+    assert observed[-76] == "20261022000100_flow_engine_motor_carrito_v1.sql"
+    assert observed[-77] == "20261021000400_automation_expert_flows_speed_v1.sql"
+    assert observed[-78] == "20261021000300_flow_engine_history_cap_v1.sql"
+    assert observed[-79] == "20261021000200_flow_engine_routes_v1.sql"
+    assert observed[-80] == "20261021000100_automation_expert_change_v1.sql"
+    assert observed[-81] == "20261020000100_recovery_checkout_authorize_started_attempt_v1.sql"
+    assert observed[-82] == "20261019000800_portable_payment_slip_reminder_survives_reply_v1.sql"
+    assert observed[-83] == "20261019000700_payment_failure_followup_v1.sql"
+    assert observed[-84] == "20261019000600_recovery_followup_steps_v1.sql"
+    assert observed[-85] == "20261019000500_payment_failure_other_coupon_delivered_v1.sql"
+    assert observed[-86] == "20261019000400_portable_payment_slip_reminders_v1.sql"
+    assert observed[-87] == "20261019000300_portable_purchase_stops_any_offer_v1.sql"
+    assert observed[-88] == "20261019000200_portable_payment_failure_variants_v1.sql"
+    assert observed[-89] == "20261019000100_portable_payment_slip_first_contact_v1.sql"
+    assert observed[-90] == "20261018000200_recovery_checkout_issuance_v1.sql"
+    assert observed[-91] == "20261018000100_recovery_coupons_v1.sql"
+    assert observed[-92] == "20261016000400_portable_checkout_issuance_for_funnel_v1.sql"
     assert first["bundle"]["sha256"] == second["bundle"]["sha256"]
     assert first["postflight"]["sha256"] == second["postflight"]["sha256"]
     assert first["production_authorized"] is False

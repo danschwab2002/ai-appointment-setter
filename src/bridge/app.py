@@ -195,6 +195,7 @@ from bridge import temporary_instruction, temporary_instruction_api, temporary_i
 from bridge import agent_product_api
 from bridge import contact_export
 from bridge.flow_audience_store import ChatwootLabelIndex
+from bridge import keyword_rule_api, keyword_rule_approval, keyword_rules
 from bridge import flow_audience_page
 from bridge.flow_audience_wiring import FlowAudience, build_flow_audience
 from bridge.bulk_send_wiring import BulkSend, build_bulk_send
@@ -605,6 +606,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # pregunta de entrada de una campana. Lo especifico (frases, pregunta) es de
     # [[agente.segmentos]]; por instancia, solo prenderlo.
     "campaign_inbound_entry_enabled",
+    # Z1 3.9 (keyword-rules-v1): la regla «palabra clave del primer mensaje ->
+    # etiqueta» que redacta el AE y aprueba una persona en la pagina. Lo
+    # especifico (palabras, etiquetas) es de la base; por instancia, solo prenderlo.
+    "keyword_rules_enabled",
     # E-321 (campaign-entry-v1): la etiqueta de una campana por la landing que
     # vio la persona. Lo especifico (que landings, que ofertas) es de
     # [[campanas]]; por instancia, solo prenderlo.
@@ -1410,6 +1415,10 @@ class Settings:
     # del primer mensaje, y el aviso con la pregunta de entrada a quien escribe
     # por su cuenta sin ella. Apagado, el pedido a Hermes es el de siempre.
     campaign_inbound_entry_enabled: bool = False
+    # Z1 3.9 (keyword-rules-v1): la etiqueta de una regla de palabra clave por el
+    # primer mensaje y la nota del turno de que es el texto de un link. Apagado,
+    # no existen las rutas ni la pagina y el pedido a Hermes es el de siempre.
+    keyword_rules_enabled: bool = False
     # E-321 (campaign-entry-v1): un recorrido nativo que nace de una intencion de
     # una landing (o de una oferta) de una [[campanas]] vigente lleva la etiqueta
     # de su segmento antes del primer envio. Apagado, el despacho no lee nada nuevo.
@@ -3136,6 +3145,9 @@ class Settings:
             campaign_inbound_entry_enabled=(
                 os.getenv("CAMPAIGN_INBOUND_ENTRY_ENABLED", "false").strip().lower()
                 == "true"
+            ),
+            keyword_rules_enabled=(
+                os.getenv(keyword_rules.FLAG, "false").strip().lower() == "true"
             ),
             flow_engine_campaign_entry_enabled=(
                 os.getenv("FLOW_ENGINE_CAMPAIGN_ENTRY_ENABLED", "false").strip().lower()
@@ -5317,6 +5329,7 @@ def create_app(
     template_request_store: template_request_api.TemplateRequestStore | None = None,
     agent_campaign_store: agent_campaign_api.CampaignStore | None = None,
     temporary_instruction_store: temporary_instruction_api.TemporaryInstructionStore | None = None,
+    keyword_rule_store: keyword_rule_api.KeywordRuleStore | None = None,
     agent_product_store: agent_product_api.ProductStore | None = None,
     bulk_send_store: flow_change_api.BulkSendStore | None = None,
     agent_pause_store: agent_global_pause.PauseStore | None = None,
@@ -6371,6 +6384,16 @@ def create_app(
                 client=control_client, label=label, macro_id=macro_id
             ),
         )
+    # Z1 3.9 (keyword-rules-v1): las reglas de palabra clave de la base. Sin el
+    # flag, None: nada se lee y el turno no cambia.
+    keyword_rule_live = keyword_rules.keyword_rules_setup(
+        settings,
+        control_client,
+        shared_supabase,
+        campaign_entry=campaign_inbound,
+        reset_command=CHATWOOT_CONVERSATION_RESET_COMMAND,
+        reset_confirmation=CHATWOOT_CONVERSATION_RESET_CONFIRMATION,
+    )
     if (
         campaign_inbound is not None
         and (campaign_inbound.has_question or agent_campaign_live is not None)
@@ -7559,6 +7582,9 @@ def create_app(
                 # 5.3 de Z1: la primera lectura, antes de los workers. Si la
                 # base no contesta no va ninguna instruccion y reintenta.
                 await temporary_instruction_live.start()
+            if keyword_rule_live is not None:
+                # Z1 3.9: lo mismo con las reglas de palabra clave.
+                await keyword_rule_live.start()
             if permission_connectors is not None:
                 # E-628: los avisos a la base antes del primer evento. Si la base
                 # no contesta, se reintenta antes de cada evento con aviso.
@@ -7657,6 +7683,7 @@ def create_app(
                 ("agent_campaigns", agent_campaign_live),
                 ("agent_global_pause", agent_pause_live),
                 ("temporary_instruction", temporary_instruction_live),
+                ("keyword_rules", keyword_rule_live),
                 ("flow_audience", flow_audience),
                 ("bulk_send", bulk_send),
             ):
@@ -7682,6 +7709,8 @@ def create_app(
     app = FastAPI(title="AI Appointment Setter Bridge", lifespan=lifespan)
     app.state.resolution_worker = resolution_worker
     app.state.flow_engine = flow_engine_runtime
+    # Z1 3.9: las reglas de palabra clave (None sin KEYWORD_RULES_ENABLED).
+    app.state.keyword_rules = keyword_rule_live
     app.state.flow_engine_divergence_notifier = flow_engine_divergence_notifier
     app.state.flow_engine_rejection_notifier = flow_engine_rejection_notifier
     app.state.hotmart_abandonment_timer_worker = hotmart_abandonment_timer_worker
@@ -8677,6 +8706,19 @@ def create_app(
                 )
                 if entry_entries:
                     context[SEGMENT_CONTEXT_KEY] = entry_entries
+        keyword_turn = None
+        if keyword_rule_live is not None and not prior_opt_out:
+            # Z1 3.9: despues de la entrada a la campana (la campana gana, D-39.3).
+            # A quien se dio de baja no se le pone la etiqueta ni la nota.
+            keyword_turn = await keyword_rule_live.turn(
+                conversation_id=conversation_id,
+                history=history,
+                history_complete=len(history)
+                < max(200, len(set(batch_message_ids)) + 19),
+                messages=_history_after_latest_reset(normalized),
+                batch_refs=expected_refs,
+                agent_replies_before=agent_replies_before,
+            )
         if (
             settings.recovery_coupon_by_reply_enabled
             and whatsapp_inbound_equivalence
@@ -8785,6 +8827,9 @@ def create_app(
                 instruction_block.sha256,
                 conversation_id,
             )
+        if keyword_turn is not None and keyword_turn.note is not None:
+            # D13: la nota de la palabra clave, ultima. Sin regla, el pedido de siempre.
+            turn_blocks = (*turn_blocks, keyword_turn.note)
         await shadow_processor.run(
             delivery_id=delivery_id,
             context=enriched_context,
@@ -11480,6 +11525,22 @@ def create_app(
                 time_zone=change_manifest.time_zone,
                 approval_origin=settings.flow_approval_base_url or "",
             )
+        if keyword_rule_live is not None:
+            # Z1 3.9 (keyword-rules-v1): el agente redacta la regla; nunca la publica.
+            keyword_rule_api.register_keyword_rule_routes(
+                app,
+                token=settings.automation_expert_change_token,
+                store=keyword_rule_store or keyword_rule_api.KeywordRuleStore(
+                    base_url=settings.supabase_base_url or "",
+                    db_key=settings.automation_expert_change_db_key or "",
+                ),
+                chatwoot=control_client,
+                live=keyword_rule_live,
+                tenant_ref=change_manifest.tenant_ref,
+                ally_ref=change_manifest.ally_ref,
+                inbox_id=change_manifest.chatwoot_inbox_id,
+                approval_origin=settings.flow_approval_base_url or "",
+            )
         if settings.agent_products_enabled:
             # E-569 (product-card-v1, MP-07): el agente propone y valida un
             # producto; nunca lo publica (MP-08).
@@ -11552,11 +11613,13 @@ def create_app(
                 access_token=settings.chatwoot_control_api_access_token or "",
                 inbox_id=scoped_manifest.chatwoot_inbox_id,
                 # E-355: crear un macro es de las campanas; sin el flag, ni la ruta ni el permiso.
-                create_macros=settings.agent_campaigns_enabled,
+                create_macros=settings.agent_campaigns_enabled
+                or settings.keyword_rules_enabled,
             ),
             tenant_ref=scoped_manifest.tenant_ref,
             ally_ref=scoped_manifest.ally_ref,
-            create_macros=settings.agent_campaigns_enabled,
+            create_macros=settings.agent_campaigns_enabled
+            or settings.keyword_rules_enabled,
         )
 
     approval_config = flow_approval.check_settings(settings)
@@ -11651,6 +11714,13 @@ def create_app(
                 # 5.3 de Z1: la pagina de una instruccion temporal: publicar y retirar.
                 temporary_instruction_page.routes(live=temporary_instruction_live)
                 if temporary_instruction_live is not None else None,
+                # Z1 3.9: la pagina de una regla de palabra clave.
+                keyword_rule_approval.routes(
+                    live=keyword_rule_live,
+                    chatwoot=control_client,
+                    inbox_id=settings.instance_manifest.chatwoot_inbox_id,
+                )
+                if keyword_rule_live is not None else None,
                 # E-484: ver cuantos van a salir y confirmar un envio manual.
                 flow_audience_page.routes(sweeper=flow_audience.sweeper)
                 if flow_audience is not None else None,
@@ -12476,6 +12546,11 @@ def create_app(
                 "agent_temporary_instruction": temporary_instruction_live.status_line(
                     datetime.now(UTC)
                 ),
+            }
+        if keyword_rule_live is not None:
+            commercial_ally_readiness = {
+                **commercial_ally_readiness,
+                "keyword_rules": keyword_rule_live.status_line(),
             }
         if product_labelers:
             # La etiqueta de producto no responde 503: no atiende a nadie, y un

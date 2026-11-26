@@ -187,7 +187,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026103000030
     // La instruccion temporal (20261126200000, 5.3 de Z1): tablas y RPC propias, no toca lo que se prueba aca.
     '20261126200000_agent_temporary_instructions_v1.sql',
     // Exportar contactos (20261126300000).
-    '20261126300000_contact_export_v1.sql'])) {
+    '20261126300000_contact_export_v1.sql',
+    // Las reglas de palabra clave (20261126400000, Z1 3.9).
+    '20261126400000_keyword_rules_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de la lista de las propuestas`, names.slice(position + 1));
 }
 if (maribel.name !== 'maribel_retomar_proceso_01' || maribel.category !== 'MARKETING') fail('el fixture no es la plantilla de Maribel');

@@ -5131,6 +5131,24 @@ class SupabaseClient:
             raise SupabaseError(f"{operation}_invalid")
         return payload
 
+    async def get_live_keyword_rules(self, instance: dict[str, str]) -> dict[str, object]:
+        """Las reglas de palabra clave publicadas (``get_live_keyword_rules_v1``, keyword-rules-v1).
+
+        Solo lectura. Devuelve ``{"rules": [...]}``; lo demas lo decide ``KeywordRules``.
+        """
+        operation = "live_keyword_rules"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_live_keyword_rules_v1",
+            content=json.dumps({"p_instance": instance}),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        payload = response.json()
+        if not isinstance(payload, dict) or not isinstance(payload.get("rules"), list):
+            raise SupabaseError(f"{operation}_invalid")
+        return payload
+
     async def claim_slack_handoff_notifications(
         self,
         *,

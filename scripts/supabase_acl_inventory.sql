@@ -300,7 +300,9 @@ expected_service_role(signature) as (
         -- 20261126300000: exportar contactos (1.3); las de la pagina son de flow_change_approver.
         ('public.create_contact_export_v1(jsonb, jsonb)'),
         ('public.read_contact_export_v1(jsonb, uuid)'),
-        ('public.read_contact_export_people_v1(jsonb, text, integer)')
+        ('public.read_contact_export_people_v1(jsonb, text, integer)'),
+        -- 20261126400000: las reglas de palabra clave vivas, para el bridge (Z1 3.9).
+        ('public.get_live_keyword_rules_v1(jsonb)')
 ),
 functions as (
     select

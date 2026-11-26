@@ -101,7 +101,9 @@ if (JSON.stringify(names.slice(position + 2)) !== JSON.stringify(['2026111400030
     // La instruccion temporal (20261126200000, 5.3 de Z1): tablas y RPC propias, no toca lo que se prueba aca.
     '20261126200000_agent_temporary_instructions_v1.sql',
     // Exportar contactos (20261126300000).
-    '20261126300000_contact_export_v1.sql'])) fail('despues de la pregunta van solo la de E-565, la de E-569, la de E-575, la de E-622, la de E-627, la de E-661, la de E-665, la de E-666 y la de E-656', names.slice(position + 2));
+    '20261126300000_contact_export_v1.sql',
+    // Las reglas de palabra clave (20261126400000, Z1 3.9).
+    '20261126400000_keyword_rules_v1.sql'])) fail('despues de la pregunta van solo la de E-565, la de E-569, la de E-575, la de E-622, la de E-627, la de E-661, la de E-665, la de E-666 y la de E-656', names.slice(position + 2));
 const readMigration = (name) => readFileSync(join(root, 'supabase/migrations', name), 'utf8')
   .replace(/create extension if not exists pgcrypto;/gi, '-- pgcrypto is built into PGlite');
 

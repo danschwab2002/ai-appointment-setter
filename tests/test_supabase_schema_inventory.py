@@ -493,7 +493,8 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261126200000 (la instruccion temporal, 5.3 de Z1) suma la lectura de la viva.
     # 20261126300000 (exportar contactos, 1.3) suma sus tres del bridge (las de la pagina son de
     # flow_change_approver).
-    assert len(allowlisted) == 260
+    # 20261126400000 (las reglas de palabra clave, Z1 3.9) suma la lectura de las vivas.
+    assert len(allowlisted) == 261
     assert "record_permission_grant_v1(jsonb)" in allowlisted
     assert "close_permission_notice_v1(text, text, timestamp with time zone)" in allowlisted
     assert "record_hotmart_unknown_offer_v1(text, bigint, text, text, text, text, text, uuid)" in allowlisted
@@ -2539,14 +2540,27 @@ def test_agent_temporary_instructions_fingerprint_counts_the_rows() -> None:
     assert "get_live_agent_temporary_instruction_v1(jsonb)" in compact
 
 
-def test_contact_export_fingerprint_is_last() -> None:
+def test_contact_export_fingerprint_counts_the_rows() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261126300000: el pedido de exportacion con RLS, las personas solo de service_role y marcar
     # bajado solo de la pagina.
-    row = sql.split("'20261126300000'", 1)[1].split("select\n    version,", 1)[0]
+    row = sql.split("'20261126300000'", 1)[1].split("'20261126400000'", 1)[0].rsplit("union all", 1)[0]
     compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
 
-    assert compact.endswith(",3,'contact_export')")
+    assert compact.endswith(",3,'contact_export'")
     assert "to_regclass('public.contact_exports')" in compact
     assert "read_contact_export_people_v1(jsonb,text,integer)" in compact
     assert "approver_mark_contact_export_downloaded_v1(jsonb,text,uuid,integer)" in compact
+
+
+def test_keyword_rules_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261126400000 (Z1 3.9): las reglas con RLS, la lectura de las vivas solo de service_role y
+    # publicar de nadie de la API.
+    row = sql.split("'20261126400000'", 1)[1].split("select\n    version,", 1)[0]
+    compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
+
+    assert compact.endswith(",3,'keyword_rules')")
+    assert "to_regclass('public.keyword_rules')" in compact
+    assert "get_live_keyword_rules_v1(jsonb)" in compact
+    assert "approver_publish_keyword_rule_v1(jsonb,text,uuid,text)" in compact
