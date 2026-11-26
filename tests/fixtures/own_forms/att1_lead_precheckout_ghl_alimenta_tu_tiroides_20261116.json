@@ -1,0 +1,30 @@
+{
+  "_capture": {
+    "origin": "ATT1 produccion, base att1-db (stack setter-att1), public.precheckout_submissions.raw_payload, el envio mas nuevo (2026-11-16 14:05:51Z), leido en solo lectura el 2026-11-26 13:31Z",
+    "what": "El lead.precheckout 1.1.0 que armo el adaptador de GHL para un envio real del formulario UHTaDn8feKiqALhjGFFF (landing B del organico). Es el molde que tiene que reproducir un formulario propio.",
+    "anonymized": "data.buyer y dedupe_key venian tapados en la lectura (<masked>) y aca son sinteticos; id y created_at son los reales. Nada mas cambio."
+  },
+  "event": {
+    "id": "01M7JAVCQA2XPE63NTERPWA35S",
+    "data": {
+      "buyer": {
+        "name": "Prueba Sintetica",
+        "email": "prueba.sintetica@example.com",
+        "phone": "+584121234567",
+        "phone_country_code": "58",
+        "phone_national": "4121234567"
+      },
+      "offer": {"code": "bmaztyhg"},
+      "consent": {"copy_version": "att1-whatsapp-contact-v1", "marketing_optin": true, "whatsapp_contact": true},
+      "product": {"id": null, "name": "Alimenta tu Tiroides", "price": 47, "hotlink": "D98014973Y", "currency": "USD"},
+      "attribution": {"sck": "", "fbclid": "", "referrer": "https://my.manychat.com", "utm_term": "", "utm_medium": "", "utm_source": "", "utm_content": "", "utm_campaign": ""},
+      "checkout_url": "https://pay.hotmart.com/D98014973Y?off=bmaztyhg",
+      "checkout_country": {"iso": "VE", "source": "phone_country_code"}
+    },
+    "event": "lead.precheckout",
+    "source": {"site": "metodoraizana-mx", "aliado": "Dra. Nina Garza", "system": "landing", "page_url": "https://site.metodoraizana.com.mx/alimenta-tu-tiroides", "landing_id": "alimenta-tu-tiroides"},
+    "version": "1.1.0",
+    "created_at": "2026-11-16T14:05:51.210Z",
+    "dedupe_key": "metodoraizana-mx:bmaztyhg:prueba.sintetica@example.com"
+  }
+}

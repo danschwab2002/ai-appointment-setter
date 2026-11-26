@@ -188,6 +188,8 @@ _TOP_KEYS_OPTIONAL = {
     "guarda_precio",
     # E-628 (permission-registry-v1 §8): los avisos de permiso de WhatsApp.
     "permisos",
+    # own-forms-v1: los formularios propios del recuperador (pagina y embebible).
+    "formularios_propios",
 }
 
 # La etiqueta de Chatwoot de un producto. Chatwoot pasa el titulo a minusculas y
@@ -202,6 +204,43 @@ RESERVED_CHATWOOT_LABELS = ("automation_paused", "automation_opted_out")
 MAX_PRODUCTS = 8
 # Lo que el principal no puede traer en [[productos]]: ya esta arriba.
 _PRINCIPAL_ONLY_ABOVE = ("funnel_ref", "binding_version", "hotmart")
+
+
+_OWN_FORM_KEY = re.compile(r"[a-z0-9][a-z0-9-]{2,39}")
+_OWN_FORM_ORIGIN = re.compile(r"https://[a-z0-9.-]+(?::[0-9]{1,5})?")
+_OWN_FORM_URL = re.compile(r"https://[^\s\"'<>]+")
+_OWN_FORM_REGION = re.compile(r"[A-Z]{2}")
+# La frase que muestran hoy los formularios de GHL de ATT1 y Maribel (decision
+# de Dan del 03/10). Es solo el valor por defecto: cada formulario puede declarar la suya.
+OWN_FORM_DEFAULT_DISCLAIMER = (
+    "Al enviar, acepto los Términos y Condiciones, autorizo el tratamiento de mis "
+    "datos personales conforme a la Política de Privacidad de este sitio."
+)
+MAX_OWN_FORMS = 32
+
+
+@dataclass(frozen=True)
+class OwnForm:
+    """Un formulario propio (``[[formularios_propios]]``, own-forms-v1).
+
+    Declararlo equivale a listar un formulario en ``[adaptadores.ghl].formularios``:
+    sus envios entran con el consentimiento de la instancia. ``landing_id`` es la
+    landing (y por ella la oferta) de todo envio del formulario.
+    """
+
+    key: str
+    landing_id: str
+    disclaimer: str
+    title: str = ""
+    page_title: str = ""
+    button: str = "Enviar"
+    links: tuple[tuple[str, str], ...] = ()
+    origins: tuple[str, ...] = ()
+    default_country: str = "MX"
+    countries: tuple[str, ...] = ()
+    thanks_url: str | None = None
+    webhooks: tuple[str, ...] = ()
+    use_core: bool = True
 
 
 class ManifestError(ValueError):
@@ -418,6 +457,8 @@ class InstanceManifest:
     # cuando, con la forma de ok_del_cliente de un item. None = no esta declarado:
     # el Automation Expert lo busca en la ultima propuesta publicada o lo pregunta.
     client_ok: Mapping[str, str] | None = None
+    # [[formularios_propios]] (own-forms-v1). Vacio = sin formularios propios.
+    own_forms: tuple[OwnForm, ...] = ()
     # Los segmentos del agente ([[agente.segmentos]], E-311). Vacio = la
     # instancia no tiene segmentos: el pedido a Hermes es el de siempre.
     agent_segments: tuple[AgentSegment, ...] = ()
@@ -787,6 +828,7 @@ class InstanceManifest:
             payload, events, all_offers
         )
         campaigns = _campaigns(payload.get("campanas"), agent_segments, all_offers)
+        own_forms = _own_forms(payload.get("formularios_propios"), events, all_offers, brand)
         attention = _attention(payload.get("atencion"), time_zone)
         price_guard_extra_amounts = _price_guard_extra_amounts(payload.get("guarda_precio"))
         permission_notices = _permission_notices(
@@ -835,6 +877,7 @@ class InstanceManifest:
             attention=attention,
             price_guard_extra_amounts=price_guard_extra_amounts,
             permission_notices=permission_notices,
+            own_forms=own_forms,
         )
         for flow, enabled in manifest.flows.items():
             blockers = manifest.flow_blockers(flow)
@@ -1258,6 +1301,113 @@ def _exact_keys(
         raise ManifestError(f"{where}: faltan {', '.join(missing)}")
     if extra:
         raise ManifestError(f"{where}: claves no soportadas {', '.join(extra)}")
+
+
+def _own_forms(
+    raw: object, events: frozenset[str], offers: tuple[Offer, ...], brand: str
+) -> tuple[OwnForm, ...]:
+    """``[[formularios_propios]]`` (own-forms-v1): opcional, una tabla por formulario."""
+
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or not all(isinstance(item, dict) for item in raw):
+        raise ManifestError("formularios_propios debe ser una lista de tablas ([[formularios_propios]])")
+    if len(raw) > MAX_OWN_FORMS:
+        raise ManifestError(f"formularios_propios admite hasta {MAX_OWN_FORMS} formularios")
+    if raw and "intencion" not in events:
+        raise ManifestError("formularios_propios exige el evento 'intencion' en eventos")
+    landing_ids = [offer.landing_id for offer in offers]
+    forms: list[OwnForm] = []
+    for index, item in enumerate(raw):
+        where = f"formularios_propios[{index}]"
+        _exact_keys(
+            where,
+            item,
+            {"clave", "landing_id"},
+            {
+                "aclaracion", "titulo", "titulo_pagina", "boton", "links", "origenes",
+                "pais", "paises", "gracias_url", "webhooks", "usar_core",
+            },
+        )
+        form_key = _str(item, "clave", f"{where}.clave")
+        if _OWN_FORM_KEY.fullmatch(form_key) is None:
+            raise ManifestError(
+                f"{where}.clave debe ser un slug de 3 a 40 caracteres (a-z, 0-9, guiones)"
+            )
+        landing_id = _str(item, "landing_id", f"{where}.landing_id")
+        if landing_ids.count(landing_id) != 1:
+            raise ManifestError(
+                f"{where}.landing_id '{landing_id}' no es la landing de una sola oferta del manifiesto"
+            )
+
+        def optional_text(name: str, default: str, _item=item, _where=where) -> str:
+            if name not in _item:
+                return default
+            return _str(_item, name, f"{_where}.{name}")
+
+        title = ""
+        if "titulo" in item:
+            if not isinstance(item["titulo"], str) or item["titulo"] != item["titulo"].strip():
+                raise ManifestError(f"{where}.titulo debe ser un texto sin espacios en los bordes")
+            title = item["titulo"]
+        links: list[tuple[str, str]] = []
+        raw_links = item.get("links", [])
+        if not isinstance(raw_links, list):
+            raise ManifestError(f"{where}.links debe ser una lista de {{texto, url}}")
+        for link_index, link in enumerate(raw_links):
+            link_where = f"{where}.links[{link_index}]"
+            if not isinstance(link, dict):
+                raise ManifestError(f"{link_where} debe ser una tabla {{texto, url}}")
+            _exact_keys(link_where, link, {"texto", "url"})
+            text = _str(link, "texto", f"{link_where}.texto")
+            url = _str(link, "url", f"{link_where}.url")
+            if _OWN_FORM_URL.fullmatch(url) is None:
+                raise ManifestError(f"{link_where}.url debe ser una URL https")
+            links.append((text, url))
+        origins = _str_list(item.get("origenes", []), f"{where}.origenes")
+        for origin in origins:
+            if _OWN_FORM_ORIGIN.fullmatch(origin) is None:
+                raise ManifestError(
+                    f"{where}.origenes: '{origin}' debe ser un origen https sin ruta (https://dominio)"
+                )
+        default_country = optional_text("pais", "MX")
+        countries = _str_list(item.get("paises", []), f"{where}.paises")
+        for region in (default_country, *countries):
+            if _OWN_FORM_REGION.fullmatch(region) is None:
+                raise ManifestError(f"{where}: '{region}' no es un codigo de pais ISO de dos letras")
+        if countries and default_country not in countries:
+            raise ManifestError(f"{where}.pais debe estar en {where}.paises")
+        thanks_url = optional_text("gracias_url", "") or None
+        if thanks_url is not None and _OWN_FORM_URL.fullmatch(thanks_url) is None:
+            raise ManifestError(f"{where}.gracias_url debe ser una URL https")
+        webhooks = _str_list(item.get("webhooks", []), f"{where}.webhooks")
+        for url in webhooks:
+            if _OWN_FORM_URL.fullmatch(url) is None:
+                raise ManifestError(f"{where}.webhooks: cada webhook debe ser una URL https")
+        use_core = item.get("usar_core", True)
+        if not isinstance(use_core, bool):
+            raise ManifestError(f"{where}.usar_core debe ser true o false")
+        forms.append(
+            OwnForm(
+                key=form_key,
+                landing_id=landing_id,
+                disclaimer=optional_text("aclaracion", OWN_FORM_DEFAULT_DISCLAIMER),
+                title=title,
+                page_title=optional_text("titulo_pagina", brand),
+                button=optional_text("boton", "Enviar"),
+                links=tuple(links),
+                origins=origins,
+                default_country=default_country,
+                countries=countries,
+                thanks_url=thanks_url,
+                webhooks=webhooks,
+                use_core=use_core,
+            )
+        )
+    form_keys = [form.key for form in forms]
+    if len(set(form_keys)) != len(form_keys):
+        raise ManifestError("formularios_propios: hay claves repetidas")
+    return tuple(forms)
 
 
 def _client_ok(value: object) -> Mapping[str, str] | None:
