@@ -261,7 +261,9 @@ def test_the_plugin_acks_the_url_button_click_and_adds_no_tool(world: SimpleName
                      "create_chatwoot_label_macro", "preview_campaign", "propose_campaign",
                      "validate_campaign", "get_campaign", "list_campaigns", "get_approval_page",
                      "add_to_test_group", "propose_bulk_send", "get_bulk_send", "list_bulk_sends",
-                     "pausar_agente", "reanudar_agente", "estado_pausa"]
+                     "pausar_agente", "reanudar_agente", "estado_pausa",
+                     "preview_temporary_instruction", "propose_temporary_instruction",
+                     "get_temporary_instruction", "list_temporary_instructions"]
     [(action_id, callback)] = actions
     assert action_id == "flow_approval_open"
     acked: list[bool] = []

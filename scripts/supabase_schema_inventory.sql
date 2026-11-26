@@ -7783,6 +7783,52 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         ), 0),
         7,
         'agent_global_pause'
+    union all
+    select
+        '20261126200000',
+        '20261126200000_agent_temporary_instructions_v1.sql',
+        -- La instruccion temporal para todas las conversaciones (5.3 de Z1, agent-temporary-instruction-v1):
+        -- las dos tablas, con RLS y sin lectura para la API ...
+        (
+            select count(*) = 2
+            from pg_class c
+            where c.oid in (to_regclass('public.agent_temporary_instructions'),
+                            to_regclass('public.agent_temporary_instruction_events'))
+              and c.relrowsecurity
+              and not has_table_privilege('anon', c.oid, 'SELECT')
+              and not has_table_privilege('authenticated', c.oid, 'SELECT')
+        )::int
+        -- ... una sola viva por instancia ...
+        + (
+            select count(*) = 1
+            from pg_indexes
+            where schemaname = 'public'
+              and indexname = 'agent_temporary_instructions_one_live'
+              and indexdef like '%status = ''publicada''%'
+        )::int
+        -- ... publicar solo desde la pagina, con su rol ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.approver_publish_agent_temporary_instruction_v1(jsonb,text,uuid,text)')
+              and prosecdef
+              and case when to_regrole('flow_change_approver') is null then false
+                       else has_function_privilege('flow_change_approver', oid, 'EXECUTE') end
+              and case when to_regrole('automation_expert_change') is null then true
+                       else not has_function_privilege('automation_expert_change', oid, 'EXECUTE') end
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+        )::int
+        -- ... y la lectura de la viva, solo de service_role.
+        + coalesce((
+            select (prosecdef
+                    and has_function_privilege('service_role', oid, 'EXECUTE')
+                    and not has_function_privilege('anon', oid, 'EXECUTE')
+                    and not has_function_privilege('authenticated', oid, 'EXECUTE'))::int
+            from functions
+            where oid = to_regprocedure('public.get_live_agent_temporary_instruction_v1(jsonb)')
+        ), 0),
+        4,
+        'agent_temporary_instructions'
 )
 select
     version,

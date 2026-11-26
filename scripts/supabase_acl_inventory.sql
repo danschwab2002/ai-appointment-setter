@@ -294,7 +294,9 @@ expected_service_role(signature) as (
         ('public.read_bulk_send_recipients_v1(uuid, integer, integer)'),
         -- 20261126100000: la pausa del agente (5.4), la lectura del turno y lo retenido.
         ('public.get_live_agent_global_pauses_v1(jsonb)'),
-        ('public.record_agent_global_pause_hold_v1(jsonb, uuid, bigint)')
+        ('public.record_agent_global_pause_hold_v1(jsonb, uuid, bigint)'),
+        -- 20261126200000: la instruccion temporal publicada y vigente, para el turno (5.3 de Z1).
+        ('public.get_live_agent_temporary_instruction_v1(jsonb)')
 ),
 functions as (
     select

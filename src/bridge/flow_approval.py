@@ -152,6 +152,8 @@ _BROWSER_SECRET = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 # sha256, asi que nadie lo puede cambiar por el camino. Un state comun tiene 43 caracteres: no se confunde.
 _CAMPAIGN_STATE = re.compile(r"^c([0-9a-f-]{36})[A-Za-z0-9_-]{32,}$")
 _TEMPLATE_STATE = re.compile(r"^t([0-9a-f-]{36})[A-Za-z0-9_-]{32,}$")
+# Lo mismo con la instruccion temporal (agent-temporary-instruction-v1): «i», el id y el secreto.
+_INSTRUCTION_STATE = re.compile(r"^i([0-9a-f-]{36})[A-Za-z0-9_-]{32,}$")
 _CSP = ("default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; "
         "frame-ancestors 'none'")
 
@@ -481,6 +483,30 @@ class ApprovalStore:
         return await self._rpc("approver_discard_agent_campaign_v1", {
             "p_instance": instance, "p_session_hash": session_hash, "p_campaign_id": campaign_id, "p_reason": reason})
 
+    # -- la instruccion temporal (agent-temporary-instruction-v1, migracion 20261126200000). --
+    async def get_temporary_instruction(self, instance: Mapping[str, str], *, session_hash: str,
+                                        instruction_id: str) -> dict[str, Any]:
+        return await self._rpc("approver_get_agent_temporary_instruction_v1", {
+            "p_instance": instance, "p_session_hash": session_hash, "p_instruction_id": instruction_id})
+
+    async def publish_temporary_instruction(self, instance: Mapping[str, str], *, session_hash: str,
+                                            instruction_id: str, fingerprint: str) -> dict[str, Any]:
+        return await self._rpc("approver_publish_agent_temporary_instruction_v1", {
+            "p_instance": instance, "p_session_hash": session_hash, "p_instruction_id": instruction_id,
+            "p_fingerprint": fingerprint})
+
+    async def retire_temporary_instruction(self, instance: Mapping[str, str], *, session_hash: str,
+                                           instruction_id: str, reason: str) -> dict[str, Any]:
+        return await self._rpc("approver_retire_agent_temporary_instruction_v1", {
+            "p_instance": instance, "p_session_hash": session_hash, "p_instruction_id": instruction_id,
+            "p_reason": reason})
+
+    async def discard_temporary_instruction(self, instance: Mapping[str, str], *, session_hash: str,
+                                            instruction_id: str, reason: str) -> dict[str, Any]:
+        return await self._rpc("approver_discard_agent_temporary_instruction_v1", {
+            "p_instance": instance, "p_session_hash": session_hash, "p_instruction_id": instruction_id,
+            "p_reason": reason})
+
     async def cohort_add(self, instance: Mapping[str, str], *, session_hash: str, product_ref: str, flow_key: str,
                          phone: str, reason: str) -> dict[str, Any]:
         return await self._rpc("approver_flow_cohort_v1", {
@@ -794,11 +820,15 @@ def _page(title: str, message: str, status: int) -> HTMLResponse:
     return HTMLResponse(_shell(title, body), status_code=status)
 
 
-def _login(return_to: str | None, *, template: str | None = None, campaign: str | None = None) -> HTMLResponse:
-    query = (f"?{urlencode({'c': campaign})}" if campaign
+def _login(return_to: str | None, *, template: str | None = None, campaign: str | None = None,
+           instruction: str | None = None) -> HTMLResponse:
+    query = (f"?{urlencode({'i': instruction})}" if instruction
+             else f"?{urlencode({'c': campaign})}" if campaign
              else f"?{urlencode({'t': template})}" if template
              else f"?{urlencode({'p': return_to})}" if return_to else "")
-    title, what, see = ("Aprobar campañas",
+    title, what, see = ("Aprobar instrucciones temporales",
+                        "Acá ves la instrucción temporal que redactó el agente y decidís si queda andando.",
+                        "la instrucción") if instruction else ("Aprobar campañas",
                         "Acá ves la campaña que armó el agente y decidís si queda andando.",
                         "la campaña") if campaign else (
                        "Aprobar plantillas de WhatsApp",
@@ -2226,6 +2256,7 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
         target = request.query_params.get("p")
         template = request.query_params.get("t")
         campaign = request.query_params.get("c")
+        instruction = request.query_params.get("i")
         if target is not None and not _canonical_uuid(target):
             return _page("Entrar", "El link no es válido.", 404)
         if template is not None and (extra_routes is None or target is not None or not _canonical_uuid(template)):
@@ -2233,11 +2264,16 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
         if campaign is not None and (extra_routes is None or target is not None or template is not None
                                      or not _canonical_uuid(campaign)):
             return _page("Entrar", "El link no es válido.", 404)
+        if instruction is not None and (extra_routes is None or target is not None or template is not None
+                                        or campaign is not None or not _canonical_uuid(instruction)):
+            return _page("Entrar", "El link no es válido.", 404)
         state = secrets.token_urlsafe(32)
         if template is not None:
             state = f"t{template}{state}"
         if campaign is not None:
             state = f"c{campaign}{state}"
+        if instruction is not None:
+            state = f"i{instruction}{state}"
         nonce = secrets.token_urlsafe(32)
         return_path = f"{PREFIX}/p/{target}" if target else f"{PREFIX}/"
         try:
@@ -2304,6 +2340,10 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
         if extra_routes is not None and campaign_state is not None and return_path == f"{PREFIX}/" \
                 and _canonical_uuid(campaign_state.group(1)):
             return_path = f"{PREFIX}/c/{campaign_state.group(1)}"
+        instruction_state = _INSTRUCTION_STATE.fullmatch(state)
+        if extra_routes is not None and instruction_state is not None and return_path == f"{PREFIX}/" \
+                and _canonical_uuid(instruction_state.group(1)):
+            return_path = f"{PREFIX}/i/{instruction_state.group(1)}"
         logger.info("flow_approval route=callback session=created ok=%s", created.get("ok") is True)
         response = RedirectResponse(return_path, status_code=303)
         response.delete_cookie(STATE_COOKIE, path="/", secure=True, httponly=True, samesite="lax")
@@ -2335,17 +2375,19 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
     async def _write_form(request: Request, *, title: str, fields: set[str],
                           optional: frozenset[str] = frozenset(),
                           template: str | None = None, campaign: str | None = None,
+                          instruction: str | None = None,
                           ) -> tuple[str, str, dict[str, str]] | Response:
         """Origin, sesion viva y en la lista, formulario acotado y CSRF; o la respuesta que corta.
 
         ``template``: la solicitud de plantilla del formulario, para que quien perdio la sesion vuelva a ella.
         ``campaign``: lo mismo, con una campana (agent-campaigns-v1).
+        ``instruction``: lo mismo, con una instruccion temporal (agent-temporary-instruction-v1).
         """
         if not _same_origin(request, config.origin):
             return _page(title, "Origen no autorizado.", 403)
         who = await _who(request)
         if who is None:
-            return _logged_out(_login(None, template=template, campaign=campaign))
+            return _logged_out(_login(None, template=template, campaign=campaign, instruction=instruction))
         user, secret = who
         try:
             form = await _bounded_form(request, max_fields=len(fields) + len(optional))

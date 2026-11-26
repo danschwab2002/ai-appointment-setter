@@ -139,6 +139,8 @@ require(JSON.stringify(executable) === JSON.stringify([
   'get_agent_campaign_v1(jsonb, uuid)',
   // Las cuatro del producto del Automation Expert (20261115000100, E-569), en su orden alfabetico.
   'get_agent_product_v1(jsonb, uuid)',
+  // Las tres de la instruccion temporal (20261126200000, 5.3 de Z1), en su orden alfabetico.
+  'get_agent_temporary_instruction_v1(jsonb, uuid)',
   'get_flow_change_proposal_v1(jsonb, uuid)',
   // Las cuatro de las solicitudes de plantilla (20261102000200, E-268, template-request-v1).
   'get_meta_template_request_v1(jsonb, uuid)',
@@ -146,9 +148,11 @@ require(JSON.stringify(executable) === JSON.stringify([
   // Las tres de la pausa del agente (20261126100000, 5.4), en su orden alfabetico.
   'list_agent_global_pauses_v1(jsonb, integer)',
   'list_agent_products_v1(jsonb, boolean, integer)',
+  'list_agent_temporary_instructions_v1(jsonb, integer)',
   'list_flow_changes_v1(jsonb, boolean, integer)',
   'list_meta_template_requests_v1(jsonb, boolean, integer)',
   'pause_agent_globally_v1(jsonb, text, text, text, timestamp with time zone, text, text)',
+  'propose_agent_temporary_instruction_v1(jsonb, text, timestamp with time zone, text, jsonb, text)',
   // La audiencia de hoy de un flujo de audiencia, para prender o apagarlo (20261116000100, E-622).
   'read_flow_audience_reach_v1(jsonb, uuid, integer)',
   'read_flow_engine_history_v1(jsonb, text, timestamp with time zone)',

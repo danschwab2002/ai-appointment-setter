@@ -490,7 +490,8 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261125000300 (preparar y los vetos de la base del masivo, encargo 3b) suma sus cuatro.
     # 20261125000400 (el registro por persona del masivo, D10 del #511) suma la suya.
     # 20261126100000 (la pausa del agente, 5.4) suma sus dos.
-    assert len(allowlisted) == 256
+    # 20261126200000 (la instruccion temporal, 5.3 de Z1) suma la lectura de la viva.
+    assert len(allowlisted) == 257
     assert "record_permission_grant_v1(jsonb)" in allowlisted
     assert "close_permission_notice_v1(text, text, timestamp with time zone)" in allowlisted
     assert "record_hotmart_unknown_offer_v1(text, bigint, text, text, text, text, text, uuid)" in allowlisted
@@ -2507,16 +2508,30 @@ def test_bulk_send_recipients_read_fingerprint_counts_the_rows() -> None:
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact
 
 
-def test_agent_global_pause_fingerprint_is_last() -> None:
+def test_agent_global_pause_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261126100000: la pausa del agente (5.4), las dos tablas con RLS, la lectura del turno y lo
     # retenido solo de service_role, y las tres del agente que service_role no ejecuta.
-    row = sql.split("'20261126100000'", 1)[1].split("select\n    version,", 1)[0]
+    row = sql.split("'20261126100000'", 1)[1].split("'20261126200000'", 1)[0].rsplit("union all", 1)[0]
     compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
 
-    assert compact.endswith(",7,'agent_global_pause')")
+    assert compact.endswith(",7,'agent_global_pause'")
     assert "to_regclass('public.agent_global_pauses')" in compact
     assert "get_live_agent_global_pauses_v1(jsonb)" in compact
     assert "record_agent_global_pause_hold_v1(jsonb,uuid,bigint)" in compact
     assert "pause_agent_globally_v1(jsonb,text,text,text,timestamptz,text,text)" in compact
     assert "nothas_function_privilege('service_role',oid,'EXECUTE')" in compact
+
+
+def test_agent_temporary_instructions_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261126200000 (5.3 de Z1): las dos tablas con RLS, una sola viva, publicar solo desde la
+    # pagina y la lectura de la viva solo de service_role.
+    row = sql.split("'20261126200000'", 1)[1].split("select\n    version,", 1)[0]
+    compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
+
+    assert compact.endswith(",4,'agent_temporary_instructions')")
+    assert "to_regclass('public.agent_temporary_instructions')" in compact
+    assert "indexname='agent_temporary_instructions_one_live'" in compact
+    assert "approver_publish_agent_temporary_instruction_v1(jsonb,text,uuid,text)" in compact
+    assert "get_live_agent_temporary_instruction_v1(jsonb)" in compact

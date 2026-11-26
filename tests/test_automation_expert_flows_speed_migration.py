@@ -206,6 +206,8 @@ def test_it_is_one_transaction_and_comes_before_the_motor() -> None:
         "20261125000400_bulk_send_recipients_read_v1.sql",
         # La pausa del agente (20261126100000, 5.4).
         "20261126100000_agent_global_pause_v1.sql",
+        # La instruccion temporal para todas las conversaciones (20261126200000, 5.3 de Z1).
+        "20261126200000_agent_temporary_instructions_v1.sql",
     ]
     for later in names[position + 1:]:
         if later != reads:
