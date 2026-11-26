@@ -296,7 +296,11 @@ expected_service_role(signature) as (
         ('public.get_live_agent_global_pauses_v1(jsonb)'),
         ('public.record_agent_global_pause_hold_v1(jsonb, uuid, bigint)'),
         -- 20261126200000: la instruccion temporal publicada y vigente, para el turno (5.3 de Z1).
-        ('public.get_live_agent_temporary_instruction_v1(jsonb)')
+        ('public.get_live_agent_temporary_instruction_v1(jsonb)'),
+        -- 20261126300000: exportar contactos (1.3); las de la pagina son de flow_change_approver.
+        ('public.create_contact_export_v1(jsonb, jsonb)'),
+        ('public.read_contact_export_v1(jsonb, uuid)'),
+        ('public.read_contact_export_people_v1(jsonb, text, integer)')
 ),
 functions as (
     select

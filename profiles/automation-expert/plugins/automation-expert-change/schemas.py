@@ -655,3 +655,66 @@ LIST_TEMPORARY_INSTRUCTIONS = {
         "additionalProperties": False,
     },
 }
+
+
+# 1.3 (contact-export-v1): exportar contactos. El agente pide con filtros; el CSV lo baja un aprobador en la pagina.
+EXPORT_CONTACTS = {
+    "name": "export_contacts",
+    "description": (
+        "Pide una lista de contactos de la base en CSV (para el mail, un sorteo, la planilla del asesor) y "
+        "devuelve matched_count (cuántas personas cumplen) y page_url: el link de la página donde un aprobador "
+        "la baja una sola vez, dentro de los 30 minutos. Mandá el número y page_url tal cual con note: nunca "
+        "pegues ni pidas teléfonos, mails o nombres en el chat. Sin filtros salen todas las personas que no "
+        "pidieron «No más mensajes» (opted_out_excluded dice cuántas bajas quedaron afuera). Si el pedido no "
+        "cierra, reason dice qué campo. Con contact_export_not_enabled, esta instancia no tiene la exportación "
+        "prendida. No manda nada a nadie."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "filtros": {
+                "type": "object",
+                "properties": {
+                    "etiquetas": {"type": "array", "items": {"type": "string"}, "maxItems": 10,
+                                  "description": "Tiene al menos una de estas etiquetas de Chatwoot."},
+                    "sin_etiquetas": {"type": "array", "items": {"type": "string"}, "maxItems": 10,
+                                      "description": "No tiene ninguna de estas etiquetas."},
+                    "compro": {"type": "boolean", "description": "true: compró; false: no compró."},
+                    "producto": {"type": "string",
+                                 "description": "Un producto de la instancia: acota compro y el formulario."},
+                    "formulario_desde": {"type": "string", "description": "Dejó un formulario desde AAAA-MM-DD."},
+                    "formulario_hasta": {"type": "string", "description": "Dejó un formulario hasta AAAA-MM-DD."},
+                    "paises": {"type": "array", "items": {"type": "string"}, "maxItems": 10,
+                               "description": "El país del teléfono, ISO de dos letras (MX, CO)."},
+                    "incluir_bajas": {"type": "boolean",
+                                      "description": "Solo si la persona lo pide: incluye las bajas."},
+                    "etiquetas_dias": {"type": "integer", "minimum": 1, "maximum": 365,
+                                       "description": "Días de conversaciones para las etiquetas (90)."},
+                },
+                "additionalProperties": False,
+            },
+            "columnas": {
+                "type": "array",
+                "items": {"type": "string", "enum": ["nombre", "telefono", "email", "etiquetas", "compro",
+                                                     "ultimo_formulario", "pais", "baja", "productos"]},
+                "description": "Por defecto nombre, telefono, email, etiquetas, compro y ultimo_formulario.",
+            },
+        },
+        "additionalProperties": False,
+    },
+}
+
+GET_CONTACT_EXPORT = {
+    "name": "get_contact_export",
+    "description": (
+        "Relee un pedido de exportación: su estado (pendiente, bajado o vencido), cuántas personas "
+        "coincidían y, si ya se bajó, cuántas filas. page_url solo mientras está pendiente. Nunca trae un "
+        "teléfono, un mail ni un nombre. Solo lee."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"export_id": {**_FLOW_ID, "description": "El id del pedido."}},
+        "required": ["export_id"],
+        "additionalProperties": False,
+    },
+}

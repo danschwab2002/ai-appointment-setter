@@ -45,7 +45,9 @@ TOOLS = ["get_flow_definitions", "propose_flow_change", "validate_flow_change", 
          "pausar_agente", "reanudar_agente", "estado_pausa",
          # 5.3 de Z1: la instruccion temporal; aprobarla y retirarla son de la pagina.
          "preview_temporary_instruction", "propose_temporary_instruction", "get_temporary_instruction",
-         "list_temporary_instructions"]
+         "list_temporary_instructions",
+         # 1.3 (contact-export-v1): pedir una exportacion y leerla; el CSV lo baja un aprobador en la pagina.
+         "export_contacts", "get_contact_export"]
 
 
 def _load_plugin() -> ModuleType:

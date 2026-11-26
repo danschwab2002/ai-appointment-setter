@@ -205,6 +205,8 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
         "20261126100000_agent_global_pause_v1.sql",
         # La instruccion temporal para todas las conversaciones (20261126200000, 5.3 de Z1).
         "20261126200000_agent_temporary_instructions_v1.sql",
+        # Exportar contactos (20261126300000).
+        "20261126300000_contact_export_v1.sql",
     ]
     native = (MIGRATIONS / "20261024000200_flow_engine_native_v1.sql").read_text(encoding="utf-8")
     assert "read_automation_expert_flows_v1" not in native

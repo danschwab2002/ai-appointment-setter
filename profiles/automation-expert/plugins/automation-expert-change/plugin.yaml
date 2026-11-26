@@ -1,6 +1,6 @@
 name: automation-expert-change
-version: "0.11.0"
-description: Proponer y validar un cambio de flujo (flow-change-cycle-v1), dejar el link para aprobarlo en la pagina del bridge, pasar el link de esa pagina sin propuesta, sumar a alguien al grupo de prueba de un flujo en cohorte (solo un aprobador), leer el catalogo de plantillas y las propuestas con su estado, leer y crear etiquetas de Chatwoot (sumarle una a una conversacion) y leer sus macros, armar el borrador de un masivo y leer su estado (la lista se sube y el envio se confirma en la pagina), y pausar y reanudar al agente comercial para todas, por etiqueta o por producto (solo a pedido de un aprobador; frenar no manda nada), y proponer y leer la instruccion temporal para todas las conversaciones (se aprueba y se retira en la pagina). Nunca aprueba, publica, confirma, arranca, retira ni borra, y no frena flujos, campanas ni masivos.
+version: "0.12.0"
+description: Proponer y validar un cambio de flujo (flow-change-cycle-v1), dejar el link para aprobarlo en la pagina del bridge, pasar el link de esa pagina sin propuesta, sumar a alguien al grupo de prueba de un flujo en cohorte (solo un aprobador), leer el catalogo de plantillas y las propuestas con su estado, leer y crear etiquetas de Chatwoot (sumarle una a una conversacion) y leer sus macros, armar el borrador de un masivo y leer su estado (la lista se sube y el envio se confirma en la pagina), y pausar y reanudar al agente comercial para todas, por etiqueta o por producto (solo a pedido de un aprobador; frenar no manda nada), y proponer y leer la instruccion temporal para todas las conversaciones (se aprueba y se retira en la pagina), y pedir una exportacion de contactos (el CSV lo baja un aprobador en la pagina). Nunca aprueba, publica, confirma, arranca, retira ni borra, y no frena flujos, campanas ni masivos.
 author: ai-appointment-setter
 provides_tools:
   - get_flow_definitions
@@ -35,6 +35,8 @@ provides_tools:
   - propose_temporary_instruction
   - get_temporary_instruction
   - list_temporary_instructions
+  - export_contacts
+  - get_contact_export
 provides_hooks:
   - pre_tool_call
 requires_env:

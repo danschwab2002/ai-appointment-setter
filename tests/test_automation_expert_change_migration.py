@@ -199,6 +199,8 @@ def test_it_is_one_transaction_and_comes_before_the_flow_engine_routes() -> None
         "20261126100000_agent_global_pause_v1.sql",
         # La instruccion temporal para todas las conversaciones (20261126200000, 5.3 de Z1).
         "20261126200000_agent_temporary_instructions_v1.sql",
+        # Exportar contactos (20261126300000).
+        "20261126300000_contact_export_v1.sql",
     ]
 
 

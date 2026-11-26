@@ -360,7 +360,11 @@ const rows = await db.query(`
       ('get_live_agent_global_pauses_v1(jsonb)'),
       ('record_agent_global_pause_hold_v1(jsonb,uuid,bigint)'),
       -- 20261126200000: la instruccion temporal publicada y vigente, para el turno (5.3 de Z1).
-      ('get_live_agent_temporary_instruction_v1(jsonb)')
+      ('get_live_agent_temporary_instruction_v1(jsonb)'),
+      -- 20261126300000: exportar contactos (1.3); las de la pagina son de flow_change_approver.
+      ('create_contact_export_v1(jsonb,jsonb)'),
+      ('read_contact_export_v1(jsonb,uuid)'),
+      ('read_contact_export_people_v1(jsonb,text,integer)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -404,6 +408,7 @@ const result = rows.rows[0];
 // 20261125000400 (el registro por persona del masivo, D10 del #511) suma la suya: 254.
 // 20261126100000 (la pausa del agente, 5.4) suma sus dos: 256.
 // 20261126200000 (la instruccion temporal, 5.3 de Z1) suma la lectura de la viva: 257.
+// 20261126300000 (exportar contactos, 1.3) suma sus tres del bridge: 260.
 // Historical baseline guard was `result.expected_count !== 63`; the current
 // baseline is 68 RPCs, daily feedback adds fourteen, payment links add three,
 // the one-shot operator disposition adds one, and correlation event context
@@ -455,7 +460,7 @@ const result = rows.rows[0];
 // claim, settle and block the retry, and mark the 131026 notice.
 // The personal coupon of a native step (20261112210500, E-483, C2) adds the read of the bridge.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 257) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 260) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

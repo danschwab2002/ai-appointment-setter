@@ -220,6 +220,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261126100000",
         # La instruccion temporal para todas las conversaciones (20261126200000, 5.3 de Z1).
         "20261126200000",
+        # Exportar contactos (20261126300000).
+        "20261126300000",
     ]
 
     sql = _sql()
