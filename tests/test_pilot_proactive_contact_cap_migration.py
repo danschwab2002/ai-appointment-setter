@@ -222,6 +222,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261126200000",
         # Exportar contactos (20261126300000).
         "20261126300000",
+        # Las reglas de palabra clave (20261126400000, Z1 3.9).
+        "20261126400000",
     ]
 
     sql = _sql()

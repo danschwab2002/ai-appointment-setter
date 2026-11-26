@@ -201,6 +201,8 @@ def test_it_is_one_transaction_and_comes_before_the_flow_engine_routes() -> None
         "20261126200000_agent_temporary_instructions_v1.sql",
         # Exportar contactos (20261126300000).
         "20261126300000_contact_export_v1.sql",
+        # Las reglas de palabra clave (20261126400000, Z1 3.9).
+        "20261126400000_keyword_rules_v1.sql",
     ]
 
 

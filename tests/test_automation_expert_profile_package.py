@@ -109,7 +109,9 @@ def test_the_distribution_copies_the_plugin_and_names_its_variables() -> None:
                                         "pausar_agente", "reanudar_agente", "estado_pausa",
                                         "preview_temporary_instruction", "propose_temporary_instruction",
                                         "get_temporary_instruction", "list_temporary_instructions",
-                                        "export_contacts", "get_contact_export"]
+                                        "export_contacts", "get_contact_export",
+                                        "preview_keyword_rule", "propose_keyword_rule", "get_keyword_rule",
+                                        "list_keyword_rules"]
 
 
 def test_the_soul_sends_the_approval_page_without_a_proposal() -> None:
@@ -138,6 +140,7 @@ SKILLS = ("flujos/armar-una-campana", "flujos/instruccion-temporal", "flujos/cre
           "flujos/pedir-plantilla-a-meta", "flujos/programar-un-envio", "flujos/envio-masivo",
           "flujos/pausar-el-agente",
           "flujos/exportar-contactos",
+          "flujos/link-con-palabra-clave",
           "plataformas/hotmart", "plataformas/ghl-formularios", "plataformas/chatwoot-whatsapp")
 
 
@@ -173,6 +176,16 @@ def test_the_campaign_skill_checks_they_are_on_before_creating_anything() -> Non
     assert gate < text.index("queda andando sin subir nada")
     assert "No crees la etiqueta ni el macro" in text
     assert "`campaigns_not_enabled`" in (PROFILE / "SOUL.md").read_text(encoding="utf-8")
+
+
+def test_the_keyword_rule_skill_checks_they_are_on_and_says_it_sends_nothing() -> None:
+    # keyword-rules-v1 (Z1 3.9): con KEYWORD_RULES_ENABLED apagado, ni etiqueta ni macro; la regla no manda nada.
+    text = _skill("flujos/link-con-palabra-clave")
+    gate = text.index("`keyword_rules_not_enabled`")
+    assert gate < text.index("## Los pasos") and gate < text.index("`create_chatwoot_label`")
+    assert "No crees la etiqueta ni el macro" in text
+    assert "No manda ningún mensaje y no arranca ningún flujo" in text
+    assert "`keyword_rules_not_enabled`" in (PROFILE / "SOUL.md").read_text(encoding="utf-8")
 
 
 def test_the_campaign_skill_reads_notices_and_does_not_promise_the_button() -> None:

@@ -142,6 +142,8 @@ require(JSON.stringify(executable) === JSON.stringify([
   // Las tres de la instruccion temporal (20261126200000, 5.3 de Z1), en su orden alfabetico.
   'get_agent_temporary_instruction_v1(jsonb, uuid)',
   'get_flow_change_proposal_v1(jsonb, uuid)',
+  // Las tres de las reglas de palabra clave (20261126400000, Z1 3.9), en su orden alfabetico.
+  'get_keyword_rule_v1(jsonb, uuid)',
   // Las cuatro de las solicitudes de plantilla (20261102000200, E-268, template-request-v1).
   'get_meta_template_request_v1(jsonb, uuid)',
   'list_agent_campaigns_v1(jsonb, boolean, integer)',
@@ -150,6 +152,7 @@ require(JSON.stringify(executable) === JSON.stringify([
   'list_agent_products_v1(jsonb, boolean, integer)',
   'list_agent_temporary_instructions_v1(jsonb, integer)',
   'list_flow_changes_v1(jsonb, boolean, integer)',
+  'list_keyword_rules_v1(jsonb, boolean, integer)',
   'list_meta_template_requests_v1(jsonb, boolean, integer)',
   'pause_agent_globally_v1(jsonb, text, text, text, timestamp with time zone, text, text)',
   'propose_agent_temporary_instruction_v1(jsonb, text, timestamp with time zone, text, jsonb, text)',
@@ -167,6 +170,7 @@ require(JSON.stringify(executable) === JSON.stringify([
   'save_agent_campaign_draft_v1(jsonb, uuid, integer, jsonb, text, text)',
   'save_agent_product_draft_v1(jsonb, uuid, integer, jsonb, text, jsonb, text, text)',
   'save_flow_change_draft_v1(jsonb, uuid, integer, jsonb, jsonb, text, text)',
+  'save_keyword_rule_draft_v1(jsonb, uuid, integer, jsonb, text, text)',
   'save_meta_template_request_draft_v1(jsonb, uuid, integer, jsonb, text, uuid, text, text)',
   // El guardado con el hilo de Slack (20261109000100, E-361).
   'save_meta_template_request_draft_v2(jsonb, uuid, integer, jsonb, text, uuid, text, text, text, text)',

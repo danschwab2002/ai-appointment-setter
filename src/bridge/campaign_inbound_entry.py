@@ -70,6 +70,25 @@ def keyword_in(text: str, keyword: str) -> bool:
     return bool(keyword) and f" {keyword} " in f" {normalize_entry_text(text)} "
 
 
+def first_message_of_turn(
+    messages: Sequence[Mapping[str, Any]], batch_refs: Iterable[str]
+) -> Mapping[str, Any] | None:
+    """El primer mensaje de la persona en la conversacion, si es parte de este turno (D14, D-E317-2).
+
+    ``messages`` es la historia normalizada desde el ultimo ``/nuevo``; ``batch_refs``,
+    los mensajes del turno. Lo usan la entrada a una campana y las reglas de palabra
+    clave (``keyword-rules-v1``): las dos miran el mismo «primer mensaje».
+    """
+
+    refs = set(batch_refs)
+    first_prospect = next(
+        (message for message in messages if message.get("actor") == "prospect"), None
+    )
+    if first_prospect is None or first_prospect.get("_message_ref") not in refs:
+        return None
+    return first_prospect
+
+
 class CampaignEntryConfigError(ValueError):
     """La declaracion de la entrada a una campana no sirve."""
 
@@ -334,22 +353,13 @@ class CampaignEntry:
         present = labels | set(remembered)
         added: list[str] = [label for label in remembered if label not in labels]
 
-        first_in_batch = next(
-            (
-                message
-                for message in messages
-                if message.get("_message_ref") in batch_refs and message.get("actor") == "prospect"
-            ),
-            None,
-        )
         first_prospect = next(
             (message for message in messages if message.get("actor") == "prospect"), None
         )
-        is_first_message = first_in_batch is not None and first_in_batch is first_prospect
+        first_in_batch = first_message_of_turn(messages, batch_refs)
 
         # 1. La palabra clave, solo en el primer mensaje de la conversacion (D14).
-        if is_first_message:
-            assert first_in_batch is not None
+        if first_in_batch is not None:
             text = first_in_batch.get("text") or ""
             for segment in active:
                 if segment.label in present or not segment.keywords:

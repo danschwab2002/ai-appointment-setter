@@ -47,7 +47,9 @@ TOOLS = ["get_flow_definitions", "propose_flow_change", "validate_flow_change", 
          "preview_temporary_instruction", "propose_temporary_instruction", "get_temporary_instruction",
          "list_temporary_instructions",
          # 1.3 (contact-export-v1): pedir una exportacion y leerla; el CSV lo baja un aprobador en la pagina.
-         "export_contacts", "get_contact_export"]
+         "export_contacts", "get_contact_export",
+         # keyword-rules-v1 (Z1 3.9): la regla de palabra clave; publicarla es de la pagina.
+         "preview_keyword_rule", "propose_keyword_rule", "get_keyword_rule", "list_keyword_rules"]
 
 
 def _load_plugin() -> ModuleType:
@@ -520,6 +522,33 @@ def test_the_campaign_tools_go_to_their_routes_with_who_asks_from_the_session(br
     assert json.loads(tools.propose_campaign({"campaign": {"clave": "x"}, "purpose": "Black November"}))["data"]["campaign_id"] == PROPOSAL
     assert json.loads(str(bridge.seen[-1]["body"]))["requested_by"] == {"slack_user": "U0123456789"}
     assert json.loads(tools.validate_campaign({"campaign_id": PROPOSAL, "revision": 1}))["data"]["status"] == "validada"
+
+
+def test_the_keyword_rule_tools_go_to_their_routes_and_say_when_they_are_off(bridge: type[_Bridge]) -> None:
+    # keyword-rules-v1 (Z1 3.9): sin KEYWORD_RULES_ENABLED las rutas no existen (el 404 generico de FastAPI).
+    tools = _tools()
+    bridge.routes[f"GET {PREFIX}/keyword-rules?estado=abiertas"] = (404, {"detail": "Not Found"})
+    assert json.loads(tools.list_keyword_rules({})) == {"error": "keyword_rules_not_enabled"}
+
+    def respond(status: int, data: dict[str, object]) -> tuple[int, object]:
+        return status, {"contract": "keyword-rules-v1", "contract_version": "1.0.0", "data": data}
+
+    bridge.routes[f"POST {PREFIX}/keyword-rules/preview"] = respond(200, {"ok": True})
+    bridge.routes[f"POST {PREFIX}/keyword-rules"] = respond(201, {"rule_id": PROPOSAL})
+    bridge.routes[f"GET {PREFIX}/keyword-rules/{PROPOSAL}"] = respond(200, {"status": "borrador"})
+    assert json.loads(tools.preview_keyword_rule({"rule": {"clave": "x"}}))["data"]["ok"] is True
+    assert json.loads(tools.propose_keyword_rule({"rule": {"clave": "x"}, "purpose": "El link de soporte"}))[
+        "data"]["rule_id"] == PROPOSAL
+    assert json.loads(str(bridge.seen[-1]["body"]))["requested_by"] == {"slack_user": "U0123456789"}
+    assert json.loads(tools.get_keyword_rule({"rule_id": PROPOSAL}))["data"]["status"] == "borrador"
+    assert json.loads(tools.get_keyword_rule({"rule_id": "no"})) == {"error": "invalid_keyword_rule_id"}
+    assert json.loads(tools.propose_keyword_rule({"rule": {}, "purpose": "Llamar al 5512345678"})) == {
+        "error": "identifier_not_allowed"}
+    bridge.routes[f"POST {PREFIX}/keyword-rules"] = (422, {"detail": "keyword_rule_draft_blocked",
+                                                          "data": {"blocks": [{"code": "keyword_rule_clashes_with_campaign"}],
+                                                                   "warnings": []}})
+    assert json.loads(tools.propose_keyword_rule({"rule": {}, "purpose": "x"}))["blocks"] == [
+        {"code": "keyword_rule_clashes_with_campaign"}]
 
 
 def test_the_campaign_tools_never_send_a_phone_in_the_purpose(bridge: type[_Bridge]) -> None:

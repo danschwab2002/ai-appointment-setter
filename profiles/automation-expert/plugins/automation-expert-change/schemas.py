@@ -316,8 +316,9 @@ CREATE_CHATWOOT_LABEL_MACRO = {
     "description": (
         "Crea en Chatwoot un macro que solo suma una etiqueta que ya existe (creala antes con "
         "create_chatwoot_label). Si ya hay un macro que hace exactamente eso, lo devuelve con created: false. "
-        "Devuelve su id: es macro_etiqueta de una campaña. No crea otro tipo de macro. "
-        "Llamala solo después de que list_campaigns contestó: sin campañas prendidas, no existe."
+        "Devuelve su id: es macro_etiqueta de una campaña o de una regla de palabra clave. No crea otro tipo "
+        "de macro. Llamala solo después de que list_campaigns o list_keyword_rules contestó: sin campañas ni "
+        "reglas prendidas, no existe."
     ),
     "parameters": {
         "type": "object",
@@ -416,6 +417,81 @@ LIST_CAMPAIGNS = {
     "description": (
         "Las campañas de la instancia y en qué estado están. estado: abiertas (por defecto) o todas. Solo lee. "
         "Con campaigns_not_enabled las campañas no están prendidas en esta instancia: no crees etiqueta ni macro."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"estado": {"type": "string", "enum": ["abiertas", "todas"]}},
+        "additionalProperties": False,
+    },
+}
+
+# keyword-rules-v1 (Z1 3.9): la regla «texto del link -> etiqueta».
+_KEYWORD_RULE = {
+    "type": "object",
+    "description": (
+        "La regla: clave (corta, minúsculas, dígitos y guiones), nombre (para la página), palabra_clave (el "
+        "texto que trae escrito el link de WhatsApp, tal cual; cuenta si el primer mensaje de la conversación lo "
+        "trae, sin importar mayúsculas, acentos ni puntuación), etiqueta y macro_etiqueta (de "
+        "create_chatwoot_label_macro: un macro que solo suma esa etiqueta). No lleva flujo: la regla solo pone la "
+        "etiqueta y le avisa al agente que el mensaje es el texto de un link."
+    ),
+}
+
+PREVIEW_KEYWORD_RULE = {
+    "name": "preview_keyword_rule",
+    "description": (
+        "Valida una regla de palabra clave contra esta instancia sin guardar nada. Vuelve con ok, blocks (qué "
+        "corregir: la palabra choca con una campaña o con otra regla, la etiqueta o el macro ya los usa el "
+        "producto, el macro hace algo más que sumar la etiqueta) y preview con el link wa.me para el botón."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"rule": _KEYWORD_RULE},
+        "required": ["rule"],
+        "additionalProperties": False,
+    },
+}
+
+PROPOSE_KEYWORD_RULE = {
+    "name": "propose_keyword_rule",
+    "description": (
+        "Guarda o rehace el borrador de una regla de palabra clave y devuelve approval_url, el link de la página "
+        "donde un aprobador la publica. No la publica: no pone ninguna etiqueta hasta ese sí. Para rehacer, mandá "
+        "rule_id y revision."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "rule": _KEYWORD_RULE,
+            "purpose": {"type": "string", "minLength": 1, "maxLength": 500,
+                        "description": "Para qué es, en una línea, como lo pidió la persona. Sin teléfonos ni mails."},
+            "rule_id": {"type": "string", "format": "uuid"},
+            "revision": {"type": "integer", "minimum": 1},
+        },
+        "required": ["rule", "purpose"],
+        "additionalProperties": False,
+    },
+}
+
+GET_KEYWORD_RULE = {
+    "name": "get_keyword_rule",
+    "description": (
+        "Relee una regla de palabra clave: estado (borrador, publicada, pausada, descartada), si se está usando "
+        "(serving: served o el motivo de por qué no) y el link de la página. Solo lee."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"rule_id": {"type": "string", "format": "uuid"}},
+        "required": ["rule_id"],
+        "additionalProperties": False,
+    },
+}
+
+LIST_KEYWORD_RULES = {
+    "name": "list_keyword_rules",
+    "description": (
+        "Las reglas de palabra clave de la instancia y su estado. estado: abiertas (por defecto) o todas. Solo "
+        "lee. Con keyword_rules_not_enabled no están prendidas en esta instancia: no crees etiqueta ni macro."
     ),
     "parameters": {
         "type": "object",

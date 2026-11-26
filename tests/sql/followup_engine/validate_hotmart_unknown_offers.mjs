@@ -83,7 +83,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026111500010
     // La instruccion temporal (20261126200000, 5.3 de Z1): tablas y RPC propias, no toca lo que se prueba aca.
     '20261126200000_agent_temporary_instructions_v1.sql',
     // Exportar contactos (20261126300000).
-    '20261126300000_contact_export_v1.sql'])) fail(`despues de ${MIGRATION} van solo la de E-569, la de E-575 y la de E-622`, names.slice(position + 1));
+    '20261126300000_contact_export_v1.sql',
+    // Las reglas de palabra clave (20261126400000, Z1 3.9).
+    '20261126400000_keyword_rules_v1.sql'])) fail(`despues de ${MIGRATION} van solo la de E-569, la de E-575 y la de E-622`, names.slice(position + 1));
 const apply = async (file) => db.exec(readFileSync(file, 'utf8').replace(
   /create extension if not exists pgcrypto;/gi,
   '-- pgcrypto is built into PGlite',

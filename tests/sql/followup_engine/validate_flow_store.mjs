@@ -710,6 +710,9 @@ check(sameJson([...lockTimeouts].sort(), [
   // La instruccion temporal: proponer y la pagina bloquean la fila o la instancia (20261126200000, 5.3 de Z1).
   'approver_discard_agent_temporary_instruction_v1', 'approver_publish_agent_temporary_instruction_v1',
   'approver_retire_agent_temporary_instruction_v1', 'propose_agent_temporary_instruction_v1',
+  // Las reglas de palabra clave desde la pagina: publicar, pausar, reanudar y descartar (20261126400000, Z1 3.9).
+  'approver_discard_keyword_rule_v1', 'approver_pause_keyword_rule_v1', 'approver_publish_keyword_rule_v1',
+  'approver_resume_keyword_rule_v1',
 ].sort()), '2: lock_timeout de 5 s en las que esperan locks', lockTimeouts);
 
 // ===========================================================================

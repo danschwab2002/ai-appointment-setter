@@ -1,0 +1,441 @@
+{
+  "_capture": {
+    "origen": "API de Chatwoot de produccion, cuenta 3, inbox 13 (Maribel), 2026-11-26T17:03:22Z, desde el contenedor del bridge de Maribel con su token de control: GET show + messages de la conversacion 455 (Z1 3.9, palabra-clave).",
+    "anonimizacion": "capturador del OS (setter_sandbox/captura_fixture_chatwoot.py) con un cambio: el primer mensaje del lead se conserva porque es el texto prellenado del link de la campana ('forever young', la palabra clave publicada de forever-young-2026 en maribel_db); el resto de los mensajes del lead redactados. Nombre, telefono, mail, identifier y source_id del contacto sinteticos; atributos del contacto vaciados; wamid reemplazados; el nombre del operador en las actividades reemplazado por 'Operador'. Sin las paginas de conversaciones.",
+    "caso": "455 de Maribel (inbox 13): la persona abre la conversacion con el texto prellenado del link de la campana ('forever young', primer mensaje real), manda otro mensaje enseguida, el macro suma la etiqueta forever-young-2026 y despues responde el agente. Documenta la forma real de un primer mensaje con palabra clave."
+  },
+  "conversation": {
+    "conversation": {
+      "meta": {
+        "sender": {
+          "additional_attributes": {},
+          "availability_status": "offline",
+          "email": null,
+          "id": 1498,
+          "name": "lucia herrera",
+          "phone_number": "+593900000455",
+          "blocked": false,
+          "identifier": null,
+          "thumbnail": "",
+          "custom_attributes": {},
+          "last_activity_at": 1795322690,
+          "created_at": 1795321499
+        },
+        "channel": "Channel::Whatsapp",
+        "team": {
+          "id": 3,
+          "name": "maribel - revisión humana",
+          "description": null,
+          "allow_auto_assign": true,
+          "account_id": 3,
+          "is_member": false
+        },
+        "hmac_verified": false
+      },
+      "id": 455,
+      "messages": [
+        {
+          "id": 7946,
+          "content": "[mensaje del lead redactado]",
+          "account_id": 3,
+          "inbox_id": 13,
+          "conversation_id": 455,
+          "message_type": 0,
+          "created_at": 1795322690,
+          "updated_at": "2026-11-22T04:44:50.304Z",
+          "private": false,
+          "status": "sent",
+          "source_id": "REDACTED-source_id",
+          "content_type": "text",
+          "content_attributes": {},
+          "sender_type": "Contact",
+          "sender_id": 1498,
+          "external_source_ids": {},
+          "additional_attributes": {},
+          "processed_message_content": "Gracias",
+          "sentiment": {},
+          "conversation": {
+            "assignee_id": null,
+            "unread_count": 4,
+            "last_activity_at": 1795322690,
+            "contact_inbox": {
+              "source_id": "REDACTED-source_id"
+            }
+          },
+          "sender": {
+            "additional_attributes": {},
+            "custom_attributes": {},
+            "email": null,
+            "id": 1498,
+            "identifier": null,
+            "name": "lucia herrera",
+            "phone_number": "+593900000455",
+            "thumbnail": "",
+            "blocked": false,
+            "type": "contact"
+          }
+        }
+      ],
+      "account_id": 3,
+      "uuid": "f16396a4-a818-46b5-b4db-166309e272d1",
+      "additional_attributes": {},
+      "agent_last_seen_at": 0,
+      "assignee_last_seen_at": 0,
+      "can_reply": false,
+      "contact_last_seen_at": 0,
+      "custom_attributes": {},
+      "inbox_id": 13,
+      "labels": [
+        "forever-young-2026",
+        "producto-forever-young",
+        "automation_paused"
+      ],
+      "muted": false,
+      "snoozed_until": null,
+      "status": "open",
+      "created_at": 1795321499,
+      "updated_at": 1795322690.384367,
+      "timestamp": 1795322690,
+      "first_reply_created_at": 0,
+      "unread_count": 4,
+      "last_non_activity_message": {
+        "id": 7946,
+        "content": "[mensaje del lead redactado]",
+        "account_id": 3,
+        "inbox_id": 13,
+        "conversation_id": 455,
+        "message_type": 0,
+        "created_at": 1795322690,
+        "updated_at": "2026-11-22T04:44:50.304Z",
+        "private": false,
+        "status": "sent",
+        "source_id": "REDACTED-source_id",
+        "content_type": "text",
+        "content_attributes": {},
+        "sender_type": "Contact",
+        "sender_id": 1498,
+        "external_source_ids": {},
+        "additional_attributes": {},
+        "processed_message_content": "Gracias",
+        "sentiment": {},
+        "conversation": {
+          "assignee_id": null,
+          "unread_count": 4,
+          "last_activity_at": 1795322690,
+          "contact_inbox": {
+            "source_id": "REDACTED-source_id"
+          }
+        },
+        "sender": {
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "email": null,
+          "id": 1498,
+          "identifier": null,
+          "name": "lucia herrera",
+          "phone_number": "+593900000455",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      },
+      "last_activity_at": 1795322690,
+      "priority": null,
+      "waiting_since": 1795322690,
+      "sla_policy_id": null
+    },
+    "messages": [
+      {
+        "id": 7933,
+        "content": "forever young",
+        "inbox_id": 13,
+        "conversation_id": 455,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1795321499,
+        "private": false,
+        "source_id": "REDACTED-source_id",
+        "sender": {
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "email": null,
+          "id": 1498,
+          "identifier": null,
+          "name": "lucia herrera",
+          "phone_number": "+593900000455",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      },
+      {
+        "id": 7934,
+        "content": "[mensaje del lead redactado]",
+        "inbox_id": 13,
+        "conversation_id": 455,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1795321518,
+        "private": false,
+        "source_id": "REDACTED-source_id",
+        "sender": {
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "email": null,
+          "id": 1498,
+          "identifier": null,
+          "name": "lucia herrera",
+          "phone_number": "+593900000455",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      },
+      {
+        "id": 7935,
+        "content": "Operador agregó forever-young-2026",
+        "inbox_id": 13,
+        "conversation_id": 455,
+        "message_type": 2,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1795321552,
+        "private": false,
+        "source_id": null
+      },
+      {
+        "id": 7936,
+        "content": "Hola, un gusto. El Black Pack Forever Young cuesta 199 USD más impuestos, en un pago único. Según tu país, Hotmart permite pagar en cuotas con tarjeta de crédito: tu tarjeta necesita cupo para el total y tu banco lo difiere en las cuotas que elijas.",
+        "inbox_id": 13,
+        "conversation_id": 455,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "read",
+        "content_attributes": {
+          "appointment_setter_reply_hash": "c7b35097fe204f088acf2a1dfa4604232e85f7ba83cc4f62a1a4ddd17590006f",
+          "appointment_setter_reply_batch_hash": "94dfa98a818cbbd96678c4f7f4e90facfd6da14e075ddba218a0e19b4bf1f974",
+          "appointment_setter_reply_part_index": 1,
+          "appointment_setter_reply_part_count": 3
+        },
+        "created_at": 1795321557,
+        "private": false,
+        "source_id": "REDACTED-source_id",
+        "sender": {
+          "id": 3,
+          "name": "maribel-setter",
+          "avatar_url": "",
+          "type": "agent_bot"
+        }
+      },
+      {
+        "id": 7937,
+        "content": "Aquí te envío el enlace para que veas el precio en tu moneda y las opciones:",
+        "inbox_id": 13,
+        "conversation_id": 455,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "read",
+        "content_attributes": {
+          "appointment_setter_reply_hash": "b33f4d10f28c9f43353c549571ad1bf3e10bdaab945b76a58fc802184fc188d9",
+          "appointment_setter_reply_batch_hash": "94dfa98a818cbbd96678c4f7f4e90facfd6da14e075ddba218a0e19b4bf1f974",
+          "appointment_setter_reply_part_index": 2,
+          "appointment_setter_reply_part_count": 3
+        },
+        "created_at": 1795321560,
+        "private": false,
+        "source_id": "REDACTED-source_id",
+        "sender": {
+          "id": 3,
+          "name": "maribel-setter",
+          "avatar_url": "",
+          "type": "agent_bot"
+        }
+      },
+      {
+        "id": 7938,
+        "content": "Aquí tienes el enlace de pago que pediste. Toca el botón para completar tu compra en Hotmart.\nhttps://pay.hotmart.com/F108511026A?off=gd7nlh8k&checkoutMode=10&src=hermes&sck=hermes~v1~01M80R1SN8YGN1GWW1DXARQ1ZH",
+        "inbox_id": 13,
+        "conversation_id": 455,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "read",
+        "content_attributes": {
+          "appointment_setter_reply_hash": "42bd4cb423fa13e0139ae39b8eb3f51f5b51588305498706299d6b39fa6e2db7",
+          "appointment_setter_reply_batch_hash": "94dfa98a818cbbd96678c4f7f4e90facfd6da14e075ddba218a0e19b4bf1f974",
+          "appointment_setter_reply_part_index": 3,
+          "appointment_setter_reply_part_count": 3
+        },
+        "created_at": 1795321564,
+        "private": false,
+        "source_id": "REDACTED-source_id",
+        "sender": {
+          "id": 3,
+          "name": "maribel-setter",
+          "avatar_url": "",
+          "type": "agent_bot"
+        }
+      },
+      {
+        "id": 7939,
+        "content": "Operador agregó producto-forever-young",
+        "inbox_id": 13,
+        "conversation_id": 455,
+        "message_type": 2,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1795321565,
+        "private": false,
+        "source_id": null
+      },
+      {
+        "id": 7940,
+        "content": "[mensaje del lead redactado]",
+        "inbox_id": 13,
+        "conversation_id": 455,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1795322257,
+        "private": false,
+        "source_id": "REDACTED-source_id",
+        "sender": {
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "email": null,
+          "id": 1498,
+          "identifier": null,
+          "name": "lucia herrera",
+          "phone_number": "+593900000455",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      },
+      {
+        "id": 7941,
+        "content": "Le paso tu consulta al equipo para que la revise. El equipo atiende de lunes a sábado de 09:00 a 20:00 (hora de Ciudad de México).",
+        "inbox_id": 13,
+        "conversation_id": 455,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "read",
+        "content_attributes": {
+          "appointment_setter_reply_hash": "0452934ac31f4c642d416b298de848f5c6e029d59fe887095913fdbbb1000e36",
+          "appointment_setter_decision": "handoff",
+          "appointment_setter_reason_code": "agent_turn_failed"
+        },
+        "created_at": 1795322299,
+        "private": false,
+        "source_id": "REDACTED-source_id",
+        "sender": {
+          "id": 3,
+          "name": "maribel-setter",
+          "avatar_url": "",
+          "type": "agent_bot"
+        }
+      },
+      {
+        "id": 7942,
+        "content": "Operador agregó automation_paused",
+        "inbox_id": 13,
+        "conversation_id": 455,
+        "message_type": 2,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1795322300,
+        "private": false,
+        "source_id": null
+      },
+      {
+        "id": 7943,
+        "content": "Último link de pago que le mandamos a esta persona (2026-11-22 04:26 UTC):\nhttps://pay.hotmart.com/F108511026A?off=gd7nlh8k&checkoutMode=10&src=hermes&sck=hermes~v1~01M80R1SN8YGN1GWW1DXARQ1ZH\nSi pide el link, envíale este mismo y no otro, ni otro cupón: así la venta queda registrada.\n\n[supportmagician-derivacion-link:3365b91c-e134-40aa-ae12-73b916928d14]",
+        "inbox_id": 13,
+        "conversation_id": 455,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1795322301,
+        "private": true,
+        "source_id": null,
+        "sender": {
+          "id": 1,
+          "name": "Operador",
+          "available_name": "Operador",
+          "avatar_url": "",
+          "type": "user",
+          "availability_status": "offline",
+          "thumbnail": ""
+        }
+      },
+      {
+        "id": 7944,
+        "content": "Derivacion automatica del setter: el agente paso esta conversacion a una persona del equipo. Revisa el historial y responde desde el equipo de revision humana.\n\nMotivo: agent_turn_failed.\n\n[supportmagician-handoff:3365b91c-e134-40aa-ae12-73b916928d14:maribel-nota-derivacion:v1]",
+        "inbox_id": 13,
+        "conversation_id": 455,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1795322305,
+        "private": true,
+        "source_id": null,
+        "sender": {
+          "id": 1,
+          "name": "Operador",
+          "available_name": "Operador",
+          "avatar_url": "",
+          "type": "user",
+          "availability_status": "offline",
+          "thumbnail": ""
+        }
+      },
+      {
+        "id": 7945,
+        "content": "Asignado a maribel - revisión humana por Operador",
+        "inbox_id": 13,
+        "conversation_id": 455,
+        "message_type": 2,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1795322306,
+        "private": false,
+        "source_id": null
+      },
+      {
+        "id": 7946,
+        "content": "[mensaje del lead redactado]",
+        "inbox_id": 13,
+        "conversation_id": 455,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1795322690,
+        "private": false,
+        "source_id": "REDACTED-source_id",
+        "sender": {
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "email": null,
+          "id": 1498,
+          "identifier": null,
+          "name": "lucia herrera",
+          "phone_number": "+593900000455",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      }
+    ]
+  }
+}

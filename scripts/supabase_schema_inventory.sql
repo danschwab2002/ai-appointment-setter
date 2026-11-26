@@ -7860,6 +7860,36 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         ), 0),
         3,
         'contact_export'
+    union all
+    select
+        '20261126400000',
+        '20261126400000_keyword_rules_v1.sql',
+        -- Las reglas de palabra clave, con RLS ...
+        (
+            select count(*) = 1
+            from pg_class c
+            where c.oid = to_regclass('public.keyword_rules') and c.relrowsecurity
+        )::int
+        -- ... la lectura de las vivas, solo de service_role ...
+        + coalesce((
+            select (prosecdef
+                    and has_function_privilege('service_role', oid, 'EXECUTE')
+                    and not has_function_privilege('anon', oid, 'EXECUTE')
+                    and not has_function_privilege('authenticated', oid, 'EXECUTE'))::int
+            from functions
+            where oid = to_regprocedure('public.get_live_keyword_rules_v1(jsonb)')
+        ), 0)
+        -- ... y publicar, de nadie de la API (solo la pagina, con su rol).
+        + coalesce((
+            select (prosecdef
+                    and not has_function_privilege('service_role', oid, 'EXECUTE')
+                    and not has_function_privilege('anon', oid, 'EXECUTE')
+                    and not has_function_privilege('authenticated', oid, 'EXECUTE'))::int
+            from functions
+            where oid = to_regprocedure('public.approver_publish_keyword_rule_v1(jsonb,text,uuid,text)')
+        ), 0),
+        3,
+        'keyword_rules'
 )
 select
     version,

@@ -56,6 +56,10 @@ from .tools import get_approval_page  # noqa: E402
 from .schemas import ADD_TO_TEST_GROUP  # noqa: E402
 from .tools import add_to_test_group  # noqa: E402
 
+# keyword-rules-v1 (Z1 3.9): la regla «texto del link -> etiqueta». Publicarla es de la pagina.
+from .schemas import GET_KEYWORD_RULE, LIST_KEYWORD_RULES, PREVIEW_KEYWORD_RULE, PROPOSE_KEYWORD_RULE  # noqa: E402
+from .tools import get_keyword_rule, list_keyword_rules, preview_keyword_rule, propose_keyword_rule  # noqa: E402
+
 # Encargo 6 del masivo: el borrador y su lectura. Confirmar, arrancar y frenar son de la pagina.
 from .schemas import GET_BULK_SEND, LIST_BULK_SENDS, PROPOSE_BULK_SEND  # noqa: E402
 from .tools import get_bulk_send, list_bulk_sends, propose_bulk_send  # noqa: E402
@@ -103,7 +107,9 @@ _TOOLS = frozenset({"get_flow_definitions", "propose_flow_change", "validate_flo
                     "preview_temporary_instruction", "propose_temporary_instruction",
                     "get_temporary_instruction", "list_temporary_instructions",
                     # 1.3: exportar contactos, solo el pedido y su lectura.
-                    "export_contacts", "get_contact_export"})
+                    "export_contacts", "get_contact_export",
+                    # keyword-rules-v1 (Z1 3.9): la regla de palabra clave, solo el borrador y su lectura.
+                    "preview_keyword_rule", "propose_keyword_rule", "get_keyword_rule", "list_keyword_rules"})
 
 
 def make_profile_guard(profile_name):
@@ -157,6 +163,10 @@ def register(ctx):
         ("list_temporary_instructions", LIST_TEMPORARY_INSTRUCTIONS, list_temporary_instructions),
         ("export_contacts", EXPORT_CONTACTS, export_contacts),
         ("get_contact_export", GET_CONTACT_EXPORT, get_contact_export),
+        ("preview_keyword_rule", PREVIEW_KEYWORD_RULE, preview_keyword_rule),
+        ("propose_keyword_rule", PROPOSE_KEYWORD_RULE, propose_keyword_rule),
+        ("get_keyword_rule", GET_KEYWORD_RULE, get_keyword_rule),
+        ("list_keyword_rules", LIST_KEYWORD_RULES, list_keyword_rules),
     ):
         ctx.register_tool(name=name, toolset="automation_expert_change", schema=schema, handler=handler)
     ctx.register_hook("pre_tool_call", make_profile_guard(getattr(ctx, "profile_name", None)))

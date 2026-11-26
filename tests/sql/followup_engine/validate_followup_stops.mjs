@@ -154,7 +154,9 @@ if (!same(names.slice(position + 1), ['20261102000100_recovery_coupon_by_reply_v
     // La instruccion temporal (20261126200000, 5.3 de Z1): tablas y RPC propias, no toca lo que se prueba aca.
     '20261126200000_agent_temporary_instructions_v1.sql',
     // Exportar contactos (20261126300000).
-    '20261126300000_contact_export_v1.sql'])) {
+    '20261126300000_contact_export_v1.sql',
+    // Las reglas de palabra clave (20261126400000, Z1 3.9).
+    '20261126400000_keyword_rules_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la renovacion por respuesta`, names.slice(position + 1));
 }
 
