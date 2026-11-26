@@ -47,6 +47,11 @@ Desde la 0.9.0 (encargo 6 del masivo manejado por el AE) suma el masivo: el borr
 confirma, lo arranca y lo frena un aprobador ahi. Sin ``BULK_SEND_ENABLED`` el bridge no tiene esas rutas:
 ``bulk_send_not_enabled``.
 
+Desde la 0.12.0 (contact-export-v1, 1.3) suma exportar contactos: el pedido (``export_contacts``, que devuelve el conteo y el
+link de la pagina donde un aprobador baja el CSV) y su lectura (``get_contact_export``). Ningun telefono, mail
+ni nombre pasa por el chat. Sin ``CONTACT_EXPORT_ENABLED`` el bridge no tiene esas rutas:
+``contact_export_not_enabled``.
+
 Con el canal del link prendido (ciclo 1.9.0), una validacion que deja la
 propuesta ``validada`` postea el boton «Revisar y aprobar» en el mismo DM
 (``approval_button.py``). El boton es un link a la pagina del bridge: tampoco
@@ -170,6 +175,16 @@ _BRIDGE_ERRORS = frozenset({
     "bulk_send_schedule_invalid",
     "bulk_send_product_required",
     "bulk_send_product_invalid",
+    # 1.3: exportar contactos (contact-export-v1).
+    "contact_export_filter_invalid",
+    "contact_export_columns_invalid",
+    "contact_export_product_invalid",
+    "contact_export_too_large",
+    "contact_export_labels_unavailable",
+    "contact_export_rate_limited",
+    "contact_export_invalid",
+    "contact_export_not_found",
+    "invalid_contact_export_id",
     # 5.4 (agent-global-pause-v1): pausar al agente para todas, por etiqueta o por producto.
     "invalid_pause_id",
     "agent_pause_until_invalid",
@@ -348,6 +363,10 @@ def _request(method: str, path: str, body: dict[str, object] | None = None) -> d
         # Y con el masivo: sin BULK_SEND_ENABLED sus rutas no existen.
         if exc.code in (404, 405) and detail in ("Not Found", "Method Not Allowed") and path.startswith(BULK_SENDS):
             return {"error": "bulk_send_not_enabled"}
+        # Y con la exportacion: sin CONTACT_EXPORT_ENABLED sus rutas no existen.
+        if exc.code in (404, 405) and detail in ("Not Found", "Method Not Allowed") \
+                and path.startswith(CONTACT_EXPORTS):
+            return {"error": "contact_export_not_enabled"}
         # 5.4: sin AGENT_GLOBAL_PAUSE_ENABLED las rutas de la pausa del agente no existen.
         if exc.code in (404, 405) and detail in ("Not Found", "Method Not Allowed") and path.startswith(AGENT_PAUSE):
             return {"error": "agent_pause_not_enabled"}
@@ -923,3 +942,40 @@ def estado_pausa(params: dict[str, object], **kwargs: object) -> str:
     """Si el agente esta pausado, para quien, desde cuando, quien lo pidio y cuantas quedaron para el equipo."""
     del kwargs, params
     return _pause_request("GET", AGENT_PAUSE)
+
+
+# 1.3 (contact-export-v1): exportar contactos. El agente arma el pedido con filtros y recibe el conteo y el link;
+# el CSV lo baja un aprobador en la pagina, una vez y dentro de los 30 minutos. Ninguna respuesta trae un dato
+# personal, y lo que el agente manda son filtros: ni telefonos ni mails.
+CONTACT_EXPORTS = f"{PREFIX}/contact-exports"
+_EXPORT_KEYS = ("filtros", "columnas")
+
+
+def export_contacts(params: dict[str, object], **kwargs: object) -> str:
+    """Pide una exportacion de contactos y devuelve el conteo y el link de la pagina. No manda nada."""
+    del kwargs
+    try:
+        requested_by = _requested_by()
+    except ValueError as exc:
+        return _dumps({"error": str(exc)})
+    if set(params) - set(_EXPORT_KEYS):
+        return _dumps({"error": "invalid_body"})
+    filters = params.get("filtros")
+    if filters is not None and not isinstance(filters, dict):
+        return _dumps({"error": "contact_export_filter_invalid"})
+    for value in (filters or {}).values():
+        texts = value if isinstance(value, list) else [value]
+        if any(isinstance(text, str) and looks_like_identifier(text) for text in texts):
+            return _dumps({"error": "identifier_not_allowed"})
+    body: dict[str, object] = {key: params[key] for key in _EXPORT_KEYS if params.get(key) is not None}
+    body["requested_by"] = requested_by
+    return _dumps(_request("POST", CONTACT_EXPORTS, body))
+
+
+def get_contact_export(params: dict[str, object], **kwargs: object) -> str:
+    """Un pedido de exportacion: estado y conteos, sin datos personales. Solo lee."""
+    del kwargs
+    export_id = _uuid(params.get("export_id"))
+    if export_id is None:
+        return _dumps({"error": "invalid_contact_export_id"})
+    return _dumps(_request("GET", f"{CONTACT_EXPORTS}/{export_id}"))

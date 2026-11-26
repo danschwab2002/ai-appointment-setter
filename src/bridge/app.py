@@ -193,6 +193,8 @@ from bridge import agent_campaign_api, agent_campaigns, campaign_approval
 from bridge import agent_global_pause
 from bridge import temporary_instruction, temporary_instruction_api, temporary_instruction_page
 from bridge import agent_product_api
+from bridge import contact_export
+from bridge.flow_audience_store import ChatwootLabelIndex
 from bridge import flow_audience_page
 from bridge.flow_audience_wiring import FlowAudience, build_flow_audience
 from bridge.bulk_send_wiring import BulkSend, build_bulk_send
@@ -489,6 +491,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # por producto, desde el AE. Portable: por instancia, solo prenderlo;
     # apagado no se lee la base y las rutas no existen.
     "agent_global_pause_enabled",
+    # 1.3 (contact-export-v1): exportar contactos en CSV desde el AE y la
+    # pagina. Portable: por instancia, solo prenderlo; apagado no existen las
+    # rutas ni se llama a la base.
+    "contact_export_enabled",
     "hotmart_purchase_worker_enabled",
     "lead_precheckout_enabled",
     # El adaptador de GHL traduce el formulario a lead.precheckout y lo manda
@@ -1165,6 +1171,11 @@ class Settings:
     # borrador de un masivo y leer su estado. Apagado (el default) no existen y
     # el bridge no llama a ninguna funcion del masivo.
     bulk_send_enabled: bool = False
+    # 1.3 (bridge/contact_export.py, contrato contact-export-v1):
+    # CONTACT_EXPORT_ENABLED. Con el flag existen las rutas del AE para pedir
+    # una exportacion y la pagina que baja el CSV. Apagado (el default) no
+    # existen y el bridge no llama a ninguna funcion de la exportacion.
+    contact_export_enabled: bool = False
     precheckout_form_enabled: bool = False
     precheckout_form_token: str | None = None
     precheckout_max_age_seconds: int = 300
@@ -2722,6 +2733,10 @@ class Settings:
                 os.getenv(flow_change_api.BULK_SEND_ENV, "false").strip().lower()
                 == "true"
             ),
+            contact_export_enabled=(
+                os.getenv(contact_export.CONTACT_EXPORT_ENV, "false").strip().lower()
+                == "true"
+            ),
             precheckout_form_enabled=precheckout_form_enabled,
             precheckout_form_token=precheckout_form_token,
             precheckout_max_age_seconds=precheckout_max_age_seconds,
@@ -4233,6 +4248,13 @@ def _validate_agent_customer_status(settings: Settings) -> None:
         raise ValueError(f"{flag} requires CHATWOOT_ACCOUNT_ID and CHATWOOT_INBOX_ID")
 
 
+def _contact_export_labels(chatwoot: object, inbox_id: int) -> ChatwootLabelIndex | None:
+    """Las etiquetas de la exportacion (1.3): el listado del cliente de control, como la audiencia."""
+    if not callable(getattr(chatwoot, "list_recent_conversations_with_messages", None)):
+        return None
+    return ChatwootLabelIndex(chatwoot=chatwoot, inbox_id=inbox_id)
+
+
 def _join_extra_routes(
     *registers: Callable[[FastAPI, flow_approval.PageTools], None] | None,
 ) -> Callable[[FastAPI, flow_approval.PageTools], None] | None:
@@ -5298,6 +5320,7 @@ def create_app(
     agent_product_store: agent_product_api.ProductStore | None = None,
     bulk_send_store: flow_change_api.BulkSendStore | None = None,
     agent_pause_store: agent_global_pause.PauseStore | None = None,
+    contact_export_store: contact_export.ContactExportStore | None = None,
     flow_approval_store: flow_approval.ApprovalStore | None = None,
     flow_approval_oidc: flow_approval.SlackIdTokenClient | None = None,
     meta_templates_client: MetaTemplatesClient | None = None,
@@ -5384,6 +5407,9 @@ def create_app(
             # El masivo por el AE (encargo 6): solo con el flag; apagado, el
             # payload de /ready no cambia.
             instance_readiness["bulk_send"] = "enabled"
+        if settings.contact_export_enabled:
+            # 1.3: solo con el flag; apagado, el payload de /ready no cambia.
+            instance_readiness["contact_export"] = "enabled"
         if settings.own_forms_enabled:
             # own-forms-v1: solo con el flag; apagado, el payload no cambia.
             instance_readiness["own_forms"] = (
@@ -5803,6 +5829,8 @@ def create_app(
     # Encargo 6 del masivo: las rutas del agente, la pagina (el link de la
     # lista) y la base con service_role.
     flow_change_api.check_bulk_send_settings(settings)
+    # 1.3: exportar contactos exige lo mismo que el masivo.
+    contact_export.check_settings(settings)
     pilot_fields = (
         (settings.pilot_scope_key, "LANCEMOS_PILOT_SCOPE_KEY"),
         (settings.pilot_scope_version, "LANCEMOS_PILOT_SCOPE_VERSION"),
@@ -11485,6 +11513,27 @@ def create_app(
                 ),
                 approval_origin=settings.flow_approval_base_url or "",
             )
+        if settings.contact_export_enabled:
+            # 1.3 (contact-export-v1): el agente pide la exportacion y recibe el
+            # conteo y el link; el CSV lo baja un aprobador en la pagina. Con el
+            # flag apagado las rutas no existen y dan 404.
+            contact_export.register_contact_export_routes(
+                app,
+                token=settings.automation_expert_change_token,
+                store=contact_export_store or contact_export.ContactExportStore(
+                    base_url=settings.supabase_base_url or "",
+                    db_key=settings.supabase_service_role_key or "",
+                ),
+                tenant_ref=change_manifest.tenant_ref,
+                ally_ref=change_manifest.ally_ref,
+                product_refs=frozenset(
+                    config.funnel_ref
+                    for config in change_manifest.to_commercial_ally_configs()
+                ),
+                time_zone=change_manifest.time_zone,
+                labels=_contact_export_labels(control_client, change_manifest.chatwoot_inbox_id),
+                approval_origin=settings.flow_approval_base_url or "",
+            )
 
     if settings.automation_expert_chatwoot_enabled:
         # automation-expert-chatwoot-v1 (F-143): su propio cliente, con la lista
@@ -11607,6 +11656,13 @@ def create_app(
                 if flow_audience is not None else None,
                 # El masivo: subir la lista, ver, confirmar y frenar.
                 bulk_send.page if bulk_send is not None else None,
+                # 1.3: ver el pedido de exportacion y bajar el CSV una vez.
+                contact_export.page_routes(
+                    labels=_contact_export_labels(
+                        control_client, settings.instance_manifest.chatwoot_inbox_id
+                    )
+                )
+                if settings.contact_export_enabled else None,
             ),
         )
 

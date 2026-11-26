@@ -7829,6 +7829,37 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         ), 0),
         4,
         'agent_temporary_instructions'
+    union all
+    select
+        '20261126300000',
+        '20261126300000_contact_export_v1.sql',
+        -- El pedido de exportacion de contactos, con RLS ...
+        (
+            select count(*) = 1
+            from pg_class c
+            where c.oid = to_regclass('public.contact_exports') and c.relrowsecurity
+        )::int
+        -- ... las personas para el conteo, solo de service_role ...
+        + coalesce((
+            select (prosecdef
+                    and has_function_privilege('service_role', oid, 'EXECUTE')
+                    and not has_function_privilege('anon', oid, 'EXECUTE')
+                    and not has_function_privilege('authenticated', oid, 'EXECUTE'))::int
+            from functions
+            where oid = to_regprocedure('public.read_contact_export_people_v1(jsonb,text,integer)')
+        ), 0)
+        -- ... y marcar bajado desde la pagina, sin execute para la API ni para service_role.
+        + coalesce((
+            select (prosecdef
+                    and not has_function_privilege('anon', oid, 'EXECUTE')
+                    and not has_function_privilege('authenticated', oid, 'EXECUTE')
+                    and not has_function_privilege('service_role', oid, 'EXECUTE'))::int
+            from functions
+            where oid = to_regprocedure(
+                'public.approver_mark_contact_export_downloaded_v1(jsonb,text,uuid,integer)')
+        ), 0),
+        3,
+        'contact_export'
 )
 select
     version,

@@ -37,8 +37,8 @@ def _function(name: str) -> str:
 def test_it_is_one_transaction_and_is_the_last() -> None:
     sql = _sql()
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
-    assert names[-13] == MIGRATION.name
-    assert names[-14] == "20261115000100_agent_products_v1.sql"
+    assert names[-14] == MIGRATION.name
+    assert names[-15] == "20261115000100_agent_products_v1.sql"
     assert sql.count("\nbegin;\n") == 1 and sql.rstrip().endswith("commit;")
     assert "set local lock_timeout = '5s';" in sql
     assert "agent_products_publish_already_applied" in sql and "agent_products_publish_prerequisite_missing" in sql

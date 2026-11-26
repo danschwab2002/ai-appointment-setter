@@ -78,6 +78,10 @@ from .tools import (  # noqa: E402
     propose_temporary_instruction,
 )
 
+# 1.3 (contact-export-v1): pedir una exportacion y leerla. El CSV lo baja un aprobador en la pagina.
+from .schemas import EXPORT_CONTACTS, GET_CONTACT_EXPORT  # noqa: E402
+from .tools import export_contacts, get_contact_export  # noqa: E402
+
 _TEMPLATE_TOOLS = frozenset({"propose_template", "validate_template", "list_template_requests",
                              "get_template_request"})
 _TOOLS = frozenset({"get_flow_definitions", "propose_flow_change", "validate_flow_change", "get_flow_change",
@@ -97,7 +101,9 @@ _TOOLS = frozenset({"get_flow_definitions", "propose_flow_change", "validate_flo
                     "pausar_agente", "reanudar_agente", "estado_pausa",
                     # 5.3 de Z1: la instruccion temporal, solo ver, proponer y leer.
                     "preview_temporary_instruction", "propose_temporary_instruction",
-                    "get_temporary_instruction", "list_temporary_instructions"})
+                    "get_temporary_instruction", "list_temporary_instructions",
+                    # 1.3: exportar contactos, solo el pedido y su lectura.
+                    "export_contacts", "get_contact_export"})
 
 
 def make_profile_guard(profile_name):
@@ -149,6 +155,8 @@ def register(ctx):
         ("propose_temporary_instruction", PROPOSE_TEMPORARY_INSTRUCTION, propose_temporary_instruction),
         ("get_temporary_instruction", GET_TEMPORARY_INSTRUCTION, get_temporary_instruction),
         ("list_temporary_instructions", LIST_TEMPORARY_INSTRUCTIONS, list_temporary_instructions),
+        ("export_contacts", EXPORT_CONTACTS, export_contacts),
+        ("get_contact_export", GET_CONTACT_EXPORT, get_contact_export),
     ):
         ctx.register_tool(name=name, toolset="automation_expert_change", schema=schema, handler=handler)
     ctx.register_hook("pre_tool_call", make_profile_guard(getattr(ctx, "profile_name", None)))

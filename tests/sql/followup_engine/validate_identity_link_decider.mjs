@@ -99,7 +99,9 @@ if (JSON.stringify(names.slice(position + 2)) !== JSON.stringify(['2026111400030
     // El numero de conversacion de los avisos (20261118000300, E-656).
     C_MIGRATION, D_MIGRATION, '20261125000200_bulk_send_store_v1.sql', '20261125000300_bulk_send_prepared_and_base_vetoes_v1.sql', '20261125000400_bulk_send_recipients_read_v1.sql', '20261126100000_agent_global_pause_v1.sql',
     // La instruccion temporal (20261126200000, 5.3 de Z1): tablas y RPC propias, no toca lo que se prueba aca.
-    '20261126200000_agent_temporary_instructions_v1.sql'])) fail('despues de la pregunta van solo la de E-565, la de E-569, la de E-575, la de E-622, la de E-627, la de E-661, la de E-665, la de E-666 y la de E-656', names.slice(position + 2));
+    '20261126200000_agent_temporary_instructions_v1.sql',
+    // Exportar contactos (20261126300000).
+    '20261126300000_contact_export_v1.sql'])) fail('despues de la pregunta van solo la de E-565, la de E-569, la de E-575, la de E-622, la de E-627, la de E-661, la de E-665, la de E-666 y la de E-656', names.slice(position + 2));
 const readMigration = (name) => readFileSync(join(root, 'supabase/migrations', name), 'utf8')
   .replace(/create extension if not exists pgcrypto;/gi, '-- pgcrypto is built into PGlite');
 

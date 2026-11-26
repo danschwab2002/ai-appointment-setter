@@ -134,7 +134,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026110300070
     // La pausa del agente (20261126100000, 5.4).
     '20261126100000_agent_global_pause_v1.sql',
     // La instruccion temporal (20261126200000, 5.3 de Z1): tablas y RPC propias, no toca lo que se prueba aca.
-    '20261126200000_agent_temporary_instructions_v1.sql'])) {
+    '20261126200000_agent_temporary_instructions_v1.sql',
+    // Exportar contactos (20261126300000).
+    '20261126300000_contact_export_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de si la persona ya es cliente`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(

@@ -108,7 +108,8 @@ def test_the_distribution_copies_the_plugin_and_names_its_variables() -> None:
                                         "propose_bulk_send", "get_bulk_send", "list_bulk_sends",
                                         "pausar_agente", "reanudar_agente", "estado_pausa",
                                         "preview_temporary_instruction", "propose_temporary_instruction",
-                                        "get_temporary_instruction", "list_temporary_instructions"]
+                                        "get_temporary_instruction", "list_temporary_instructions",
+                                        "export_contacts", "get_contact_export"]
 
 
 def test_the_soul_sends_the_approval_page_without_a_proposal() -> None:
@@ -136,6 +137,7 @@ def _skill(path: str) -> str:
 SKILLS = ("flujos/armar-una-campana", "flujos/instruccion-temporal", "flujos/crear-un-flujo", "flujos/cambiar-un-flujo", "flujos/pasar-flujo-al-sistema-nuevo",
           "flujos/pedir-plantilla-a-meta", "flujos/programar-un-envio", "flujos/envio-masivo",
           "flujos/pausar-el-agente",
+          "flujos/exportar-contactos",
           "plataformas/hotmart", "plataformas/ghl-formularios", "plataformas/chatwoot-whatsapp")
 
 

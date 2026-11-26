@@ -196,7 +196,9 @@ if (JSON.stringify(names.slice(names.indexOf(MIGRATION) + 1)) !== JSON.stringify
     // La pausa del agente (20261126100000, 5.4).
     '20261126100000_agent_global_pause_v1.sql',
     // La instruccion temporal (20261126200000, 5.3 de Z1): tablas y RPC propias, no toca lo que se prueba aca.
-    '20261126200000_agent_temporary_instructions_v1.sql'])) {
+    '20261126200000_agent_temporary_instructions_v1.sql',
+    // Exportar contactos (20261126300000).
+    '20261126300000_contact_export_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la del seguimiento a 24 h nativo`, names.slice(-3));
 }
 if (maribel.name !== 'maribel_retomar_proceso_01') fail('el fixture no es la plantilla de Maribel');

@@ -1,0 +1,31 @@
+{
+  "_capture": {
+    "origen": "La forma de _contact_export_people (20261126300000) medida el 2026-11-26 en solo lectura contra la base de ATT1 (att1-db del stack setter-att1) y la de Maribel (maribel_db), corriendo el cuerpo de la funcion como consulta (sin crear nada) y leyendo solo conteos y nombres de claves: ATT1 1.069 personas en dos paginas de 1.000 (la primera, 207.791 bytes, 0,35 s las dos), 1.069 con nombre y mail, 42 bajas, 172 con compra, 1.000 con formulario, hasta 7 formularios por persona; Maribel 818 personas en una pagina, 692 con nombre y mail, 20 bajas, 270 con compra, 532 con formulario.",
+    "anonimizacion": "Ninguna fila sale de una persona: los telefonos son sinteticos (555 y 3000000), los nombres y mails inventados. Lo unico real es la forma: las claves de cada persona, de cada formulario y de la pagina.",
+    "para_que": "tests/test_contact_export.py la parsea con parse_people y tests/sql/followup_engine/validate_contact_export.mjs verifica que la funcion real devuelva exactamente estas claves."
+  },
+  "page": {
+    "people": [
+      {
+        "phone": "525550000001",
+        "name": "Ana Prueba",
+        "email": "ana.prueba@example.test",
+        "forms": [
+          {"at": "2026-11-20T15:04:05.123456+00:00", "product": "att1"},
+          {"at": "2026-10-02T12:00:00+00:00", "product": "att1"}
+        ],
+        "purchased_products": ["att1"],
+        "opted_out": false
+      },
+      {
+        "phone": "541155550002",
+        "name": null,
+        "email": null,
+        "forms": [],
+        "purchased_products": [],
+        "opted_out": true
+      }
+    ],
+    "next_after": "541155550002"
+  }
+}
