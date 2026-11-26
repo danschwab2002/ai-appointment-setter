@@ -794,3 +794,36 @@ GET_CONTACT_EXPORT = {
         "additionalProperties": False,
     },
 }
+
+# agent-campaign-judge-v1 (4.9, F-163): el control de calidad de una campana validada, pedido desde aca.
+JUDGE_CAMPAIGN = {
+    "name": "judge_campaign",
+    "description": (
+        "Pide el control de calidad (el juez) de una campaña validada. Corre en el bridge en segundo plano y "
+        "tarda de 6 a 17 minutos: contesta enseguida con status corriendo. Hasta 3 por campaña por día y solo de "
+        "09:00 a 21:00 de la instancia (si no, agent_campaign_judge_outside_hours o "
+        "agent_campaign_judge_daily_limit). No manda nada a nadie. El resultado se lee con get_campaign_judge. "
+        "Con judge_not_enabled lo corre el equipo."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"campaign_id": {"type": "string", "format": "uuid"}},
+        "required": ["campaign_id"],
+        "additionalProperties": False,
+    },
+}
+
+GET_CAMPAIGN_JUDGE = {
+    "name": "get_campaign_judge",
+    "description": (
+        "La última corrida del control de calidad de una campaña: resultado CORRIENDO, LIMPIO, CON-PREGUNTAS "
+        "o ERROR; en result.preguntas lo que frena (hasta 10) y en result.avisos lo que no; cuántas lleva hoy "
+        "(runs_today de daily_limit) y si se puede pedir otra ahora (can_start_now). Solo lee."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"campaign_id": {"type": "string", "format": "uuid"}},
+        "required": ["campaign_id"],
+        "additionalProperties": False,
+    },
+}

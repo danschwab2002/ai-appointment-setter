@@ -265,7 +265,8 @@ def test_the_plugin_acks_the_url_button_click_and_adds_no_tool(world: SimpleName
                      "preview_temporary_instruction", "propose_temporary_instruction",
                      "get_temporary_instruction", "list_temporary_instructions",
                      "export_contacts", "get_contact_export",
-                     "preview_keyword_rule", "propose_keyword_rule", "get_keyword_rule", "list_keyword_rules"]
+                     "preview_keyword_rule", "propose_keyword_rule", "get_keyword_rule", "list_keyword_rules",
+                     "judge_campaign", "get_campaign_judge"]
     [(action_id, callback)] = actions
     assert action_id == "flow_approval_open"
     acked: list[bool] = []

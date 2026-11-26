@@ -209,6 +209,8 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
         "20261126300000_contact_export_v1.sql",
         # Las reglas de palabra clave (20261126400000, Z1 3.9).
         "20261126400000_keyword_rules_v1.sql",
+        # Las corridas del juez (20261126500000, 4.9).
+        "20261126500000_agent_campaign_judge_runs_v1.sql",
     ]
     native = (MIGRATIONS / "20261024000200_flow_engine_native_v1.sql").read_text(encoding="utf-8")
     assert "read_automation_expert_flows_v1" not in native

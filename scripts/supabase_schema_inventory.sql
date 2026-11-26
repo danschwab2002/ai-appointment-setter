@@ -7890,6 +7890,44 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         ), 0),
         3,
         'keyword_rules'
+    union all
+    select
+        '20261126500000',
+        '20261126500000_agent_campaign_judge_runs_v1.sql',
+        -- Las corridas del juez de una campana que pide el AE (4.9, F-163): la tabla con RLS y sin
+        -- lectura para la API ...
+        (
+            select count(*) = 1
+            from pg_class c
+            where c.oid = to_regclass('public.agent_campaign_judge_runs')
+              and c.relrowsecurity
+              and not has_table_privilege('anon', c.oid, 'SELECT')
+              and not has_table_privilege('authenticated', c.oid, 'SELECT')
+              and not has_table_privilege('service_role', c.oid, 'SELECT')
+        )::int
+        -- ... una sola corriendo por instancia ...
+        + (
+            select count(*) = 1
+            from pg_indexes
+            where schemaname = 'public'
+              and indexname = 'agent_campaign_judge_runs_one_running'
+        )::int
+        -- ... y las tres funciones, solo de service_role y security definer.
+        + (
+            select count(*) = 3
+            from functions
+            where oid in (
+                to_regprocedure('public.start_agent_campaign_judge_run_v1(jsonb,uuid,text,timestamptz,integer)'),
+                to_regprocedure('public.finish_agent_campaign_judge_run_v1(jsonb,uuid,text,jsonb,text)'),
+                to_regprocedure('public.get_agent_campaign_judge_run_v1(jsonb,uuid,timestamptz)')
+            )
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        3,
+        'agent_campaign_judge_runs'
 )
 select
     version,

@@ -302,7 +302,11 @@ expected_service_role(signature) as (
         ('public.read_contact_export_v1(jsonb, uuid)'),
         ('public.read_contact_export_people_v1(jsonb, text, integer)'),
         -- 20261126400000: las reglas de palabra clave vivas, para el bridge (Z1 3.9).
-        ('public.get_live_keyword_rules_v1(jsonb)')
+        ('public.get_live_keyword_rules_v1(jsonb)'),
+        -- 20261126500000: las corridas del juez de una campana que pide el AE (4.9, F-163).
+        ('public.start_agent_campaign_judge_run_v1(jsonb, uuid, text, timestamp with time zone, integer)'),
+        ('public.finish_agent_campaign_judge_run_v1(jsonb, uuid, text, jsonb, text)'),
+        ('public.get_agent_campaign_judge_run_v1(jsonb, uuid, timestamp with time zone)')
 ),
 functions as (
     select

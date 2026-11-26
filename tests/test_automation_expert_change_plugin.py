@@ -49,7 +49,9 @@ TOOLS = ["get_flow_definitions", "propose_flow_change", "validate_flow_change", 
          # 1.3 (contact-export-v1): pedir una exportacion y leerla; el CSV lo baja un aprobador en la pagina.
          "export_contacts", "get_contact_export",
          # keyword-rules-v1 (Z1 3.9): la regla de palabra clave; publicarla es de la pagina.
-         "preview_keyword_rule", "propose_keyword_rule", "get_keyword_rule", "list_keyword_rules"]
+         "preview_keyword_rule", "propose_keyword_rule", "get_keyword_rule", "list_keyword_rules",
+         # 4.9 (agent-campaign-judge-v1): pedir el control de calidad de una campana y leerlo.
+         "judge_campaign", "get_campaign_judge"]
 
 
 def _load_plugin() -> ModuleType:
@@ -549,6 +551,26 @@ def test_the_keyword_rule_tools_go_to_their_routes_and_say_when_they_are_off(bri
                                                                    "warnings": []}})
     assert json.loads(tools.propose_keyword_rule({"rule": {}, "purpose": "x"}))["blocks"] == [
         {"code": "keyword_rule_clashes_with_campaign"}]
+
+
+def test_the_judge_tools_go_to_their_routes_and_say_when_the_judge_is_not_on(bridge: type[_Bridge]) -> None:
+    # 4.9: con AUTOMATION_EXPERT_JUDGE_ENABLED apagado la ruta no existe (aunque esten las campanas).
+    tools = _tools()
+    bridge.routes[f"POST {PREFIX}/campaigns/{PROPOSAL}/judge"] = (404, {"detail": "Not Found"})
+    assert json.loads(tools.judge_campaign({"campaign_id": PROPOSAL})) == {"error": "judge_not_enabled"}
+    bridge.routes[f"GET {PREFIX}/campaigns/{PROPOSAL}/judge"] = (404, {"detail": "Not Found"})
+    assert json.loads(tools.get_campaign_judge({"campaign_id": PROPOSAL})) == {"error": "judge_not_enabled"}
+    envelope = {"contract": "agent-campaign-judge-v1", "contract_version": "1.0.0"}
+    bridge.routes[f"POST {PREFIX}/campaigns/{PROPOSAL}/judge"] = (202, {**envelope, "data": {"resultado": "CORRIENDO"}})
+    assert json.loads(tools.judge_campaign({"campaign_id": PROPOSAL}))["data"]["resultado"] == "CORRIENDO"
+    assert json.loads(str(bridge.seen[-1]["body"])) == {"requested_by": {"slack_user": "U0123456789"}}
+    bridge.routes[f"GET {PREFIX}/campaigns/{PROPOSAL}/judge"] = (200, {**envelope, "data": {"last_run": None}})
+    assert json.loads(tools.get_campaign_judge({"campaign_id": PROPOSAL}))["data"] == {"last_run": None}
+    for code in ("agent_campaign_judge_outside_hours", "agent_campaign_judge_daily_limit",
+                 "agent_campaign_judge_running", "agent_campaign_judge_expires_soon", "agent_campaign_not_validated"):
+        bridge.routes[f"POST {PREFIX}/campaigns/{PROPOSAL}/judge"] = (409, {"detail": code})
+        assert json.loads(tools.judge_campaign({"campaign_id": PROPOSAL})) == {"error": code}
+    assert json.loads(tools.judge_campaign({"campaign_id": "no-es"})) == {"error": "invalid_campaign_id"}
 
 
 def test_the_campaign_tools_never_send_a_phone_in_the_purpose(bridge: type[_Bridge]) -> None:

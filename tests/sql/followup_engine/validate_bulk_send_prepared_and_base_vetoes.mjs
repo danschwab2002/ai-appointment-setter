@@ -55,7 +55,7 @@ const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.end
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // El registro por persona para el reporte (D10 del #511): solo lee, no cambia nada de lo que se prueba aca.
-const KNOWN_LATER = ['20261125000400_bulk_send_recipients_read_v1.sql'];
+const KNOWN_LATER = ['20261125000400_bulk_send_recipients_read_v1.sql', '20261126500000_agent_campaign_judge_runs_v1.sql'];
 for (const name of names.slice(position + 1)) {
   if (!KNOWN_LATER.includes(name) && readFileSync(join(root, 'supabase/migrations', name), 'utf8').includes('bulk_')) {
     fail(`${name} toca el masivo: revisar esta prueba`);
