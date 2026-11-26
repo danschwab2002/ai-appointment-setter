@@ -226,6 +226,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261126400000",
         # Las corridas del juez de una campana que pide el AE (20261126500000).
         "20261126500000",
+        # El conocimiento vivo del AE (20261126600000, pieza 5.5).
+        "20261126600000",
     ]
 
     sql = _sql()

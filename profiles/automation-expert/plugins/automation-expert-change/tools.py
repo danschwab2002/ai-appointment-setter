@@ -63,6 +63,12 @@ pedirlo (``judge_campaign``, corre en el bridge en segundo plano) y leer su resu
 (``get_campaign_judge``). Sin ``AUTOMATION_EXPERT_JUDGE_ENABLED`` el bridge no tiene esas rutas:
 ``judge_not_enabled``.
 
+Desde la 0.15.0 (live-knowledge-v1, pieza 5.5) suma el conocimiento del agente comercial: leer lo
+vigente (``get_knowledge``), ver el cambio por secciones sin guardar (``preview_knowledge_change``),
+guardarlo validado (``propose_knowledge_change``) y releer las versiones. Aprobarlo y volver al archivo lo
+hace un aprobador en la pagina. Sin ``AGENT_LIVE_KNOWLEDGE_ENABLED`` el bridge no tiene esas rutas:
+``knowledge_not_enabled``.
+
 Con el canal del link prendido (ciclo 1.9.0), una validacion que deja la
 propuesta ``validada`` postea el boton «Revisar y aprobar» en el mismo DM
 (``approval_button.py``). El boton es un link a la pagina del bridge: tampoco
@@ -94,7 +100,8 @@ _PHONE_SEPARATORS = frozenset(" \t\n\r -.()+")
 # Los codigos que el bridge contesta; cualquier otro se cambia por uno generico.
 _DRAFT_BLOCKED = frozenset({"flow_change_draft_blocked", "template_request_draft_blocked", "campaign_draft_blocked",
                             "temporary_instruction_blocked",
-                            "keyword_rule_draft_blocked"})
+                            "keyword_rule_draft_blocked",
+                            "knowledge_change_blocked"})
 _BRIDGE_ERRORS = frozenset({
     "automation_expert_change_authentication_required",
     "invalid_body",
@@ -165,6 +172,13 @@ _BRIDGE_ERRORS = frozenset({
     "agent_campaign_judge_expires_soon",
     "agent_campaign_judge_running",
     "agent_campaign_judge_daily_limit",
+    # El conocimiento vivo (live-knowledge-v1, pieza 5.5).
+    "invalid_knowledge_id",
+    "knowledge_change_invalid",
+    "knowledge_change_blocked",
+    "agent_knowledge_not_found",
+    "agent_knowledge_open_limit",
+    "agent_knowledge_base_changed",
     # E-486 (8d): sumar un telefono al grupo de prueba de un flujo.
     "not_an_approver",
     "flow_cohort_phone_invalid",
@@ -398,6 +412,9 @@ def _request(method: str, path: str, body: dict[str, object] | None = None) -> d
         if exc.code in (404, 405) and detail in ("Not Found", "Method Not Allowed") \
                 and path.startswith(KEYWORD_RULES):
             return {"error": "keyword_rules_not_enabled"}
+        # Lo mismo con el conocimiento vivo: sin AGENT_LIVE_KNOWLEDGE_ENABLED sus rutas no existen.
+        if exc.code in (404, 405) and detail in ("Not Found", "Method Not Allowed") and path.startswith(KNOWLEDGE):
+            return {"error": "knowledge_not_enabled"}
         # Y con el masivo: sin BULK_SEND_ENABLED sus rutas no existen.
         if exc.code in (404, 405) and detail in ("Not Found", "Method Not Allowed") and path.startswith(BULK_SENDS):
             return {"error": "bulk_send_not_enabled"}
@@ -1080,3 +1097,48 @@ def get_campaign_judge(params: dict[str, object], **kwargs: object) -> str:
     if campaign_id is None:
         return _dumps({"error": "invalid_campaign_id"})
     return _dumps(_request("GET", f"{CAMPAIGNS}/{campaign_id}/judge"))
+
+
+# live-knowledge-v1 (pieza 5.5): el conocimiento base por secciones. No hay herramienta para publicarlo ni
+# para volver al archivo: eso lo hace un aprobador en la pagina.
+KNOWLEDGE = f"{PREFIX}/knowledge"
+
+
+def get_knowledge(params: dict[str, object], **kwargs: object) -> str:
+    del params, kwargs
+    return _dumps(_request("GET", KNOWLEDGE))
+
+
+def preview_knowledge_change(params: dict[str, object], **kwargs: object) -> str:
+    del kwargs
+    return _dumps(_request("POST", f"{KNOWLEDGE}/preview", {"cambios": params.get("cambios")}))
+
+
+def propose_knowledge_change(params: dict[str, object], **kwargs: object) -> str:
+    del kwargs
+    requested = _campaign_requester()
+    if isinstance(requested, str):
+        return requested
+    purpose = params.get("purpose")
+    if not isinstance(purpose, str) or not purpose.strip():
+        return _dumps({"error": "invalid_body"})
+    if looks_like_identifier(purpose):
+        return _dumps({"error": "identifier_not_allowed"})
+    return _dumps(_request("POST", KNOWLEDGE, {"cambios": params.get("cambios"), "purpose": purpose.strip(),
+                                               "requested_by": requested}))
+
+
+def get_knowledge_change(params: dict[str, object], **kwargs: object) -> str:
+    del kwargs
+    knowledge_id = _uuid(params.get("knowledge_id"))
+    if knowledge_id is None:
+        return _dumps({"error": "invalid_knowledge_id"})
+    return _dumps(_request("GET", f"{KNOWLEDGE}/versions/{knowledge_id}"))
+
+
+def list_knowledge_changes(params: dict[str, object], **kwargs: object) -> str:
+    del kwargs
+    estado = params.get("estado", "abiertas")
+    if estado not in ("abiertas", "todas"):
+        return _dumps({"error": "invalid_query", "reason": {"field": "estado"}})
+    return _dumps(_request("GET", f"{KNOWLEDGE}/versions?estado={estado}"))

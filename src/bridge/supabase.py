@@ -5048,6 +5048,26 @@ class SupabaseClient:
         _required_enum(rows[0], "answer", {"si", "no"}, operation=operation)
         return _required_enum(rows[0], "outcome", {"recorded", "replayed"}, operation=operation)
 
+    async def get_live_agent_knowledge(self, instance: dict[str, str]) -> dict[str, object]:
+        """La version viva publicada del conocimiento (``get_live_agent_knowledge_v1``, live-knowledge-v1).
+
+        Solo lectura. Devuelve ``{"knowledge": <fila o null>}``; lo demas lo decide la fuente viva.
+        """
+        operation = "live_agent_knowledge"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_live_agent_knowledge_v1",
+            content=json.dumps({"p_instance": instance}),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        payload = response.json()
+        if not isinstance(payload, dict) or "knowledge" not in payload or not (
+            payload["knowledge"] is None or isinstance(payload["knowledge"], dict)
+        ):
+            raise SupabaseError(f"{operation}_invalid")
+        return payload
+
     async def get_live_agent_campaigns(self, instance: dict[str, str]) -> dict[str, object]:
         """La campana publicada de la instancia (``get_live_agent_campaigns_v1``, E-355).
 

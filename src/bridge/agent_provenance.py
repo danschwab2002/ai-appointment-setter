@@ -145,6 +145,7 @@ def build_turn(
     model_answered: str | None,
     segments: tuple[dict[str, object], ...] = (),
     price_guard: dict[str, object] | None = None,
+    knowledge: dict[str, object] | None = None,
 ) -> AgentTurn:
     """``segments``: clave, version y sha256 de cada segmento que fue como `system`.
 
@@ -152,6 +153,9 @@ def build_turn(
     ``price_guard`` (E-564, price-guard-v1 §5): el modo, los montos bloqueados
     por intento y el resultado. Solo con la guarda prendida; son montos de
     catalogo, nunca texto de la persona ni el reply bloqueado.
+    ``knowledge`` (live-knowledge-v1): con que conocimiento contesto, el del
+    archivo (version y sha256) o una version viva (id, version viva y sha256).
+    Solo con AGENT_LIVE_KNOWLEDGE_ENABLED.
     """
     digest = context_digest(context)
     added = context_added(context)
@@ -159,6 +163,8 @@ def build_turn(
         added["segments"] = [dict(segment) for segment in segments]
     if price_guard is not None:
         added["price_guard"] = price_guard
+    if knowledge is not None:
+        added["knowledge"] = dict(knowledge)
     return AgentTurn(
         external_conversation_id=external_conversation_id(context),
         turn_digest=turn_digest(

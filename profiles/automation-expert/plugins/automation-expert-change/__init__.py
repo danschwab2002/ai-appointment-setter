@@ -90,6 +90,22 @@ from .tools import export_contacts, get_contact_export  # noqa: E402
 from .schemas import GET_CAMPAIGN_JUDGE, JUDGE_CAMPAIGN  # noqa: E402
 from .tools import get_campaign_judge, judge_campaign  # noqa: E402
 
+# live-knowledge-v1 (5.5): el conocimiento por secciones. Publicarlo y volver al archivo son de la pagina.
+from .schemas import (  # noqa: E402
+    GET_KNOWLEDGE,
+    GET_KNOWLEDGE_CHANGE,
+    LIST_KNOWLEDGE_CHANGES,
+    PREVIEW_KNOWLEDGE_CHANGE,
+    PROPOSE_KNOWLEDGE_CHANGE,
+)
+from .tools import (  # noqa: E402
+    get_knowledge,
+    get_knowledge_change,
+    list_knowledge_changes,
+    preview_knowledge_change,
+    propose_knowledge_change,
+)
+
 _TEMPLATE_TOOLS = frozenset({"propose_template", "validate_template", "list_template_requests",
                              "get_template_request"})
 _TOOLS = frozenset({"get_flow_definitions", "propose_flow_change", "validate_flow_change", "get_flow_change",
@@ -115,7 +131,10 @@ _TOOLS = frozenset({"get_flow_definitions", "propose_flow_change", "validate_flo
                     # keyword-rules-v1 (Z1 3.9): la regla de palabra clave, solo el borrador y su lectura.
                     "preview_keyword_rule", "propose_keyword_rule", "get_keyword_rule", "list_keyword_rules",
                     # 4.9: el control de calidad de una campana, pedirlo y leerlo.
-                    "judge_campaign", "get_campaign_judge"})
+                    "judge_campaign", "get_campaign_judge",
+                    # live-knowledge-v1: el conocimiento, solo leer y proponer.
+                    "get_knowledge", "preview_knowledge_change", "propose_knowledge_change",
+                    "get_knowledge_change", "list_knowledge_changes"})
 
 
 def make_profile_guard(profile_name):
@@ -175,6 +194,11 @@ def register(ctx):
         ("list_keyword_rules", LIST_KEYWORD_RULES, list_keyword_rules),
         ("judge_campaign", JUDGE_CAMPAIGN, judge_campaign),
         ("get_campaign_judge", GET_CAMPAIGN_JUDGE, get_campaign_judge),
+        ("get_knowledge", GET_KNOWLEDGE, get_knowledge),
+        ("preview_knowledge_change", PREVIEW_KNOWLEDGE_CHANGE, preview_knowledge_change),
+        ("propose_knowledge_change", PROPOSE_KNOWLEDGE_CHANGE, propose_knowledge_change),
+        ("get_knowledge_change", GET_KNOWLEDGE_CHANGE, get_knowledge_change),
+        ("list_knowledge_changes", LIST_KNOWLEDGE_CHANGES, list_knowledge_changes),
     ):
         ctx.register_tool(name=name, toolset="automation_expert_change", schema=schema, handler=handler)
     ctx.register_hook("pre_tool_call", make_profile_guard(getattr(ctx, "profile_name", None)))

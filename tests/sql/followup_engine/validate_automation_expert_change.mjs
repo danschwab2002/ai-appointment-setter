@@ -137,6 +137,8 @@ require(JSON.stringify(executable) === JSON.stringify([
   'discard_agent_product_v1(jsonb, uuid, text, text)',
   // Las cuatro de las campanas del Automation Expert (20261108005000, E-355), en su orden alfabetico.
   'get_agent_campaign_v1(jsonb, uuid)',
+  // Las tres del conocimiento vivo (20261126600000, pieza 5.5), en su orden alfabetico.
+  'get_agent_knowledge_version_v1(jsonb, uuid)',
   // Las cuatro del producto del Automation Expert (20261115000100, E-569), en su orden alfabetico.
   'get_agent_product_v1(jsonb, uuid)',
   // Las tres de la instruccion temporal (20261126200000, 5.3 de Z1), en su orden alfabetico.
@@ -149,6 +151,7 @@ require(JSON.stringify(executable) === JSON.stringify([
   'list_agent_campaigns_v1(jsonb, boolean, integer)',
   // Las tres de la pausa del agente (20261126100000, 5.4), en su orden alfabetico.
   'list_agent_global_pauses_v1(jsonb, integer)',
+  'list_agent_knowledge_versions_v1(jsonb, boolean, integer)',
   'list_agent_products_v1(jsonb, boolean, integer)',
   'list_agent_temporary_instructions_v1(jsonb, integer)',
   'list_flow_changes_v1(jsonb, boolean, integer)',
@@ -168,6 +171,7 @@ require(JSON.stringify(executable) === JSON.stringify([
   'record_meta_template_request_validation_v1(jsonb, uuid, integer, jsonb, jsonb, jsonb, jsonb, text)',
   'resume_agent_globally_v1(jsonb, uuid, text, text)',
   'save_agent_campaign_draft_v1(jsonb, uuid, integer, jsonb, text, text)',
+  'save_agent_knowledge_version_v1(jsonb, integer, text, text, uuid, text, jsonb, jsonb, text, integer, jsonb, jsonb, text, text)',
   'save_agent_product_draft_v1(jsonb, uuid, integer, jsonb, text, jsonb, text, text)',
   'save_flow_change_draft_v1(jsonb, uuid, integer, jsonb, jsonb, text, text)',
   'save_keyword_rule_draft_v1(jsonb, uuid, integer, jsonb, text, text)',

@@ -435,6 +435,21 @@ class TurnProvenanceRecorder(Protocol):
         ...  # pragma: no cover - protocolo
 
 
+class ServedKnowledgeView(Protocol):
+    """Lo que el procesador lee del conocimiento servido (``bridge.live_knowledge.ServedKnowledge``)."""
+
+    @property
+    def rendered(self) -> str: ...
+
+    def ref(self) -> dict[str, object]: ...
+
+
+class KnowledgeSource(Protocol):
+    """La fuente del conocimiento vivo (live-knowledge-v1): no espera a la base."""
+
+    def current(self) -> ServedKnowledgeView: ...
+
+
 class ExtraSystemBlock(Protocol):
     """Un `system` de un turno, despues del conocimiento base (E-311).
 
@@ -473,8 +488,13 @@ class HermesShadowProcessor:
         product_keys: tuple[str, ...] = (),
         campaign_answers: bool = False,
         price_guard: PriceGuard | None = None,
+        knowledge_source: KnowledgeSource | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
+        # live-knowledge-v1 (5.5): con AGENT_LIVE_KNOWLEDGE_ENABLED, el conocimiento de cada
+        # turno sale de la fuente viva (la version aprobada en la pagina o el archivo). None,
+        # el `system` es el del arranque y el pedido es byte a byte el de siempre.
+        self._knowledge_source = knowledge_source
         # E-564 (price-guard-v1): con AGENT_PRICE_GUARD_MODE=bloquea, la guarda
         # de precio de la instancia. None (el flag en off), el procesador no
         # extrae nada y todo es byte a byte como antes.
@@ -510,6 +530,21 @@ class HermesShadowProcessor:
         de test pueda no tener el metodo y el cableado lo detecte con hasattr.
         """
         self._provenance_recorder = recorder
+
+    def bind_knowledge_source(self, source: KnowledgeSource | None) -> None:
+        """Enchufar la fuente del conocimiento vivo (live-knowledge-v1) despues de construir.
+
+        Como el registrador: la fuente necesita el cliente de Supabase, que existe recien
+        en `create_app`.
+        """
+        self._knowledge_source = source
+
+    def _knowledge_now(self) -> tuple[str | None, dict[str, object] | None]:
+        """El `system` del turno y su procedencia. Sin fuente, el del arranque y nada que anotar."""
+        if self._knowledge_source is None:
+            return self._system_prompt, None
+        served = self._knowledge_source.current()
+        return served.rendered, served.ref()
 
     def record_failure(self, *, delivery_id: str, reason: str) -> None:
         digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
@@ -683,6 +718,7 @@ class HermesShadowProcessor:
         model_answered: str | None,
         extra_system: tuple[ExtraSystemBlock, ...] = (),
         price_guard: dict[str, object] | None = None,
+        knowledge: dict[str, object] | None = None,
     ) -> None:
         """Deja el rastro del turno. Nunca rompe el turno."""
         if self._provenance_recorder is None:
@@ -722,6 +758,7 @@ class HermesShadowProcessor:
                         for block in extra_system
                     ),
                     **({"price_guard": price_guard} if price_guard is not None else {}),
+                    **({"knowledge": knowledge} if knowledge is not None else {}),
                 )
             )
         except Exception:  # noqa: BLE001 - la propuesta manda
@@ -744,9 +781,11 @@ class HermesShadowProcessor:
         # E-564 (price-guard-v1 §3): los montos permitidos de este turno, de los
         # mismos textos que recibe el modelo. Solo con la guarda prendida.
         guard = self._price_guard
+        # El conocimiento se fija una vez por turno: todos los intentos van con el mismo.
+        system_prompt, knowledge_ref = self._knowledge_now()
         allowed: frozenset[Amount] = (
             guard.allowed_for_turn(
-                texts=(self._system_prompt,),
+                texts=(system_prompt,),
                 context=context,
                 blocks=extra_system,
             )
@@ -779,8 +818,8 @@ class HermesShadowProcessor:
                             "stream": False,
                             "messages": [
                                 *(
-                                    [{"role": "system", "content": self._system_prompt}]
-                                    if self._system_prompt
+                                    [{"role": "system", "content": system_prompt}]
+                                    if system_prompt
                                     else []
                                 ),
                                 *(
@@ -821,6 +860,7 @@ class HermesShadowProcessor:
                     outcome="failed",
                     model_answered=None,
                     extra_system=extra_system,
+                    knowledge=knowledge_ref,
                     **_guard_kwargs(guard_record(OUTCOME_HANDOFF)),
                 )
                 return
@@ -918,6 +958,7 @@ class HermesShadowProcessor:
                     outcome="completed",
                     model_answered=model_answered,
                     extra_system=extra_system,
+                    knowledge=knowledge_ref,
                     **_guard_kwargs(
                         guard_record(
                             OUTCOME_RETRIED_OK
@@ -976,6 +1017,7 @@ class HermesShadowProcessor:
             outcome="failed",
             model_answered=model_answered,
             extra_system=extra_system,
+            knowledge=knowledge_ref,
             **_guard_kwargs(guard_record(OUTCOME_HANDOFF)),
         )
 

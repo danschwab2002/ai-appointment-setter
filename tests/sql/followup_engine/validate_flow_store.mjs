@@ -715,6 +715,9 @@ check(sameJson([...lockTimeouts].sort(), [
   'approver_resume_keyword_rule_v1',
   // Abrir y cerrar una corrida del juez pedida por el AE (20261126500000, 4.9).
   'finish_agent_campaign_judge_run_v1', 'start_agent_campaign_judge_run_v1',
+  // El conocimiento vivo del AE: publicar, descartar y volver al archivo desde la pagina (20261126600000).
+  'approver_discard_agent_knowledge_v1', 'approver_publish_agent_knowledge_v1',
+  'approver_return_to_file_agent_knowledge_v1',
 ].sort()), '2: lock_timeout de 5 s en las que esperan locks', lockTimeouts);
 
 // ===========================================================================

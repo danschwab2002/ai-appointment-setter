@@ -306,7 +306,9 @@ expected_service_role(signature) as (
         -- 20261126500000: las corridas del juez de una campana que pide el AE (4.9, F-163).
         ('public.start_agent_campaign_judge_run_v1(jsonb, uuid, text, timestamp with time zone, integer)'),
         ('public.finish_agent_campaign_judge_run_v1(jsonb, uuid, text, jsonb, text)'),
-        ('public.get_agent_campaign_judge_run_v1(jsonb, uuid, timestamp with time zone)')
+        ('public.get_agent_campaign_judge_run_v1(jsonb, uuid, timestamp with time zone)'),
+        -- 20261126600000: la version publicada del conocimiento vivo del AE (pieza 5.5).
+        ('public.get_live_agent_knowledge_v1(jsonb)')
 ),
 functions as (
     select
