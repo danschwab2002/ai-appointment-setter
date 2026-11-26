@@ -192,7 +192,9 @@ if (JSON.stringify(names.slice(names.indexOf(MIGRATION) + 1)) !== JSON.stringify
     // Preparar y los vetos del masivo (20261125000300).
     '20261125000300_bulk_send_prepared_and_base_vetoes_v1.sql',
     // El registro por persona del masivo (20261125000400).
-    '20261125000400_bulk_send_recipients_read_v1.sql'])) {
+    '20261125000400_bulk_send_recipients_read_v1.sql',
+    // La pausa del agente (20261126100000, 5.4).
+    '20261126100000_agent_global_pause_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la del seguimiento a 24 h nativo`, names.slice(-3));
 }
 if (maribel.name !== 'maribel_retomar_proceso_01') fail('el fixture no es la plantilla de Maribel');

@@ -12,6 +12,10 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Agregado (apagado por defecto)
+
+- **Pausar al agente para todas, por etiqueta o por producto desde el Automation Expert (5.4), detrás de `AGENT_GLOBAL_PAUSE_ENABLED` (apagado).** El AE pone y saca la pausa (`pausar_agente`, `reanudar_agente`, `estado_pausa`) a pedido de una persona de `FLOW_APPROVAL_SLACK_APPROVERS`; la base guarda quién la pidió, el motivo, quién la sacó y cuántas conversaciones retuvo. Con una pausa viva el turno no llama al agente ni manda nada, como con `automation_paused`, sin ponerle la etiqueta a nadie; al reanudar se contesta el próximo mensaje. No toca los flujos. `/ready` suma `agent_global_pause` solo con el flag. Contrato `agent-global-pause-v1`, plugin `automation-expert-change` 0.10.0. **Quien actualiza:** correr la migración `20261126100000_agent_global_pause_v1.sql` antes de prender el flag; con el flag apagado, nada.
+
 ### Arreglado
 
 - **El aviso de una plantilla de Meta ya no se pierde por falta de hilo (5.7, template-request-v1 1.3.1).** Una solicitud nueva que llega sin hilo de Slack se guarda con el canal de la aliada (`[slack].canal`) y el aviso sale en la raíz del canal con el nombre y el estado, en vez de quedar `no_thread`. Sin flag ni migración. Quien actualiza: nada; para que salga, el bot del Automation Expert tiene que estar en el canal de la aliada (si no, el aviso espera en `waiting`).

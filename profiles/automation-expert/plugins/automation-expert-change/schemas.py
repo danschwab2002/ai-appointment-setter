@@ -523,3 +523,57 @@ LIST_BULK_SENDS = {
         "additionalProperties": False,
     },
 }
+
+# 5.4 (agent-global-pause-v1, D4 y D10 del mapa Z1): pausar al agente comercial. Frenar no manda nada.
+PAUSAR_AGENTE = {
+    "name": "pausar_agente",
+    "description": (
+        "Pausa al agente comercial: deja de contestar en todas las conversaciones (alcance todas), en las que "
+        "tienen una etiqueta de Chatwoot (alcance etiqueta, valor = la etiqueta) o en las de un producto "
+        "(alcance producto, valor = la clave del producto). No manda nada a nadie y no toca los flujos, que "
+        "tienen su propia pausa en la página. Lo que entre durante la pausa queda en Chatwoot para el equipo. "
+        "Solo a pedido de un aprobador: con not_an_approver, quien te habla no lo es. hasta es opcional (ISO con "
+        "zona, entre 5 minutos y 7 días): sin hasta, sigue hasta que alguien la saque. motivo, siempre."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "alcance": {"type": "string", "enum": ["todas", "etiqueta", "producto"]},
+            "valor": {"type": "string", "maxLength": 64,
+                      "description": "La etiqueta o la clave del producto. Con todas, no va."},
+            "hasta": {"type": "string", "maxLength": 40,
+                      "description": "Cuándo se levanta sola, ISO 8601 con zona (2026-11-29T21:00:00-06:00)."},
+            "motivo": {"type": "string", "maxLength": 500, "description": "Por qué, en una frase."},
+        },
+        "required": ["alcance", "motivo"],
+        "additionalProperties": False,
+    },
+}
+
+REANUDAR_AGENTE = {
+    "name": "reanudar_agente",
+    "description": (
+        "Saca una pausa del agente (su pause_id sale de estado_pausa). El agente vuelve a contestar desde el "
+        "próximo mensaje de cada persona: lo que entró durante la pausa no se contesta para atrás. Solo a "
+        "pedido de un aprobador."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "pause_id": {"type": "string", "format": "uuid"},
+            "motivo": {"type": "string", "maxLength": 500},
+        },
+        "required": ["pause_id"],
+        "additionalProperties": False,
+    },
+}
+
+ESTADO_PAUSA = {
+    "name": "estado_pausa",
+    "description": (
+        "Si el agente está pausado: las pausas vivas (alcance, hasta, quién la pidió y por qué, cuántas "
+        "conversaciones quedaron para el equipo), las últimas levantadas y los productos que se pueden pausar "
+        "solos. Solo lee. Con agent_pause_not_enabled, la instancia no lo tiene prendido."
+    ),
+    "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+}

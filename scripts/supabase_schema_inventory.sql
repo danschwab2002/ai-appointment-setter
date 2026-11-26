@@ -7746,6 +7746,43 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         ), 0),
         2,
         'bulk_send_recipients_read'
+    union all
+    select
+        '20261126100000',
+        '20261126100000_agent_global_pause_v1.sql',
+        -- La pausa del agente (5.4): las dos tablas con RLS ...
+        coalesce((
+            select count(*)::int
+            from pg_class c
+            where c.oid in (to_regclass('public.agent_global_pauses'), to_regclass('public.agent_global_pause_holds'))
+              and c.relrowsecurity
+        ), 0)
+        -- ... la lectura del turno y lo retenido, solo de service_role ...
+        + coalesce((
+            select count(*)::int
+            from functions
+            where oid in (to_regprocedure('public.get_live_agent_global_pauses_v1(jsonb)'),
+                          to_regprocedure('public.record_agent_global_pause_hold_v1(jsonb,uuid,bigint)'))
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        ), 0)
+        -- ... y poner, sacar y listar, que service_role no ejecuta.
+        + coalesce((
+            select count(*)::int
+            from functions
+            where oid in (
+                to_regprocedure('public.pause_agent_globally_v1(jsonb,text,text,text,timestamptz,text,text)'),
+                to_regprocedure('public.resume_agent_globally_v1(jsonb,uuid,text,text)'),
+                to_regprocedure('public.list_agent_global_pauses_v1(jsonb,integer)'))
+              and prosecdef
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        ), 0),
+        7,
+        'agent_global_pause'
 )
 select
     version,

@@ -5066,6 +5066,51 @@ class SupabaseClient:
             raise SupabaseError(f"{operation}_invalid")
         return payload
 
+    async def get_live_agent_global_pauses(self, instance: dict[str, str]) -> dict[str, object]:
+        """Las pausas vivas del agente (``get_live_agent_global_pauses_v1``, agent-global-pause-v1).
+
+        Solo lectura. Devuelve ``{"pauses": [...]}``; la forma de cada una la valida ``LivePauses``.
+        """
+        operation = "live_agent_global_pauses"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_live_agent_global_pauses_v1",
+            content=json.dumps({"p_instance": instance}),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        payload = response.json()
+        if not isinstance(payload, dict) or not isinstance(payload.get("pauses"), list):
+            raise SupabaseError(f"{operation}_invalid")
+        return payload
+
+    async def record_agent_global_pause_hold(
+        self, instance: dict[str, str], *, pause_id: str, conversation_id: int
+    ) -> str:
+        """Una conversacion que el turno dejo para el equipo por una pausa (``record_agent_global_pause_hold_v1``).
+
+        Devuelve ``recorded``, ``repeated`` o ``not_active``.
+        """
+        operation = "agent_global_pause_hold"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/record_agent_global_pause_hold_v1",
+            content=json.dumps(
+                {
+                    "p_instance": instance,
+                    "p_pause_id": pause_id,
+                    "p_conversation_id": conversation_id,
+                }
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        payload = response.json()
+        outcome = payload.get("outcome") if isinstance(payload, dict) else None
+        if outcome not in {"recorded", "repeated", "not_active"}:
+            raise SupabaseError(f"{operation}_invalid")
+        return str(outcome)
+
     async def claim_slack_handoff_notifications(
         self,
         *,

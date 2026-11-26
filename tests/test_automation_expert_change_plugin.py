@@ -40,7 +40,9 @@ TOOLS = ["get_flow_definitions", "propose_flow_change", "validate_flow_change", 
          # E-486 (8d): sumar a alguien al grupo de prueba; solo agrega.
          "add_to_test_group",
          # Encargo 6 del masivo: el borrador y su lectura; confirmar, arrancar y frenar son de la pagina.
-         "propose_bulk_send", "get_bulk_send", "list_bulk_sends"]
+         "propose_bulk_send", "get_bulk_send", "list_bulk_sends",
+         # 5.4 (agent-global-pause-v1): pausar al agente comercial; frenar no manda nada.
+         "pausar_agente", "reanudar_agente", "estado_pausa"]
 
 
 def _load_plugin() -> ModuleType:
@@ -83,6 +85,9 @@ def test_no_tool_approves_publishes_or_pauses() -> None:
     names = {value["name"] for value in vars(schemas).values() if isinstance(value, dict) and "name" in value}
     assert names == set(TOOLS)
     assert not any(word in name for name in names for word in ("approve", "publish", "pause", "discard"))
+    # La unica pausa es la del agente comercial (5.4, D4 del mapa Z1): no toca flujos, campanas ni masivos.
+    assert {name for name in names if "paus" in name or "reanud" in name} == {
+        "pausar_agente", "reanudar_agente", "estado_pausa"}
     # Ninguna borra, saca, ejecuta ni manda (F-143: lectura y creacion si, borrado no). «bulk_send» es el
     # sustantivo (el masivo, encargo 6): ninguna de sus tres lo manda, lo confirma, lo arranca ni lo frena.
     nouns = {name.replace("bulk_sends", "masivos").replace("bulk_send", "masivo") for name in names}

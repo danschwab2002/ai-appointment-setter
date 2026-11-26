@@ -60,6 +60,10 @@ from .tools import add_to_test_group  # noqa: E402
 from .schemas import GET_BULK_SEND, LIST_BULK_SENDS, PROPOSE_BULK_SEND  # noqa: E402
 from .tools import get_bulk_send, list_bulk_sends, propose_bulk_send  # noqa: E402
 
+# 5.4 (agent-global-pause-v1): pausar al agente comercial; el bridge chequea que pida un aprobador.
+from .schemas import ESTADO_PAUSA, PAUSAR_AGENTE, REANUDAR_AGENTE  # noqa: E402
+from .tools import estado_pausa, pausar_agente, reanudar_agente  # noqa: E402
+
 _TEMPLATE_TOOLS = frozenset({"propose_template", "validate_template", "list_template_requests",
                              "get_template_request"})
 _TOOLS = frozenset({"get_flow_definitions", "propose_flow_change", "validate_flow_change", "get_flow_change",
@@ -74,7 +78,9 @@ _TOOLS = frozenset({"get_flow_definitions", "propose_flow_change", "validate_flo
                     # E-486: el grupo de prueba, solo agregar y solo un aprobador.
                     "add_to_test_group",
                     # Encargo 6: el masivo, solo el borrador y su lectura.
-                    "propose_bulk_send", "get_bulk_send", "list_bulk_sends"})
+                    "propose_bulk_send", "get_bulk_send", "list_bulk_sends",
+                    # 5.4: la pausa del agente comercial, solo a pedido de un aprobador.
+                    "pausar_agente", "reanudar_agente", "estado_pausa"})
 
 
 def make_profile_guard(profile_name):
@@ -119,6 +125,9 @@ def register(ctx):
         ("propose_bulk_send", PROPOSE_BULK_SEND, propose_bulk_send),
         ("get_bulk_send", GET_BULK_SEND, get_bulk_send),
         ("list_bulk_sends", LIST_BULK_SENDS, list_bulk_sends),
+        ("pausar_agente", PAUSAR_AGENTE, pausar_agente),
+        ("reanudar_agente", REANUDAR_AGENTE, reanudar_agente),
+        ("estado_pausa", ESTADO_PAUSA, estado_pausa),
     ):
         ctx.register_tool(name=name, toolset="automation_expert_change", schema=schema, handler=handler)
     ctx.register_hook("pre_tool_call", make_profile_guard(getattr(ctx, "profile_name", None)))
