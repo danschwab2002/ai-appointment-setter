@@ -241,7 +241,8 @@ class AgentWorkspace:
             raise CoordinationError(
                 "claim has no base_sha; cannot verify documentation evidence"
             )
-        changed = _git(worktree, "diff", "--name-only", f"{base_sha}...HEAD")
+        diff_base = self._diff_base(worktree, claim)
+        changed = _git(worktree, "diff", "--name-only", f"{diff_base}...HEAD")
         for entry in changed.splitlines():
             relative = entry.strip()
             if not relative.startswith(STATE_EVIDENCE_SCOPE):
@@ -609,6 +610,29 @@ class AgentWorkspace:
                 return claim
         return None
 
+    def _diff_base(self, worktree: Path, claim: Claim) -> str:
+        """The commit the branch's own changes are measured from.
+
+        Normally the fixed ``base_sha`` of the claim. After the branch is
+        brought up to date with ``base_ref`` (merging main), the merge-base
+        with ``base_ref`` moves forward and whatever main brought in stops
+        counting as a change of the branch. It is used only when ``base_sha``
+        is its ancestor, so the comparison never starts earlier than the claim
+        and any doubt falls back to ``base_sha`` (fail closed: more paths).
+        """
+        base_sha = claim.data.get("base_sha")
+        base_ref = claim.data.get("base_ref")
+        if not base_ref:
+            return base_sha
+        merge_base = _run_git(worktree, "merge-base", base_ref, "HEAD", check=False)
+        candidate = merge_base.stdout.strip()
+        if merge_base.returncode != 0 or not candidate:
+            return base_sha
+        contained = _run_git(
+            worktree, "merge-base", "--is-ancestor", base_sha, candidate, check=False
+        )
+        return candidate if contained.returncode == 0 else base_sha
+
     def _changed_paths(self, claim: Claim) -> set[str]:
         worktree = Path(claim.worktree)
         if not worktree.is_dir():
@@ -621,7 +645,7 @@ class AgentWorkspace:
             "diff",
             "--name-status",
             "-z",
-            f"{claim.base_sha}...HEAD",
+            f"{self._diff_base(worktree, claim)}...HEAD",
             check=False,
         )
         if committed.returncode != 0:

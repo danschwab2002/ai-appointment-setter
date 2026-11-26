@@ -283,6 +283,61 @@ def test_tracked_change_keeps_its_full_path_during_scope_check(repo: Path) -> No
     assert coordinator.preflight(Path(claim.worktree)).task_id == "feature-a"
 
 
+def _advance_main_and_merge_into(repo: Path, worktree: Path) -> None:
+    """Another PR lands on main; the branch is brought up to date with it."""
+    (repo / "README.md").write_text("landed from another PR\n")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-m", "another PR")
+    _git(repo, "push", "origin", "main")
+    _git(worktree, "fetch", "origin")
+    _git(worktree, "merge", "--no-ff", "-m", "merge origin/main", "origin/main")
+
+
+def test_merging_main_into_the_branch_keeps_the_claim_in_scope(repo: Path) -> None:
+    """2026-11-25: every branch update with main blocked its own claim.
+
+    The diff used the base_sha fixed at start, so whatever main brought in
+    looked like changes of the branch.
+    """
+    coordinator = AgentWorkspace(repo)
+    claim = _start(coordinator, repo, "feature-a", paths=("src/app.py",))
+    worktree = Path(claim.worktree)
+    (worktree / "src" / "app.py").write_text("VALUE = 2\n")
+    _git(worktree, "commit", "-am", "own change")
+    _advance_main_and_merge_into(repo, worktree)
+
+    assert coordinator._changed_paths(claim) == {"src/app.py"}
+    assert coordinator.preflight(worktree).task_id == "feature-a"
+
+
+def test_merging_main_does_not_hide_own_changes_outside_scope(repo: Path) -> None:
+    coordinator = AgentWorkspace(repo)
+    claim = _start(coordinator, repo, "feature-a", paths=("src/app.py",))
+    worktree = Path(claim.worktree)
+    (worktree / "notes.md").write_text("outside scope\n")
+    _git(worktree, "add", "notes.md")
+    _git(worktree, "commit", "-m", "outside scope")
+    _advance_main_and_merge_into(repo, worktree)
+
+    with pytest.raises(CoordinationError, match="outside declared scope"):
+        coordinator.preflight(worktree)
+
+
+def test_documents_brought_in_by_main_are_not_inspected(repo: Path) -> None:
+    coordinator = AgentWorkspace(repo)
+    claim = _start(coordinator, repo, "state-merged-main", paths=("src/app.py",))
+    worktree = Path(claim.worktree)
+    (repo / "docs").mkdir(exist_ok=True)
+    (repo / "docs" / "landed.md").write_text(ASSERTION, encoding="utf-8")
+    _git(repo, "add", "docs/landed.md")
+    _git(repo, "commit", "-m", "docs: landed")
+    _git(repo, "push", "origin", "main")
+    _git(worktree, "fetch", "origin")
+    _git(worktree, "merge", "--no-ff", "-m", "merge origin/main", "origin/main")
+
+    coordinator._validate_state_claims_have_evidence(claim)
+
+
 def test_terminal_claim_cannot_be_reopened(repo: Path) -> None:
     coordinator = AgentWorkspace(repo)
     _start(coordinator, repo, "feature-a")
