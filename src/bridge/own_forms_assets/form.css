@@ -1,0 +1,176 @@
+/* Formularios propios del recuperador. Todo va con prefijo .sf- para no chocar
+   con los estilos de la landing; las variables de .sf-form se pueden pisar desde
+   la landing para ajustar colores, radio y fuente. */
+.sf-form {
+  --sf-color-texto: #1f2328;
+  --sf-color-fondo: #ffffff;
+  --sf-color-borde: #c9ced6;
+  --sf-color-boton: #1f6f43;
+  --sf-color-boton-texto: #ffffff;
+  --sf-color-error: #b42318;
+  --sf-color-ok: #1f6f43;
+  --sf-radio: 8px;
+  --sf-fuente: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 16px;
+  color: var(--sf-color-texto);
+  background: var(--sf-color-fondo);
+  font-family: var(--sf-fuente);
+  font-size: 16px;
+  line-height: 1.4;
+  text-align: left;
+}
+
+.sf-form *,
+.sf-form *::before,
+.sf-form *::after {
+  box-sizing: border-box;
+}
+
+.sf-titulo {
+  margin: 0 0 16px;
+  font-size: 1.25em;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.sf-campo {
+  margin: 0 0 14px;
+}
+
+.sf-label {
+  display: block;
+  margin: 0 0 6px;
+  font-size: 0.9em;
+  font-weight: 600;
+}
+
+.sf-input,
+.sf-select {
+  display: block;
+  width: 100%;
+  min-height: 48px;
+  margin: 0;
+  padding: 10px 12px;
+  color: var(--sf-color-texto);
+  background: var(--sf-color-fondo);
+  border: 1px solid var(--sf-color-borde);
+  border-radius: var(--sf-radio);
+  font-family: inherit;
+  /* 16px como mínimo: con menos, iOS hace zoom al enfocar el campo. */
+  font-size: 16px;
+  line-height: 1.25;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.sf-select {
+  padding-right: 28px;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  text-overflow: ellipsis;
+}
+
+.sf-input:focus,
+.sf-select:focus {
+  outline: 2px solid var(--sf-color-boton);
+  outline-offset: 1px;
+}
+
+.sf-input[aria-invalid="true"] {
+  border-color: var(--sf-color-error);
+}
+
+.sf-telefono {
+  display: flex;
+  gap: 8px;
+}
+
+.sf-telefono .sf-select {
+  flex: 0 0 40%;
+  width: 40%;
+  min-width: 0;
+}
+
+.sf-telefono .sf-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Campo trampa para bots: fuera de pantalla, no display:none (algunos bots
+   saltean los campos ocultos con display:none). */
+.sf-trampa {
+  position: absolute !important;
+  left: -10000px !important;
+  top: auto !important;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+}
+
+.sf-aclaracion {
+  margin: 4px 0 14px;
+  font-size: 0.8em;
+  line-height: 1.45;
+  opacity: 0.85;
+}
+
+.sf-aclaracion a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.sf-boton {
+  display: block;
+  width: 100%;
+  min-height: 52px;
+  margin: 0;
+  padding: 12px 16px;
+  color: var(--sf-color-boton-texto);
+  background: var(--sf-color-boton);
+  border: 0;
+  border-radius: var(--sf-radio);
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.sf-boton:hover {
+  filter: brightness(1.06);
+}
+
+.sf-boton:disabled,
+.sf-boton[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.6;
+  filter: none;
+}
+
+.sf-mensaje {
+  margin: 12px 0 0;
+  font-size: 0.9em;
+}
+
+.sf-mensaje:empty {
+  display: none;
+}
+
+.sf-error {
+  color: var(--sf-color-error);
+}
+
+.sf-ok {
+  color: var(--sf-color-ok);
+  font-weight: 600;
+}

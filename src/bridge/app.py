@@ -146,6 +146,16 @@ from bridge.ghl_precheckout_adapter import (
     translate_ghl_form_submission,
 )
 from bridge.lead_precheckout import LeadPrecheckoutSubmission, parse_lead_precheckout
+from bridge.own_forms import (
+    OWN_FORM_BODY_LIMIT_BYTES,
+    OwnFormRejection,
+    OwnFormSubmission,
+    SlidingWindowLimiter,
+    render_embed_js,
+    render_page_html,
+    translate_own_form_submission,
+    webhook_copy,
+)
 from bridge.handoff_wait_alerts import HandoffWaitAlertSweeper
 from bridge.meta_delivery import (
     DEFAULT_RETRY_MAX_AGE_SECONDS as META_RETRY_MAX_AGE_SECONDS,
@@ -359,6 +369,10 @@ JOHANNA_ABANDONMENT_BODY_LIMIT_BYTES = 8 * 1024
 # para no pisar una conversacion viva, no para callar a quien escribio ayer.
 FIRST_TOUCH_ACTIVE_CONVERSATION_GUARD_MAX_SECONDS = 86_400
 PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
+    # own-forms-v1: los formularios propios (pagina /f/<clave> y embed.js). Lo
+    # de cada aliada son sus [[formularios_propios]]; por instancia, solo
+    # prenderlo. Apagado, las rutas no existen (404).
+    "own_forms_enabled",
     "chatwoot_human_pause_enabled",
     # Levantar la pausa no depende del aliado: lo unico especifico es el id del
     # macro de Chatwoot, que ya es configuracion por runtime.
@@ -1148,6 +1162,13 @@ class Settings:
     lead_precheckout_offer_code: str = "bxjge6zq"
     ghl_precheckout_adapter_enabled: bool = False
     ghl_precheckout_adapter_token: str | None = None
+    # own-forms-v1: OWN_FORMS_ENABLED. Con el flag existen /f/<clave> (la
+    # pagina), /f/<clave>/embed.js y /f/<clave>/enviar para cada formulario de
+    # [[formularios_propios]]. Apagado (el default), 404.
+    own_forms_enabled: bool = False
+    # El origen publico del bridge (https://dominio): las rutas de la pagina y
+    # del script se arman con el. Sin el, FLOW_APPROVAL_BASE_URL.
+    own_forms_public_base_url: str | None = None
     precheckout_first_touch_enabled: bool = False
     precheckout_first_touch_token: str | None = None
     precheckout_delayed_first_touch_enabled: bool = False
@@ -1735,6 +1756,12 @@ class Settings:
         )
         ghl_precheckout_adapter_token = (
             os.getenv("GHL_PRECHECKOUT_ADAPTER_TOKEN", "").strip() or None
+        )
+        own_forms_enabled = os.getenv("OWN_FORMS_ENABLED", "false").lower() == "true"
+        own_forms_public_base_url = (
+            os.getenv("OWN_FORMS_PUBLIC_BASE_URL", "").strip().rstrip("/")
+            or os.getenv("FLOW_APPROVAL_BASE_URL", "").strip().rstrip("/")
+            or None
         )
         allowed_jid = os.getenv("ALLOWED_WHATSAPP_JID", "").strip() or None
         allowed_phone = (
@@ -2680,6 +2707,8 @@ class Settings:
             lead_precheckout_offer_code=lead_precheckout_offer_code,
             ghl_precheckout_adapter_enabled=ghl_precheckout_adapter_enabled,
             ghl_precheckout_adapter_token=ghl_precheckout_adapter_token,
+            own_forms_enabled=own_forms_enabled,
+            own_forms_public_base_url=own_forms_public_base_url,
             precheckout_first_touch_enabled=precheckout_first_touch_enabled,
             precheckout_first_touch_token=precheckout_first_touch_token,
             precheckout_delayed_first_touch_enabled=(
@@ -3687,6 +3716,15 @@ def _validate_instance_manifest_gates(settings: Settings) -> None:
             blocked.append("ghl_precheckout_adapter_enabled->intencion")
         if not manifest.ghl_form_ids:
             blocked.append("ghl_precheckout_adapter_enabled->adaptadores.ghl")
+    if settings.own_forms_enabled:
+        # Lo que el formulario produce es el evento intencion, y solo existen
+        # los formularios que la instancia declara (own-forms-v1).
+        if "intencion" not in manifest.events:
+            blocked.append("own_forms_enabled->intencion")
+        if not manifest.own_forms:
+            blocked.append("own_forms_enabled->formularios_propios")
+        if not settings.own_forms_public_base_url:
+            blocked.append("own_forms_enabled->OWN_FORMS_PUBLIC_BASE_URL")
     if settings.meta_final_effect_enabled and not any(
         manifest.flow_enabled(flow) for flow in _OUTBOUND_FLOWS
     ):
@@ -5316,6 +5354,11 @@ def create_app(
             # El masivo por el AE (encargo 6): solo con el flag; apagado, el
             # payload de /ready no cambia.
             instance_readiness["bulk_send"] = "enabled"
+        if settings.own_forms_enabled:
+            # own-forms-v1: solo con el flag; apagado, el payload no cambia.
+            instance_readiness["own_forms"] = (
+                f"enabled:{len(settings.instance_manifest.own_forms)}"
+            )
         ghl_adapter_risk = _ghl_adapter_risk_readiness(settings.instance_manifest)
         if ghl_adapter_risk is not None:
             instance_readiness["ghl_adapter_risk"] = ghl_adapter_risk
@@ -13257,6 +13300,211 @@ def create_app(
             raise
         trace.emit(outcome=str(result["status"]), status_code=200, reason="-")
         return result
+
+    # ------------------------------------------------------------ own-forms-v1
+    # Los formularios propios (docs/contracts/own-forms-v1.md): la pagina, el
+    # script embebible y el envio. Solo con OWN_FORMS_ENABLED y manifiesto.
+    own_form_ip_limiter = SlidingWindowLimiter(limit=10, window_s=600)
+    own_form_phone_limiter = SlidingWindowLimiter(limit=3, window_s=3600)
+
+    def _own_form_or_404(form_key: str):
+        manifest = settings.instance_manifest
+        if not settings.own_forms_enabled or manifest is None or not explicit_manifest_runtime:
+            raise HTTPException(status_code=404, detail="not_found")
+        form = next((item for item in manifest.own_forms if item.key == form_key), None)
+        if form is None:
+            raise HTTPException(status_code=404, detail="not_found")
+        route = commercial_ally_routes.owner_of_landing_id(form.landing_id)
+        landing = (
+            next(
+                (
+                    item
+                    for item in route.config.offer_landings
+                    if item.landing_id == form.landing_id
+                ),
+                None,
+            )
+            if route is not None
+            else None
+        )
+        if route is None or landing is None:
+            # El manifiesto lo valida al cargar: solo un binding armado de otra forma.
+            raise HTTPException(status_code=404, detail="not_found")
+        return form, route, landing
+
+    def _own_form_allowed_origins(form) -> frozenset[str]:
+        base = settings.own_forms_public_base_url or ""
+        return frozenset((*form.origins, base)) - {""}
+
+    def _own_form_cors_headers(origin: str, form) -> dict[str, str]:
+        if origin not in _own_form_allowed_origins(form):
+            return {}
+        return {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+            "Access-Control-Max-Age": "600",
+            "Vary": "Origin",
+        }
+
+    def _own_form_log(**fields: object) -> None:
+        # Solo codigos e ids: nunca el nombre, el correo ni el telefono.
+        logger.log(
+            logging.WARNING if fields.get("outcome") in ("rejected", "error") else logging.INFO,
+            "own_form " + " ".join(f"{key}={value}" for key, value in fields.items()),
+        )
+
+    async def _own_form_webhooks(urls: tuple[str, ...], payload: dict[str, object], form_key: str) -> None:
+        # D9: un intento por webhook, despues de responder; una falla no toca el envio.
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=False) as client:
+            for url in urls:
+                try:
+                    reply = await client.post(url, json=payload)
+                    _own_form_log(webhook="sent", form=form_key, status=reply.status_code)
+                except httpx.HTTPError as exc:
+                    _own_form_log(webhook="failed", form=form_key, error=type(exc).__name__)
+
+    @app.get("/f/{form_key}")
+    async def own_form_page(form_key: str) -> Response:
+        form, _route, _landing = _own_form_or_404(form_key)
+        base = settings.own_forms_public_base_url
+        html = render_page_html(form, embed_url=f"{base}/f/{form.key}/embed.js")
+        return Response(
+            content=html,
+            media_type="text/html; charset=utf-8",
+            headers={
+                "Content-Security-Policy": (
+                    "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                    "connect-src 'self'; img-src 'self' data:; form-action 'none'; "
+                    "frame-ancestors 'none'; base-uri 'none'"
+                ),
+                "Cache-Control": "no-store",
+                "Referrer-Policy": "strict-origin-when-cross-origin",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @app.get("/f/{form_key}/embed.js")
+    async def own_form_embed(form_key: str) -> Response:
+        form, _route, _landing = _own_form_or_404(form_key)
+        base = settings.own_forms_public_base_url
+        script = render_embed_js(form, submit_url=f"{base}/f/{form.key}/enviar")
+        return Response(
+            content=script,
+            media_type="application/javascript; charset=utf-8",
+            headers={
+                "Cache-Control": "public, max-age=300",
+                "X-Content-Type-Options": "nosniff",
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
+
+    @app.options("/f/{form_key}/enviar")
+    async def own_form_preflight(form_key: str, origin: str = Header(default="")) -> Response:
+        form, _route, _landing = _own_form_or_404(form_key)
+        headers = _own_form_cors_headers(origin, form)
+        return Response(status_code=204 if headers else 403, headers=headers)
+
+    @app.post("/f/{form_key}/enviar")
+    async def own_form_submit(
+        form_key: str,
+        request: Request,
+        background_tasks: BackgroundTasks,
+        content_type: str = Header(default=""),
+        origin: str = Header(default=""),
+    ) -> Response:
+        form, route, landing = _own_form_or_404(form_key)
+        cors = _own_form_cors_headers(origin, form)
+
+        def reply(status_code: int, body: dict[str, object], **log: object) -> Response:
+            _own_form_log(form=form.key, status=status_code, **log)
+            return Response(
+                content=json.dumps(body),
+                status_code=status_code,
+                media_type="application/json",
+                headers={**cors, "Cache-Control": "no-store"},
+            )
+
+        if not cors:
+            # D4: solo desde un origen declarado del formulario o la pagina propia.
+            return reply(403, {"detail": {"codigo": "origen"}}, outcome="rejected", reason="origin")
+        if content_type.split(";", 1)[0].strip().lower() != "application/json":
+            return reply(415, {"detail": {"codigo": "tipo"}}, outcome="rejected", reason="content_type")
+        client_ip = (
+            request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+            or (request.client.host if request.client else "-")
+        )
+        if not own_form_ip_limiter.allow(f"{form.key}:{client_ip}"):
+            return reply(429, {"detail": {"codigo": "limite"}}, outcome="rejected", reason="ip_limit")
+        raw = bytearray()
+        async for chunk in request.stream():
+            if len(raw) + len(chunk) > OWN_FORM_BODY_LIMIT_BYTES:
+                return reply(413, {"detail": {"codigo": "largo"}}, outcome="rejected", reason="too_large")
+            raw.extend(chunk)
+        try:
+            body = json.loads(bytes(raw))
+            submission = OwnFormSubmission.from_json(body)
+        except (ValueError, RecursionError):
+            return reply(400, {"detail": {"codigo": "cuerpo_invalido"}}, outcome="rejected", reason="invalid_json")
+        if submission.honeypot:
+            # Un bot: se le contesta como a un envio bueno y no se guarda nada.
+            return reply(
+                200,
+                {"status": "received", "checkout_url": None, "gracias_url": form.thanks_url},
+                outcome="honeypot",
+            )
+        try:
+            translation = translate_own_form_submission(
+                submission, config=route.config, landing=landing, now=datetime.now(UTC)
+            )
+        except OwnFormRejection as exc:
+            return reply(
+                422,
+                {"detail": {"codigo": exc.code, "mensaje": exc.user_message}},
+                outcome="rejected",
+                reason=exc.code,
+                phone_region=exc.phone_region or "-",
+            )
+        buyer = translation.event["data"]["buyer"]  # type: ignore[index]
+        if not own_form_phone_limiter.allow(f"{form.key}:{buyer['phone']}"):  # type: ignore[index]
+            return reply(429, {"detail": {"codigo": "limite"}}, outcome="rejected", reason="phone_limit")
+        submission_event = parse_lead_precheckout(translation.event, config=route.config)
+        if submission_event is None or not submission_event.phone_valid:
+            return reply(
+                422,
+                {"detail": {"codigo": "telefono", "mensaje": OwnFormRejection("telefono").user_message}},
+                outcome="rejected",
+                reason="translation_rejected",
+            )
+        if shared_supabase is None:
+            return reply(503, {"detail": {"codigo": "no_disponible"}}, outcome="error", reason="supabase")
+        try:
+            admission = await _admit_portable_lead(submission_event, translation.event, route)
+        except SupabaseError:
+            return reply(503, {"detail": {"codigo": "no_disponible"}}, outcome="error", reason="persist")
+        result = _lead_admission_response(submission_event, admission, background_tasks)
+        if form.webhooks:
+            background_tasks.add_task(
+                _own_form_webhooks,
+                form.webhooks,
+                webhook_copy(translation.event, form_key=form.key),
+                form.key,
+            )
+        return reply(
+            200,
+            {
+                "status": result["status"],
+                "checkout_url": translation.checkout_url,
+                "gracias_url": form.thanks_url,
+            },
+            outcome=result["status"],
+            delivery_id=submission_event.external_submission_id,
+            landing=f"{landing.site}/{landing.landing_id}",
+            offer=landing.offer_code,
+            phone_region=translation.phone_region,
+            has_utm=str(translation.has_utm).lower(),
+            has_fbclid=str(translation.has_fbclid).lower(),
+        )
 
     @app.post("/webhooks/precheckout", status_code=status.HTTP_202_ACCEPTED)
     async def receive_precheckout_webhook(

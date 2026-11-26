@@ -12,6 +12,18 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.42.0] - 2026-11-26
+
+Una menor sobre la 1.41.0. **Los formularios propios** (contrato `own-forms-v1`): el formulario que hoy pone GHL en las landings lo dibuja el bridge, como página propia (`/f/<clave>`) y como script embebible (`/f/<clave>/embed.js`), y el envío entra directo al recuperador por la misma admisión que el adaptador de GHL. **Llega apagado:** detrás de `OWN_FORMS_ENABLED`, `false` por defecto; apagado, las rutas dan 404 y `/ready` no cambia. Sin migraciones.
+
+### Agregado (apagado por defecto)
+
+- **Formularios propios, detrás de `OWN_FORMS_ENABLED`.** `[[formularios_propios]]` en el manifiesto declara cada formulario (clave, landing, aclaración, orígenes, países, webhooks). `POST /f/<clave>/enviar` arma el mismo `lead.precheckout` 1.1.0 que el adaptador de GHL (verificado contra el evento real de ATT1 del 16/11) y lo admite por la misma admisión portable; devuelve el link de Hotmart como lo arma el core y copia el envío a los webhooks declarados. En una página del core con `form: 'propio'`, el script le entrega el contacto a `superpowers.formSubmitted` y el core arma el checkout como hoy.
+
+### Qué hace quien actualiza una instancia
+
+Nada. Para usarlo: declarar `[[formularios_propios]]`, y prender `OWN_FORMS_ENABLED=true` (con `OWN_FORMS_PUBLIC_BASE_URL`, o `FLOW_APPROVAL_BASE_URL` ya cargada).
+
 ## [1.41.0] - 2026-11-25
 
 Una menor sobre la 1.40.7, con 14 PR (#500 a #513) y 4 migraciones. **El masivo manejado por el Automation Expert** (#500, #502 a #513): el AE arma el borrador de un envío a una lista que trae una persona, la lista se sube y el envío se confirma y se frena en la página de aprobación, y un motor lo manda con frenos y con el candado del portfolio. **Llega apagado:** todo queda detrás de `BULK_SEND_ENABLED`, que vale `false` por defecto; con el flag apagado el bridge no cambia (ni rutas, ni trabajador, ni purga, ni claves nuevas en `/ready`, ni llamadas a las funciones nuevas). Además, el choque de identidad al admitir un evento deja de avisarse como falla del motor (#501), que no tiene flag.
