@@ -12,6 +12,10 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Arreglado
+
+- **El aviso de una plantilla de Meta ya no se pierde por falta de hilo (5.7, template-request-v1 1.3.1).** Una solicitud nueva que llega sin hilo de Slack se guarda con el canal de la aliada (`[slack].canal`) y el aviso sale en la raíz del canal con el nombre y el estado, en vez de quedar `no_thread`. Sin flag ni migración. Quien actualiza: nada; para que salga, el bot del Automation Expert tiene que estar en el canal de la aliada (si no, el aviso espera en `waiting`).
+
 ## [1.42.0] - 2026-11-26
 
 Una menor sobre la 1.41.0. **Los formularios propios** (contrato `own-forms-v1`): el formulario que hoy pone GHL en las landings lo dibuja el bridge, como página propia (`/f/<clave>`) y como script embebible (`/f/<clave>/embed.js`), y el envío entra directo al recuperador por la misma admisión que el adaptador de GHL. **Llega apagado:** detrás de `OWN_FORMS_ENABLED`, `false` por defecto; apagado, las rutas dan 404 y `/ready` no cambia. Sin migraciones.

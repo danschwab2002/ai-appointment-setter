@@ -11235,6 +11235,8 @@ def create_app(
                 ally_ref=change_manifest.ally_ref,
                 inbox_id=change_manifest.chatwoot_inbox_id,
                 template_context=template_request.context_from_manifest(change_manifest),
+                # D-57.1: sin hilo, el aviso de Meta sale en la raiz del canal de la aliada.
+                ally_slack_channel=change_manifest.slack_channel,
             )
             # F-146 parte 4 (template-request-v1 1.3.0): el sondeo y el aviso en
             # el hilo. Con el flag apagado este worker no existe.

@@ -1,4 +1,4 @@
-"""template-request-v1 1.3.0 (F-146 parte 4, E-361): el sondeo de Meta y el aviso en el hilo de Slack.
+"""template-request-v1 1.3.1 (F-146 parte 4, E-361): el sondeo de Meta y el aviso en el hilo de Slack.
 
 Meta y Slack van por los clientes reales con transporte simulado (formas en
 fixtures/meta_template_status_borde_20261109.json, documentadas, sin captura:
@@ -247,6 +247,47 @@ def test_a_dm_without_thread_posts_in_the_dm() -> None:
     slack = Slack()
     _run(_worker(Store(notices=[_notice(thread_ts=None)]), slack=slack))
     assert "thread_ts" not in slack.posted[0]
+
+
+# D-57.1 (5.7): sin hilo, la solicitud nueva se guarda con el canal de la aliada y el aviso sale en su raiz.
+ALLY = "C0ALIADA123"
+
+
+def _ally_slack() -> Slack:
+    return Slack({**BORDE["slack_post_ok"], "channel": ALLY})
+
+
+def test_without_a_thread_the_notice_goes_to_the_ally_channel_root_with_name_and_state() -> None:
+    store, slack = Store(notices=[_notice(channel=ALLY, thread_ts=None)]), _ally_slack()
+    _run(_worker(store, slack=slack))
+    posted = slack.posted[0]
+    assert posted["channel"] == ALLY and "thread_ts" not in posted
+    assert f"`{NAME}`" in posted["text"] and "aprobó" in posted["text"] and "Ya se puede usar" in posted["text"]
+    assert "hilo" not in posted["text"]
+    assert store.finished == [{"request_id": ID, "kind": "aprobada", "outcome": "sent", "error_code": None}]
+
+
+def test_the_root_notice_goes_out_once() -> None:
+    store, slack = Store(notices=[_notice(channel=ALLY, thread_ts=None)]), _ally_slack()
+    _run(_worker(store, slack=slack))
+    _run(_worker(store, slack=slack))
+    assert len(slack.posted) == 1 and len(store.finished) == 1
+
+
+def test_in_a_thread_or_the_dm_it_still_says_reply_here() -> None:
+    assert template_status.notice_text(_notice()).endswith("Contestá en este hilo para seguir.")
+    assert template_status.notice_text(_notice(thread_ts=None)).endswith("Contestá en este hilo para seguir.")
+    rejected = _notice("rechazada", channel=ALLY, thread_ts=None, status="rechazada", meta_rejected_reason="SCAM")
+    assert "hilo" not in template_status.notice_text(rejected) and "rechazó" in template_status.notice_text(rejected)
+
+
+def test_an_ae_bot_outside_the_ally_channel_waits_without_spending_attempts() -> None:
+    # Forma de slack_post_rejected (fixture documentado, sin captura) con el error que da un bot fuera del canal.
+    store = Store(notices=[_notice(channel=ALLY, thread_ts=None)])
+    worker = _worker(store, slack=Slack({**BORDE["slack_post_rejected"], "error": "not_in_channel"}))
+    _run(worker)
+    assert store.finished[0]["outcome"] == "waiting"
+    assert store.finished[0]["error_code"] == "slack_blocked:not_in_channel"
 
 
 def test_the_worker_posts_only_what_the_base_hands_over() -> None:

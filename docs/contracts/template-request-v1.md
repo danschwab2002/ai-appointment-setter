@@ -1,6 +1,6 @@
 # template-request-v1: la solicitud de plantilla de Meta
 
-**Versión:** 1.3.0 (F-146, partes 1 a 5: la base, el validador, las rutas del Automation Expert, la página de aprobación, el envío a Meta, las herramientas del plugin, la skill `pedir-plantilla-a-meta`, y el sondeo con el aviso en el hilo).
+**Versión:** 1.3.1 (F-146, partes 1 a 5: la base, el validador, las rutas del Automation Expert, la página de aprobación, el envío a Meta, las herramientas del plugin, la skill `pedir-plantilla-a-meta`, y el sondeo con el aviso en el hilo; 1.3.1: el aviso sin hilo sale en la raíz del canal de la aliada, §7).
 **Migraciones:** `20261102000200_meta_template_requests_v1.sql` y `20261109000100_meta_template_request_notices_v1.sql` (parte 4).
 **Código:** `src/bridge/template_request.py` (puro), `src/bridge/template_request_api.py` (las rutas del AE), `src/bridge/template_approval.py` (la página y el envío), `src/bridge/meta_templates.py` (el cliente cerrado de Meta) y `src/bridge/template_status.py` (el sondeo y el aviso).
 **Flag:** `META_TEMPLATES_ENABLED`, apagado por defecto. Apagado, las rutas no existen, el cliente de Meta no se crea y nada cambia.
@@ -221,7 +221,9 @@ El texto es fijo y lo escribe `notice_text`; el modelo no interviene. El único 
 | `waiting` | Slack rechazó el token o el canal (`invalid_auth`, `token_revoked`, `account_inactive`, `channel_not_found`, `not_in_channel` y parecidos): no gasta intentos, vuelve a los 15 minutos y sale cuando se corrige. `/ready` queda `degraded`. |
 | `failed` | Tercer rechazo, o una fila que no se pudo escribir. |
 | `unknown` | Puede haber llegado (timeout, 5xx, caída en el medio): **no se repite**. Slack no tiene idempotencia. |
-| `no_thread` | Solicitud sin hilo guardado (las anteriores a esta versión): sin aviso, contada. |
+| `no_thread` | Solicitud sin canal guardado: las anteriores a 1.3.0, o una instancia sin `[slack].canal` (ver abajo). Sin aviso, contada. |
+
+**Sin hilo (1.3.1, D-57.1 a D-57.3).** Una solicitud **nueva** que llega a `POST /template-requests` sin `slack_thread` se guarda con el canal de la aliada (`[slack].canal` del manifiesto) y sin hilo: el aviso sale en la raíz de ese canal, con el nombre de la plantilla y el estado, sin el «contestá en este hilo» (en la raíz de un canal no hay hilo que seguir). El hilo de la charla, cuando viene, gana siempre. Rehacer una solicitud sin hilo la guarda como antes (`save_meta_template_request_draft_v1`): la v2 pisaría el hilo que ya tenía con la raíz del canal (D-57.2). Sin `[slack].canal`, o con uno que la base no acepta (`^[CG][A-Z0-9]{8,20}$`), se guarda como antes y el aviso sigue contándose `no_thread` (D-57.3). Sin migración: la columna `notify_slack_channel` ya acepta un canal sin hilo. El bot de la app del AE tiene que estar en ese canal; si no está, Slack contesta `not_in_channel` y el aviso queda `waiting` (no se pierde, `/ready` queda `degraded`) hasta que se lo invite. Dato de partida (maribel_db, 2026-11-26, solo lectura): de 11 solicitudes, la única `no_thread` es la del 2026-11-09, guardada antes de 1.3.0; las 10 siguientes trajeron canal e hilo. Esa fila no se reenvía: su aviso ya está cerrado.
 
 **Quién postea.** El DM es de la app del AE: solo su bot escribe ahí, así que el conector de la aliada no sirve. Va con `META_TEMPLATES_SLACK_BOT_TOKEN`, el mismo `SLACK_BOT_TOKEN` del profile. Sin el token, o con uno mal formado, el sondeo corre y los avisos esperan en la base (`/ready` dice `sin_token` o `token_invalido`); el bridge arranca igual. Salen al cargarlo.
 
