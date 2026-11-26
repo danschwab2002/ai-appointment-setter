@@ -5111,6 +5111,26 @@ class SupabaseClient:
             raise SupabaseError(f"{operation}_invalid")
         return str(outcome)
 
+    async def get_live_agent_temporary_instruction(self, instance: dict[str, str]) -> dict[str, object]:
+        """La instruccion temporal publicada y vigente (``get_live_agent_temporary_instruction_v1``, 5.3 de Z1).
+
+        Solo lectura. Devuelve ``{"instruction": {...} | None}``; lo demas lo decide la lectura viva.
+        """
+        operation = "live_agent_temporary_instruction"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_live_agent_temporary_instruction_v1",
+            content=json.dumps({"p_instance": instance}),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        payload = response.json()
+        if not isinstance(payload, dict) or "instruction" not in payload or not (
+            payload["instruction"] is None or isinstance(payload["instruction"], dict)
+        ):
+            raise SupabaseError(f"{operation}_invalid")
+        return payload
+
     async def claim_slack_handoff_notifications(
         self,
         *,

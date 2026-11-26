@@ -31,6 +31,11 @@ hace una persona de la lista en la pagina; el control de calidad lo corre el
 operador. Y ``create_chatwoot_label_macro``: un macro que solo suma una etiqueta.
 Sin ``AGENT_CAMPAIGNS_ENABLED`` el bridge no tiene esas rutas: ``campaigns_not_enabled``.
 
+Desde la 0.11.0 (agent-temporary-instruction-v1, 5.3 de Z1) suma la instruccion temporal para
+todas las conversaciones: ver como queda (``preview_temporary_instruction``), proponerla y leerla.
+Publicarla y retirarla lo hace una persona de la lista en la pagina. Sin
+``AGENT_TEMPORARY_INSTRUCTION_ENABLED`` el bridge no tiene esas rutas: ``temporary_instruction_not_enabled``.
+
 Desde la 0.4.0 (automation-expert-chatwoot-v1, F-143) suma la herramienta
 acotada de Chatwoot: leer y crear etiquetas, sumarle una a una conversacion y
 leer los macros. No borra, no saca etiquetas y no manda mensajes; la lista
@@ -71,7 +76,8 @@ _SLACK_THREAD_TS_RE = re.compile(r"[0-9]{1,12}\.[0-9]{1,8}")
 _EMAIL_RE = re.compile(r"[^\s@]+@[^\s@]+")
 _PHONE_SEPARATORS = frozenset(" \t\n\r -.()+")
 # Los codigos que el bridge contesta; cualquier otro se cambia por uno generico.
-_DRAFT_BLOCKED = frozenset({"flow_change_draft_blocked", "template_request_draft_blocked", "campaign_draft_blocked"})
+_DRAFT_BLOCKED = frozenset({"flow_change_draft_blocked", "template_request_draft_blocked", "campaign_draft_blocked",
+                            "temporary_instruction_blocked"})
 _BRIDGE_ERRORS = frozenset({
     "automation_expert_change_authentication_required",
     "invalid_body",
@@ -173,6 +179,15 @@ _BRIDGE_ERRORS = frozenset({
     "agent_pause_open_limit",
     "agent_pause_scope_invalid",
     "agent_pause_reason_invalid",
+    # La instruccion temporal (agent-temporary-instruction-v1, 5.3 de Z1).
+    "invalid_instruction_id",
+    "temporary_instruction_invalid",
+    "temporary_instruction_blocked",
+    "agent_temporary_instruction_not_found",
+    "agent_temporary_instruction_window_over",
+    "agent_temporary_instruction_window_too_long",
+    "agent_temporary_instruction_daily_limit",
+    "agent_temporary_instruction_text_invalid",
 })
 
 
@@ -326,6 +341,10 @@ def _request(method: str, path: str, body: dict[str, object] | None = None) -> d
         # Lo mismo con las campanas: sin AGENT_CAMPAIGNS_ENABLED sus rutas no existen.
         if exc.code == 404 and detail == "Not Found" and path.startswith(CAMPAIGNS):
             return {"error": "campaigns_not_enabled"}
+        # Y con la instruccion temporal: sin AGENT_TEMPORARY_INSTRUCTION_ENABLED sus rutas no existen.
+        if exc.code in (404, 405) and detail in ("Not Found", "Method Not Allowed") \
+                and path.startswith(TEMPORARY_INSTRUCTIONS):
+            return {"error": "temporary_instruction_not_enabled"}
         # Y con el masivo: sin BULK_SEND_ENABLED sus rutas no existen.
         if exc.code in (404, 405) and detail in ("Not Found", "Method Not Allowed") and path.startswith(BULK_SENDS):
             return {"error": "bulk_send_not_enabled"}
@@ -686,6 +705,50 @@ def list_campaigns(params: dict[str, object], **kwargs: object) -> str:
     if estado not in ("abiertas", "todas"):
         return _dumps({"error": "invalid_query", "reason": {"field": "estado"}})
     return _dumps(_request("GET", f"{CAMPAIGNS}?estado={estado}"))
+
+
+# agent-temporary-instruction-v1 (5.3 de Z1): la instruccion temporal para todas las conversaciones.
+# Ver como queda y proponerla; publicarla y retirarla lo hace un aprobador en la pagina (D4).
+TEMPORARY_INSTRUCTIONS = f"{PREFIX}/temporary-instructions"
+
+
+def _instruction(params: dict[str, object]) -> dict[str, object]:
+    return {"texto": params.get("texto"), "hasta": params.get("hasta")}
+
+
+def preview_temporary_instruction(params: dict[str, object], **kwargs: object) -> str:
+    del kwargs
+    return _dumps(_request("POST", f"{TEMPORARY_INSTRUCTIONS}/preview", {"instruction": _instruction(params)}))
+
+
+def propose_temporary_instruction(params: dict[str, object], **kwargs: object) -> str:
+    del kwargs
+    requested = _campaign_requester()
+    if isinstance(requested, str):
+        return requested
+    purpose = params.get("purpose")
+    if not isinstance(purpose, str) or not purpose.strip():
+        return _dumps({"error": "invalid_body"})
+    if looks_like_identifier(purpose):
+        return _dumps({"error": "identifier_not_allowed"})
+    return _dumps(_request("POST", TEMPORARY_INSTRUCTIONS, {"instruction": _instruction(params),
+                                                            "purpose": purpose.strip(), "requested_by": requested}))
+
+
+def get_temporary_instruction(params: dict[str, object], **kwargs: object) -> str:
+    del kwargs
+    instruction_id = _uuid(params.get("instruction_id"))
+    if instruction_id is None:
+        return _dumps({"error": "invalid_instruction_id"})
+    return _dumps(_request("GET", f"{TEMPORARY_INSTRUCTIONS}/{instruction_id}"))
+
+
+def list_temporary_instructions(params: dict[str, object], **kwargs: object) -> str:
+    del kwargs
+    limit = params.get("limit", 10)
+    if type(limit) is not int or not 1 <= limit <= 50:
+        return _dumps({"error": "invalid_query", "reason": {"field": "limit"}})
+    return _dumps(_request("GET", f"{TEMPORARY_INSTRUCTIONS}?limit={limit}"))
 
 
 # E-486 (8d, D14 y D15 aprobadas por Dan el 12/11): sumar un telefono al grupo de prueba.

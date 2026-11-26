@@ -191,6 +191,7 @@ from bridge import automation_expert_chatwoot, flow_approval, flow_change_api
 from bridge import template_approval, template_request, template_request_api
 from bridge import agent_campaign_api, agent_campaigns, campaign_approval
 from bridge import agent_global_pause
+from bridge import temporary_instruction, temporary_instruction_api, temporary_instruction_page
 from bridge import agent_product_api
 from bridge import flow_audience_page
 from bridge.flow_audience_wiring import FlowAudience, build_flow_audience
@@ -471,6 +472,11 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # oferta leen tambien las campanas del AE. Exige AGENT_CAMPAIGNS_ENABLED;
     # cada camino sigue detras de su flag. Por instancia, solo prenderlo.
     "agent_campaign_label_paths_enabled",
+    # 5.3 de Z1 (agent-temporary-instruction-v1): la instruccion temporal para
+    # todas las conversaciones, redactada por el AE y aprobada en la pagina.
+    # Portable: por instancia, solo prenderlo; apagado no existen las rutas, no
+    # se lee la base y el pedido a Hermes es el de siempre.
+    "agent_temporary_instruction_enabled",
     # E-569 (product-card-v1, MP-07): el producto que suma el Automation
     # Expert, como dato (proponer, validar, listar). Portable: por instancia,
     # solo prenderlo; apagado no existen las rutas ni se llama a la base.
@@ -1142,6 +1148,13 @@ class Settings:
     # tres caminos de la etiqueta leen la fuente viva (manifiesto mas campanas
     # del AE). Apagado, las fuentes fijas de hoy.
     agent_campaign_label_paths_enabled: bool = False
+    # 5.3 de Z1 (bridge/temporary_instruction.py, contrato
+    # agent-temporary-instruction-v1): AGENT_TEMPORARY_INSTRUCTION_ENABLED. Con
+    # el flag, la instruccion publicada va como `system` en todos los turnos,
+    # despues del conocimiento base y antes de los segmentos. Apagado (el
+    # default) no existen las rutas ni la pagina, no se lee la base y el pedido
+    # a Hermes es byte a byte el de siempre.
+    agent_temporary_instruction_enabled: bool = False
     # E-569 (bridge/agent_product_api.py, contrato product-card-v1, MP-07):
     # AGENT_PRODUCTS_ENABLED. Con el flag existen las rutas del AE para
     # proponer, validar, obtener y listar productos. Apagado (el default) no
@@ -2697,6 +2710,9 @@ class Settings:
             agent_campaign_label_paths_enabled=(
                 os.getenv("AGENT_CAMPAIGN_LABEL_PATHS_ENABLED", "false").strip().lower()
                 == "true"
+            ),
+            agent_temporary_instruction_enabled=(
+                os.getenv(temporary_instruction.FLAG_ENV, "false").strip().lower() == "true"
             ),
             agent_products_enabled=(
                 os.getenv(agent_product_api.AGENT_PRODUCTS_ENV, "false").strip().lower()
@@ -5278,6 +5294,7 @@ def create_app(
     automation_expert_chatwoot_client: automation_expert_chatwoot.ScopedChatwoot | None = None,
     template_request_store: template_request_api.TemplateRequestStore | None = None,
     agent_campaign_store: agent_campaign_api.CampaignStore | None = None,
+    temporary_instruction_store: temporary_instruction_api.TemporaryInstructionStore | None = None,
     agent_product_store: agent_product_api.ProductStore | None = None,
     bulk_send_store: flow_change_api.BulkSendStore | None = None,
     agent_pause_store: agent_global_pause.PauseStore | None = None,
@@ -5485,6 +5502,28 @@ def create_app(
             )
 
         agent_pause_live = agent_global_pause.LivePauses(fetch=_fetch_live_pauses)
+    # 5.3 de Z1 (agent-temporary-instruction-v1): con el flag, la instruccion
+    # publicada de la base, con cache corta. Apagado no se crea nada y ningun
+    # turno cambia. La fila se lee recien en el arranque.
+    temporary_instruction_live: temporary_instruction.LiveTemporaryInstruction | None = None
+    if settings.agent_temporary_instruction_enabled:
+        temporary_instruction_api.check_settings(settings)
+        assert settings.instance_manifest is not None
+        instruction_manifest = settings.instance_manifest
+
+        async def _fetch_live_temporary_instruction() -> dict[str, object]:
+            assert shared_supabase is not None
+            return await shared_supabase.get_live_agent_temporary_instruction(
+                {
+                    "tenant_ref": instruction_manifest.tenant_ref,
+                    "ally_ref": instruction_manifest.ally_ref,
+                }
+            )
+
+        temporary_instruction_live = temporary_instruction.LiveTemporaryInstruction(
+            fetch=_fetch_live_temporary_instruction,
+            time_zone=instruction_manifest.time_zone,
+        )
     # Un binding por producto (paso 2c): el principal es el que ya carga el
     # bridge; con un solo producto es la unica ruta.
     commercial_ally_routes = ProductRoutes.build(
@@ -5757,6 +5796,8 @@ def create_app(
     template_request_api.check_settings(settings)
     # E-355: las campanas exigen las rutas del agente, la pagina y la entrada.
     agent_campaign_api.check_settings(settings)
+    # 5.3 de Z1: la instruccion temporal exige las rutas del agente y la pagina.
+    temporary_instruction_api.check_settings(settings)
     # E-569: los productos del AE exigen sus rutas y el manifiesto.
     agent_product_api.check_settings(settings)
     # Encargo 6 del masivo: las rutas del agente, la pagina (el link de la
@@ -7486,6 +7527,10 @@ def create_app(
             if agent_pause_live is not None:
                 # Lo mismo con las pausas del agente: sin lectura, ninguna.
                 await agent_pause_live.start()
+            if temporary_instruction_live is not None:
+                # 5.3 de Z1: la primera lectura, antes de los workers. Si la
+                # base no contesta no va ninguna instruccion y reintenta.
+                await temporary_instruction_live.start()
             if permission_connectors is not None:
                 # E-628: los avisos a la base antes del primer evento. Si la base
                 # no contesta, se reintenta antes de cada evento con aviso.
@@ -7583,6 +7628,7 @@ def create_app(
                 ("resolution", resolution_worker),
                 ("agent_campaigns", agent_campaign_live),
                 ("agent_global_pause", agent_pause_live),
+                ("temporary_instruction", temporary_instruction_live),
                 ("flow_audience", flow_audience),
                 ("bulk_send", bulk_send),
             ):
@@ -8693,6 +8739,24 @@ def create_app(
             if entry_turn is not None and entry_turn.notice is not None
             else segment_blocks
         )
+        # 5.3 de Z1 (agent-temporary-instruction-v1): la instruccion temporal
+        # va en todos los turnos, despues del conocimiento base y antes de los
+        # segmentos (D11). Vencida o sin instruccion, el pedido es el de
+        # siempre. Sin el flag no existe.
+        instruction_block = (
+            temporary_instruction_live.block(datetime.now(UTC))
+            if temporary_instruction_live is not None
+            else None
+        )
+        if instruction_block is not None:
+            turn_blocks = (instruction_block, *turn_blocks)
+            logger.info(
+                "temporary_instruction_context id=%s version=%s sha256=%s conversation=%s",
+                instruction_block.key,
+                instruction_block.version,
+                instruction_block.sha256,
+                conversation_id,
+            )
         await shadow_processor.run(
             delivery_id=delivery_id,
             context=enriched_context,
@@ -11374,6 +11438,20 @@ def create_app(
                 context=agent_campaigns_context,
                 approval_origin=settings.flow_approval_base_url or "",
             )
+        if settings.agent_temporary_instruction_enabled:
+            # 5.3 de Z1 (agent-temporary-instruction-v1): el agente la redacta
+            # y la propone; nunca la publica ni la retira.
+            temporary_instruction_api.register_temporary_instruction_routes(
+                app,
+                token=settings.automation_expert_change_token,
+                store=temporary_instruction_store or temporary_instruction_api.TemporaryInstructionStore(
+                    base_url=settings.supabase_base_url or "",
+                    db_key=settings.automation_expert_change_db_key or "",
+                ),
+                instance={"tenant_ref": change_manifest.tenant_ref, "ally_ref": change_manifest.ally_ref},
+                time_zone=change_manifest.time_zone,
+                approval_origin=settings.flow_approval_base_url or "",
+            )
         if settings.agent_products_enabled:
             # E-569 (product-card-v1, MP-07): el agente propone y valida un
             # producto; nunca lo publica (MP-08).
@@ -11521,6 +11599,9 @@ def create_app(
                 # E-355: la pagina de una campana y su boton de publicar.
                 campaign_approval.routes(live=agent_campaign_live)
                 if agent_campaign_live is not None else None,
+                # 5.3 de Z1: la pagina de una instruccion temporal: publicar y retirar.
+                temporary_instruction_page.routes(live=temporary_instruction_live)
+                if temporary_instruction_live is not None else None,
                 # E-484: ver cuantos van a salir y confirmar un envio manual.
                 flow_audience_page.routes(sweeper=flow_audience.sweeper)
                 if flow_audience is not None else None,
@@ -12330,6 +12411,15 @@ def create_app(
             commercial_ally_readiness = {
                 **commercial_ally_readiness,
                 "agent_global_pause": agent_pause_live.status_line(),
+            }
+        if temporary_instruction_live is not None:
+            # 5.3 de Z1: que se sirve y si la lectura viene andando. Apagado,
+            # /ready no cambia (D3).
+            commercial_ally_readiness = {
+                **commercial_ally_readiness,
+                "agent_temporary_instruction": temporary_instruction_live.status_line(
+                    datetime.now(UTC)
+                ),
             }
         if product_labelers:
             # La etiqueta de producto no responde 503: no atiende a nadie, y un

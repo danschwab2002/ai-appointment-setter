@@ -64,6 +64,20 @@ from .tools import get_bulk_send, list_bulk_sends, propose_bulk_send  # noqa: E4
 from .schemas import ESTADO_PAUSA, PAUSAR_AGENTE, REANUDAR_AGENTE  # noqa: E402
 from .tools import estado_pausa, pausar_agente, reanudar_agente  # noqa: E402
 
+# 5.3 de Z1: la instruccion temporal, ver y proponer. Publicarla y retirarla son de la pagina.
+from .schemas import (  # noqa: E402
+    GET_TEMPORARY_INSTRUCTION,
+    LIST_TEMPORARY_INSTRUCTIONS,
+    PREVIEW_TEMPORARY_INSTRUCTION,
+    PROPOSE_TEMPORARY_INSTRUCTION,
+)
+from .tools import (  # noqa: E402
+    get_temporary_instruction,
+    list_temporary_instructions,
+    preview_temporary_instruction,
+    propose_temporary_instruction,
+)
+
 _TEMPLATE_TOOLS = frozenset({"propose_template", "validate_template", "list_template_requests",
                              "get_template_request"})
 _TOOLS = frozenset({"get_flow_definitions", "propose_flow_change", "validate_flow_change", "get_flow_change",
@@ -80,7 +94,10 @@ _TOOLS = frozenset({"get_flow_definitions", "propose_flow_change", "validate_flo
                     # Encargo 6: el masivo, solo el borrador y su lectura.
                     "propose_bulk_send", "get_bulk_send", "list_bulk_sends",
                     # 5.4: la pausa del agente comercial, solo a pedido de un aprobador.
-                    "pausar_agente", "reanudar_agente", "estado_pausa"})
+                    "pausar_agente", "reanudar_agente", "estado_pausa",
+                    # 5.3 de Z1: la instruccion temporal, solo ver, proponer y leer.
+                    "preview_temporary_instruction", "propose_temporary_instruction",
+                    "get_temporary_instruction", "list_temporary_instructions"})
 
 
 def make_profile_guard(profile_name):
@@ -128,6 +145,10 @@ def register(ctx):
         ("pausar_agente", PAUSAR_AGENTE, pausar_agente),
         ("reanudar_agente", REANUDAR_AGENTE, reanudar_agente),
         ("estado_pausa", ESTADO_PAUSA, estado_pausa),
+        ("preview_temporary_instruction", PREVIEW_TEMPORARY_INSTRUCTION, preview_temporary_instruction),
+        ("propose_temporary_instruction", PROPOSE_TEMPORARY_INSTRUCTION, propose_temporary_instruction),
+        ("get_temporary_instruction", GET_TEMPORARY_INSTRUCTION, get_temporary_instruction),
+        ("list_temporary_instructions", LIST_TEMPORARY_INSTRUCTIONS, list_temporary_instructions),
     ):
         ctx.register_tool(name=name, toolset="automation_expert_change", schema=schema, handler=handler)
     ctx.register_hook("pre_tool_call", make_profile_guard(getattr(ctx, "profile_name", None)))

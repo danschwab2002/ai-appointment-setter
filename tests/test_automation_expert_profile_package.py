@@ -106,7 +106,9 @@ def test_the_distribution_copies_the_plugin_and_names_its_variables() -> None:
                                         "validate_campaign", "get_campaign", "list_campaigns",
                                         "get_approval_page", "add_to_test_group",
                                         "propose_bulk_send", "get_bulk_send", "list_bulk_sends",
-                                        "pausar_agente", "reanudar_agente", "estado_pausa"]
+                                        "pausar_agente", "reanudar_agente", "estado_pausa",
+                                        "preview_temporary_instruction", "propose_temporary_instruction",
+                                        "get_temporary_instruction", "list_temporary_instructions"]
 
 
 def test_the_soul_sends_the_approval_page_without_a_proposal() -> None:
@@ -131,7 +133,7 @@ def _skill(path: str) -> str:
     return (PROFILE / "skills" / path / "SKILL.md").read_text(encoding="utf-8")
 
 
-SKILLS = ("flujos/armar-una-campana", "flujos/crear-un-flujo", "flujos/cambiar-un-flujo", "flujos/pasar-flujo-al-sistema-nuevo",
+SKILLS = ("flujos/armar-una-campana", "flujos/instruccion-temporal", "flujos/crear-un-flujo", "flujos/cambiar-un-flujo", "flujos/pasar-flujo-al-sistema-nuevo",
           "flujos/pedir-plantilla-a-meta", "flujos/programar-un-envio", "flujos/envio-masivo",
           "flujos/pausar-el-agente",
           "plataformas/hotmart", "plataformas/ghl-formularios", "plataformas/chatwoot-whatsapp")

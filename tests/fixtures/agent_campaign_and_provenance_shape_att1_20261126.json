@@ -1,0 +1,49 @@
+{
+  "_capture": {
+    "origen": "base de ATT1 (contenedor att1-db del stack setter-att1, VPS contabo), psql con default_transaction_read_only=on",
+    "fecha": "2026-11-26",
+    "para": "agent-temporary-instruction-v1 (5.3 de Z1): copiar la forma de la fila de una campana del AE y la de la procedencia de un turno con un `system` extra",
+    "que_se_leyo": "public.agent_campaigns (la unica fila: claves del borrador, largos, estados y eventos; sin el texto), public.agent_turn_provenance (context_added -> 'segments' de los 3 turnos con segmento)",
+    "anonimizado": "sin textos de la campana ni del proposito (solo su largo), sin IDs de Slack, sin conversaciones. El sha256 es el del render de un segmento de prueba sintetico (prueba-bn-sintetico)."
+  },
+  "agent_campaigns": {
+    "rows": 1,
+    "shape": [
+      {
+        "status": "publicada",
+        "revision": 3,
+        "campaign_key": "black-november-2026",
+        "segment_version": 1,
+        "valid_from": "2026-11-12T17:00:00+00:00",
+        "valid_until": "2026-12-01T06:00:00+00:00",
+        "window_days": 18.54,
+        "draft_keys": ["asesoramiento", "clave", "desde", "etiqueta", "hasta", "instruccion", "macro_etiqueta",
+                       "no_confirmado", "nombre", "oferta", "palabras_clave", "promesas_prohibidas", "se_puede_decir"],
+        "instruccion_chars": 237,
+        "purpose_chars": 209,
+        "validated_at": "2026-11-12T19:19:51.839806+00:00",
+        "expires_at": "2026-11-13T19:31:19.834053+00:00",
+        "approved_at": "2026-11-12T19:43:00.127839+00:00",
+        "approved_by_kind": "slack",
+        "paused_at": null,
+        "closed_at": null,
+        "closed_by_kind": null,
+        "closed_by_ref": null,
+        "events": ["agent_campaign_draft_saved:automation_expert", "agent_campaign_validated:automation_expert",
+                   "agent_campaign_checked:operador", "agent_campaign_draft_saved:automation_expert",
+                   "agent_campaign_validated:automation_expert", "agent_campaign_checked:operador",
+                   "agent_campaign_draft_saved:automation_expert", "agent_campaign_validated:automation_expert",
+                   "agent_campaign_checked:operador", "agent_campaign_published:slack"]
+      }
+    ]
+  },
+  "agent_turn_provenance_segments": {
+    "with_segments": 3,
+    "kinds": ["(segmento)"],
+    "sample": [
+      [{"key": "prueba-bn-sintetico", "sha256": "a94fb76f933ff9960de59826b57c1fe9ce4db214c21941aabb9ed7c030118fa8", "version": 1, "agent_replies_before": 0}],
+      [{"key": "prueba-bn-sintetico", "sha256": "a94fb76f933ff9960de59826b57c1fe9ce4db214c21941aabb9ed7c030118fa8", "version": 1, "agent_replies_before": 1}],
+      [{"key": "prueba-bn-sintetico", "sha256": "a94fb76f933ff9960de59826b57c1fe9ce4db214c21941aabb9ed7c030118fa8", "version": 1, "agent_replies_before": 0}]
+    ]
+  }
+}

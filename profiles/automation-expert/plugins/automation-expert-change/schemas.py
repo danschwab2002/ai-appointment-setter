@@ -577,3 +577,81 @@ ESTADO_PAUSA = {
     ),
     "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
 }
+
+
+# agent-temporary-instruction-v1 (5.3 de Z1): la instruccion temporal para todas las conversaciones.
+_INSTRUCTION_TEXT = {
+    "type": "string", "minLength": 1, "maxLength": 600,
+    "description": ("Lo que el agente tiene que tener en cuenta en todas las conversaciones, en una o dos frases, "
+                    "como lo diría el equipo («Hoy no ofrezcas cupón», «Si preguntan por el vivo, se movió al "
+                    "jueves 19 h»). Hasta 600 caracteres. Sin links, teléfonos, mails ni montos de dinero: el "
+                    "precio y los links salen del conocimiento."),
+}
+_INSTRUCTION_UNTIL = {
+    "type": "string",
+    "description": ("Hasta cuándo vale: fecha y hora con zona (por ejemplo 2026-11-28T23:59:00-06:00). "
+                    "Obligatorio, en el futuro y a lo sumo 7 días desde ahora. Después el agente la deja de usar solo."),
+}
+
+PREVIEW_TEMPORARY_INSTRUCTION = {
+    "name": "preview_temporary_instruction",
+    "description": (
+        "Valida una instrucción temporal y muestra cómo la va a leer el agente (con el encabezado fijo del "
+        "producto), sin guardar nada. Vuelve con ok, blocks (qué corregir: link, teléfono o mail, monto, la "
+        "fecha) y preview. Con temporary_instruction_not_enabled, esta instancia no la tiene prendida."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"texto": _INSTRUCTION_TEXT, "hasta": _INSTRUCTION_UNTIL},
+        "required": ["texto", "hasta"],
+        "additionalProperties": False,
+    },
+}
+
+PROPOSE_TEMPORARY_INSTRUCTION = {
+    "name": "propose_temporary_instruction",
+    "description": (
+        "Propone la instrucción temporal. No la publica: el agente no la usa hasta que un aprobador la apruebe en "
+        "la página (approval_url, vale 24 horas). Proponer otra reemplaza a la que esperaba el sí. No manda nada a "
+        "nadie."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "texto": _INSTRUCTION_TEXT,
+            "hasta": _INSTRUCTION_UNTIL,
+            "purpose": {"type": "string", "minLength": 1, "maxLength": 500,
+                        "description": "Para qué es, en una línea, como lo pidió la persona. Sin teléfonos ni mails."},
+        },
+        "required": ["texto", "hasta", "purpose"],
+        "additionalProperties": False,
+    },
+}
+
+GET_TEMPORARY_INSTRUCTION = {
+    "name": "get_temporary_instruction",
+    "description": (
+        "Relee una instrucción temporal: su estado (validada, publicada, terminada, retirada, vencida, "
+        "descartada), hasta cuándo vale y approval_url (la página para aprobarla o retirarla). Solo lee."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"instruction_id": {"type": "string", "format": "uuid"}},
+        "required": ["instruction_id"],
+        "additionalProperties": False,
+    },
+}
+
+LIST_TEMPORARY_INSTRUCTIONS = {
+    "name": "list_temporary_instructions",
+    "description": (
+        "Las instrucciones temporales de la instancia, de la más nueva a la más vieja, y cuál está andando "
+        "(live_instruction_id). limit de 1 a 50 (10 por defecto). Solo lee. Con temporary_instruction_not_enabled, "
+        "esta instancia no la tiene prendida: no la propongas."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 50}},
+        "additionalProperties": False,
+    },
+}

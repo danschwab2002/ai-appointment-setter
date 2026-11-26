@@ -42,7 +42,10 @@ TOOLS = ["get_flow_definitions", "propose_flow_change", "validate_flow_change", 
          # Encargo 6 del masivo: el borrador y su lectura; confirmar, arrancar y frenar son de la pagina.
          "propose_bulk_send", "get_bulk_send", "list_bulk_sends",
          # 5.4 (agent-global-pause-v1): pausar al agente comercial; frenar no manda nada.
-         "pausar_agente", "reanudar_agente", "estado_pausa"]
+         "pausar_agente", "reanudar_agente", "estado_pausa",
+         # 5.3 de Z1: la instruccion temporal; aprobarla y retirarla son de la pagina.
+         "preview_temporary_instruction", "propose_temporary_instruction", "get_temporary_instruction",
+         "list_temporary_instructions"]
 
 
 def _load_plugin() -> ModuleType:
@@ -538,3 +541,58 @@ def test_the_campaign_names_its_own_offer_and_the_bridge_accepts_it() -> None:
         "asesoramiento": ["Si pregunta por el bono, el de la página de Black."],
     }
     assert parse_campaign(draft)["oferta"] == {"codigo_oferta": "wmkq4ba9"}
+
+
+# ------------------------------------------------------------- la instruccion temporal (5.3 de Z1)
+
+
+def test_a_bridge_without_the_temporary_instruction_says_so(bridge: type[_Bridge]) -> None:
+    # Sin AGENT_TEMPORARY_INSTRUCTION_ENABLED las rutas no existen: FastAPI contesta su 404 generico.
+    bridge.routes[f"GET {PREFIX}/temporary-instructions?limit=10"] = (404, {"detail": "Not Found"})
+    assert json.loads(_tools().list_temporary_instructions({})) == {"error": "temporary_instruction_not_enabled"}
+    bridge.routes[f"GET {PREFIX}/temporary-instructions/{PROPOSAL}"] = (
+        404, {"detail": "agent_temporary_instruction_not_found"})
+    assert json.loads(_tools().get_temporary_instruction({"instruction_id": PROPOSAL})) == {
+        "error": "agent_temporary_instruction_not_found"}
+
+
+def test_the_temporary_instruction_tools_go_to_their_routes_with_who_asks_from_the_session(
+    bridge: type[_Bridge],
+) -> None:
+    tools = _tools()
+
+    def respond(status: int, data: dict[str, object]) -> tuple[int, object]:
+        return status, {"contract": "agent-temporary-instruction-v1", "contract_version": "1.0.0", "data": data}
+
+    bridge.routes[f"POST {PREFIX}/temporary-instructions/preview"] = respond(200, {"ok": True})
+    bridge.routes[f"POST {PREFIX}/temporary-instructions"] = respond(201, {"instruction_id": PROPOSAL})
+    params = {"texto": "Hoy no ofrezcas cupón.", "hasta": "2026-11-28T23:59:00-06:00"}
+    assert json.loads(tools.preview_temporary_instruction(params))["data"]["ok"] is True
+    assert json.loads(str(bridge.seen[-1]["body"])) == {"instruction": params}
+    proposed = json.loads(tools.propose_temporary_instruction({**params, "purpose": "Black sin cupón"}))
+    assert proposed["data"]["instruction_id"] == PROPOSAL
+    sent = json.loads(str(bridge.seen[-1]["body"]))
+    assert sent == {"instruction": params, "purpose": "Black sin cupón", "requested_by": {"slack_user": "U0123456789"}}
+
+
+def test_a_blocked_instruction_comes_back_with_its_blocks(bridge: type[_Bridge]) -> None:
+    bridge.routes[f"POST {PREFIX}/temporary-instructions"] = (422, {
+        "detail": "temporary_instruction_blocked",
+        "data": {"blocks": [{"code": "temporary_instruction_amount", "field": "texto"}], "warnings": []}})
+    out = json.loads(_tools().propose_temporary_instruction({"texto": "USD 37", "hasta": "2026-11-28T23:59:00Z",
+                                                             "purpose": "x"}))
+    assert out == {"error": "temporary_instruction_blocked",
+                   "blocks": [{"code": "temporary_instruction_amount", "field": "texto"}], "warnings": []}
+
+
+def test_the_temporary_instruction_tools_never_publish_nor_retire_and_never_send_a_phone(
+    bridge: type[_Bridge],
+) -> None:
+    tools = _tools()
+    assert json.loads(tools.propose_temporary_instruction({"texto": "x", "hasta": "2026-11-28T23:59:00Z",
+                                                           "purpose": "Llamar al 5512345678"})) == {
+        "error": "identifier_not_allowed"}
+    assert json.loads(tools.get_temporary_instruction({"instruction_id": "no"})) == {"error": "invalid_instruction_id"}
+    assert json.loads(tools.list_temporary_instructions({"limit": 99}))["error"] == "invalid_query"
+    source = (PLUGIN / "tools.py").read_text(encoding="utf-8")
+    assert "/retire" not in source and "temporary-instructions/{instruction_id}/publish" not in source

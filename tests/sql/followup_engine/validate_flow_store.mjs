@@ -707,6 +707,9 @@ check(sameJson([...lockTimeouts].sort(), [
   'record_bulk_send_prepared_v1',
   // La pausa del agente: poner, sacar y anotar lo retenido (20261126100000, 5.4).
   'pause_agent_globally_v1', 'record_agent_global_pause_hold_v1', 'resume_agent_globally_v1',
+  // La instruccion temporal: proponer y la pagina bloquean la fila o la instancia (20261126200000, 5.3 de Z1).
+  'approver_discard_agent_temporary_instruction_v1', 'approver_publish_agent_temporary_instruction_v1',
+  'approver_retire_agent_temporary_instruction_v1', 'propose_agent_temporary_instruction_v1',
 ].sort()), '2: lock_timeout de 5 s en las que esperan locks', lockTimeouts);
 
 // ===========================================================================
