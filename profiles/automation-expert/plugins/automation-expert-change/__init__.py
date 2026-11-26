@@ -86,6 +86,10 @@ from .tools import (  # noqa: E402
 from .schemas import EXPORT_CONTACTS, GET_CONTACT_EXPORT  # noqa: E402
 from .tools import export_contacts, get_contact_export  # noqa: E402
 
+# agent-campaign-judge-v1 (4.9): pedir el control de calidad de una campana y leerlo. No publica.
+from .schemas import GET_CAMPAIGN_JUDGE, JUDGE_CAMPAIGN  # noqa: E402
+from .tools import get_campaign_judge, judge_campaign  # noqa: E402
+
 _TEMPLATE_TOOLS = frozenset({"propose_template", "validate_template", "list_template_requests",
                              "get_template_request"})
 _TOOLS = frozenset({"get_flow_definitions", "propose_flow_change", "validate_flow_change", "get_flow_change",
@@ -109,7 +113,9 @@ _TOOLS = frozenset({"get_flow_definitions", "propose_flow_change", "validate_flo
                     # 1.3: exportar contactos, solo el pedido y su lectura.
                     "export_contacts", "get_contact_export",
                     # keyword-rules-v1 (Z1 3.9): la regla de palabra clave, solo el borrador y su lectura.
-                    "preview_keyword_rule", "propose_keyword_rule", "get_keyword_rule", "list_keyword_rules"})
+                    "preview_keyword_rule", "propose_keyword_rule", "get_keyword_rule", "list_keyword_rules",
+                    # 4.9: el control de calidad de una campana, pedirlo y leerlo.
+                    "judge_campaign", "get_campaign_judge"})
 
 
 def make_profile_guard(profile_name):
@@ -167,6 +173,8 @@ def register(ctx):
         ("propose_keyword_rule", PROPOSE_KEYWORD_RULE, propose_keyword_rule),
         ("get_keyword_rule", GET_KEYWORD_RULE, get_keyword_rule),
         ("list_keyword_rules", LIST_KEYWORD_RULES, list_keyword_rules),
+        ("judge_campaign", JUDGE_CAMPAIGN, judge_campaign),
+        ("get_campaign_judge", GET_CAMPAIGN_JUDGE, get_campaign_judge),
     ):
         ctx.register_tool(name=name, toolset="automation_expert_change", schema=schema, handler=handler)
     ctx.register_hook("pre_tool_call", make_profile_guard(getattr(ctx, "profile_name", None)))

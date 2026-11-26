@@ -494,7 +494,9 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261126300000 (exportar contactos, 1.3) suma sus tres del bridge (las de la pagina son de
     # flow_change_approver).
     # 20261126400000 (las reglas de palabra clave, Z1 3.9) suma la lectura de las vivas.
-    assert len(allowlisted) == 261
+    # 20261126500000 (las corridas del juez de una campana que pide el AE, 4.9) suma sus tres.
+    assert len(allowlisted) == 264
+    assert "start_agent_campaign_judge_run_v1(jsonb, uuid, text, timestamp with time zone, integer)" in allowlisted
     assert "record_permission_grant_v1(jsonb)" in allowlisted
     assert "close_permission_notice_v1(text, text, timestamp with time zone)" in allowlisted
     assert "record_hotmart_unknown_offer_v1(text, bigint, text, text, text, text, text, uuid)" in allowlisted
@@ -2553,14 +2555,31 @@ def test_contact_export_fingerprint_counts_the_rows() -> None:
     assert "approver_mark_contact_export_downloaded_v1(jsonb,text,uuid,integer)" in compact
 
 
-def test_keyword_rules_fingerprint_is_last() -> None:
+def test_keyword_rules_fingerprint_counts_the_rows() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261126400000 (Z1 3.9): las reglas con RLS, la lectura de las vivas solo de service_role y
     # publicar de nadie de la API.
-    row = sql.split("'20261126400000'", 1)[1].split("select\n    version,", 1)[0]
+    row = sql.split("'20261126400000'", 1)[1].split("'20261126500000'", 1)[0].rsplit("union all", 1)[0]
     compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
 
-    assert compact.endswith(",3,'keyword_rules')")
+    assert compact.endswith(",3,'keyword_rules'")
     assert "to_regclass('public.keyword_rules')" in compact
     assert "get_live_keyword_rules_v1(jsonb)" in compact
     assert "approver_publish_keyword_rule_v1(jsonb,text,uuid,text)" in compact
+
+
+def test_agent_campaign_judge_runs_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261126500000: la tabla de las corridas del juez con RLS, una sola corriendo por instancia y
+    # las tres funciones, solo de service_role.
+    row = sql.split("'20261126500000'", 1)[1].split("select\n    version,", 1)[0]
+    compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
+
+    assert compact.endswith(",3,'agent_campaign_judge_runs')")
+    assert "to_regclass('public.agent_campaign_judge_runs')" in compact
+    assert "agent_campaign_judge_runs_one_running" in compact
+    for function in ("start_agent_campaign_judge_run_v1(jsonb,uuid,text,timestamptz,integer)",
+                     "finish_agent_campaign_judge_run_v1(jsonb,uuid,text,jsonb,text)",
+                     "get_agent_campaign_judge_run_v1(jsonb,uuid,timestamptz)"):
+        assert function in compact
+    assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact

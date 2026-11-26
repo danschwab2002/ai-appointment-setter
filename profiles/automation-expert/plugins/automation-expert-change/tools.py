@@ -58,6 +58,11 @@ Desde la 0.13.0 (keyword-rules-v1, Z1 3.9) suma las reglas de palabra clave: el 
 la lista en la pagina. Sin ``KEYWORD_RULES_ENABLED`` el bridge no tiene esas rutas:
 ``keyword_rules_not_enabled``.
 
+Desde la 0.14.0 (agent-campaign-judge-v1, 4.9) suma el control de calidad de una campana validada:
+pedirlo (``judge_campaign``, corre en el bridge en segundo plano) y leer su resultado
+(``get_campaign_judge``). Sin ``AUTOMATION_EXPERT_JUDGE_ENABLED`` el bridge no tiene esas rutas:
+``judge_not_enabled``.
+
 Con el canal del link prendido (ciclo 1.9.0), una validacion que deja la
 propuesta ``validada`` postea el boton «Revisar y aprobar» en el mismo DM
 (``approval_button.py``). El boton es un link a la pagina del bridge: tampoco
@@ -154,6 +159,12 @@ _BRIDGE_ERRORS = frozenset({
     "agent_campaign_expired",
     "agent_campaign_key_is_immutable",
     "agent_campaign_draft_invalid",
+    # El juez por el AE (agent-campaign-judge-v1, 4.9).
+    "agent_campaign_not_validated",
+    "agent_campaign_judge_outside_hours",
+    "agent_campaign_judge_expires_soon",
+    "agent_campaign_judge_running",
+    "agent_campaign_judge_daily_limit",
     # E-486 (8d): sumar un telefono al grupo de prueba de un flujo.
     "not_an_approver",
     "flow_cohort_phone_invalid",
@@ -372,6 +383,10 @@ def _request(method: str, path: str, body: dict[str, object] | None = None) -> d
         if exc.code in (404, 405) and detail in ("Not Found", "Method Not Allowed") \
                 and path.startswith(f"{PREFIX}/flows/") and path.endswith("/cohort"):
             return {"error": "cohort_tool_not_enabled"}
+        # El juez por el AE: sin AUTOMATION_EXPERT_JUDGE_ENABLED su ruta no existe (aunque esten las campanas).
+        if exc.code in (404, 405) and detail in ("Not Found", "Method Not Allowed") \
+                and path.startswith(CAMPAIGNS) and path.endswith("/judge"):
+            return {"error": "judge_not_enabled"}
         # Lo mismo con las campanas: sin AGENT_CAMPAIGNS_ENABLED sus rutas no existen.
         if exc.code == 404 and detail == "Not Found" and path.startswith(CAMPAIGNS):
             return {"error": "campaigns_not_enabled"}
@@ -1045,3 +1060,23 @@ def get_contact_export(params: dict[str, object], **kwargs: object) -> str:
     if export_id is None:
         return _dumps({"error": "invalid_contact_export_id"})
     return _dumps(_request("GET", f"{CONTACT_EXPORTS}/{export_id}"))
+
+# agent-campaign-judge-v1 (4.9, F-163): pedir el control de calidad y leer su resultado. Corre en el bridge;
+# sin AUTOMATION_EXPERT_JUDGE_ENABLED sus rutas no existen: judge_not_enabled.
+def judge_campaign(params: dict[str, object], **kwargs: object) -> str:
+    del kwargs
+    campaign_id = _uuid(params.get("campaign_id"))
+    if campaign_id is None:
+        return _dumps({"error": "invalid_campaign_id"})
+    requested = _campaign_requester()
+    if isinstance(requested, str):
+        return requested
+    return _dumps(_request("POST", f"{CAMPAIGNS}/{campaign_id}/judge", {"requested_by": requested}))
+
+
+def get_campaign_judge(params: dict[str, object], **kwargs: object) -> str:
+    del kwargs
+    campaign_id = _uuid(params.get("campaign_id"))
+    if campaign_id is None:
+        return _dumps({"error": "invalid_campaign_id"})
+    return _dumps(_request("GET", f"{CAMPAIGNS}/{campaign_id}/judge"))

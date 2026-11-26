@@ -216,6 +216,8 @@ def test_it_is_one_transaction_and_comes_before_the_bridge_reads() -> None:
         "20261126300000_contact_export_v1.sql",
         # Las reglas de palabra clave (20261126400000, Z1 3.9).
         "20261126400000_keyword_rules_v1.sql",
+        # Las corridas del juez (20261126500000, 4.9).
+        "20261126500000_agent_campaign_judge_runs_v1.sql",
     ]
     later = (MIGRATIONS / names[position + 1]).read_text(encoding="utf-8")
     assert "create or replace" not in later.lower()

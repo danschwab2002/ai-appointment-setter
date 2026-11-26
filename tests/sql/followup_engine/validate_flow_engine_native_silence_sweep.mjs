@@ -145,7 +145,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026110200040
     // Exportar contactos (20261126300000).
     '20261126300000_contact_export_v1.sql',
     // Las reglas de palabra clave (20261126400000, Z1 3.9).
-    '20261126400000_keyword_rules_v1.sql'])) {
+    '20261126400000_keyword_rules_v1.sql',
+    // Las corridas del juez (20261126500000, 4.9).
+    '20261126500000_agent_campaign_judge_runs_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo el reciclado`, names.slice(position + 1));
 }
 

@@ -111,7 +111,8 @@ def test_the_distribution_copies_the_plugin_and_names_its_variables() -> None:
                                         "get_temporary_instruction", "list_temporary_instructions",
                                         "export_contacts", "get_contact_export",
                                         "preview_keyword_rule", "propose_keyword_rule", "get_keyword_rule",
-                                        "list_keyword_rules"]
+                                        "list_keyword_rules", "judge_campaign",
+                                        "get_campaign_judge"]
 
 
 def test_the_soul_sends_the_approval_page_without_a_proposal() -> None:

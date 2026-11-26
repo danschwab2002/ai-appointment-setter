@@ -189,7 +189,7 @@ from bridge.opt_out_confirmation import (
 )
 from bridge import automation_expert_chatwoot, flow_approval, flow_change_api
 from bridge import template_approval, template_request, template_request_api
-from bridge import agent_campaign_api, agent_campaigns, campaign_approval
+from bridge import agent_campaign_api, agent_campaigns, campaign_approval, campaign_judge_api
 from bridge import agent_global_pause
 from bridge import temporary_instruction, temporary_instruction_api, temporary_instruction_page
 from bridge import agent_product_api
@@ -484,6 +484,9 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # Expert, como dato (proponer, validar, listar). Portable: por instancia,
     # solo prenderlo; apagado no existen las rutas ni se llama a la base.
     "agent_products_enabled",
+    # 4.9 (agent-campaign-judge-v1): el AE pide el juez de una campana y el
+    # bridge lo corre. Portable: por instancia, prenderlo con el SOUL comun.
+    "automation_expert_judge_enabled",
     # Encargo 6 del masivo manejado por el AE: el borrador, el estado y la
     # lista de masivos. Portable: por instancia, solo prenderlo; apagado no
     # existen las rutas ni se llama a la base.
@@ -1171,6 +1174,13 @@ class Settings:
     # proponer, validar, obtener y listar productos. Apagado (el default) no
     # existen y el bridge no llama a ninguna RPC de productos.
     agent_products_enabled: bool = False
+    # 4.9 (F-163, contrato agent-campaign-judge-v1): AUTOMATION_EXPERT_JUDGE_ENABLED.
+    # Con el flag el AE pide el juez de una campana validada y el bridge lo
+    # corre en segundo plano (3 por campana por dia, de 09:00 a 21:00 de la
+    # instancia). Apagado (el default) las rutas no existen y nada llama al
+    # modelo. El SOUL comun del agente, como archivo (la imagen no lo trae).
+    automation_expert_judge_enabled: bool = False
+    automation_expert_judge_soul_path: Path | None = None
     # Encargo 6 del masivo (bridge/flow_change_api.py, register_bulk_send_routes):
     # BULK_SEND_ENABLED. Con el flag existen las rutas del AE para armar el
     # borrador de un masivo y leer su estado. Apagado (el default) no existen y
@@ -2737,6 +2747,14 @@ class Settings:
             agent_products_enabled=(
                 os.getenv(agent_product_api.AGENT_PRODUCTS_ENV, "false").strip().lower()
                 == "true"
+            ),
+            automation_expert_judge_enabled=(
+                os.getenv(campaign_judge_api.FLAG, "false").strip().lower() == "true"
+            ),
+            automation_expert_judge_soul_path=(
+                Path(os.getenv(campaign_judge_api.SOUL_ENV, "").strip())
+                if os.getenv(campaign_judge_api.SOUL_ENV, "").strip()
+                else None
             ),
             bulk_send_enabled=(
                 os.getenv(flow_change_api.BULK_SEND_ENV, "false").strip().lower()
@@ -5330,6 +5348,8 @@ def create_app(
     agent_campaign_store: agent_campaign_api.CampaignStore | None = None,
     temporary_instruction_store: temporary_instruction_api.TemporaryInstructionStore | None = None,
     keyword_rule_store: keyword_rule_api.KeywordRuleStore | None = None,
+    campaign_judge_store: campaign_judge_api.JudgeRunStore | None = None,
+    campaign_judge_runner: Callable[[str], tuple[str, dict[str, object] | None, str | None]] | None = None,
     agent_product_store: agent_product_api.ProductStore | None = None,
     bulk_send_store: flow_change_api.BulkSendStore | None = None,
     agent_pause_store: agent_global_pause.PauseStore | None = None,
@@ -5839,6 +5859,8 @@ def create_app(
     temporary_instruction_api.check_settings(settings)
     # E-569: los productos del AE exigen sus rutas y el manifiesto.
     agent_product_api.check_settings(settings)
+    # 4.9: el juez por el AE exige las campanas, la base, el SOUL y la clave del modelo.
+    campaign_judge_api.check_settings(settings)
     # Encargo 6 del masivo: las rutas del agente, la pagina (el link de la
     # lista) y la base con service_role.
     flow_change_api.check_bulk_send_settings(settings)
@@ -11541,6 +11563,19 @@ def create_app(
                 inbox_id=change_manifest.chatwoot_inbox_id,
                 approval_origin=settings.flow_approval_base_url or "",
             )
+        if settings.automation_expert_judge_enabled:
+            # 4.9 (agent-campaign-judge-v1): el AE pide el juez; corre en segundo
+            # plano con la misma funcion que el comando. Apagado no existen.
+            campaign_judge_api.register_campaign_judge_routes(
+                app,
+                token=settings.automation_expert_change_token,
+                store=campaign_judge_store or campaign_judge_api.JudgeRunStore(
+                    base_url=settings.supabase_base_url or "",
+                    db_key=settings.supabase_service_role_key or "",
+                ),
+                manifest=change_manifest,
+                run=campaign_judge_runner or campaign_judge_api.default_runner(settings),
+            )
         if settings.agent_products_enabled:
             # E-569 (product-card-v1, MP-07): el agente propone y valida un
             # producto; nunca lo publica (MP-08).
@@ -12551,6 +12586,12 @@ def create_app(
             commercial_ally_readiness = {
                 **commercial_ally_readiness,
                 "keyword_rules": keyword_rule_live.status_line(),
+            }
+        if settings.automation_expert_judge_enabled:
+            # 4.9: solo con el flag; apagado, /ready no cambia.
+            commercial_ally_readiness = {
+                **commercial_ally_readiness,
+                "automation_expert_judge": "enabled",
             }
         if product_labelers:
             # La etiqueta de producto no responde 503: no atiende a nadie, y un
