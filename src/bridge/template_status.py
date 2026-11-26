@@ -1,4 +1,4 @@
-"""El sondeo del estado en Meta y el aviso en el hilo de Slack (template-request-v1 1.3.0, F-146 parte 4, E-361).
+"""El sondeo del estado en Meta y el aviso en el hilo de Slack (template-request-v1 1.3.1, F-146 parte 4, E-361).
 
 Cuando Meta contesta sobre una plantilla que el Automation Expert pidio, el
 bridge avisa **en el mismo hilo de Slack donde se la pidieron** (decision de Dan
@@ -25,6 +25,13 @@ bot puede escribir ahi, asi que el conector de la aliada no sirve. Va con
 el token, o con uno mal formado, el sondeo corre igual, los avisos esperan en la
 base y ``/ready`` lo dice. Si Slack rechaza el token o el canal, el aviso no gasta
 intentos: espera en la base y sale cuando se corrige.
+
+**Sin hilo (D-57.1, 1.3.1).** Una solicitud nueva que llego sin hilo de Slack se
+guarda con el canal de la aliada (``[slack].canal``) y sin hilo: el aviso sale en
+la raiz de ese canal, con el nombre y el estado, y sin el "contesta en este hilo".
+Solo queda ``no_thread`` la que no tiene canal guardado (las anteriores a 1.3.0,
+o una instancia sin ``[slack].canal``). El bot del AE tiene que estar en el canal:
+si no, Slack contesta ``not_in_channel`` y el aviso espera (``waiting``) sin perderse.
 
 El log lleva el id, la clase y el codigo; nunca el texto de la plantilla ni el
 hilo.
@@ -80,8 +87,18 @@ REASON_NOT_READ = "no se pudo leer desde acá, se ve en la cuenta de WhatsApp."
 _REPLY_HERE = "Contestá en este hilo para seguir."
 
 
+def _replies_here(notice: Mapping[str, Any]) -> bool:
+    """Si tiene sentido decir "contesta en este hilo": en un hilo o en el DM con el AE, no en la raiz de un canal."""
+    return isinstance(notice.get("thread_ts"), str) or str(notice.get("channel", "")).startswith("D")
+
+
 def notice_text(notice: Mapping[str, Any]) -> str:
     """El aviso, escrito por codigo. ``KeyError`` o ``ValueError`` si la fila no es la que se reclamo."""
+    text = _notice_body(notice)
+    return f"{text} {_REPLY_HERE}" if _replies_here(notice) else text
+
+
+def _notice_body(notice: Mapping[str, Any]) -> str:
     name = notice["template_name"]
     if not isinstance(name, str) or re.fullmatch(r"[a-z0-9][a-z0-9_]{1,99}", name) is None:
         raise ValueError("template_name_invalid")
@@ -89,17 +106,16 @@ def notice_text(notice: Mapping[str, Any]) -> str:
     if kind == "rechazada":
         code = notice.get("meta_rejected_reason")
         reason = REASON_NOT_READ if code is None else _REJECTED_REASON.get(str(code), UNKNOWN_REASON)
-        return (f"*Meta rechazó la plantilla* `{name}`. Motivo: {reason} "
-                f"Se corrige con una versión nueva. {_REPLY_HERE}")
+        return f"*Meta rechazó la plantilla* `{name}`. Motivo: {reason} Se corrige con una versión nueva."
     if kind == "recategorizada":
         requested = _CATEGORY_WORD[notice["category_requested"]]
         approved = _CATEGORY_WORD[notice["meta_category"]]
         return (f"*Meta aprobó la plantilla* `{name}`, *pero la cambió de tipo*: se pidió {requested} y quedó "
-                f"{approved}. Puede cambiar en qué flujos se usa y lo que cuesta cada mensaje. {_REPLY_HERE}")
+                f"{approved}. Puede cambiar en qué flujos se usa y lo que cuesta cada mensaje.")
     if kind == "aprobada":
         ready = ("Ya se puede usar en un flujo." if notice.get("status") == "en_catalogo"
                  else "Puede tardar hasta 3 horas en quedar disponible para los flujos.")
-        return f"*Meta aprobó la plantilla* `{name}`. {ready} {_REPLY_HERE}"
+        return f"*Meta aprobó la plantilla* `{name}`. {ready}"
     raise ValueError("notice_kind_invalid")
 
 

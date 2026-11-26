@@ -70,7 +70,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 CONTRACT = rules.CONTRACT
-CONTRACT_VERSION = "1.3.0"
+CONTRACT_VERSION = "1.3.1"
 LIST_DEFAULT_LIMIT = 20
 LIST_MAX_LIMIT = 50
 LIST_STATES = {"abiertas": True, "todas": False}
@@ -87,6 +87,8 @@ _GRAPH_VERSION = re.compile(r"^v[0-9]{1,3}\.[0-9]{1,2}$")
 _PRODUCT_VERSION = re.compile(r"^v?[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$")
 _GIT_SHA = re.compile(r"^[0-9a-f]{7,40}$")
 _SLACK_CHANNEL = re.compile(r"^[CDG][A-Z0-9]{8,20}$")
+# D-57.1: el canal de la aliada, para la solicitud nueva que llega sin hilo. Un DM no es "el canal de la aliada".
+_ALLY_SLACK_CHANNEL = re.compile(r"^[CG][A-Z0-9]{8,20}$")
 _SLACK_THREAD_TS = re.compile(r"^[0-9]{1,12}\.[0-9]{1,8}$")
 _POINTER = re.compile(r"^(/[a-z0-9_]{1,40}){1,16}$")
 _RESULT_STATUS = {
@@ -240,12 +242,21 @@ def _slack_thread(body: Mapping[str, Any]) -> tuple[str, str | None] | None:
 
 def register_template_request_routes(app: FastAPI, *, token: str, store: TemplateRequestStore, chatwoot: Any,
                                      tenant_ref: str, ally_ref: str, inbox_id: int,
-                                     template_context: rules.TemplateContext, git_sha: str | None = None) -> None:
+                                     template_context: rules.TemplateContext, git_sha: str | None = None,
+                                     ally_slack_channel: str | None = None) -> None:
     """Las rutas, detras del flag (lo mira quien llama: con el flag apagado no existen).
 
     El manejador de ``EntryRefused`` es el de las rutas de cambio de flujos, que
     el flag exige prendidas.
+
+    ``ally_slack_channel`` es ``[slack].canal`` del manifiesto (D-57.1, 1.3.1): una
+    solicitud nueva que llega sin hilo de Slack se guarda con ese canal y sin hilo,
+    y el aviso de Meta sale en la raiz del canal en vez de quedar ``no_thread``. Sin
+    canal declarado (o con uno que la base no aceptaria) se guarda como antes.
     """
+    if ally_slack_channel is not None and not _ALLY_SLACK_CHANNEL.fullmatch(ally_slack_channel):
+        logger.warning("template_request ally_slack_channel=invalid fallback=off")
+        ally_slack_channel = None
     context = _Context(instance={"tenant_ref": tenant_ref, "ally_ref": ally_ref}, inbox_id=inbox_id,
                        git_sha=git_sha or os.getenv("GIT_SHA", "") or "unknown")
     slots = asyncio.Semaphore(2)
@@ -348,6 +359,10 @@ def register_template_request_routes(app: FastAPI, *, token: str, store: Templat
             request_id = _request_id(request_id) if isinstance(request_id, str) else _request_id("")
         proposal_id, step = _for_flow(body)
         slack_thread = _slack_thread(body)
+        # D-57.1/D-57.2: solo la solicitud nueva cae al canal de la aliada. Rehacer sin hilo deja el que tenia
+        # (save_..._v2 lo pisaria con la raiz del canal).
+        if slack_thread is None and request_id is None and ally_slack_channel is not None:
+            slack_thread = (ally_slack_channel, None)
         try:
             draft = rules.parse_template(body["template"])
         except rules.TemplateRequestInvalid as error:

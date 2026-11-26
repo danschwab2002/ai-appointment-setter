@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import copy
+import dataclasses
 import json
 from pathlib import Path
 from uuid import uuid4
@@ -187,7 +188,7 @@ def test_proposing_saves_the_normalized_draft_with_the_role_key_and_answers_the_
     response = client.post(f"{PREFIX}/template-requests", headers=AUTH, json=_body())
     assert response.status_code == 201, response.text
     body = response.json()
-    assert (body["contract"], body["contract_version"]) == ("template-request-v1", "1.3.0")
+    assert (body["contract"], body["contract_version"]) == ("template-request-v1", "1.3.1")
     data = body["data"]
     assert data["status"] == "borrador" and data["revision"] == 1 and data["variables"] == ["nombre", "producto"]
     assert data["burbuja"]["cuerpo"].startswith("Hola, [nombre]. Se confirmó tu pago de [producto].")
@@ -569,6 +570,51 @@ def test_a_dm_without_thread_saves_only_the_channel() -> None:
 
 def test_without_a_thread_it_saves_as_before() -> None:
     client, db = _client()
+    assert client.post(f"{PREFIX}/template-requests", json=_body(), headers=AUTH).status_code == 201
+    assert db.requests[-1][0] == "save_meta_template_request_draft_v1"
+    assert "p_slack_channel" not in db.requests[-1][1]
+
+
+# D-57.1 (5.7, 1.3.1): la solicitud nueva sin hilo cae a la raiz del canal de la aliada. Dato real (maribel_db,
+# 2026-11-26, solo lectura): de 11 solicitudes, la unica 'no_thread' es la del 2026-11-09 12:23Z, guardada antes
+# de que existiera el hilo (20261109000100); las 10 siguientes trajeron canal e hilo.
+ALLY_CHANNEL = "C0ALIADA123"
+
+
+def _with_ally_channel(channel: str | None = ALLY_CHANNEL) -> dict:
+    manifest = _change_settings().instance_manifest
+    return {"instance_manifest": dataclasses.replace(manifest, slack_channel=channel)}
+
+
+def test_a_new_request_without_a_thread_goes_to_the_ally_channel_root() -> None:
+    client, db = _client(**_with_ally_channel())
+    assert client.post(f"{PREFIX}/template-requests", json=_body(), headers=AUTH).status_code == 201
+    function, body, _ = db.requests[-1]
+    assert function == "save_meta_template_request_draft_v2"
+    assert body["p_slack_channel"] == ALLY_CHANNEL and body["p_slack_thread_ts"] is None
+
+
+def test_the_thread_of_the_chat_wins_over_the_ally_channel() -> None:
+    client, db = _client(**_with_ally_channel())
+    thread = {"channel": "D0123456789", "thread_ts": "1762700000.123456"}
+    assert client.post(f"{PREFIX}/template-requests", json=_body(slack_thread=thread), headers=AUTH).status_code == 201
+    assert db.requests[-1][1]["p_slack_channel"] == "D0123456789"
+
+
+def test_redoing_without_a_thread_keeps_the_one_it_had() -> None:
+    client, db = _client(**_with_ally_channel())
+    thread = {"channel": "D0123456789", "thread_ts": "1762700000.123456"}
+    created = client.post(f"{PREFIX}/template-requests", json=_body(slack_thread=thread), headers=AUTH).json()
+    redo = _body(request_id=created["data"]["request_id"], revision=1)
+    assert client.post(f"{PREFIX}/template-requests", json=redo, headers=AUTH).status_code == 201
+    function, body, _ = db.requests[-1]
+    assert function == "save_meta_template_request_draft_v1" and "p_slack_channel" not in body
+
+
+@pytest.mark.parametrize("channel", [None, "C1234567"])
+def test_without_a_usable_ally_channel_it_saves_as_before(channel: str | None) -> None:
+    # "C1234567" lo acepta el manifiesto ([CG] + 6) pero no la base ([CDG] + 8): guardarlo romperia el pedido.
+    client, db = _client(**_with_ally_channel(channel))
     assert client.post(f"{PREFIX}/template-requests", json=_body(), headers=AUTH).status_code == 201
     assert db.requests[-1][0] == "save_meta_template_request_draft_v1"
     assert "p_slack_channel" not in db.requests[-1][1]
