@@ -148,7 +148,9 @@ if (!same(names.slice(position + 1), ['20261102000100_recovery_coupon_by_reply_v
     // Preparar y los vetos del masivo (20261125000300).
     '20261125000300_bulk_send_prepared_and_base_vetoes_v1.sql',
     // El registro por persona del masivo (20261125000400).
-    '20261125000400_bulk_send_recipients_read_v1.sql'])) {
+    '20261125000400_bulk_send_recipients_read_v1.sql',
+    // La pausa del agente (20261126100000, 5.4).
+    '20261126100000_agent_global_pause_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la renovacion por respuesta`, names.slice(position + 1));
 }
 

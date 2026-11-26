@@ -211,7 +211,7 @@ READ_PLUGIN = Path(__file__).resolve().parents[1] / "profiles" / "automation-exp
 SKILLS = READ_PLUGIN.parents[1] / "skills"
 SKILL_NAMES = ("armar-una-campana", "cambiar-un-flujo", "chatwoot-whatsapp", "crear-un-flujo", "envio-masivo",
                "ghl-formularios", "hotmart",
-               "pasar-flujo-al-sistema-nuevo", "pedir-plantilla-a-meta", "programar-un-envio")
+               "pasar-flujo-al-sistema-nuevo", "pausar-el-agente", "pedir-plantilla-a-meta", "programar-un-envio")
 
 
 def _tools():  # el modulo del plugin, sin Hermes

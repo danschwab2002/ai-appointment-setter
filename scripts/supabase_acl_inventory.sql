@@ -291,7 +291,10 @@ expected_service_role(signature) as (
         ('public.read_bulk_send_members_v1(uuid, integer, integer)'),
         ('public.read_bulk_list_base_vetoes_v1(jsonb, uuid, text[])'),
         -- 20261125000400: el registro por persona del masivo, para el reporte (D10 del #511).
-        ('public.read_bulk_send_recipients_v1(uuid, integer, integer)')
+        ('public.read_bulk_send_recipients_v1(uuid, integer, integer)'),
+        -- 20261126100000: la pausa del agente (5.4), la lectura del turno y lo retenido.
+        ('public.get_live_agent_global_pauses_v1(jsonb)'),
+        ('public.record_agent_global_pause_hold_v1(jsonb, uuid, bigint)')
 ),
 functions as (
     select

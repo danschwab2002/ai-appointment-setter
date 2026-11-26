@@ -216,6 +216,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261125000300",
         # El registro por persona del masivo (20261125000400).
         "20261125000400",
+        # La pausa del agente (20261126100000, 5.4).
+        "20261126100000",
     ]
 
     sql = _sql()

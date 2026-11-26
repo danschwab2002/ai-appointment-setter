@@ -96,7 +96,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026111700050
   // Preparar y los vetos del masivo (20261125000300).
   '20261125000300_bulk_send_prepared_and_base_vetoes_v1.sql',
     // El registro por persona del masivo (20261125000400).
-    '20261125000400_bulk_send_recipients_read_v1.sql'])) {
+    '20261125000400_bulk_send_recipients_read_v1.sql',
+    // La pausa del agente (20261126100000, 5.4).
+    '20261126100000_agent_global_pause_v1.sql'])) {
   fail(`despues de ${MIGRATION} van solo la de E-661, la de E-665, la de E-666 y la de E-656`, names.slice(position + 1));
 }
 

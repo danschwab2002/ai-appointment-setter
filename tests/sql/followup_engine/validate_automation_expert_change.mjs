@@ -143,9 +143,12 @@ require(JSON.stringify(executable) === JSON.stringify([
   // Las cuatro de las solicitudes de plantilla (20261102000200, E-268, template-request-v1).
   'get_meta_template_request_v1(jsonb, uuid)',
   'list_agent_campaigns_v1(jsonb, boolean, integer)',
+  // Las tres de la pausa del agente (20261126100000, 5.4), en su orden alfabetico.
+  'list_agent_global_pauses_v1(jsonb, integer)',
   'list_agent_products_v1(jsonb, boolean, integer)',
   'list_flow_changes_v1(jsonb, boolean, integer)',
   'list_meta_template_requests_v1(jsonb, boolean, integer)',
+  'pause_agent_globally_v1(jsonb, text, text, text, timestamp with time zone, text, text)',
   // La audiencia de hoy de un flujo de audiencia, para prender o apagarlo (20261116000100, E-622).
   'read_flow_audience_reach_v1(jsonb, uuid, integer)',
   'read_flow_engine_history_v1(jsonb, text, timestamp with time zone)',
@@ -156,6 +159,7 @@ require(JSON.stringify(executable) === JSON.stringify([
   'record_agent_product_validation_v1(jsonb, uuid, integer, jsonb, jsonb, jsonb, text)',
   'record_flow_change_validation_v1(jsonb, uuid, integer, jsonb, jsonb, jsonb, jsonb, text)',
   'record_meta_template_request_validation_v1(jsonb, uuid, integer, jsonb, jsonb, jsonb, jsonb, text)',
+  'resume_agent_globally_v1(jsonb, uuid, text, text)',
   'save_agent_campaign_draft_v1(jsonb, uuid, integer, jsonb, text, text)',
   'save_agent_product_draft_v1(jsonb, uuid, integer, jsonb, text, jsonb, text, text)',
   'save_flow_change_draft_v1(jsonb, uuid, integer, jsonb, jsonb, text, text)',

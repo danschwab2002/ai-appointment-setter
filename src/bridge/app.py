@@ -190,6 +190,7 @@ from bridge.opt_out_confirmation import (
 from bridge import automation_expert_chatwoot, flow_approval, flow_change_api
 from bridge import template_approval, template_request, template_request_api
 from bridge import agent_campaign_api, agent_campaigns, campaign_approval
+from bridge import agent_global_pause
 from bridge import agent_product_api
 from bridge import flow_audience_page
 from bridge.flow_audience_wiring import FlowAudience, build_flow_audience
@@ -478,6 +479,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # lista de masivos. Portable: por instancia, solo prenderlo; apagado no
     # existen las rutas ni se llama a la base.
     "bulk_send_enabled",
+    # 5.4 (agent-global-pause-v1): pausar al agente para todas, por etiqueta o
+    # por producto, desde el AE. Portable: por instancia, solo prenderlo;
+    # apagado no se lee la base y las rutas no existen.
+    "agent_global_pause_enabled",
     "hotmart_purchase_worker_enabled",
     "lead_precheckout_enabled",
     # El adaptador de GHL traduce el formulario a lead.precheckout y lo manda
@@ -1124,6 +1129,10 @@ class Settings:
     # E-355 (bridge/agent_campaigns.py, contrato agent-campaigns-v1): con el flag,
     # el catalogo de segmentos suma la campana publicada desde la base.
     agent_campaigns_enabled: bool = False
+    # 5.4 (bridge/agent_global_pause.py, contrato agent-global-pause-v1): con el
+    # flag, el turno lee las pausas vivas del agente de la base (cache corta) y
+    # el AE las pone y las saca. Apagado, nada cambia.
+    agent_global_pause_enabled: bool = False
     # E-410 (contrato segment-knowledge-v1, «La oferta de la campana en el
     # link»): con el flag, un segmento vigente con [oferta].codigo_oferta hace
     # que el link del agente se reserve con esa oferta. Apagado, la reserva y su
@@ -2680,6 +2689,9 @@ class Settings:
             agent_segment_catalog=agent_segment_catalog,
             agent_campaigns_enabled=(
                 os.getenv("AGENT_CAMPAIGNS_ENABLED", "false").strip().lower() == "true"
+            ),
+            agent_global_pause_enabled=(
+                os.getenv(agent_global_pause.ENV, "false").strip().lower() == "true"
             ),
             agent_campaign_offer_link_enabled=agent_campaign_offer_link_enabled,
             agent_campaign_label_paths_enabled=(
@@ -5268,6 +5280,7 @@ def create_app(
     agent_campaign_store: agent_campaign_api.CampaignStore | None = None,
     agent_product_store: agent_product_api.ProductStore | None = None,
     bulk_send_store: flow_change_api.BulkSendStore | None = None,
+    agent_pause_store: agent_global_pause.PauseStore | None = None,
     flow_approval_store: flow_approval.ApprovalStore | None = None,
     flow_approval_oidc: flow_approval.SlackIdTokenClient | None = None,
     meta_templates_client: MetaTemplatesClient | None = None,
@@ -5452,6 +5465,26 @@ def create_app(
             notify=_announce_campaign_not_served,
         )
         segment_catalog = agent_campaign_live
+    # 5.4 (agent-global-pause-v1): con el flag, las pausas vivas del agente,
+    # leidas de la base con cache corta y lo ultimo bueno si no contesta.
+    # Apagado no se crea nada y el turno es el de siempre.
+    agent_pause_live: agent_global_pause.LivePauses | None = None
+    agent_pause_instance: dict[str, str] = {}
+    if settings.agent_global_pause_enabled:
+        agent_global_pause.check_settings(settings)
+        assert settings.instance_manifest is not None
+        agent_pause_instance = {
+            "tenant_ref": settings.instance_manifest.tenant_ref,
+            "ally_ref": settings.instance_manifest.ally_ref,
+        }
+
+        async def _fetch_live_pauses() -> dict[str, object]:
+            assert shared_supabase is not None
+            return await shared_supabase.get_live_agent_global_pauses(
+                agent_pause_instance
+            )
+
+        agent_pause_live = agent_global_pause.LivePauses(fetch=_fetch_live_pauses)
     # Un binding por producto (paso 2c): el principal es el que ya carga el
     # bridge; con un solo producto es la unica ruta.
     commercial_ally_routes = ProductRoutes.build(
@@ -7450,6 +7483,9 @@ def create_app(
                 # La primera lectura, antes de los workers. Si la base no
                 # contesta sigue con los segmentos del manifiesto y reintenta.
                 await agent_campaign_live.start()
+            if agent_pause_live is not None:
+                # Lo mismo con las pausas del agente: sin lectura, ninguna.
+                await agent_pause_live.start()
             if permission_connectors is not None:
                 # E-628: los avisos a la base antes del primer evento. Si la base
                 # no contesta, se reintenta antes de cada evento con aviso.
@@ -7546,6 +7582,7 @@ def create_app(
                 ("hotmart_abandonment_timer", hotmart_abandonment_timer_worker),
                 ("resolution", resolution_worker),
                 ("agent_campaigns", agent_campaign_live),
+                ("agent_global_pause", agent_pause_live),
                 ("flow_audience", flow_audience),
                 ("bulk_send", bulk_send),
             ):
@@ -8828,6 +8865,10 @@ def create_app(
         # Con varios productos, lo que hizo la persona se lee una vez, aca: da las
         # etiquetas y lo reusa la entrada del agente.
         inbound_person_activity: tuple[tuple[str, PersonActivity], ...] | None = None
+        # 5.4: los productos de esta conversacion en este turno, para la pausa
+        # por producto (la etiqueta sale por un macro y el webhook trae las de
+        # antes).
+        turn_product_keys: tuple[str, ...] = ()
         if product_labelers:
             # Antes de la admision y de la pausa, a proposito: la etiqueta dice de
             # que producto es la conversacion, la atienda el agente o una persona.
@@ -8845,15 +8886,17 @@ def create_app(
                     inbound_person_activity = await _read_person_activity(
                         _whatsapp_digits(decision.sender_jid)
                     )
+                    turn_product_keys = tuple(
+                        activity_product
+                        for activity_product, _ in inbound_person_activity or ()
+                    )
                     await label_products(
                         labeled_conversation_id,
-                        (
-                            activity_product
-                            for activity_product, _ in inbound_person_activity or ()
-                        ),
+                        turn_product_keys,
                         source="entrante",
                     )
                 else:
+                    turn_product_keys = tuple(product_labelers)
                     await label_products(
                         labeled_conversation_id, product_labelers, source="entrante"
                     )
@@ -9206,11 +9249,13 @@ def create_app(
                 )
                 return
 
-            async def record_opt_out_without_admission() -> bool:
+            async def record_opt_out_without_admission(*, confirm: bool = True) -> bool:
                 """Only the stop and the opt-out, without the agent.
 
                 With a manifest, a "No mas mensajes" does not depend on the
-                admission. Returns whether the person is stopped.
+                admission. Returns whether the person is stopped. With
+                ``confirm=False`` (the global pause, 5.4) the one-line
+                confirmation does not go out: pausing sends nothing.
                 """
                 stop_context = _shadow_context(payload)
                 stop_message_id = payload.get("id")
@@ -9227,7 +9272,7 @@ def create_app(
                     context=stop_context,
                     expected_jid=scoped_expected_jid,
                     opt_out_only=True,
-                    confirm_new_opt_out=confirm_new_opt_out,
+                    confirm_new_opt_out=confirm_new_opt_out if confirm else None,
                 )
                 return stop_result.stopped
 
@@ -9368,6 +9413,58 @@ def create_app(
                     # derived, the opt-out was never recorded and the person
                     # stayed open to every following flow.
                     await record_opt_out_without_admission()
+                return
+        if agent_pause_live is not None:
+            # 5.4 (agent-global-pause-v1, D10): con una pausa viva que alcanza
+            # a esta conversacion, el agente no corre, como con la etiqueta
+            # automation_paused, y no sale nada: ni respuesta, ni aviso de
+            # derivacion, ni la confirmacion de una baja (la baja si se anota).
+            # La conversacion queda en Chatwoot sin contestar, para el equipo,
+            # y la base anota que se retuvo. Al sacar la pausa se contesta el
+            # proximo mensaje; este no.
+            # D-54.4: tambien la que estaba puesta cuando la persona lo
+            # escribio, aunque ya se haya levantado (el monitor de trabadas
+            # vuelve a admitir el mensaje y, sin la etiqueta, se contestaria).
+            holding_pause = agent_pause_live.holding(
+                labels=conversation_labels(payload),
+                product_keys=turn_product_keys,
+                message_at=agent_global_pause.message_at(payload),
+            )
+            if holding_pause is not None:
+                held_conversation = payload.get("conversation")
+                held_conversation_id = (
+                    held_conversation.get("id")
+                    if isinstance(held_conversation, dict)
+                    else None
+                )
+                logger.info(
+                    "agent_global_pause_held pause=%s scope=%s conversation=%s",
+                    holding_pause.pause_id,
+                    holding_pause.scope,
+                    held_conversation_id,
+                )
+                if admission is not None and whatsapp_inbound_equivalence:
+                    await record_opt_out_without_admission(confirm=False)
+                if (
+                    shared_supabase is not None
+                    and isinstance(held_conversation_id, int)
+                    and not isinstance(held_conversation_id, bool)
+                    and held_conversation_id > 0
+                ):
+                    try:
+                        await shared_supabase.record_agent_global_pause_hold(
+                            agent_pause_instance,
+                            pause_id=holding_pause.pause_id,
+                            conversation_id=held_conversation_id,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - la pausa ya freno al agente
+                        logger.warning(
+                            "agent_global_pause_hold_not_recorded pause=%s "
+                            "conversation=%s error_type=%s",
+                            holding_pause.pause_id,
+                            held_conversation_id,
+                            type(exc).__name__,
+                        )
                 return
         audio_handoff_reason: str | None = None
         if audio_transcriber is not None and needs_audio_transcription(payload):
@@ -11336,6 +11433,48 @@ def create_app(
         )
 
     approval_config = flow_approval.check_settings(settings)
+    if agent_pause_live is not None:
+        # 5.4 (agent-global-pause-v1, D4): el AE pone y saca la pausa a pedido de
+        # una persona de la lista de aprobadores de la pagina. Con el flag
+        # apagado las rutas no existen y dan 404.
+        assert approval_config is not None
+        assert settings.instance_manifest is not None
+        assert settings.automation_expert_change_token is not None
+        pause_manifest = settings.instance_manifest
+        app.state.agent_global_pause = agent_pause_live
+        pause_known_labels: Callable[[], Awaitable[list[str]]] | None = None
+        if settings.automation_expert_chatwoot_enabled:
+            pause_chatwoot = automation_expert_chatwoot_client or (
+                automation_expert_chatwoot.ScopedChatwoot(
+                    base_url=settings.chatwoot_base_url or "",
+                    account_id=pause_manifest.chatwoot_account_id,
+                    access_token=settings.chatwoot_control_api_access_token or "",
+                    inbox_id=pause_manifest.chatwoot_inbox_id,
+                    create_macros=False,
+                )
+            )
+
+            async def pause_known_labels() -> list[str]:
+                return [
+                    str(label["title"]) for label in await pause_chatwoot.list_labels()
+                ]
+
+        agent_global_pause.register_agent_pause_routes(
+            app,
+            token=settings.automation_expert_change_token,
+            store=agent_pause_store or agent_global_pause.PauseStore(
+                base_url=settings.supabase_base_url or "",
+                db_key=settings.automation_expert_change_db_key or "",
+            ),
+            approvers=approval_config.approvers,
+            tenant_ref=pause_manifest.tenant_ref,
+            ally_ref=pause_manifest.ally_ref,
+            product_labels={
+                product.key: product.chatwoot_label for product in pause_manifest.products
+            },
+            live=agent_pause_live,
+            known_labels=pause_known_labels,
+        )
     if approval_config is not None:
         # flow-change-cycle-v1 1.9.0 (A′ PR 3a y 3b): la pagina de aprobacion,
         # que muestra y, desde el 3b, aprueba y publica, descarta, pausa y carga
@@ -12183,6 +12322,14 @@ def create_app(
             commercial_ally_readiness = {
                 **commercial_ally_readiness,
                 "agent_campaigns": agent_campaign_live.status_line(),
+            }
+        if agent_pause_live is not None:
+            # 5.4: si hay una pausa viva del agente, de que alcance, y como
+            # viene la lectura. No responde 503: pausar no es una falla.
+            # Apagado, /ready no cambia.
+            commercial_ally_readiness = {
+                **commercial_ally_readiness,
+                "agent_global_pause": agent_pause_live.status_line(),
             }
         if product_labelers:
             # La etiqueta de producto no responde 503: no atiende a nadie, y un

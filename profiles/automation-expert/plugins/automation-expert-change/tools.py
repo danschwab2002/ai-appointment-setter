@@ -11,10 +11,15 @@ la persona sale del contexto de la sesión de Hermes
 0.21.0, leído el 2026-10-21), y solo en Slack. La base lo guarda como
 declarado: el bridge no lo puede verificar.
 
-Ninguna herramienta aprueba ni publica, y no hay pausa: la base no puede
-verificar a quien la pide desde el agente. Aprobar, publicar y pausar lo hace
-un aprobador en la pagina de aprobacion del bridge (ciclo 1.9.0), con su ID de
-Slack verificado, o el comando del operador.
+Ninguna herramienta aprueba ni publica, y no pausa flujos ni campanas: la base
+no puede verificar a quien la pide desde el agente. Aprobar, publicar y pausar
+un flujo o una campana lo hace un aprobador en la pagina de aprobacion del
+bridge (ciclo 1.9.0), con su ID de Slack verificado, o el comando del operador.
+
+Desde la 0.10.0 (agent-global-pause-v1, item 5.4) suma la pausa del agente
+comercial (``pausar_agente``, ``reanudar_agente``, ``estado_pausa``): frenar no
+manda nada, asi que el agente la pone directo, y el bridge la acepta solo si
+quien habla esta en la lista de aprobadores de la pagina (``not_an_approver``).
 
 Desde el ciclo 1.10.0 (M16 P6 y P7) suma dos lecturas: el catalogo de
 plantillas de la bandeja (``list_templates``) y las propuestas de la instancia
@@ -159,6 +164,15 @@ _BRIDGE_ERRORS = frozenset({
     "bulk_send_schedule_invalid",
     "bulk_send_product_required",
     "bulk_send_product_invalid",
+    # 5.4 (agent-global-pause-v1): pausar al agente para todas, por etiqueta o por producto.
+    "invalid_pause_id",
+    "agent_pause_until_invalid",
+    "agent_pause_product_unknown",
+    "agent_pause_product_without_label",
+    "agent_pause_not_found",
+    "agent_pause_open_limit",
+    "agent_pause_scope_invalid",
+    "agent_pause_reason_invalid",
 })
 
 
@@ -315,6 +329,9 @@ def _request(method: str, path: str, body: dict[str, object] | None = None) -> d
         # Y con el masivo: sin BULK_SEND_ENABLED sus rutas no existen.
         if exc.code in (404, 405) and detail in ("Not Found", "Method Not Allowed") and path.startswith(BULK_SENDS):
             return {"error": "bulk_send_not_enabled"}
+        # 5.4: sin AGENT_GLOBAL_PAUSE_ENABLED las rutas de la pausa del agente no existen.
+        if exc.code in (404, 405) and detail in ("Not Found", "Method Not Allowed") and path.startswith(AGENT_PAUSE):
+            return {"error": "agent_pause_not_enabled"}
         return {"error": "automation_expert_change_unavailable"}
     except (URLError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError, OSError):
         return {"error": "automation_expert_change_unavailable"}
@@ -780,3 +797,66 @@ def list_bulk_sends(params: dict[str, object], **kwargs: object) -> str:
     if type(limit) is not int or not 1 <= limit <= 50:
         return _dumps({"error": "invalid_query"})
     return _dumps(_request("GET", f"{BULK_SENDS}?limit={limit}"))
+
+
+# 5.4 (agent-global-pause-v1, D4 y D10 del mapa Z1): pausar al agente comercial para todas las
+# conversaciones, por etiqueta o por producto. Frenar no manda nada: lo hace el agente directo, a pedido de
+# un aprobador (el bridge lo chequea con la lista de la pagina: not_an_approver). Sin
+# AGENT_GLOBAL_PAUSE_ENABLED el bridge no tiene esas rutas: agent_pause_not_enabled.
+AGENT_PAUSE = f"{PREFIX}/agent-pause"
+_PAUSE_KEYS = frozenset({"alcance", "valor", "hasta", "motivo"})
+
+
+def _pause_request(method: str, path: str, body: dict[str, object] | None = None) -> str:
+    out = _request(method, path, body)
+    if "error" in out:
+        return _dumps(out)
+    data = out.get("data")
+    return _dumps(data if isinstance(data, dict) else {"error": "automation_expert_change_response_invalid"})
+
+
+def pausar_agente(params: dict[str, object], **kwargs: object) -> str:
+    """Pausa al agente comercial (todas, una etiqueta o un producto). No manda nada a nadie."""
+    del kwargs
+    try:
+        requested_by = _requested_by()
+    except ValueError as exc:
+        return _dumps({"error": str(exc)})
+    if set(params) - _PAUSE_KEYS or params.get("alcance") not in ("todas", "etiqueta", "producto"):
+        return _dumps({"error": "invalid_body"})
+    motivo = params.get("motivo")
+    if not isinstance(motivo, str) or not motivo.strip():
+        return _dumps({"error": "invalid_body"})
+    if looks_like_identifier(motivo):
+        return _dumps({"error": "identifier_not_allowed"})
+    body: dict[str, object] = {key: params[key] for key in ("alcance", "valor", "hasta") if params.get(key) is not None}
+    body["motivo"] = motivo.strip()
+    body["requested_by"] = requested_by
+    return _pause_request("POST", AGENT_PAUSE, body)
+
+
+def reanudar_agente(params: dict[str, object], **kwargs: object) -> str:
+    """Saca una pausa del agente. Lo que entro durante la pausa no se contesta: el agente contesta el proximo."""
+    del kwargs
+    pause_id = _uuid(params.get("pause_id"))
+    if pause_id is None:
+        return _dumps({"error": "invalid_pause_id"})
+    try:
+        requested_by = _requested_by()
+    except ValueError as exc:
+        return _dumps({"error": str(exc)})
+    body: dict[str, object] = {"requested_by": requested_by}
+    motivo = params.get("motivo")
+    if motivo is not None:
+        if not isinstance(motivo, str) or not motivo.strip():
+            return _dumps({"error": "invalid_body"})
+        if looks_like_identifier(motivo):
+            return _dumps({"error": "identifier_not_allowed"})
+        body["motivo"] = motivo.strip()
+    return _pause_request("POST", f"{AGENT_PAUSE}/{pause_id}/resume", body)
+
+
+def estado_pausa(params: dict[str, object], **kwargs: object) -> str:
+    """Si el agente esta pausado, para quien, desde cuando, quien lo pidio y cuantas quedaron para el equipo."""
+    del kwargs, params
+    return _pause_request("GET", AGENT_PAUSE)
