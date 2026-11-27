@@ -32,6 +32,12 @@ Las reglas de la charla son las de `crear-un-flujo` (lenguaje de negocio, rondas
 - Sale de a 2,5 personas por segundo como mucho, y baja solo si Meta tarda en entregar. Un masivo de 4.000 personas dura unos 27 minutos.
 - **Se frena solo** si Meta empieza a rechazar, si fallan demasiados envíos o si baja la salud del número, y el equipo recibe un aviso. Un aprobador también lo puede frenar desde la página.
 
+## El calentamiento del número (si la respuesta trae `warmup`)
+
+- Algunas instancias tienen el calentamiento prendido: un número sube de a escalones (por ejemplo 500, 1.000 y 5.000 personas), una tanda grande por día y más grande solo si la anterior salió bien. Ahí `get_bulk_send`, `list_bulk_sends` y `propose_bulk_send` traen `warmup`: el tope del día de la hora pedida (`tope_del_dia`), desde cuándo se puede la próxima (`proxima`) y, con la lista subida, si este masivo entra (`este_masivo.entra`).
+- Si no entra, contalo con el `detalle` tal cual (es el mismo texto que ve el aprobador en la página) y ofrecé partirlo en masivos de hasta ese tope, uno por día, o moverlo de día. La página no deja confirmar uno que no entra, y si igual llega a la hora sin entrar, se frena solo antes de mandar.
+- Sin `warmup` en la respuesta, esta instancia no lo tiene: no lo menciones.
+
 ## El producto y la campaña
 
 - El producto del envío sirve para que no le llegue a quien ya lo compró. Con un solo producto en la instancia no hace falta preguntarlo.

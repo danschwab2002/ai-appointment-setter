@@ -18,8 +18,9 @@ la instancia.
 * **Antes de arrancar.** La plantilla no puede estar en ``META_FIRST_TOUCH_RETRY_TEMPLATES`` (el
   barrido de rechazos de Meta reintentaria cientos de 131049 por su cuenta), tiene que estar aprobada
   en Meta y, si su encabezado es una imagen, el envio tiene que traerla. Despues el candado del
-  portfolio (decision 6), la regla de las 24 h (decision 13) y la salud EN VIVO de los numeros del
-  portfolio (decision 5). Recien ahi pasa a ``enviando``.
+  portfolio (decision 6), la regla de las 24 h (decision 13), con ``BULK_SEND_WARMUP_ENABLED`` el
+  calentamiento del numero (``bulk_send_warmup``: tope del dia y espaciado, D7-D10) y la salud EN VIVO de
+  los numeros del portfolio (decision 5). Recien ahi pasa a ``enviando``.
 * **La tanda piloto** (decision 12): los primeros 20, y 5 minutos mirando la entrega con
   ``pilot_verdict`` antes de seguir. Un freno en el piloto no sigue.
 * **Los lotes de 25** a 2,5 por segundo como mucho (decision 2), con ``adjust_rate``. Antes de cada
@@ -87,6 +88,7 @@ from bridge.bulk_send_brakes import (
     STATUS_READ,
     STATUS_SENT,
     BrakeThresholds,
+    Verdict,
     FinishedSend,
     PilotPolicy,
     PilotState,
@@ -537,6 +539,10 @@ class PortfolioHealthReader(Protocol):
         ...
 
 
+# F2: el calentamiento al arrancar (``BulkSendWarmup.check`` sobre el envio y el reloj del motor).
+WarmupCheck = Callable[["BulkSendSnapshot", datetime], Awaitable[Verdict]]
+
+
 class BulkBrakeNotifier(Protocol):
     async def braked(self, send: BulkSendSnapshot, reason: str) -> None: ...
 
@@ -857,7 +863,8 @@ class BulkSendWorker:
                  notifier: BulkBrakeNotifier | None = None, prepare: Prepare | None = None,
                  clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
                  sleep: Callable[[float], Awaitable[object]] = asyncio.sleep,
-                 meta_brake: Callable[[str, str], str | None] | None = None) -> None:
+                 meta_brake: Callable[[str, str], str | None] | None = None,
+                 warmup: WarmupCheck | None = None) -> None:
         self._store = store
         self._sender = sender
         self._revalidate = revalidate
@@ -869,6 +876,8 @@ class BulkSendWorker:
         self._config = config
         self._notifier = notifier
         self._prepare = prepare
+        # F2 (BULK_SEND_WARMUP_ENABLED): el calentamiento del numero. None con el flag apagado: nada cambia.
+        self._warmup = warmup
         self._clock = clock
         self._sleep = sleep
         # meta-enforcement-brakes-v1: la plantilla retirada por recategorizacion o
@@ -1037,6 +1046,18 @@ class BulkSendWorker:
                 if not verdict.allows:
                     return TickReport(await self._brake(send, verdict.reason or "regla_24h", notify=True),
                                       send.send_id)
+                if self._warmup is not None:
+                    # F2: el tope del dia y el espaciado del numero (bulk_send_warmup, D-F2.7). Si no se puede
+                    # leer, no se manda ni se frena: se vuelve a mirar en la pasada siguiente.
+                    try:
+                        warm = await self._warmup(send, now)
+                    except Exception as error:  # noqa: BLE001
+                        logger.warning("bulk_send_warmup_unreadable send=%s error=%s", send.send_id,
+                                       type(error).__name__)
+                        return TickReport("calentamiento_ilegible", send.send_id)
+                    if not warm.allows:
+                        return TickReport(await self._brake(send, warm.reason or "calentamiento", notify=True),
+                                          send.send_id)
             readings = dict(await self._health.read())
             start = portfolio_start_verdict(self._config.instance_key, readings,
                                             yellow_confirmed=send.confirmed_health == "amarillo")

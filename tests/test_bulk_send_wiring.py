@@ -151,7 +151,7 @@ def test_on_create_app_registers_the_page_and_builds_the_worker(monkeypatch, tmp
     assert page.status_code in (200, 401) and "Slack" in page.text
     assert bulk.readiness() == {"bulk_send_worker": "ok", "bulk_send_last_outcome": "none",
                                 "bulk_send_last_send": "none", "bulk_send_instance_key": "att1",
-                                "bulk_send_purge": "never"}
+                                "bulk_send_purge": "never", "bulk_send_warmup": "disabled"}
 
 
 def _build(tmp_path: Path, **changes: Any) -> wiring.BulkSend | None:

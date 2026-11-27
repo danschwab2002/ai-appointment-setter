@@ -20,6 +20,9 @@ llame (crear, arrancar, parar, ``/ready`` y la seccion de la pagina), como ``flo
   ``read_bulk_send_recipients_v1`` (``20261125000400``), lo leido de Chatwoot y ``build_report``.
 * ``build_bulk_send``: con ``BULK_SEND_ENABLED`` arma todo, y si falta algo que lo hace seguro no
   arranca el bridge (``BulkSendConfigError``). Apagado devuelve None y nada de esto existe.
+* El calentamiento (F2, ``bulk_send_warmup``): con ``BULK_SEND_WARMUP_ENABLED`` ademas, ``BulkSendWarmup``
+  sobre ``read_bulk_sends_v1`` y el mismo reporte de la pagina; lo usan el motor al arrancar, la pagina al
+  confirmar y el AE al leer. Apagado no se arma y ``/ready`` dice ``bulk_send_warmup: disabled``.
 
 Lo que pide prendido, ademas de lo que ya exige ``check_bulk_send_settings``:
 
@@ -109,6 +112,8 @@ from bridge.bulk_send_worker import (
     batch_vetoes,
     parse_portfolio_numbers,
 )
+from bridge.bulk_send_warmup import ENV_VARIABLES as WARMUP_ENV_VARIABLES
+from bridge.bulk_send_warmup import BulkSendWarmup, WarmupConfigError, policy_from_env
 from bridge.flow_audience_sweeper import HEALTH_PATH_VARIABLE as AUDIENCE_HEALTH_PATH_VARIABLE
 from bridge.flow_audience_sweeper import file_health_reader
 from bridge.messaging import ChatwootMessageSender, FirstTouchResult
@@ -119,7 +124,7 @@ logger = logging.getLogger(__name__)
 HEALTH_PATH_VARIABLE = "BULK_SEND_META_HEALTH_PATH"
 ENV_VARIABLES = (FLAG, INSTANCE_KEY_VARIABLE, LOCK_DIR_VARIABLE, NUMBERS_VARIABLE, SEND_HOURS_VARIABLE,
                  TIMEZONE_VARIABLE, TEMPLATES_VARIABLE, RETRY_TEMPLATES_VARIABLE, HEALTH_PATH_VARIABLE,
-                 AUDIENCE_HEALTH_PATH_VARIABLE)
+                 AUDIENCE_HEALTH_PATH_VARIABLE, *WARMUP_ENV_VARIABLES)
 
 # Quien escribio hace poco no recibe (decision 14, masivo.py): la guarda de G3 del sender, en segundos.
 RECENT_INBOUND_SECONDS = 6 * 3600
@@ -583,7 +588,9 @@ class BulkSend:
     config: BulkSendWorkerConfig
     clock: Callable[[], datetime]
     purge_every: timedelta = PURGE_EVERY
+    warmup: BulkSendWarmup | None = None
     _purge_task: asyncio.Task[None] | None = None
+    _warmup_task: asyncio.Task[None] | None = None
     _stopping: asyncio.Event | None = None
     last_purge: str = "never"
 
@@ -592,18 +599,32 @@ class BulkSend:
         if self._purge_task is None:
             self._stopping = asyncio.Event()
             self._purge_task = asyncio.create_task(self._purge_loop(), name="bulk_send_purge")
+            if self.warmup is not None:
+                self._warmup_task = asyncio.create_task(self._warmup_loop(), name="bulk_send_warmup")
 
     async def stop(self) -> None:
         if self._stopping is not None:
             self._stopping.set()
-        if self._purge_task is not None:
-            self._purge_task.cancel()
+        for task in (self._purge_task, self._warmup_task):
+            if task is None:
+                continue
+            task.cancel()
             try:
-                await self._purge_task
+                await task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001 - parar no levanta
                 pass
-            self._purge_task = None
+        self._purge_task = self._warmup_task = None
         await self.worker.stop()
+
+    async def _warmup_loop(self) -> None:
+        """El tope de hoy para ``/ready`` y la lectura de las respuestas de la ultima tanda grande (D-F2.4)."""
+        assert self._stopping is not None and self.warmup is not None
+        while not self._stopping.is_set():
+            await self.warmup.refresh()
+            try:
+                await asyncio.wait_for(self._stopping.wait(), timeout=self.warmup.refresh_every.total_seconds())
+            except asyncio.TimeoutError:
+                pass
 
     async def purge_once(self) -> str:
         try:
@@ -632,7 +653,9 @@ class BulkSend:
                 "bulk_send_last_outcome": worker.get("bulk_send_last_outcome", "none"),
                 "bulk_send_last_send": worker.get("bulk_send_last_send", "none"),
                 "bulk_send_instance_key": self.config.instance_key,
-                "bulk_send_purge": self.last_purge}
+                "bulk_send_purge": self.last_purge,
+                # F2: el tope de hoy del numero (``att1=1000``, ``att1=hoy_no:espaciado``) o ``disabled``.
+                "bulk_send_warmup": self.warmup.readiness() if self.warmup is not None else "disabled"}
 
 
 def _environ() -> dict[str, str]:
@@ -682,6 +705,10 @@ def build_bulk_send(*, enabled: bool, environ: Mapping[str, str] | None, supabas
     assert chatwoot_base_url and chatwoot_account_id is not None and chatwoot_inbox_id is not None
     assert chatwoot_control_token
     config = BulkSendWorkerConfig.from_env(env)
+    try:
+        warmup_policy = policy_from_env(env, pilot_size=config.pilot.size)
+    except WarmupConfigError as error:
+        raise BulkSendConfigError(str(error)) from error
     numbers = parse_portfolio_numbers(env[NUMBERS_VARIABLE])
     if config.instance_key not in numbers:
         raise BulkSendConfigError(f"{NUMBERS_VARIABLE} must include {config.instance_key}")
@@ -719,6 +746,15 @@ def build_bulk_send(*, enabled: bool, environ: Mapping[str, str] | None, supabas
         return await revalidate_prepared(worker_chatwoot, prepared, phone=phone, now=at)
 
     prepare_store = SupabasePrepareStore(store)
+    report = BulkSendRecipientsReport(
+        store=store, chatwoot=ChatwootBulkSendReader(control_client, inbox_id=chatwoot_inbox_id), clock=now)
+    warmup = (BulkSendWarmup(policy=warmup_policy, zone=config.zone, instance_key=config.instance_key,
+                             read_sends=store.read_sends, report=report.report, clock=now)
+              if warmup_policy is not None else None)
+
+    async def warmup_check(send: Any, at: datetime) -> Any:
+        assert warmup is not None
+        return await warmup.check(send_id=send.send_id, size=send.eligible_count, at=at)
 
     async def prepare(send_id: str, should_stop: Callable[[], bool]) -> PrepareReport:
         # Un Chatwoot por corrida: el freno por la API de preparar cuenta solo lo de esta corrida.
@@ -733,16 +769,16 @@ def build_bulk_send(*, enabled: bool, environ: Mapping[str, str] | None, supabas
         status_reader=ChatwootDeliveryStatusReader(control_client), health=health,
         lock=PortfolioLock(config.lock_dir), templates=MetaTemplateResolver(meta), config=config,
         notifier=SlackBulkBrakeNotifier(producer=producer) if producer is not None else None,
-        prepare=prepare, clock=now, meta_brake=meta_brake)
+        prepare=prepare, clock=now, meta_brake=meta_brake,
+        warmup=warmup_check if warmup is not None else None)
     page = page_routes(
         chatwoot=control_client, inbox_id=chatwoot_inbox_id, country_code=country_code_for_time_zone(time_zone),
         sending_key=config.instance_key, portfolio_keys=tuple(numbers), health=file_health_reader(Path(health_path)),
         reviewer=BulkListVetoReviewer(store=veto_store, chatwoot=control_client, inbox_id=chatwoot_inbox_id),
-        report=BulkSendRecipientsReport(
-            store=store, chatwoot=ChatwootBulkSendReader(control_client, inbox_id=chatwoot_inbox_id), clock=now),
-        campaigns=campaigns)
-    logger.info("bulk_send_enabled instance=%s numbers=%s", config.instance_key, ",".join(sorted(numbers)))
-    return BulkSend(worker=worker, store=store, page=page, config=config, clock=now)
+        report=report, campaigns=campaigns, warmup=warmup.view_for if warmup is not None else None)
+    logger.info("bulk_send_enabled instance=%s numbers=%s warmup=%s", config.instance_key, ",".join(sorted(numbers)),
+                "on" if warmup is not None else "off")
+    return BulkSend(worker=worker, store=store, page=page, config=config, clock=now, warmup=warmup)
 
 
 __all__ = [

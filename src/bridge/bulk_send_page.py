@@ -37,6 +37,11 @@ El AE arma el borrador (encargo 6) y manda el link ``/flow-approval/masivos/<id>
 * ``GET  /flow-approval/masivos/{id}/no-entregados.csv``: los que no recibieron, con el
   telefono entero (los aprobadores son quienes pueden verlo, ``bulk_send_report``).
 
+Con ``BULK_SEND_WARMUP_ENABLED`` (F2, ``bulk_send_warmup``), la vista previa suma «El calentamiento del
+numero» (el tope del dia de la hora pedida, si entra y desde cuando se puede la proxima tanda grande) y
+confirmar se niega si el masivo no entra (``warmup_blocks``), o si el calentamiento no se pudo leer
+(``warmup_unreadable``). Apagado, la pagina es la de siempre.
+
 Nada de esto manda un mensaje: preparar y mandar son del motor (encargos 7 y 9).
 """
 
@@ -165,6 +170,10 @@ _EXCLUDED = {
     "escribio_hace_poco": "escribieron en las últimas 6 horas",
 }
 _BRAKE = {"a_mano": "lo frenó una persona", "lista_purgada": "se borraron los teléfonos de la lista"}
+# F2: un masivo que el motor freno al arrancar porque no entraba en el calentamiento del numero.
+_WARMUP_BRAKE = "calentamiento:"
+_WARMUP_BRAKE_TEXT = ("no entraba en el calentamiento del número al arrancar (el tope del día o el espaciado "
+                      "entre tandas grandes)")
 _IMPORT_ERRORS = {
     "vacio": "El archivo está vacío.",
     "demasiado_grande": "El archivo pesa más de lo que se puede subir.",
@@ -191,6 +200,9 @@ _DONE = {
     "confirmation_missing": "Falta marcar «Confirmo». No se confirmó.",
     "yellow_ack_missing": "El número está en amarillo: falta la segunda marca. No se confirmó.",
     "health_blocks": "La salud de los números no deja arrancar. No se confirmó.",
+    "warmup_blocks": ("Este masivo no entra en el calentamiento del número ese día: mirá abajo «El calentamiento "
+                      "del número», con el tope y desde cuándo se puede. No se confirmó."),
+    "warmup_unreadable": "No se pudo leer el calentamiento del número. Probá en un rato. No se confirmó.",
     "list_missing": "Todavía no hay lista. Subila arriba.",
     "list_not_vetted": "La lista todavía no pasó la revisión. Volvé a subir el mismo archivo.",
     "nobody_to_send": "No queda nadie a quien mandarle.",
@@ -574,7 +586,7 @@ def _invalid_form(send_id: str, csrf: str) -> str:
 def render_send(view: Mapping[str, Any], *, csrf: str, done: Mapping[str, str], template: Mapping[str, Any] | None,
                 image: ImageCheck | None, readings: Mapping[str, Mapping[str, Any] | None], sending: str,
                 campaign: str | None, report: Mapping[str, Any] | None, has_reviewer: bool,
-                now: datetime) -> str:
+                now: datetime, warmup: Mapping[str, Any] | None = None) -> str:
     """La vista previa de un masivo. Sin telefonos enteros: los ejemplos vienen enmascarados de la base."""
     send_id = str(view.get("send_id") or "")
     state = str(view.get("state") or "")
@@ -587,7 +599,8 @@ def render_send(view: Mapping[str, Any], *, csrf: str, done: Mapping[str, str], 
              _done_html(done)]
     if state == "frenado":
         reason = str(view.get("brake_reason") or "")
-        parts.append(f'<div class="notice notice--warn"><p>Frenado: {_esc(_BRAKE.get(reason, reason))}.</p></div>')
+        text = _WARMUP_BRAKE_TEXT if reason.startswith(_WARMUP_BRAKE) else _BRAKE.get(reason, reason)
+        parts.append(f'<div class="notice notice--warn"><p>Frenado: {_esc(text)}.</p></div>')
 
     parts.append('<section class="panel"><div class="panel-heading"><h2>La plantilla</h2></div>'
                  f'<div class="panel-body">{_template_html(template, view, image)}</div></section>')
@@ -680,6 +693,12 @@ def render_send(view: Mapping[str, Any], *, csrf: str, done: Mapping[str, str], 
                  "<p>Los números que comparten el portfolio de Meta.</p></div>"
                  f'<div class="panel-body">{_health_html(readings, sending, verdict, now)}</div></section>')
 
+    if warmup is not None:
+        parts.append('<section class="panel"><div class="panel-heading"><h2>El calentamiento del número</h2>'
+                     "<p>Un número nuevo en masivos sube de a escalones: una tanda grande por día y más grande solo "
+                     "si la anterior salió bien.</p></div>"
+                     f'<div class="panel-body">{_warmup_html(warmup)}</div></section>')
+
     # Confirmar y frenar.
     actions = []
     if state == "borrador" and vetted and eligible:
@@ -714,6 +733,22 @@ def render_send(view: Mapping[str, Any], *, csrf: str, done: Mapping[str, str], 
                "que no recibieron (CSV)</a></p>" if report.get("undelivered_count") else "")
             + "</div></section>")
     return "".join(parts)
+
+
+def _warmup_html(warmup: Mapping[str, Any]) -> str:
+    """La seccion del calentamiento (F2): el texto lo arma ``bulk_send_warmup``, el mismo que ve el AE."""
+    if warmup.get("error"):
+        return ('<div class="notice notice--warn"><p>No se pudo leer el calentamiento del número: no se puede '
+                "confirmar. Probá en un rato.</p></div>")
+    steps = " · ".join(f"{n:,}".replace(",", ".") for n in warmup.get("escalones") or [] if isinstance(n, int))
+    out = [f"<p>Escalones: {_esc(steps)}. Ese día ({_esc(warmup.get('dia'))}) el tope de una tanda grande es "
+           f"<strong>{_esc(warmup.get('tope_del_dia'))}</strong> personas (escalón {_esc(warmup.get('escalon'))}).</p>",
+           f"<p>{_esc(warmup.get('detalle'))}</p>"]
+    mine = warmup.get("este_masivo")
+    if isinstance(mine, Mapping):
+        kind = "notice--ok" if mine.get("entra") else "notice--warn"
+        out.append(f'<div class="notice {kind}"><p>{_esc(mine.get("detalle"))}</p></div>')
+    return "".join(out)
 
 
 # ---------------------------------------------------------------------------
@@ -811,7 +846,9 @@ def routes(*, chatwoot: Any, inbox_id: int, country_code: str | None, sending_ke
            reviewer: BulkListReviewer | None = None, report: BulkSendReportSource | None = None,
            campaigns: Callable[[], Sequence[Any]] | None = None,
            image_probe: Callable[[str], Awaitable[ImageCheck]] | None = probe_image,
-           max_upload_bytes: int = DEFAULT_MAX_BYTES) -> Callable[[FastAPI, PageTools], None]:
+           max_upload_bytes: int = DEFAULT_MAX_BYTES,
+           warmup: Callable[[Mapping[str, Any]], Awaitable[Mapping[str, Any]]] | None = None,
+           ) -> Callable[[FastAPI, PageTools], None]:
     """Las rutas, para ``register_flow_approval_routes(extra_routes=...)``. Se registran solo con
     ``BULK_SEND_ENABLED``.
 
@@ -823,6 +860,8 @@ def routes(*, chatwoot: Any, inbox_id: int, country_code: str | None, sending_ke
     ``report``: el reporte del envio (encargo 10); sin el, la pagina no lo muestra.
     ``campaigns``: los segmentos de campana del bridge (``LiveSegmentCatalog.segments``), para decir si la
     etiqueta esta vigente; sin el, no se dice. ``image_probe``: baja la imagen; ``None`` no la baja.
+    ``warmup``: el calentamiento del numero (``BulkSendWarmup.view_for``, F2); sin el (flag apagado) la
+    pagina no lo muestra ni lo mira al confirmar.
     """
     keys = tuple(dict.fromkeys((sending_key, *portfolio_keys)))
     image_cache: dict[str, tuple[float, ImageCheck]] = {}
@@ -894,6 +933,15 @@ def routes(*, chatwoot: Any, inbox_id: int, country_code: str | None, sending_ke
                 return None
             return page_view(built, viewer_can_see_phones=True)
 
+        async def warmup_of(view: Mapping[str, Any]) -> Mapping[str, Any] | None:
+            if warmup is None:
+                return None
+            try:
+                return await warmup(view)
+            except Exception as error:  # noqa: BLE001 - la pagina dice que no pudo leerlo y no confirma
+                logger.warning("bulk_send_page warmup=unavailable error=%s", type(error).__name__)
+                return {"error": "unavailable"}
+
         def not_found(title: str) -> Response:
             return _page(title, "No existe ese masivo en esta instancia.", 404)
 
@@ -921,7 +969,7 @@ def routes(*, chatwoot: Any, inbox_id: int, country_code: str | None, sending_ke
                 view, csrf=csrf, done=_done_from_query(request, tools.config, secret),
                 template=await template_of(view), image=await image_of(view), readings=readings(),
                 sending=sending_key, campaign=campaign_of(view), report=await report_of(view),
-                has_reviewer=reviewer is not None, now=tools.now())
+                has_reviewer=reviewer is not None, now=tools.now(), warmup=await warmup_of(view))
             return HTMLResponse(_shell(TITLE, body, user=user, csrf=csrf, show_user_id=False))
 
         async def upload_gate(request: Request, send_id: str, title: str
@@ -1102,6 +1150,16 @@ def routes(*, chatwoot: Any, inbox_id: int, country_code: str | None, sending_ke
                     blocked = bool(verdict.reason and verdict.reason.endswith("amarillo_sin_confirmar"))
                     logger.info("flow_approval route=bulk_send_confirm send=%s health=%s", send_id, verdict.reason)
                     return {"ok": False, "reason_code": "yellow_ack_missing" if blocked else "health_blocks"}
+                if warmup is not None:
+                    # F2: el masivo tiene que entrar en el calentamiento del numero el dia de la hora pedida.
+                    warm = await warmup_of(await read(session, send_id))
+                    mine = warm.get("este_masivo") if warm is not None else None
+                    if warm is None or warm.get("error"):
+                        return {"ok": False, "reason_code": "warmup_unreadable"}
+                    if not isinstance(mine, Mapping) or mine.get("entra") is not True:
+                        logger.info("flow_approval route=bulk_send_confirm send=%s warmup=%s", send_id,
+                                    mine.get("motivo") if isinstance(mine, Mapping) else "sin_tamano")
+                        return {"ok": False, "reason_code": "warmup_blocks"}
                 return await store._rpc("approver_confirm_bulk_send_v1", {  # noqa: SLF001
                     "p_instance": instance, "p_session_hash": session, "p_send_id": send_id,
                     "p_expected_count": int(raw), "p_confirmed": True,

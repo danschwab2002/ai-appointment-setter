@@ -44,7 +44,7 @@ import json
 import logging
 import os
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -823,6 +823,10 @@ def register_flow_change_routes(app: FastAPI, *, token: str, store: FlowChangeSt
 # * ``GET {PREFIX}/bulk-sends/{id}``: el estado y los conteos (``read_bulk_send_v1``).
 # * ``GET {PREFIX}/bulk-sends``: los masivos de la instancia (``read_bulk_sends_v1``).
 #
+# Con ``BULK_SEND_WARMUP_ENABLED`` (F2, ``bulk_send_warmup``) las tres suman ``warmup`` a cada masivo: el tope
+# del dia de su hora pedida, si entra y desde cuando se puede la proxima tanda grande, con el mismo texto
+# (``detalle``) que ve el aprobador en la pagina. Apagado, la clave no esta y las respuestas son las de hoy.
+#
 # Ninguna confirma, arranca ni frena: eso lo hace un aprobador en la pagina. Ninguna respuesta lleva un
 # telefono, ni enmascarado: de la vista de la base pasan solo los conteos y los datos del envio (los
 # ejemplos enmascarados son de la pagina).
@@ -1060,12 +1064,15 @@ def check_bulk_send_settings(settings: Any) -> None:
 
 def register_bulk_send_routes(app: FastAPI, *, token: str, store: BulkSendStore, chatwoot: Any, tenant_ref: str,
                               ally_ref: str, inbox_id: int, product_refs: frozenset[str], approval_origin: str,
-                              git_sha: str | None = None, clock: Callable[[], datetime] | None = None) -> None:
+                              git_sha: str | None = None, clock: Callable[[], datetime] | None = None,
+                              warmup: Callable[[Mapping[str, Any]], Awaitable[Mapping[str, Any]]] | None = None
+                              ) -> None:
     """Las tres rutas del masivo, detras del flag (lo mira quien llama: apagado no existen).
 
     ``product_refs``: los productos de la instancia (los ``funnel_ref`` del manifiesto); el masivo sale
     para uno o varios de ellos y los vetos sacan a quien ya los compro. ``approval_origin``: el dominio de
-    la pagina de aprobacion, para el link de la lista.
+    la pagina de aprobacion, para el link de la lista. ``warmup``: el calentamiento del numero
+    (``BulkSendWarmup.view_for``, F2); sin el no se suma nada.
     """
     instance = {"tenant_ref": tenant_ref, "ally_ref": ally_ref}
     sha = git_sha or os.environ.get("GIT_SHA", "") or "unknown"
@@ -1098,6 +1105,17 @@ def register_bulk_send_routes(app: FastAPI, *, token: str, store: BulkSendStore,
             code, http_status = "automation_expert_change_unavailable", 503
         logger.info("bulk_send_ae route=%s send_id=%s status=%s code=%s", route, send_id, http_status, code)
         return HTTPException(status_code=http_status, detail=code)
+
+    async def with_warmup(view: Mapping[str, Any]) -> dict[str, Any]:
+        out = bulk_send_ae_view(view, origin=approval_origin)
+        if warmup is None:
+            return out
+        try:
+            out["warmup"] = dict(await warmup(view))
+        except Exception as error:  # noqa: BLE001 - el AE dice que no se pudo leer; la pagina no confirma igual
+            logger.info("bulk_send_ae warmup=unavailable error=%s", type(error).__name__)
+            out["warmup"] = {"error": "warmup_unavailable"}
+        return out
 
     def send_id_of(value: str) -> str:
         try:
@@ -1171,7 +1189,7 @@ def register_bulk_send_routes(app: FastAPI, *, token: str, store: BulkSendStore,
                 raise failure(error, "propose") from None
         logger.info("bulk_send_ae route=propose send_id=%s status=201 variables=%s products=%s", send_id,
                     len(variables), len(products))
-        return envelope({**bulk_send_ae_view(view, origin=approval_origin),
+        return envelope({**await with_warmup(view),
                          "upload_url": bulk_send_page_url(approval_origin, send_id),
                          "upload_note": BULK_SEND_UPLOAD_NOTE})
 
@@ -1188,7 +1206,7 @@ def register_bulk_send_routes(app: FastAPI, *, token: str, store: BulkSendStore,
                 listed = await store.read_bulk_sends(instance, limit=int(limit))
             except (StoreUnavailable, StoreRejected) as error:
                 raise failure(error, "list") from None
-        sends = [bulk_send_ae_view(view, origin=approval_origin) for view in listed if isinstance(view, Mapping)]
+        sends = [await with_warmup(view) for view in listed if isinstance(view, Mapping)]
         logger.info("bulk_send_ae route=list status=200 sends=%s", len(sends))
         return envelope({"bulk_sends": sends})
 
@@ -1204,7 +1222,7 @@ def register_bulk_send_routes(app: FastAPI, *, token: str, store: BulkSendStore,
             except (StoreUnavailable, StoreRejected) as error:
                 raise failure(error, "read", checked) from None
         logger.info("bulk_send_ae route=read send_id=%s status=200", checked)
-        return envelope(bulk_send_ae_view(view, origin=approval_origin))
+        return envelope(await with_warmup(view))
 
 
 def _uuid_or_none(value: Any) -> str | None:
