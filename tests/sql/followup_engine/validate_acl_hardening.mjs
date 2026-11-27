@@ -374,7 +374,15 @@ const rows = await db.query(`
       -- 20261126600000: la version publicada del conocimiento vivo del AE (pieza 5.5).
       ('get_live_agent_knowledge_v1(jsonb)'),
       -- 20261126800000: las campanas en reposo con bloque minimo (4.8, agent-campaign-phases-v1).
-      ('get_agent_campaign_rests_v1(jsonb)')
+      ('get_agent_campaign_rests_v1(jsonb)'),
+      -- 20261127100000: los frenos ante Meta (F1, meta-enforcement-brakes-v1).
+      ('record_meta_template_categories_v1(jsonb,text,jsonb,timestamp with time zone)'),
+      ('record_meta_template_category_webhook_v1(jsonb,text,jsonb)'),
+      ('record_meta_account_event_v1(jsonb,text,jsonb)'),
+      ('get_meta_enforcement_state_v1(jsonb,text)'),
+      ('act_on_meta_enforcement_v1(jsonb,text,text,jsonb,text,text)'),
+      ('claim_meta_enforcement_notices_v1(jsonb,integer)'),
+      ('finish_meta_enforcement_notice_v1(jsonb,uuid,text,text)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -423,6 +431,7 @@ const result = rows.rows[0];
 // 20261126500000 (las corridas del juez de una campana que pide el AE, 4.9) suma sus tres: 264.
 // 20261126600000 (el conocimiento vivo del AE, pieza 5.5) suma la lectura de la publicada: 265.
 // 20261126800000 (las fases del lanzamiento, 4.8) suma la lectura del reposo: 255.
+// 20261127100000 (los frenos ante Meta, F1) suma sus siete: 273.
 // Historical baseline guard was `result.expected_count !== 63`; the current
 // baseline is 68 RPCs, daily feedback adds fourteen, payment links add three,
 // the one-shot operator disposition adds one, and correlation event context
@@ -474,7 +483,7 @@ const result = rows.rows[0];
 // claim, settle and block the retry, and mark the 131026 notice.
 // The personal coupon of a native step (20261112210500, E-483, C2) adds the read of the bridge.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 266) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 273) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

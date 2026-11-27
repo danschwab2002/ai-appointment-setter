@@ -34,6 +34,13 @@ REASON_MISMATCH = "approved_template_mismatch"
 # and the instance did not declare it: it does not fix itself with a retry.
 REASON_HEADER_MEDIA_NOT_DECLARED = "approved_template_header_media_not_declared"
 REASON_PARAMETERS_MISSING = "template_parameters_missing"
+# meta-enforcement-brakes-v1: the bridge marks a template of the catalog it must
+# not send (``meta_enforcement.braked_catalog``) with this key, whose value is the
+# reason (``template_recategorized`` or ``meta_account_restricted``), and sets its
+# status to ``BRAKED_STATUS`` so every other reader of the catalog refuses it as
+# not approved. Without META_ENFORCEMENT_BRAKES_ENABLED no entry carries the key.
+BRAKE_KEY = "bridge_meta_brake"
+BRAKED_STATUS = "BRIDGE_BRAKED"
 
 _PLACEHOLDER_RE = re.compile(r"\{\{(\d+)\}\}")
 # Meta refuses a body parameter with a new line, a tab or more than four
@@ -335,6 +342,10 @@ def parse_approved_template(
         raise ApprovedTemplateError(REASON_MISMATCH, "ambiguous_template")
     template = same_language[0]
 
+    brake = template.get(BRAKE_KEY)
+    if isinstance(brake, str) and brake:
+        # The same outcome as a template that is not approved, with its own reason.
+        raise ApprovedTemplateError(brake, "meta_enforcement_brake")
     if template.get("status") != "APPROVED":
         raise ApprovedTemplateError(REASON_UNAVAILABLE, "not_approved")
     category = template.get("category")

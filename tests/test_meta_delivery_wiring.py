@@ -111,7 +111,10 @@ def test_everything_is_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     app = create_app(_settings(), chatwoot_client=_chatwoot_client(),
                      supabase_client=_FakeSupabase())  # type: ignore[arg-type]
     assert app.state.meta_delivery_sweeper is None
-    assert not any(key.startswith("meta_") for key in _get_ready(app))
+    ready = _get_ready(app)
+    # meta-enforcement-brakes-v1 suma su clave siempre, con «disabled» apagado (F1, punto 8).
+    assert ready.pop("meta_enforcement") == "disabled"
+    assert not any(key.startswith("meta_") for key in ready)
 
 
 def test_the_variables_are_read_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:

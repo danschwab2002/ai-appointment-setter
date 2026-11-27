@@ -33,7 +33,7 @@ import hmac
 import logging
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -243,7 +243,8 @@ def _slack_thread(body: Mapping[str, Any]) -> tuple[str, str | None] | None:
 def register_template_request_routes(app: FastAPI, *, token: str, store: TemplateRequestStore, chatwoot: Any,
                                      tenant_ref: str, ally_ref: str, inbox_id: int,
                                      template_context: rules.TemplateContext, git_sha: str | None = None,
-                                     ally_slack_channel: str | None = None) -> None:
+                                     ally_slack_channel: str | None = None,
+                                     utility_brake: Callable[[], str | None] | None = None) -> None:
     """Las rutas, detras del flag (lo mira quien llama: con el flag apagado no existen).
 
     El manejador de ``EntryRefused`` es el de las rutas de cambio de flujos, que
@@ -253,6 +254,11 @@ def register_template_request_routes(app: FastAPI, *, token: str, store: Templat
     solicitud nueva que llega sin hilo de Slack se guarda con ese canal y sin hilo,
     y el aviso de Meta sale en la raiz del canal en vez de quedar ``no_thread``. Sin
     canal declarado (o con uno que la base no aceptaria) se guarda como antes.
+
+    ``utility_brake`` (meta-enforcement-brakes-v1, D4): con los frenos ante Meta
+    prendidos, desde la segunda recategorizacion seguida de la cuenta el pedido
+    nuevo de una plantilla de UTILIDAD se frena con 409 y el motivo que devuelve
+    (``meta_recategorization_streak``). Marketing sigue. None, como siempre.
     """
     if ally_slack_channel is not None and not _ALLY_SLACK_CHANNEL.fullmatch(ally_slack_channel):
         logger.warning("template_request ally_slack_channel=invalid fallback=off")
@@ -367,6 +373,11 @@ def register_template_request_routes(app: FastAPI, *, token: str, store: Templat
             draft = rules.parse_template(body["template"])
         except rules.TemplateRequestInvalid as error:
             raise EntryRefused(error.code, error.reason) from None
+        if utility_brake is not None and draft.category == "UTILITY":
+            braked = utility_brake()
+            if braked is not None:
+                logger.info("template_request status=409 code=%s", braked)
+                raise HTTPException(status_code=409, detail=braked)
         busy()
         async with slots:
             found = await catalog(required=False)
@@ -423,6 +434,11 @@ def register_template_request_routes(app: FastAPI, *, token: str, store: Templat
                 draft = rules.draft_from_stored(stored.get("draft"))
             except rules.TemplateRequestInvalid:
                 raise failure(StoreUnavailable(), "validate", checked) from None
+            if utility_brake is not None and draft.category == "UTILITY":
+                braked = utility_brake()
+                if braked is not None:
+                    logger.info("template_request status=409 code=%s", braked)
+                    raise HTTPException(status_code=409, detail=braked)
             found = await catalog(required=True)
             assert found is not None
             result = rules.check(draft, template_context, catalog_names=_catalog_names(found))

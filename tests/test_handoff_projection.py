@@ -675,6 +675,7 @@ def test_handoff_readiness_reports_only_sanitized_projection_counts(
     assert response == {
         "status": "ready",
         "chatwoot_stalled_monitor": "disabled",
+        "meta_enforcement": "disabled",
         "pilot_boundary": "disabled",
         "automation_state": "default_off",
         "reason_code": "pilot_boundary_disabled",

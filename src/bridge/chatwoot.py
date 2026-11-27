@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import fcntl
 import hashlib
 import math
@@ -365,10 +366,45 @@ class ChatwootClient:
         # de la persona cuenta como disparador, para el monitor de trabadas y
         # para la guarda de envio, como ya cuenta un audio.
         self._accept_attachment_without_text = accept_attachment_without_text
+        # meta-enforcement-brakes-v1: el filtro que marca en el catalogo las
+        # plantillas que no salen. None (el default) deja ``get_inbox`` igual.
+        self._catalog_filter: Callable[[dict[str, object]], dict[str, object]] | None = None
+        # Y el ultimo control antes de mandar una plantilla (nombre, idioma) ->
+        # motivo o None: con motivo no sale (ChatwootProtocolError).
+        self._template_brake: Callable[[str, str], str | None] | None = None
 
     @property
     def account_id(self) -> int:
         return self._account_id
+
+    def with_catalog_filter(
+        self,
+        catalog_filter: Callable[[dict[str, object]], dict[str, object]],
+        *,
+        template_brake: Callable[[str, str], str | None] | None = None,
+    ) -> ChatwootClient:
+        """Una copia que pasa el inbox de ``get_inbox`` por ``catalog_filter``.
+
+        La usan solo los envios que inicia el bridge (frenos ante Meta,
+        meta-enforcement-brakes-v1): el resto sigue con el cliente original.
+        ``template_brake`` es el ultimo control de los envios con plantilla que
+        no leen el catalogo (``send_first_message``, ``send_followup_message`` y
+        las plantillas del AgentBot): con motivo, no sale. Comparte todo lo demas.
+        """
+        clone = copy.copy(self)
+        clone._catalog_filter = catalog_filter
+        clone._template_brake = template_brake
+        return clone
+
+    def _check_template_brake(self, template_params: object) -> None:
+        if self._template_brake is None or not isinstance(template_params, dict):
+            return
+        name, language = template_params.get("name"), template_params.get("language")
+        if not isinstance(name, str) or not isinstance(language, str):
+            return
+        reason = self._template_brake(name, language)
+        if reason is not None:
+            raise ChatwootProtocolError(f"meta_enforcement:{reason}")
 
     async def list_stalled_conversations(
         self,
@@ -2800,6 +2836,7 @@ class ChatwootClient:
             or self._agent_bot_id is None
         ):
             raise ChatwootProtocolError("agent_bot_not_configured")
+        self._check_template_brake(template_params)
 
         reply_hash = hashlib.sha256(
             f"first:{conversation_id}:{delivery_id}".encode("utf-8")
@@ -2876,6 +2913,7 @@ class ChatwootClient:
         ):
             raise ChatwootProtocolError("invalid_conversation_id")
 
+        self._check_template_brake(template_params)
         followup_hash = hashlib.sha256(
             f"followup:{delivery_id}".encode("utf-8")
         ).hexdigest()
@@ -2964,6 +3002,8 @@ class ChatwootClient:
             raise ChatwootProtocolError("invalid_json") from exc
         if not isinstance(payload, dict) or payload.get("id") != inbox_id:
             raise ChatwootProtocolError("invalid_inbox_payload")
+        if self._catalog_filter is not None:
+            return self._catalog_filter(payload)
         return payload
 
     async def sync_inbox_templates(self, *, inbox_id: int) -> None:
@@ -3359,6 +3399,7 @@ class ChatwootClient:
             raise ChatwootProtocolError(f"invalid_{error_prefix}_command_key")
         if not isinstance(template_params, dict) or not template_params:
             raise ChatwootProtocolError(f"invalid_{error_prefix}_template_params")
+        self._check_template_brake(template_params)
 
         messages_path = (
             f"/api/v1/accounts/{self._account_id}"

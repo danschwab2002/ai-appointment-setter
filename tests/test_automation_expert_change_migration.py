@@ -211,6 +211,8 @@ def test_it_is_one_transaction_and_comes_before_the_flow_engine_routes() -> None
         "20261126700000_flow_audience_country_and_event_hour_v1.sql",
         # Las fases del lanzamiento (20261126800000).
         "20261126800000_agent_campaign_phases_v1.sql",
+        # Los frenos ante Meta (20261127100000, F1).
+        "20261127100000_meta_enforcement_brakes_v1.sql",
     ]
 
 

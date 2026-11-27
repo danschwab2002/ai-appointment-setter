@@ -8006,6 +8006,41 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         ), 0),
         2,
         'agent_campaign_phases'
+    union all
+    select
+        '20261127100000',
+        '20261127100000_meta_enforcement_brakes_v1.sql',
+        -- Los frenos ante Meta: las siete tablas, con RLS ...
+        (
+            select count(*) = 7
+            from pg_class c
+            where c.oid in (to_regclass('public.meta_template_category_seen'),
+                            to_regclass('public.meta_template_category_events'),
+                            to_regclass('public.meta_template_retirements'),
+                            to_regclass('public.meta_account_events'),
+                            to_regclass('public.meta_account_freezes'),
+                            to_regclass('public.meta_recategorization_streak_releases'),
+                            to_regclass('public.meta_enforcement_notices'))
+              and c.relrowsecurity
+        )::int
+        -- ... y las siete RPC, solo de service_role.
+        + (
+            select count(*) = 7
+            from functions
+            where oid in (to_regprocedure('public.record_meta_template_categories_v1(jsonb,text,jsonb,timestamptz)'),
+                          to_regprocedure('public.record_meta_template_category_webhook_v1(jsonb,text,jsonb)'),
+                          to_regprocedure('public.record_meta_account_event_v1(jsonb,text,jsonb)'),
+                          to_regprocedure('public.get_meta_enforcement_state_v1(jsonb,text)'),
+                          to_regprocedure('public.act_on_meta_enforcement_v1(jsonb,text,text,jsonb,text,text)'),
+                          to_regprocedure('public.claim_meta_enforcement_notices_v1(jsonb,integer)'),
+                          to_regprocedure('public.finish_meta_enforcement_notice_v1(jsonb,uuid,text,text)'))
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        2,
+        'meta_enforcement_brakes'
 )
 select
     version,

@@ -36,8 +36,10 @@ const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.end
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Despues van solo las fases del lanzamiento (20261126800000, 4.8), que no tocan la audiencia.
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261126800000_agent_campaign_phases_v1.sql'])) {
-  fail(`despues de ${MIGRATION} va solo la de las fases del lanzamiento`, names.slice(position + 1));
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261126800000_agent_campaign_phases_v1.sql',
+  // Los frenos ante Meta (20261127100000, F1).
+  '20261127100000_meta_enforcement_brakes_v1.sql'])) {
+  fail(`despues de ${MIGRATION} van solo la de las fases del lanzamiento y la de los frenos ante Meta`, names.slice(position + 1));
 }
 
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(

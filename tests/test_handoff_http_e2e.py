@@ -106,6 +106,7 @@ def test_handoff_projection_readiness_over_real_http(tmp_path: Path) -> None:
     assert response.json() == {
         "status": "ready",
         "chatwoot_stalled_monitor": "disabled",
+        "meta_enforcement": "disabled",
         "pilot_boundary": "disabled",
         "automation_state": "default_off",
         "reason_code": "pilot_boundary_disabled",
