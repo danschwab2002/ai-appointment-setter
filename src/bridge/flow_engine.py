@@ -72,12 +72,12 @@ from .flow_definition import (
     step_type,
     trigger_of,
 )
-from .flow_audience import AUDIENCE_FORMS, PERMISSION_BY_STATUS, audience_form
+from .flow_audience import AUDIENCE_FORMS, EVENT_HOUR_VARIABLE, PERMISSION_BY_STATUS, audience_form
 from .flow_policy import STEPS_BY_LEGACY_KIND
 from .flow_schedule import DEFAULT_ZONE, LAST_MINUTE, Franja, franja_of, is_open, next_open
 
 __all__ = [
-    "ENGINE_CAPABILITIES_NATIVE", "ENGINE_CAPABILITIES_NATIVE_AUDIENCE", "NATIVE_AUDIENCE_FORMS", "NATIVE_AUDIENCE_PERMISSIONS", "NATIVE_AUDIENCE_TRIGGER", "ENGINE_CAPABILITIES_NATIVE_MULTITOUCH", "ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE", "ENGINE_CAPABILITIES_NATIVE_CART_MULTITOUCH", "NATIVE_COUPON_FIRST_VARIABLES", "NATIVE_COUPON_NEXT_VARIABLES", "NATIVE_MAX_PERSONAL_COUPONS", "NATIVE_PERSONAL_COUPON_BUTTON", "NATIVE_PERSONAL_COUPON_TRIGGERS", "NATIVE_MULTITOUCH_TRIGGERS", "NATIVE_TOUCH_STEP_PREFIX", "ENGINE_CAPABILITIES_NATIVE_SILENCE", "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_PARAMETERS", "NATIVE_CAPABILITIES_BY_TRIGGER", "ENGINE_CAPABILITIES_NATIVE_PAYMENT_SLIP", "NATIVE_PAYMENT_SLIP_DUE_ANCHORS", "NATIVE_PAYMENT_SLIP_TRIGGER", "NATIVE_PAYMENT_SLIP_VARIABLES", "NATIVE_SILENCE_TRIGGER", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
+    "ENGINE_CAPABILITIES_NATIVE", "ENGINE_CAPABILITIES_NATIVE_AUDIENCE", "NATIVE_AUDIENCE_FORMS", "NATIVE_AUDIENCE_VARIABLES", "NATIVE_AUDIENCE_PERMISSIONS", "NATIVE_AUDIENCE_TRIGGER", "ENGINE_CAPABILITIES_NATIVE_MULTITOUCH", "ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE", "ENGINE_CAPABILITIES_NATIVE_CART_MULTITOUCH", "NATIVE_COUPON_FIRST_VARIABLES", "NATIVE_COUPON_NEXT_VARIABLES", "NATIVE_MAX_PERSONAL_COUPONS", "NATIVE_PERSONAL_COUPON_BUTTON", "NATIVE_PERSONAL_COUPON_TRIGGERS", "NATIVE_MULTITOUCH_TRIGGERS", "NATIVE_TOUCH_STEP_PREFIX", "ENGINE_CAPABILITIES_NATIVE_SILENCE", "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_PARAMETERS", "NATIVE_CAPABILITIES_BY_TRIGGER", "ENGINE_CAPABILITIES_NATIVE_PAYMENT_SLIP", "NATIVE_PAYMENT_SLIP_DUE_ANCHORS", "NATIVE_PAYMENT_SLIP_TRIGGER", "NATIVE_PAYMENT_SLIP_VARIABLES", "NATIVE_SILENCE_TRIGGER", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
     "BolsaLedger", "ControlLine", "Eligible", "EngineCapabilities", "EngineFlow", "Firing", "FlowRef",
     "GateDecision", "GateFacts", "PersonView", "Plan", "PlanInvalid", "PlanNotSupported", "PlannedStep",
     "RunView", "StartDecision", "evaluate_gate", "first_eligible", "legacy_motivo", "native_audience_form", "native_not_supported", "native_payment_failure_branches", "native_payment_failure_paths", "native_trigger_key", "native_variables_fit", "is_native_personal_coupon_button", "not_supported", "plan_start",
@@ -452,9 +452,13 @@ NATIVE_AUDIENCE_TRIGGER = "audiencia"
 # ``para.es``: prospecta con formulario, clienta con compra). Aca son alias para quien ya los importaba.
 NATIVE_AUDIENCE_FORMS = AUDIENCE_FORMS
 NATIVE_AUDIENCE_PERMISSIONS = frozenset(PERMISSION_BY_STATUS.values())
+# 4.4 (flow-audience-trigger-v1, D-44.1): la audiencia suma hora_evento, la hora del ``evento`` del flujo en la
+# zona de cada persona (la llena el bridge, worker; la base la deja pasar desde 20261126700000).
+NATIVE_AUDIENCE_VARIABLES = ("nombre", "producto", EVENT_HOUR_VARIABLE)
 ENGINE_CAPABILITIES_NATIVE_AUDIENCE = dataclasses.replace(
     ENGINE_CAPABILITIES_NATIVE_MULTITOUCH,
     triggers=frozenset({NATIVE_AUDIENCE_TRIGGER}),
+    variables=frozenset(NATIVE_AUDIENCE_VARIABLES),
 )
 
 
@@ -769,7 +773,7 @@ def _native_personal_coupon_not_supported(definition: Mapping[str, Any], key: st
             add(f"{NOT_SUPPORTED}:cupon_personal")
         elif key == "carrito" and button is not None and not personal:
             add(f"{NOT_SUPPORTED}:boton_sin_cupon_personal")
-        allowed = NATIVE_PURCHASE_VARIABLES
+        allowed = NATIVE_AUDIENCE_VARIABLES if key == NATIVE_AUDIENCE_TRIGGER else NATIVE_PURCHASE_VARIABLES
         if personal and in_path and key in NATIVE_PERSONAL_COUPON_TRIGGERS:
             allowed = NATIVE_COUPON_FIRST_VARIABLES if sends == 0 else NATIVE_COUPON_NEXT_VARIABLES
         if not native_variables_fit(step.get("variables"), allowed):

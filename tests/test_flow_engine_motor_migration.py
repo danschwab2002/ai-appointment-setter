@@ -220,6 +220,8 @@ def test_it_is_one_transaction_and_comes_before_the_bridge_reads() -> None:
         "20261126500000_agent_campaign_judge_runs_v1.sql",
         # El conocimiento vivo del AE (20261126600000, pieza 5.5).
         "20261126600000_agent_live_knowledge_v1.sql",
+        # El pais y la hora del evento de la audiencia (20261126700000, piezas 4.4 y 4.5).
+        "20261126700000_flow_audience_country_and_event_hour_v1.sql",
     ]
     later = (MIGRATIONS / names[position + 1]).read_text(encoding="utf-8")
     assert "create or replace" not in later.lower()

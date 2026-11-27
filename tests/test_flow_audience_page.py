@@ -52,6 +52,8 @@ class AudienceDb(PostgrestEmulator):
             "omitted_by_reason": {"baja": 4, "sin_permiso": 5}, "released_count": 0, "started_count": 0,
             "materialized_at": "2026-12-01T15:00:00Z", "brake_reason": None}
         self.audience_calls: list[tuple[str, dict]] = []
+        # 4.5: la lista por prefijo (20261126700000). None: una base sin la migracion (PostgREST da 404).
+        self.countries: dict[str, dict[str, int]] | None = None
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         name = request.url.path.rsplit("/", 1)[1]
@@ -64,6 +66,11 @@ class AudienceDb(PostgrestEmulator):
         if session is None:
             return self._raise("28000", "flow_approval_session_invalid", 403)
         row = self.occurrence
+        if name == "approver_read_flow_audience_countries_v1":
+            if self.countries is None:
+                return httpx.Response(404, json={"code": "PGRST202", "message": "Could not find the function"})
+            return httpx.Response(200, json={"contract": "flow-audience-countries-v1",
+                                             "occurrences": self.countries})
         if name == "approver_read_flow_audience_v1":
             return httpx.Response(200, json={
                 "flows": [{"flow_id": FLOW, "flow_key": "black_manual", "nombre": "Aviso de Black", "form": "manual",
@@ -275,3 +282,40 @@ def test_a_brake_by_a_low_limit_reads_in_plain_words_e547() -> None:
     # Las frenadas viejas por LIMITED (antes de E-547) siguen leyéndose igual.
     old = flow_audience_page._occurrence_html({**row, "brake_reason": "meta_salud:limited"}, csrf="x", time_zone=None)
     assert "Meta limitó los envíos del número" in old
+
+
+
+# ---------------------------------------------------------------------------
+# 4.5: el conteo por pais de los que van a salir.
+# ---------------------------------------------------------------------------
+
+def test_the_page_counts_who_goes_out_by_country_from_the_prefix() -> None:
+    client, db, _ = _client()
+    # La forma de la base (approver_read_flow_audience_countries_v1): prefijo de 4 digitos -> cuantas. Los
+    # prefijos son los de la ocurrencia del 25/11 de aviso_diario_prueba en Maribel (sin telefonos): 52xx, 57xx,
+    # 1713 (Houston), 1236 (Columbia Britanica) y un +1 sin region (1555).
+    db.countries = {OCCURRENCE: {"5255": 100, "5233": 28, "5730": 9, "1713": 1, "1236": 1, "1555": 2}}
+    page = _page(client)
+
+    assert "Por país: México 128, Colombia 9, sin país reconocido 2, CA 1, US 1." in page
+    assert "5255" not in page and "1713" not in page
+
+
+def test_without_the_migration_the_page_is_the_one_from_before() -> None:
+    client, db, _ = _client()
+    page = _page(client)
+
+    assert "Por país" not in page
+    assert "Van a salir: <strong>137</strong>" in page
+    assert [name for name, _ in db.audience_calls] == [
+        "approver_read_flow_audience_v1", "approver_read_flow_audience_countries_v1"]
+
+
+def test_countries_from_prefixes_uses_the_rule_of_the_filter() -> None:
+    from bridge.phones import whatsapp_phone_country
+
+    prefixes = {"5215": 3, "5491": 1, "1809": 2, "4915": 1, "12": 5, "x": 1, "5730": 0}
+    assert flow_audience_page.countries_from_prefixes(prefixes) == {"MX": 3, "AR": 1, "DO": 2, "DE": 1, None: 6}
+    # El mismo pais que el filtro de la audiencia con el telefono entero.
+    for phone in ("5215512345678", "5491123456789", "18095551234", "4915112345678"):
+        assert flow_audience_page.countries_from_prefixes({phone[:4]: 1}) == {whatsapp_phone_country(phone): 1}

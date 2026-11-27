@@ -40,8 +40,10 @@ from .flow_audience import (
     PROBLEM_MISSING,
     PROBLEM_UNKNOWN,
     Problem,
+    EVENT_HOUR_VARIABLE,
     audience_form,
     check_audience_trigger,
+    check_evento,
     check_para,
     check_ritmo,
 )
@@ -100,7 +102,10 @@ EXITS = ("compra", "contesta", "ficha_vencida")
 # personal (cart_discount.cart_discount_values). Las dos horas se escriben en la zona del pais
 # que sale del prefijo del telefono (country_for_phone y timezone_for_country,
 # cart_discount.py:69-82), con la de CDMX si el prefijo no se reconoce.
-VARIABLES = ("nombre", "producto", "medio_de_pago", "cuando", "precio", "vence", "vencimiento")
+# hora_evento (4.4, flow-audience-trigger-v1): la hora del ``evento`` declarado en un flujo de audiencia, en la
+# zona del pais del telefono de cada persona (flow_audience.event_hour_text). Solo con ``evento`` (regla 1).
+VARIABLES = ("nombre", "producto", "medio_de_pago", "cuando", "precio", "vence", "vencimiento",
+             EVENT_HOUR_VARIABLE)
 # Las que solo valen en un paso con cupon: hablan del cupon personal (regla 5).
 COUPON_VARIABLES = ("precio", "vence")
 # La que solo vale con un disparador de evento: es la hora del evento (regla 5).
@@ -182,7 +187,7 @@ MAX_TEXT_CHARS = 300
 
 _TOP_KEYS = (
     "esquema", "flujo", "producto", "nombre", "version", "estado", "dispara", "para", "entra",
-    "pasos", "termina", "horario", "topes", "prioridad", "ritmo",
+    "pasos", "termina", "horario", "topes", "prioridad", "ritmo", "evento",
 )
 # Los disparadores (E-484): un evento, un silencio, o una de las tres formas del
 # disparo por audiencia (flow_audience), que van con ``para`` y, opcional, ``ritmo``.
@@ -1468,6 +1473,7 @@ def check_definition(definition: object, *, published: bool = False,
                     reason="para.producto es el producto del flujo: la compra se mira en ese producto.")
     if "ritmo" in definition:
         _add_problems(out, check_ritmo(definition["ritmo"]))
+    _check_event(out, definition)
     if "entra" in definition:
         _check_entry(out, definition["entra"])
     if "pasos" in definition:
@@ -1490,6 +1496,28 @@ def check_definition(definition: object, *, published: bool = False,
     if size is not None and size <= DEFINITION_MAX_BYTES:
         _check_identifiers(out, definition)
     return tuple(out.findings)
+
+
+def _check_event(out: _Collector, definition: Mapping[str, Any]) -> None:
+    """4.4 (D-44.5): ``evento`` solo con un disparo por audiencia, y ``hora_evento`` solo con ``evento``.
+
+    Van en la regla 1 (``invalid_value``) y no en un codigo nuevo: sin ``evento`` no hay de donde sacar la hora,
+    y con un evento o un silencio ``evento`` no tiene a quien hablarle. Sin las dos claves no dice nada.
+    """
+    has_event = "evento" in definition
+    if has_event:
+        _add_problems(out, check_evento(definition["evento"]))
+        if audience_form(definition.get("dispara")) is None:
+            out.add(INVALID_VALUE, ("evento",),
+                    reason="evento va solo con un envío por fecha, cada cierto tiempo o manual.")
+    for step, segments in _iter_steps(definition.get("pasos"), ("pasos",)):
+        variables = step.get("variables") if step_type(step) == "plantilla" else None
+        if not isinstance(variables, list):
+            continue
+        for index, variable in enumerate(variables):
+            if variable == EVENT_HOUR_VARIABLE and not has_event:
+                out.add(INVALID_VALUE, segments + ("variables", index),
+                        reason="hora_evento es la hora del evento del flujo: sumá evento con el y zona.")
 
 
 def _add_problems(out: _Collector, problems: Iterable[Problem]) -> None:
@@ -2068,8 +2096,9 @@ _SKIP = object()
 
 _SUB_ORDER: Mapping[str, tuple[str, ...]] = {
     "dispara": TRIGGER_KEYS,
-    "para": ("es", "etiquetas", "producto", "formulario_en", "excluye"),
+    "para": ("es", "etiquetas", "producto", "formulario_en", "excluye", "paises", "excluye_paises"),
     "ritmo": ("por_hora", "por_ocurrencia"),
+    "evento": ("el", "zona"),
     "entra": ("permiso", "contesto_a"),
     "termina": ("si", "vence"),
     "horario": ("zona", "desde", "hasta"),

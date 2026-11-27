@@ -48,9 +48,11 @@ AUDIENCE_STATUSES = ("prospecta", "clienta")
 # El permiso que corresponde a cada estado (D6): una prospecta solo con el formulario
 # con permiso; una clienta solo con compra (y el ok_del_cliente del ciclo, regla 17).
 PERMISSION_BY_STATUS: Mapping[str, str] = {"prospecta": "formulario", "clienta": "compra"}
-PARA_KEYS = ("es", "etiquetas", "producto", "formulario_en", "excluye")
+PARA_KEYS = ("es", "etiquetas", "producto", "formulario_en", "excluye", "paises", "excluye_paises")
 RITMO_KEYS = ("por_hora", "por_ocurrencia")
 FECHA_KEYS = ("el", "zona")
+# 4.4 (D-44.1): el evento del que habla el envio (la clase, el vivo), con la misma forma que dispara.fecha.
+EVENTO_KEYS = FECHA_KEYS
 CADA_KEYS = ("dias", "hora", "zona", "desde", "hasta")
 
 # DEFAULT_REVISAR_DAN (D10): 200 por hora y 1.000 por ocurrencia; el cliente los baja.
@@ -68,6 +70,8 @@ FORM_WINDOW_MAX_DAYS = 365
 # Un bridge caido mas que esto no manda tarde: la ocurrencia queda como perdida.
 OCCURRENCE_GRACE = timedelta(hours=6)
 MAX_LABELS = 20
+# 4.5 (D-45.1): cuantos paises entran en para.paises o para.excluye_paises.
+MAX_COUNTRIES = 60
 
 _LABEL = re.compile(r"[a-z0-9][a-z0-9_-]{0,254}")
 _PRODUCT = re.compile(r"[a-z0-9][a-z0-9-]{0,127}")
@@ -75,6 +79,7 @@ _HOUR = re.compile(r"([01][0-9]|2[0-3]):([0-5][0-9])")
 _LOCAL_DATETIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T([01][0-9]|2[0-3]):[0-5][0-9]")
 _DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _DAYS = re.compile(r"([1-9][0-9]{0,2})d")
+_COUNTRY = re.compile(r"[A-Z]{2}")
 
 PROBLEM_UNKNOWN = "unknown"
 PROBLEM_INVALID = "invalid"
@@ -221,6 +226,51 @@ def check_para(value: object) -> list[Problem]:
     excluded = value.get("excluye")
     if isinstance(labels, list) and isinstance(excluded, list) and set(map(str, labels)) & set(map(str, excluded)):
         out.append(Problem(PROBLEM_INVALID, path + ("excluye",), "Una etiqueta no puede pedirse y excluirse."))
+    for key in ("paises", "excluye_paises"):
+        if key in value and not _countries_ok(value[key]):
+            out.append(Problem(PROBLEM_INVALID, path + (key,),
+                               f"{key} es una lista sin repetir de códigos de país ISO de dos letras (CO, MX), "
+                               f"de 1 a {MAX_COUNTRIES}."))
+    countries = value.get("paises")
+    excluded_countries = value.get("excluye_paises")
+    if isinstance(countries, list) and isinstance(excluded_countries, list) \
+            and set(map(str, countries)) & set(map(str, excluded_countries)):
+        out.append(Problem(PROBLEM_INVALID, path + ("excluye_paises",), "Un país no puede pedirse y excluirse."))
+    return out
+
+
+def _country_of(phone: str | None) -> str | None:
+    # phones (phonenumbers) se importa al usarlo: flow_definition, que importa este modulo, lo cargan scripts
+    # del operador con el python3 del sistema, sin dependencias (scripts/add_instance_offers.py).
+    from .phones import whatsapp_phone_country
+
+    return whatsapp_phone_country(phone)
+
+
+def _countries_ok(value: object) -> bool:
+    try:
+        import phonenumbers
+    except ImportError:  # el python3 del sistema de los scripts del operador: solo la forma
+        known = None
+    else:
+        known = phonenumbers.SUPPORTED_REGIONS
+    return isinstance(value, list) and 1 <= len(value) <= MAX_COUNTRIES and len(set(map(str, value))) == len(
+        value) and all(isinstance(country, str) and _COUNTRY.fullmatch(country) is not None
+                       and (known is None or country in known) for country in value)
+
+
+def check_evento(value: object) -> list[Problem]:
+    """La forma de ``evento`` (4.4): ``{el: AAAA-MM-DDTHH:MM, zona: <IANA>}``, como ``dispara.fecha``."""
+    path: tuple[str | int, ...] = ("evento",)
+    out: list[Problem] = []
+    if not isinstance(value, Mapping):
+        out.append(Problem(PROBLEM_INVALID, path, "evento es un objeto con el y zona."))
+        return out
+    _keys(out, value, path, EVENTO_KEYS, EVENTO_KEYS)
+    if "el" in value and not _local_datetime_ok(value["el"]):
+        out.append(Problem(PROBLEM_INVALID, path + ("el",), "el es una fecha y hora local, AAAA-MM-DDTHH:MM."))
+    if "zona" in value and not _zone_ok(value["zona"]):
+        out.append(Problem(PROBLEM_INVALID, path + ("zona",), "zona es una zona horaria IANA."))
     return out
 
 
@@ -265,6 +315,9 @@ class AudienceSpec:
     per_hour: int
     per_occurrence: int
     fingerprint: str = field(compare=False)
+    # 4.5 (D-45.1): vacios sin las claves, y entonces el filtro es el de antes byte a byte.
+    countries: tuple[str, ...] = ()
+    excluded_countries: tuple[str, ...] = ()
 
 
 class AudienceSpecInvalid(ValueError):
@@ -330,6 +383,7 @@ def audience_spec(definition: Mapping[str, Any]) -> AudienceSpec:
         product=para.get("producto", definition.get("producto")),
         form_window_days=window, per_hour=per_hour, per_occurrence=per_occurrence,
         fingerprint=audience_fingerprint(definition),
+        countries=tuple(para.get("paises", ())), excluded_countries=tuple(para.get("excluye_paises", ())),
     )
 
 
@@ -414,6 +468,10 @@ OMIT_EXCLUDED = "excluida"
 OMIT_STATUS = "estado"
 OMIT_DUPLICATE = "repetida"
 OMIT_OVER_CAP = "tope_por_ocurrencia"
+# 4.5 (D-45.3): el pais del telefono no es uno de para.paises, o no se reconoce (con cualquier filtro por
+# pais, un telefono sin pais reconocido queda afuera); o es uno de para.excluye_paises.
+OMIT_COUNTRY = "pais"
+OMIT_EXCLUDED_COUNTRY = "pais_excluido"
 
 
 def select_members(spec: AudienceSpec, candidates: Iterable[Candidate], *, now: datetime
@@ -447,6 +505,14 @@ def select_members(spec: AudienceSpec, candidates: Iterable[Candidate], *, now: 
         if spec.excluded and set(spec.excluded) & candidate.labels:
             omit(OMIT_EXCLUDED)
             continue
+        if spec.countries or spec.excluded_countries:
+            country = _country_of(candidate.phone)
+            if country is None or (spec.countries and country not in spec.countries):
+                omit(OMIT_COUNTRY)
+                continue
+            if country in spec.excluded_countries:
+                omit(OMIT_EXCLUDED_COUNTRY)
+                continue
         is_customer = bool(candidate.customer_products) if spec.product is None else (
             spec.product in candidate.customer_products)
         if spec.status == "clienta":
@@ -466,3 +532,82 @@ def select_members(spec: AudienceSpec, candidates: Iterable[Candidate], *, now: 
             continue
         chosen.append(candidate)
     return tuple(chosen), omitted
+
+
+# ---------------------------------------------------------------------------
+# 4.4: la hora del evento en la zona de cada persona.
+# ---------------------------------------------------------------------------
+
+# La variable de plantilla (D-44.1): la hora del ``evento`` declarado en el flujo, en la zona del pais del
+# telefono de quien la recibe.
+EVENT_HOUR_VARIABLE = "hora_evento"
+
+# D-44.2: los paises con una sola hora para casi toda su gente, con su zona y como se nombran. Medido en
+# Maribel (recordatorio de la clase del 22/11, maribel_forever_clase_recordatorio_01, 1.704 envios): CO
+# 1.195, MX 174, +1 111, PE 78, EC 58, CL 23, AR 16, CR 16, ES 15, VE 3, PY 2, UY 1 y 12 sueltos de otros
+# indicativos. Mexico tiene varias zonas, pero casi todos sus numeros son de la del centro (la que ya usan
+# ``cart_discount`` y el horario de las instancias). Estados Unidos, Canada y Brasil tienen varias zonas
+# con horas distintas: no estan, y caen en la hora del evento con el nombre de su zona (D-44.3).
+COUNTRY_ZONES: Mapping[str, tuple[str, str]] = {
+    "MX": ("America/Mexico_City", "México"),
+    "CO": ("America/Bogota", "Colombia"),
+    "AR": ("America/Argentina/Buenos_Aires", "Argentina"),
+    "PE": ("America/Lima", "Perú"),
+    "EC": ("America/Guayaquil", "Ecuador"),
+    "CL": ("America/Santiago", "Chile"),
+    "VE": ("America/Caracas", "Venezuela"),
+    "BO": ("America/La_Paz", "Bolivia"),
+    "PY": ("America/Asuncion", "Paraguay"),
+    "UY": ("America/Montevideo", "Uruguay"),
+    "CR": ("America/Costa_Rica", "Costa Rica"),
+    "GT": ("America/Guatemala", "Guatemala"),
+    "SV": ("America/El_Salvador", "El Salvador"),
+    "HN": ("America/Tegucigalpa", "Honduras"),
+    "NI": ("America/Managua", "Nicaragua"),
+    "PA": ("America/Panama", "Panamá"),
+    "DO": ("America/Santo_Domingo", "República Dominicana"),
+    "PR": ("America/Puerto_Rico", "Puerto Rico"),
+    "ES": ("Europe/Madrid", "España"),
+}
+
+
+@dataclass(frozen=True)
+class AudienceEvent:
+    """El ``evento`` de un flujo: su momento (con zona) y la zona en que se declaro."""
+
+    at: datetime
+    zone: str
+
+
+def audience_event(definition: Mapping[str, Any]) -> AudienceEvent | None:
+    """El ``evento`` declarado en una definicion, o None si no lo trae o no tiene la forma."""
+    value = definition.get("evento") if isinstance(definition, Mapping) else None
+    if value is None or check_evento(value):
+        return None
+    assert isinstance(value, Mapping)
+    zone = str(value["zona"])
+    return AudienceEvent(at=datetime.fromisoformat(value["el"]).replace(tzinfo=ZoneInfo(zone)), zone=zone)
+
+
+def _zone_name(zone: str) -> str:
+    for country_zone, name in COUNTRY_ZONES.values():
+        if country_zone == zone:
+            return name
+    return zone.rsplit("/", 1)[-1].replace("_", " ")
+
+
+def event_hour_text(event: AudienceEvent, *, phone: str | None) -> str:
+    """«20:00 (hora de México)»: la hora del evento en la zona del pais de ``phone``.
+
+    D-44.3: con un pais fuera de ``COUNTRY_ZONES`` (varias zonas, o no reconocido) es la hora del evento en su
+    zona, con el nombre de esa zona. D-44.4: si en la zona de la persona el evento cae otro dia que en la zona
+    del evento, suma la fecha: «01:00 del 02/12 (hora de España)».
+    """
+    country = _country_of(phone)
+    zone_and_name = COUNTRY_ZONES.get(country) if country is not None else None
+    zone, name = zone_and_name if zone_and_name is not None else (event.zone, _zone_name(event.zone))
+    local = event.at.astimezone(ZoneInfo(zone))
+    text = f"{local.hour:02d}:{local.minute:02d}"
+    if local.date() != event.at.date():
+        text += f" del {local.day:02d}/{local.month:02d}"
+    return f"{text} (hora de {name})"

@@ -115,6 +115,69 @@ def whatsapp_phone_region(phone: str | None) -> str:
     return "other"
 
 
+# --- the country of a phone (flow-audience-trigger-v1, 4.5 y 4.4) ---------------------------
+#
+# D-45.2: the country is a function of the first four digits of the canonical
+# phone, never of the rest: the calling code (ITU codes are prefix-free) and,
+# inside +1 (US, Canada and the Caribbean share it), the area code. That is what
+# lets the audience page count by country from a four-digit prefix (the base
+# never hands the page a phone) with the same answer the audience filter got
+# from the whole number. The metadata is libphonenumber's (``phonenumbers``):
+# a +1 area code that belongs to no region (555, 999) is ``None``. A code shared
+# by several regions outside +1 (+7, +44) gives its main region (RU, GB).
+
+COUNTRY_PREFIX_DIGITS = 4
+# A +1 area code is resolved with a fixed subscriber part: only the area code
+# picks the region (``leading_digits`` of each Caribbean region, the general
+# pattern of the US and Canada), and 234-5678 is a valid exchange everywhere.
+_NANP_SUBSCRIBER = "2345678"
+
+
+def phone_prefix_country(digits: str | None) -> str | None:
+    """The ISO 3166-1 alpha-2 country of a phone, from its first four digits, or ``None``.
+
+    ``digits`` is a canonical phone or just its first ``COUNTRY_PREFIX_DIGITS``
+    digits. ``None`` when it is shorter than that, carries a non-digit, or its
+    calling code (or +1 area code) is not a country.
+    """
+    if not isinstance(digits, str) or len(digits) < COUNTRY_PREFIX_DIGITS or not digits.isdigit():
+        return None
+    prefix = digits[:COUNTRY_PREFIX_DIGITS]
+    if prefix[0] == "0":
+        return None
+    for length in (1, 2, 3):
+        code = int(prefix[:length])
+        regions = phonenumbers.COUNTRY_CODE_TO_REGION_CODE.get(code)
+        if regions:
+            break
+    else:
+        return None
+    if code == 1:
+        try:
+            number = phonenumbers.parse("+1" + prefix[1:4] + _NANP_SUBSCRIBER)
+        except phonenumbers.NumberParseException:
+            return None
+        region = phonenumbers.region_code_for_number(number)
+    else:
+        region = phonenumbers.region_code_for_country_code(code)
+    if not isinstance(region, str) or len(region) != 2 or not region.isalpha() or region == "ZZ":
+        return None
+    return region
+
+
+def whatsapp_phone_country(phone: str | None) -> str | None:
+    """The country of a WhatsApp phone (any of its forms), or ``None`` if it is not recognized.
+
+    The phone is read in canonical form (8 to 15 digits) and its country comes
+    from ``phone_prefix_country``: Mexico with or without the 1, Argentina with
+    or without the 9, the same country.
+    """
+    canonical = canonical_whatsapp_phone(phone)
+    if canonical is None or not 8 <= len(canonical) <= 15:
+        return None
+    return phone_prefix_country(canonical)
+
+
 # --- bulk lists ------------------------------------------------------------------------------
 #
 # A bulk send imports a list (a GHL export, a spreadsheet) where the phones come

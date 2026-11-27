@@ -45,7 +45,9 @@ from .flow_approval import (
     _shell,
     _when,
 )
+from .flow_audience import COUNTRY_ZONES
 from .flow_audience_sweeper import AudienceSweeper
+from .phones import COUNTRY_PREFIX_DIGITS, phone_prefix_country
 
 __all__ = ["PATH", "render_audience", "routes"]
 
@@ -64,6 +66,9 @@ _STATE = {
 _FORM = {"fecha": "En una fecha", "cada": "Cada cierto tiempo", "manual": "Cuando lo lanza una persona"}
 _OMIT = {"baja": "pidieron no recibir más", "sin_permiso": "sin permiso vigente", "fuera_de_cohorte":
          "fuera del grupo de prueba", "repetida": "ya lo recibieron hace poco"}
+# 4.5: el pais de los que van a salir, por el prefijo de su telefono (approver_read_flow_audience_countries_v1,
+# 20261126700000). Sin pais reconocido van aparte.
+_COUNTRY_UNKNOWN = "sin país reconocido"
 _BRAKE = {"meta_salud:red": "la salud del número está en rojo", "meta_salud:yellow":
           "la salud del número está en amarillo", "meta_salud:sin_lectura": "no se pudo leer la salud del número",
           "meta_salud:vieja": "la lectura de la salud del número tiene más de 26 horas",
@@ -123,6 +128,29 @@ def _omitted_text(by_reason: object) -> str:
     return f"<p>Quedaron afuera: {_esc(', '.join(parts))}.</p>" if parts else ""
 
 
+def countries_from_prefixes(prefixes: object) -> dict[str | None, int]:
+    """``{prefijo de 4 digitos: cuantas}`` a ``{pais ISO o None: cuantas}``, con la regla del filtro (D-45.2)."""
+    out: dict[str | None, int] = {}
+    if not isinstance(prefixes, Mapping):
+        return out
+    for prefix, n in prefixes.items():
+        count = _count(n)
+        if not count or not isinstance(prefix, str):
+            continue
+        country = phone_prefix_country(prefix) if len(prefix) == COUNTRY_PREFIX_DIGITS else None
+        out[country] = out.get(country, 0) + count
+    return out
+
+
+def _countries_html(prefixes: object) -> str:
+    by_country = countries_from_prefixes(prefixes)
+    if not by_country:
+        return ""
+    parts = [f"{COUNTRY_ZONES[country][1] if country in COUNTRY_ZONES else (country or _COUNTRY_UNKNOWN)} {n}"
+             for country, n in sorted(by_country.items(), key=lambda item: (-item[1], item[0] or "~"))]
+    return f"<p>Por país: {_esc(', '.join(parts))}.</p>"
+
+
 def _not_started_text(reason: str) -> str:
     if reason in _NOT_STARTED:
         return _NOT_STARTED[reason]
@@ -170,7 +198,8 @@ def _started_html(row: Mapping[str, Any]) -> str:
     return "".join(lines)
 
 
-def _occurrence_html(row: Mapping[str, Any], *, csrf: str, time_zone: str | None) -> str:
+def _occurrence_html(row: Mapping[str, Any], *, csrf: str, time_zone: str | None,
+                     countries: Mapping[str, Any] | None = None) -> str:
     occurrence_id = str(row.get("occurrence_id") or "")
     if not _canonical_uuid(occurrence_id):
         return ""
@@ -182,6 +211,7 @@ def _occurrence_html(row: Mapping[str, Any], *, csrf: str, time_zone: str | None
         f"<p><strong>{_esc(row.get('flow_key'))}</strong> · {_esc(_FORM.get(str(row.get('form')), ''))} · "
         f"{_chip(label, chip)}</p>",
         f'<p class="count">Van a salir: <strong>{members}</strong> personas, a {per_hour} por hora como máximo.</p>',
+        _countries_html((countries or {}).get(occurrence_id)),
         _omitted_text(row.get("omitted_by_reason")),
     ]
     if state in ("enviando", "terminada") or int(row.get("released_count") or 0) > 0:
@@ -204,15 +234,19 @@ def _occurrence_html(row: Mapping[str, Any], *, csrf: str, time_zone: str | None
     return f'<section class="panel"><div class="panel-body">{"".join(lines)}</div></section>'
 
 
-def render_audience(read: Mapping[str, Any], *, csrf: str, done: Mapping[str, str], time_zone: str | None) -> str:
-    """La pagina: los flujos manuales con su boton y las ocurrencias. Sin telefonos."""
+def render_audience(read: Mapping[str, Any], *, csrf: str, done: Mapping[str, str], time_zone: str | None,
+                    countries: Mapping[str, Any] | None = None) -> str:
+    """La pagina: los flujos manuales con su boton y las ocurrencias. Sin telefonos.
+
+    ``countries`` (4.5): ``{ocurrencia: {prefijo: cuantas}}`` de la base; sin la lectura, la pagina de antes.
+    """
     flows = [f for f in read.get("flows") or [] if isinstance(f, Mapping)]
     manual = [f for f in flows if f.get("form") == "manual" and _canonical_uuid(str(f.get("flow_id") or ""))]
     flow_html = "".join(
         f'<li><strong>{_esc(f.get("nombre") or f.get("flow_key"))}</strong> ({_esc(f.get("flow_key"))})'
         f'<form method="post" action="{PATH}/armar">{_hidden("csrf_token", csrf)}{_hidden("flujo", f["flow_id"])}'
         '<button type="submit">Armar la lista</button></form></li>' for f in manual)
-    occurrences = "".join(_occurrence_html(row, csrf=csrf, time_zone=time_zone)
+    occurrences = "".join(_occurrence_html(row, csrf=csrf, time_zone=time_zone, countries=countries)
                           for row in read.get("occurrences") or [] if isinstance(row, Mapping))
     return (f'<header class="page-header"><p class="meta"><a href="{PREFIX}/">Aprobación de flujos</a></p>'
             f"<h1>{_esc(TITLE)}</h1></header>{_done(done)}"
@@ -234,6 +268,18 @@ def routes(*, sweeper: AudienceSweeper) -> Callable[[FastAPI, PageTools], None]:
             return await store._rpc("approver_read_flow_audience_v1",  # noqa: SLF001 - la misma tienda de la pagina
                                     {"p_instance": instance, "p_session_hash": session_hash})
 
+        async def read_countries(session_hash: str) -> Mapping[str, Any] | None:
+            # 4.5: el conteo por pais es un agregado; si la base no tiene la lectura (sin 20261126700000) o no
+            # contesta, la pagina sale igual, sin esa linea.
+            try:
+                found = await store._rpc("approver_read_flow_audience_countries_v1",  # noqa: SLF001
+                                         {"p_instance": instance, "p_session_hash": session_hash})
+            except Exception as error:  # noqa: BLE001 - un agregado que no se lee no tira la pagina
+                logger.info("flow_approval route=audience countries=unavailable error=%s", type(error).__name__)
+                return None
+            occurrences = found.get("occurrences") if isinstance(found, Mapping) else None
+            return occurrences if isinstance(occurrences, Mapping) else None
+
         @app.get(PATH)
         async def audience_page(request: Request) -> Response:
             who = await tools.who(request)
@@ -247,9 +293,10 @@ def routes(*, sweeper: AudienceSweeper) -> Callable[[FastAPI, PageTools], None]:
             except (StoreRejected, StoreUnavailable):
                 logger.info("flow_approval route=audience status=503")
                 return _page(TITLE, "El almacén no contestó. Probá en un rato.", 503)
+            countries = await read_countries(_sha(secret))
             csrf = tools.config.csrf_token(secret)
             body = render_audience(found, csrf=csrf, done=_done_from_query(request, tools.config, secret),
-                                   time_zone=tools.time_zone)
+                                   time_zone=tools.time_zone, countries=countries)
             return HTMLResponse(_shell(TITLE, body, user=user, csrf=csrf, show_user_id=False))
 
         @app.post(PATH + "/armar")

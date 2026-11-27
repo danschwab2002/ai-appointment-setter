@@ -1,0 +1,69 @@
+{
+ "_capture": {
+  "origen": "maribel_db (stack maribel, VPS contabo), flow_definitions del flujo aviso_fecha_prueba v1, leida en una sesion de solo lectura (default_transaction_read_only=on)",
+  "fecha": "2026-11-26",
+  "audience_fingerprint": "18ebe04932fe055a787589b4608ced99f57bc9e10fa35d958cefa38d6084a949",
+  "fingerprint_de": "flow_audience_occurrences.audience_fingerprint de fecha:2026-11-17T16:00Z (aviso_fecha_prueba) y de cada:2026-11-25 (aviso_diario_prueba), las dos con el mismo para, permiso y ritmo",
+  "sin_datos_personales": "la definicion no lleva telefonos, mails ni nombres de personas"
+ },
+ "definition": {
+  "para": {
+   "es": "prospecta",
+   "formulario_en": "30d"
+  },
+  "entra": {
+   "permiso": "formulario",
+   "contesto_a": []
+  },
+  "flujo": "aviso_fecha_prueba",
+  "pasos": [
+   {
+    "idioma": "es_MX",
+    "plantilla": "maribel_retomar_proceso_02",
+    "variables": [
+     "nombre",
+     "producto"
+    ]
+   }
+  ],
+  "ritmo": {
+   "por_hora": 200,
+   "por_ocurrencia": 1000
+  },
+  "topes": {
+   "bolsa": "maribel-aviso_fecha_prueba",
+   "total": "sin_tope",
+   "por_dia": "sin_tope",
+   "repeticion": {
+    "una_por": "persona",
+    "otra_despues_de": "7d"
+   }
+  },
+  "estado": "publicada",
+  "nombre": "Aviso con fecha (prueba)",
+  "dispara": {
+   "fecha": {
+    "el": "2026-11-17T10:00",
+    "zona": "America/Mexico_City"
+   }
+  },
+  "esquema": "setter-flujo/v1",
+  "horario": {
+   "zona": "America/Mexico_City",
+   "desde": "09:00",
+   "hasta": "21:00"
+  },
+  "termina": {
+   "si": [
+    "compra"
+   ],
+   "vence": "1d"
+  },
+  "version": 1,
+  "producto": "maribel",
+  "prioridad": {
+   "le_gana_a": [],
+   "no_arranca_mientras": []
+  }
+ }
+}

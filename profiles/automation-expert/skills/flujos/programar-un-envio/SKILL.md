@@ -22,8 +22,13 @@ Las reglas de la charla son las de `crear-un-flujo` (lenguaje de negocio, rondas
 - **Prospectas:** quien dejó el formulario y aceptó que le escriban por WhatsApp, en los últimos días que digas (proponé 30). Quien ya compró no entra.
 - **Clientas:** quien compró (el producto que digas, o cualquiera de la instancia). A una clienta solo se le escribe con una plantilla de utilidad y con el OK del cliente, como con la compra.
 - **Con etiquetas, si hace falta:** «solo las que tienen la etiqueta de Black», «menos las VIP». Son las etiquetas de las conversaciones (la guía `chatwoot-whatsapp`). Si no nombra ninguna, no la propongas.
+- **Por país, si lo pide:** «solo Colombia y México» (`para.paises: [CO, MX]`) o «menos Estados Unidos» (`para.excluye_paises: [US]`), con el código de dos letras. El país sale del número de WhatsApp de cada persona; un número de un país que no se reconoce queda afuera cuando hay filtro por país. Estados Unidos y Canadá comparten el +1: se distinguen por el código de área. Si no habla de países, no lo propongas. La página muestra cuántas salen de cada país.
 - Quien pidió no recibir más mensajes **nunca** entra, aunque esté en la lista. Contalo como dado, no lo preguntes.
 - La misma persona no recibe otra vez el mismo envío antes de **7 días** (proponelo; si quiere otro número, que lo diga).
+
+## La hora de una clase o un vivo
+
+Si el mensaje recuerda algo que pasa a una hora (una clase, un vivo), declarás el momento en `evento: {el: AAAA-MM-DDTHH:MM, zona: <zona>}` (la zona en que lo dijo el cliente) y la plantilla usa el dato `hora_evento`: a cada persona le llega la hora en la zona de su país, por ejemplo «20:00 (hora de México)», «21:00 (hora de Colombia)» o «03:00 del 02/12 (hora de España)» si allá ya es otro día. En Estados Unidos, Canadá, Brasil o un país sin zona conocida va la hora del evento con el nombre de su zona. Si el evento ya pasó cuando le toca a alguien, a esa persona no le sale. `hora_evento` va solo con `evento`, y `evento` solo en un envío a un grupo.
 
 ## El ritmo y los frenos (contalo siempre en el resumen)
 

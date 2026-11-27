@@ -1163,6 +1163,7 @@ def _new_audience_lines(summary: Mapping[str, Any]) -> str | None:
     excluded = audience.get("excluye")
     if isinstance(excluded, list) and excluded:
         who += f", sin {_esc(', '.join(str(label) for label in excluded))}"
+    who += _countries_text(audience)
     trigger = summary.get("dispara") if isinstance(summary.get("dispara"), Mapping) else {}
     if form == "manual":
         when = ("La lista se arma en «Envíos a una audiencia» (Armar la lista), y ahí se ve cuántas personas salen antes de "
@@ -1175,11 +1176,27 @@ def _new_audience_lines(summary: Mapping[str, Any]) -> str | None:
         said = ", ".join(_WEEKDAY_TEXT.get(str(day), str(day)) for day in days)
         when = f"La lista se arma sola los {_esc(said)} a las {_esc(trigger.get('hora'))} ({_esc(trigger.get('zona'))})."
     lines += f"<p>A quién apunta: {who}. Cuántas personas son lo cuenta la lista de cada envío. {when}</p>"
+    event = summary.get("evento")
+    if isinstance(event, Mapping):
+        # 4.4: la hora que dice el mensaje (hora_evento) sale de aca, en la zona del pais de cada persona.
+        lines += (f"<p>El mensaje habla del evento del {_esc(str(event.get('el', '')).replace('T', ' a las '))} "
+                  f"({_esc(event.get('zona'))}): a cada persona le llega esa hora en la zona de su país.</p>")
     return lines + ("<p class=\"meta\">Sin estimación con eventos: un disparo por audiencia no tiene evento. El "
                     "número sale de la lista congelada de cada envío.</p>")
 
 
+def _countries_text(audience: Mapping[str, Any]) -> str:
+    """4.5: «, de CO y MX» o «, sin US», por el pais del numero de cada persona. Vacio sin las claves."""
+    text = ""
+    for key, prefix in (("paises", ", de "), ("excluye_paises", ", sin ")):
+        countries = audience.get(key)
+        if isinstance(countries, list) and countries:
+            text += f"{prefix}{_esc(', '.join(str(country) for country in countries))} (por el número)"
+    return text
+
+
 _REACH_CAVEATS = {
+    "pais_del_telefono": "el país lo mira la lista por el número de cada persona al armarse",
     "etiquetas_de_chatwoot": "las etiquetas las mira la lista en Chatwoot al armarse",
     "repeticion": "quien ya recibió un envío de este flujo puede quedar afuera por la repetición",
     "tope_por_ocurrencia": "cada envío corta en el tope por envío",
@@ -1202,6 +1219,7 @@ def _audience_reach_lines(summary: Mapping[str, Any]) -> str | None:
         who = (f"prospectas de <strong>{product}</strong> con el formulario con permiso de WhatsApp en los "
                f"últimos {_esc(audience.get('formulario_en_dias'))} días")
     people = f"<strong>{_esc(matching)}</strong> {'persona' if matching == 1 else 'personas'}"
+    who += _countries_text(audience)
     head += (f"<p>Disparo por audiencia (<strong>{_esc(_AUDIENCE_TRIGGER_TEXT[form])}</strong>). Hoy cumplen la "
              f"audiencia {people}: {who}, sin las que se dieron de baja.</p>")
     if summary.get("tipo") == "apagar":

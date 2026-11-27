@@ -126,6 +126,17 @@ class SupabaseAudienceStore:
                                       state=str(row.get("state") or "")))
         return flows
 
+    async def read_flow_definition(self, flow_id: str, version: int) -> Mapping[str, Any] | None:
+        """4.4: la definicion de esa version de un flujo de audiencia que corre, o None.
+
+        La lee de ``read_flow_audience_flows_v1`` (las versiones activas): una version que ya no es la activa,
+        o un flujo que se apago, no tiene evento que decir y su paso con ``hora_evento`` cierra sin salir.
+        """
+        for flow in await self.read_audience_flows():
+            if flow.flow_id == flow_id and flow.version == version:
+                return flow.definition
+        return None
+
     async def read_candidates(self, flow: AudienceFlow, *, limit: int = CANDIDATES_LIMIT) -> CandidateRead:
         body = await self._object("read_flow_audience_candidates_v1", {
             "p_instance": self._instance, "p_flow_id": flow.flow_id, "p_version": flow.version, "p_limit": limit})
