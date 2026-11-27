@@ -1,0 +1,15 @@
+{
+  "_origen": "Generado a mano el 2026-11-27 (F4, D-F4.4): la salida de jsonb_array_elements_text de PGlite 0.5.4 (Postgres 17) sobre las variables de un paso con un texto fijo. No es una captura de produccion: ningun flujo publicado tiene todavia un texto fijo. La comprueba validate_flow_engine_literal_variables.mjs contra la base y la decodifica supabase.get_flow_engine_step_context.",
+  "definition_variables": [
+    "nombre",
+    {
+      "texto": "Seguís a tiempo: «el acceso» es tuyo hoy, con \"todo\" incluido y barra \\ al final 🙂"
+    },
+    "producto"
+  ],
+  "template_variables": [
+    "nombre",
+    "{\"texto\": \"Seguís a tiempo: «el acceso» es tuyo hoy, con \\\"todo\\\" incluido y barra \\\\ al final 🙂\"}",
+    "producto"
+  ]
+}

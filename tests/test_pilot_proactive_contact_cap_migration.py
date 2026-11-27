@@ -234,6 +234,7 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261126800000",
         # Los frenos ante Meta (20261127100000, F1).
         "20261127100000",
+        "20261127300000",
     ]
 
     sql = _sql()

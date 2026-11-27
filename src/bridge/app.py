@@ -621,6 +621,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # especifico (que flujo, que plantillas) es de la base; por instancia, solo
     # prenderlo.
     "flow_engine_native_payment_slip_enabled",
+    # F4 (20261127300000): el texto fijo de un marcador ({"texto": …} en las
+    # variables de un paso nativo). Lo especifico (que texto) es de la
+    # definicion que aprueba Dan; por instancia, solo prenderlo.
+    "flow_literal_variables_enabled",
     # E-316 (segment-labels-v1): la etiqueta de un segmento antes del primer
     # turno del agente, la que pone el motor nativo antes del primer envio y la
     # que se hereda de otra conversacion del contacto. Lo especifico (que
@@ -1461,6 +1465,12 @@ class Settings:
     # flujo nativo de la ficha es motor_nativo:disparador y lo de hoy no cambia:
     # ningun flujo publicado lo lleva.
     flow_engine_native_payment_slip_enabled: bool = False
+    # F4 (20261127300000, flow-engine-v2 §36): FLOW_LITERAL_VARIABLES_ENABLED. Con
+    # el flag, el validador acepta {"texto": …} en las variables de un paso
+    # plantilla y el envio nativo lo pone en su marcador. Apagado (el default),
+    # el validador lo rechaza (invalid_value) y un paso que lo traiga cierra sin
+    # salir (flow_engine_step_unsupported), como antes.
+    flow_literal_variables_enabled: bool = False
     # E-316 (segment-labels-v1, PR-C de los segmentos): el paso etiquetar de un
     # flujo nativo acepta la etiqueta de cada [[agente.segmentos]] con macro, con
     # cualquier disparador, y el motor la pone antes del primer envio. Apagado, el
@@ -3221,6 +3231,10 @@ class Settings:
                 os.getenv("FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED", "false")
                 .strip()
                 .lower()
+                == "true"
+            ),
+            flow_literal_variables_enabled=(
+                os.getenv("FLOW_LITERAL_VARIABLES_ENABLED", "false").strip().lower()
                 == "true"
             ),
             flow_engine_segment_labels_enabled=(
@@ -7576,6 +7590,8 @@ def create_app(
         durable_dispatcher = DurableDispatcher(
             flow_engine_enabled=settings.flow_engine_enabled,
             native_multitouch_enabled=settings.flow_engine_native_multitouch_enabled,
+            # F4: el texto fijo de un marcador en un paso nativo.
+            native_literal_variables_enabled=settings.flow_literal_variables_enabled,
             native_person_cap=native_person_cap(settings),
             # E-528 (C4): C1 y C3 de la ficha nativa, con las filas de [[ficha.medios]] del manifiesto.
             native_payment_slip=(
@@ -11712,6 +11728,8 @@ def create_app(
             template_images=change_manifest.template_image_names,
             # E-353: lo que este bridge corre de verdad, para que el AE no publique sin efecto.
             runtime=instance_runtime,
+            # F4: el texto fijo en las variables de un paso.
+            literal_variables=settings.flow_literal_variables_enabled,
         )
         if settings.meta_templates_enabled:
             # F-146 (template-request-v1): el agente redacta y valida una
@@ -12042,6 +12060,8 @@ def create_app(
             segment_labels=lambda: segment_labels_setup.validator_labels(datetime.now(UTC)),
             template_images=settings.instance_manifest.template_image_names,
             runtime=instance_runtime,
+            # F4: el texto fijo en las variables de un paso, para revalidar al publicar.
+            literal_variables=settings.flow_literal_variables_enabled,
             # F-146 parte 3: la pagina de una solicitud de plantilla y el envio
             # a Meta. Con el flag apagado las rutas no existen, y el cliente de
             # Meta ni se crea.

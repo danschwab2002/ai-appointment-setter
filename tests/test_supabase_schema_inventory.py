@@ -2631,13 +2631,25 @@ def test_agent_campaign_phases_fingerprint() -> None:
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact
 
 
-def test_meta_enforcement_brakes_fingerprint_is_last() -> None:
+def test_meta_enforcement_brakes_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261127100000 (F1): las siete tablas con RLS y las siete RPC solo de service_role.
-    row = sql.split("'20261127100000'", 1)[1].split("select\n    version,", 1)[0]
+    row = sql.split("'20261127100000'", 1)[1].split("union all", 1)[0]
     compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
 
-    assert compact.endswith(",2,'meta_enforcement_brakes')")
+    assert compact.endswith(",2,'meta_enforcement_brakes'")
     assert "to_regclass('public.meta_template_retirements')" in compact
     assert "act_on_meta_enforcement_v1(jsonb,text,text,jsonb,text,text)" in compact
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact
+
+
+
+def test_flow_engine_literal_variables_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261127300000 (F4): la marca del texto fijo en las formas nativas y en el compilador.
+    row = sql.split("'20261127300000'", 1)[1].split("select\n    version,", 1)[0]
+    compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
+
+    assert compact.endswith(",2,'flow_engine_literal_variables')")
+    assert "position('flow_literal_variables_steps'indefinition)>0" in compact
+    assert "_flow_engine_compile_policy_core(jsonb,text,integer,text,text)" in compact

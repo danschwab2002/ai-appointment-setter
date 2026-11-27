@@ -29,7 +29,8 @@ La entrada de ``validar``::
                               "native_silence_sweeper", "cart_touches", "main_product",
                               "native_multitouch_enabled"?, "native_personal_coupon_enabled"?,
                               "native_payment_slip_enabled"?}?,
-                  "template_images": [<nombre de plantilla>]?},
+                  "template_images": [<nombre de plantilla>]?,
+                  "literal_variables": true | false?},
      "store": {"flows": [{"flow_id", "product_ref", "flow_key", "state",
                           "active_version", "generation", "route_executor"?,
                           "versions": {"<n>": <definicion>}}]},
@@ -134,6 +135,10 @@ def instance_from_input(value: object) -> InstanceView:
     raw_images = data.get("template_images", [])
     if not isinstance(raw_images, list) or not all(isinstance(name, str) for name in raw_images):
         raise OperatorInputError("operator_instance_invalid")
+    # F4: FLOW_LITERAL_VARIABLES_ENABLED del bridge. Opcional: sin la clave (el comando del operador), apagado.
+    literal_variables = data.get("literal_variables", False)
+    if not isinstance(literal_variables, bool):
+        raise OperatorInputError("operator_instance_invalid")
     try:
         return InstanceView(
             tenant_ref=data.get("tenant_ref"),  # type: ignore[arg-type]
@@ -143,6 +148,7 @@ def instance_from_input(value: object) -> InstanceView:
             segment_labels=tuple((entry["etiqueta"], entry["estado"]) for entry in raw_segments),
             runtime=runtime,
             template_images=frozenset(raw_images),
+            literal_variables=literal_variables,
         )
     except (TypeError, ValueError) as error:
         raise OperatorInputError("operator_instance_invalid") from error

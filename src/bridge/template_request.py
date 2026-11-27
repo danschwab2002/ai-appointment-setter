@@ -616,8 +616,13 @@ def check(draft: Draft, context: TemplateContext, *, catalog_names: Sequence[tup
                      f"Una plantilla de marketing lleva la respuesta «{OPT_OUT_BUTTON}»: la baja se detecta por "
                      "ese texto.")
     if draft.category == "UTILITY" and _PROMO.search(" ".join(filter(None, (header, body, footer)))):
+        # F4 (D16): lo comercial que cambia de un flujo a otro puede ir en una variable de texto del paso
+        # ({texto: …}, con FLOW_LITERAL_VARIABLES_ENABLED), que Dan aprueba entero en la pagina.
         result.warn("template_utility_sounds_promotional", "/categoria",
-                    "Es de utilidad y habla de descuento u oferta: Meta la puede aprobar como marketing.")
+                    "Es de utilidad y habla de descuento u oferta: Meta la puede aprobar como marketing. "
+                    "Mové lo comercial a una variable de texto del flujo ({{n}} en el cuerpo y {texto: …} en "
+                    "las variables del paso): el cuerpo queda de utilidad. Igual Meta mira lo que se manda y "
+                    "puede pasarla a marketing.")
     return result
 
 

@@ -35,7 +35,10 @@ const LATER_OK = new Set(['20261117000600_flow_audience_repeat_counts_started_v1
   '20261117000700_flow_audience_start_reasons_v1.sql',
   // 20261126700000 (4.5 y 4.4): hora_evento en la forma nativo:audiencia y la lectura por prefijo de la pagina; no
   // la audiencia contada ni read_flow_audience_candidates_v1.
-  '20261126700000_flow_audience_country_and_event_hour_v1.sql']);
+  '20261126700000_flow_audience_country_and_event_hour_v1.sql',
+  // 20261127300000 (F4): el texto fijo en la forma nativo:audiencia (y en las de evento) y el compilador; nombra
+  // flow_audience_ solo por la marca que exige. No la audiencia contada ni read_flow_audience_candidates_v1.
+  '20261127300000_flow_engine_literal_variables_v1.sql']);
 for (const name of names.slice(position + 1).filter((n) => !LATER_OK.has(n))) {
   if (readFileSync(join(root, 'supabase/migrations', name), 'utf8').includes('flow_audience_')) {
     fail(`${name} toca el disparo por audiencia: revisar esta prueba`);

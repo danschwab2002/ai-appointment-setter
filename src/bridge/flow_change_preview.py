@@ -31,7 +31,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from .flow_definition import FlowWorld, ProposalItem, TemplateCatalog, diff
+from .flow_definition import LITERAL_KEY, FlowWorld, ProposalItem, TemplateCatalog, diff, is_literal_variable
 
 __all__ = [
     "GAP_AUDIENCE",
@@ -126,6 +126,9 @@ def _fill(text: str | None, variables: Sequence[object], *, fallback: str) -> st
         marker = match.group(1)
         if marker.isdigit() and 1 <= int(marker) <= len(variables) and isinstance(variables[int(marker) - 1], str):
             return f"[{variables[int(marker) - 1]}]"
+        if marker.isdigit() and 1 <= int(marker) <= len(variables) and is_literal_variable(variables[int(marker) - 1]):
+            # F4: el texto fijo va tal cual, sin corchetes: es lo que le llega a todas.
+            return str(variables[int(marker) - 1][LITERAL_KEY])  # type: ignore[index]
         return f"[{fallback}]"
 
     return _MARKER.sub(name, text)
@@ -137,7 +140,8 @@ def message_as_seen(template: Mapping[str, Any], step: Mapping[str, Any]) -> dic
     Las variables son las del paso, en el orden de los marcadores
     (``{{1}}`` es la primera). Un marcador sin variable queda como
     ``[sin variable]``, que es lo que el validador frena. Un boton con link que
-    cambia muestra la base y ``[link de pago]`` o ``[link de la ficha]``.
+    cambia muestra la base y ``[link de pago]`` o ``[link de la ficha]``. Un texto
+    fijo (F4, ``{"texto": …}``) va en su marcador tal cual, y entero en ``textos_fijos``.
     """
     view = template_view(template)
     variables = step.get("variables") if isinstance(step.get("variables"), list) else []
@@ -152,7 +156,15 @@ def message_as_seen(template: Mapping[str, Any], step: Mapping[str, Any]) -> dic
         "botones": [{"tipo": b["tipo"], "texto": b["texto"],
                      **({"link": _fill(b["link"], [], fallback=link_word)} if b["link"] else {})}
                     for b in view["botones"]],
+        **_literal_texts(variables),
     }
+
+
+def _literal_texts(variables: Sequence[object]) -> dict[str, Any]:
+    """F4: los textos fijos del paso, enteros y con su marcador, para que quien aprueba lea el copy exacto."""
+    found = [{"marcador": position, "texto": variable[LITERAL_KEY]}  # type: ignore[index]
+             for position, variable in enumerate(variables, start=1) if is_literal_variable(variable)]
+    return {"textos_fijos": found} if found else {}
 
 
 def _template_steps(steps: object, at: str) -> list[tuple[str, Mapping[str, Any]]]:
