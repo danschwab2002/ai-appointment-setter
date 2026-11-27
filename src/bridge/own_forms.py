@@ -420,6 +420,30 @@ def country_options(countries: tuple[str, ...]) -> list[dict[str, str]]:
     return options
 
 
+def effective_countries(form: object) -> tuple[str, ...]:
+    """Los paises que dibuja el selector del formulario.
+
+    D-PD.1: si el formulario no declara ``paises``, o declara la lista vacia, van
+    ``DEFAULT_COUNTRIES`` (lo que dice own-forms-v1). Sin selector, embed.js manda
+    ``+`` y los digitos escritos: los 10 digitos de un celular de Mexico salian como
+    un numero de Brasil invalido (``+55...``) y la persona no llegaba al checkout.
+    Una lista vacia no se lee como «sin selector» porque ese formulario no sirve
+    para nadie que escriba su numero sin indicativo.
+    D-PD.2: el orden de ``DEFAULT_COUNTRIES``, con Mexico primero.
+    D-PD.3: si ``pais`` no esta en ``DEFAULT_COUNTRIES``, va primero, para que el
+    selector lo muestre elegido (con lista declarada, el manifiesto ya exige que
+    este adentro).
+    """
+
+    declared = tuple(form.countries)  # type: ignore[attr-defined]
+    if declared:
+        return declared
+    default = form.default_country  # type: ignore[attr-defined]
+    if default in DEFAULT_COUNTRIES:
+        return DEFAULT_COUNTRIES
+    return (default, *DEFAULT_COUNTRIES)
+
+
 def render_embed_js(form: object, *, submit_url: str) -> str:
     """``embed.js`` con la configuracion del formulario inyectada."""
 
@@ -434,7 +458,7 @@ def render_embed_js(form: object, *, submit_url: str) -> str:
             for text, url in form.links  # type: ignore[attr-defined]
         ],
         "pais_por_defecto": form.default_country,  # type: ignore[attr-defined]
-        "paises": country_options(form.countries),  # type: ignore[attr-defined]
+        "paises": country_options(effective_countries(form)),
         "etiquetas": {
             "nombre": "Nombre completo",
             "email": "Correo electrónico",

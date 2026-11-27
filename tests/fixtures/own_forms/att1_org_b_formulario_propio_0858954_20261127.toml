@@ -1,0 +1,13 @@
+# Copia textual del bloque [[formularios_propios]] de att1-org-b, el unico
+# formulario propio publicado de ATT1 al 27/11/2026.
+# Origen: danschwab2002/setter-instancia-att1, origin/main 0858954
+# (2026-11-26T12:27:06-03:00), instancia.toml lineas 387-391. Leido el 27/11/2026.
+# Sin datos personales: solo la clave, la landing, el origen y el link legal.
+# No declara `pais` ni `paises`: es el caso del bug (embed.js publicado con
+# "paises": [], medido por GET el 27/11 en /f/att1-org-b/embed.js).
+
+[[formularios_propios]]
+clave = "att1-org-b"
+landing_id = "alimenta-tu-tiroides"
+origenes = ["https://site.metodoraizana.com.mx"]
+links = [{ texto = "Política de Privacidad", url = "https://www.metodoraizana.com/politica-de-privacidad" }]

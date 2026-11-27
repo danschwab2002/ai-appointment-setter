@@ -146,6 +146,16 @@ def test_page_and_embed_are_served() -> None:
     assert f"{BASE}/f/att1-org-b/enviar" in script.text
 
 
+def test_served_embed_without_paises_carries_the_default_countries() -> None:
+    # El formulario no declara paises (como att1-org-b publicado): el embed servido
+    # trae la lista por defecto con Mexico primero, no "paises": [].
+    script, _ = _run(_request("GET", "/f/att1-org-b/embed.js"))
+    assert script.status_code == 200
+    assert '"paises": []' not in script.text
+    assert '"paises": [{"iso": "MX", "nombre": "México", "prefijo": "52"}' in script.text
+    assert '"pais_por_defecto": "MX"' in script.text
+
+
 def test_preflight_only_for_declared_origins() -> None:
     ok, _ = _run(
         _request("OPTIONS", "/f/att1-org-b/enviar", headers={"Origin": ORIGIN})
