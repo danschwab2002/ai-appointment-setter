@@ -7883,6 +7883,7 @@ class SupabaseClient:
         priority_wins: bool = False,
         payment_failure_by_phone_offers: Sequence[str] | None = None,
         audience: bool = False,
+        keyword: bool = False,
     ) -> tuple[FlowEngineNativeAdmissionRow, ...]:
         """The native admission of one normalized event (flow-engine-v2, 4).
 
@@ -7908,6 +7909,12 @@ class SupabaseClient:
         tied to ``flujo_id`` and ``version``) goes to the native admission of
         that flow. Without it such an event is ``invalid_flow_engine_event``
         (22023), as before, and any other event is admitted exactly the same.
+
+        ``keyword`` (Z2 3.9, migration 20261127400000) adds ``native_keyword:
+        true`` to ``p_instance``: an event with ``fuente: palabra_clave`` (the
+        Chatwoot conversation whose first message brought the keyword of a
+        published rule) goes to the native admission of that rule's flows.
+        Without it such an event is ``invalid_flow_engine_event`` (22023).
         """
         operation = "admit_flow_engine_event_v1"
         p_instance = dict(instance)
@@ -7915,6 +7922,8 @@ class SupabaseClient:
             p_instance["native_priority_wins"] = True
         if audience:
             p_instance["native_audience"] = True
+        if keyword:
+            p_instance["native_keyword"] = True
         if payment_failure_by_phone_offers is not None:
             p_instance["native_payment_failure_by_phone_offers"] = list(payment_failure_by_phone_offers)
         body = json.dumps(

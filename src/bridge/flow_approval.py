@@ -914,6 +914,9 @@ def _trigger_text(definition: Mapping[str, Any]) -> str:
         return "sin disparador"
     if "silencio" in trigger:
         return "cuando una conversación queda en silencio"
+    if isinstance(trigger.get("palabra_clave"), str):
+        # Z2 3.9: la regla de palabra clave que lo arranca.
+        return f"cuando alguien empieza la conversación con el link de la regla «{_esc(trigger['palabra_clave'])}»"
     event = trigger.get("evento")
     return _esc(_EVENTO.get(str(event), f"con el evento {event}"))
 
@@ -2071,7 +2074,8 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
                                   runtime: InstanceRuntime | None = None,
                                   template_images: frozenset[str] = frozenset(),
                                   literal_variables: bool = False,
-                                  extra_routes: Callable[[FastAPI, PageTools], None] | None = None) -> None:
+                                  extra_routes: Callable[[FastAPI, PageTools], None] | None = None,
+                                  keyword_rules: Callable[[], frozenset[str]] | None = None) -> None:
     """Las rutas de la pagina. Solo se llama con el flag prendido.
 
     ``segment_labels`` (E-316, segment-labels-v1): las etiquetas de segmento que acepta etiquetar,
@@ -2499,7 +2503,9 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
                          "segment_labels": segment_labels() if segment_labels is not None else [],
                          **({"runtime": runtime.to_json()} if runtime is not None else {}),
                          **({"template_images": sorted(template_images)} if template_images else {}),
-                         **({"literal_variables": True} if literal_variables else {})},
+                         **({"literal_variables": True} if literal_variables else {}),
+                         # Z2 3.9: las reglas de palabra clave servidas ahora (keyword_rule_unknown).
+                         **({"keyword_rules": sorted(keyword_rules())} if keyword_rules is not None else {})},
             "store": snapshot,
             "proposal": {"id": proposal_id, "revision": found.get("revision"), "items": found.get("items"),
                          "draft_base": found.get("draft_base"), "purpose": found.get("purpose"),

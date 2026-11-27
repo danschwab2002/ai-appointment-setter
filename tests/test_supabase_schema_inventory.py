@@ -2644,12 +2644,24 @@ def test_meta_enforcement_brakes_fingerprint() -> None:
 
 
 
-def test_flow_engine_literal_variables_fingerprint_is_last() -> None:
+def test_flow_engine_literal_variables_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261127300000 (F4): la marca del texto fijo en las formas nativas y en el compilador.
-    row = sql.split("'20261127300000'", 1)[1].split("select\n    version,", 1)[0]
+    row = sql.split("'20261127300000'", 1)[1].split("'20261127400000'", 1)[0].rsplit("union all", 1)[0]
     compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
 
-    assert compact.endswith(",2,'flow_engine_literal_variables')")
+    assert compact.endswith(",2,'flow_engine_literal_variables'")
     assert "position('flow_literal_variables_steps'indefinition)>0" in compact
     assert "_flow_engine_compile_policy_core(jsonb,text,integer,text,text)" in compact
+
+
+def test_flow_engine_keyword_trigger_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261127400000 (Z2 3.9): la admision de la palabra clave, privada, y sus siete marcas.
+    row = sql.split("'20261127400000'", 1)[1].split("select\n    version,", 1)[0]
+    compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
+
+    assert compact.endswith(",8,'flow_engine_keyword_trigger')")
+    assert "_flow_engine_admit_native_keyword_v1(jsonb,jsonb)" in compact
+    assert "flow_engine_keyword_trigger_admit:end" in compact
+    assert "nothas_function_privilege('service_role',oid,'EXECUTE')" in compact

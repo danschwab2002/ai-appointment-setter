@@ -125,9 +125,11 @@ def instance_from_input(value: object) -> InstanceView:
             NativeRuntime(**fields, native_multitouch=raw_runtime.get("native_multitouch_enabled", False),
                           native_personal_coupon=raw_runtime.get("native_personal_coupon_enabled", False),
                           # E-528 (C4): la ficha nativa, opcional como las otras dos.
-                          native_payment_slip=raw_runtime.get("native_payment_slip_enabled", False))
+                          native_payment_slip=raw_runtime.get("native_payment_slip_enabled", False),
+                          # Z2 3.9: la palabra clave, opcional; sin la clave, apagada.
+                          native_keyword=raw_runtime.get("native_keyword_enabled", False))
             if {"native_multitouch_enabled", "native_personal_coupon_enabled",
-                "native_payment_slip_enabled"} & set(raw_runtime)
+                "native_payment_slip_enabled", "native_keyword_enabled"} & set(raw_runtime)
             else InstanceRuntime(**fields))
     except (KeyError, TypeError, ValueError) as error:
         raise OperatorInputError("operator_instance_invalid") from error
@@ -139,6 +141,11 @@ def instance_from_input(value: object) -> InstanceView:
     literal_variables = data.get("literal_variables", False)
     if not isinstance(literal_variables, bool):
         raise OperatorInputError("operator_instance_invalid")
+    # Z2 3.9: las claves de las reglas de palabra clave servidas. Opcional: sin la clave, no se sabe (None).
+    raw_keywords = data.get("keyword_rules")
+    if raw_keywords is not None and (not isinstance(raw_keywords, list)
+                                     or not all(isinstance(key, str) for key in raw_keywords)):
+        raise OperatorInputError("operator_instance_invalid")
     try:
         return InstanceView(
             tenant_ref=data.get("tenant_ref"),  # type: ignore[arg-type]
@@ -149,6 +156,7 @@ def instance_from_input(value: object) -> InstanceView:
             runtime=runtime,
             template_images=frozenset(raw_images),
             literal_variables=literal_variables,
+            keyword_rules=None if raw_keywords is None else frozenset(raw_keywords),
         )
     except (TypeError, ValueError) as error:
         raise OperatorInputError("operator_instance_invalid") from error

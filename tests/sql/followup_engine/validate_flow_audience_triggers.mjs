@@ -76,7 +76,10 @@ const LATER_OK = ['20261116000100_flow_audience_reach_v1.sql', '20261117000600_f
   '20261126700000_flow_audience_country_and_event_hour_v1.sql',
   // 20261127300000 (F4) suma el texto fijo a las formas nativas y al compilador; nombra flow_audience_ solo por la
   // marca que exige (validate_flow_engine_literal_variables.mjs).
-  '20261127300000_flow_engine_literal_variables_v1.sql'];
+  '20261127300000_flow_engine_literal_variables_v1.sql',
+  // 20261127400000 (Z2 3.9) suma el disparador palabra_clave en la admision y el despacho nativos, sin tocar las
+  // funciones del disparo por audiencia de aca (validate_flow_engine_keyword_trigger.mjs).
+  '20261127400000_flow_engine_keyword_trigger_v1.sql'];
 for (const name of names.slice(position + 1).filter((n) => !LATER_OK.includes(n))) {
   if (readFileSync(join(root, 'supabase/migrations', name), 'utf8').includes('flow_audience_')) {
     fail(`${name} toca el disparo por audiencia: revisar esta prueba`);

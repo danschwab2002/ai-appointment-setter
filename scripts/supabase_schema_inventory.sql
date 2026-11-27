@@ -8060,6 +8060,69 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         ), 0),
         2,
         'flow_engine_literal_variables'
+    union all
+    select
+        '20261127400000',
+        '20261127400000_flow_engine_keyword_trigger_v1.sql',
+        -- El flujo de la palabra clave de una regla (Z2 3.9): la admision de la
+        -- conversacion, privada ...
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_admit_native_keyword_v1(jsonb,jsonb)')
+              and position('flow_engine_keyword_trigger_admission' in definition) > 0
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+        )::int
+        -- ... la entrada que la llama solo con la clave del bridge ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_flow_engine_event_v1(jsonb,jsonb)')
+              and position('flow_engine_keyword_trigger_admit: end' in definition) > 0
+        )::int
+        -- ... el disparador, la forma y lo que abre la base ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_trigger(jsonb)')
+              and position('flow_engine_keyword_trigger_kind' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_steps(text)')
+              and position('flow_engine_keyword_trigger_steps' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_unsupported(jsonb)')
+              and position('flow_engine_keyword_trigger_multitouch' in definition) > 0
+        )::int
+        -- ... el permiso en la admision ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_admit_native_flow(public.flow_controls,public.webhook_events,uuid,text,timestamptz,bigint,bigint,text)')
+              and position('flow_engine_keyword_trigger_permission: end' in definition) > 0
+        )::int
+        -- ... el despacho ...
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_followup_execution_context(uuid,text,bigint,timestamptz)')
+              and position('flow_engine_keyword_trigger_product' in definition) > 0
+        )::int
+        -- ... y la compra como salida en la reevaluacion.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._portable_case_purchase_stop_reason(uuid)')
+              and position('flow_engine_keyword_trigger_case' in definition) > 0
+        )::int,
+        8,
+        'flow_engine_keyword_trigger'
 )
 select
     version,

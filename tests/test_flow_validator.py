@@ -463,6 +463,24 @@ def _difusion(**changes: Any) -> dict[str, Any]:
     return definition
 
 
+def _keyword(**changes: Any) -> dict[str, Any]:
+    """Z2 3.9: el flujo de la regla de palabra clave soporte, lo minimo que escribe el agente."""
+    definition: dict[str, Any] = {
+        "nombre": "Bienvenida de soporte", "dispara": {"palabra_clave": "soporte"},
+        "pasos": [copy.deepcopy(CONFIRMED_STEP)], "horario": "siempre",
+    }
+    definition.update(changes)
+    return definition
+
+
+def _keyword_running(rules: frozenset[str] | None = frozenset({"soporte"}), *, keyword: bool = True) -> InstanceView:
+    """La instancia con el motor y, si ``keyword``, el flujo de las reglas (los tres flags de Z2 3.9)."""
+    return InstanceView("lancemos", "att1", frozenset({"att1"}), "America/Mexico_City", keyword_rules=rules,
+                        runtime=fv.NativeRuntime(engine_enabled=True, native_intent_enabled=True,
+                                                 native_silence_sweeper=True, cart_touches=True, main_product="att1",
+                                                 native_multitouch=True, native_keyword=keyword))
+
+
 CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]] = {
     # Regla 1.
     "unknown_key": (
@@ -635,6 +653,11 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
     "product_not_declared": (
         lambda: run(with_(flow_def("carrito"), lambda d: d.update(producto="att9"))),
         lambda: run(with_(flow_def("carrito"), lambda d: d.update(producto="att1"))),
+    ),
+    # Z2 3.9: dispara.palabra_clave nombra una regla que no esta andando.
+    "keyword_rule_unknown": (
+        lambda: run_new(_keyword(), "soporte", instance=_keyword_running(frozenset({"alumnos"}))),
+        lambda: run_new(_keyword(), "soporte", instance=_keyword_running()),
     ),
     "product_required": (
         lambda: run(flow_def("carrito"),
@@ -1062,7 +1085,7 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         8: {"hour_invalid", "window_not_increasing", "zone_invalid", "zone_changed", "pool_zone_mismatch"},
         9: {"cap_invalid", "daily_cap_exceeds_total"},
         10: {"unknown_flow_reference", "mutual_le_gana_a", "product_not_declared", "product_required",
-             "duplicate_flow_key"},
+             "duplicate_flow_key", "keyword_rule_unknown"},
         11: {"unresolved_value"},
         12: {"vence_not_after_waits"},
         13: {"template_not_in_catalog", "template_not_approved", "template_language_mismatch",

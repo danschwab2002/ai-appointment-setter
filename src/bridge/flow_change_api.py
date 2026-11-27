@@ -410,6 +410,8 @@ class _Context:
     template_images: frozenset[str] = frozenset()
     # F4: FLOW_LITERAL_VARIABLES_ENABLED, el texto fijo en las variables de un paso.
     literal_variables: bool = False
+    # Z2 3.9: las claves de las reglas de palabra clave servidas ahora. None: no se sabe.
+    keyword_rules: Callable[[], frozenset[str]] | None = None
 
 
 def _instance_view(context: _Context, store: Mapping[str, Any]) -> InstanceView:
@@ -421,7 +423,8 @@ def _instance_view(context: _Context, store: Mapping[str, Any]) -> InstanceView:
                         segment_labels=tuple((entry["etiqueta"], entry["estado"])
                                              for entry in context.segment_labels()),
                         runtime=context.runtime, template_images=context.template_images,
-                        literal_variables=context.literal_variables)
+                        literal_variables=context.literal_variables,
+                        keyword_rules=context.keyword_rules() if context.keyword_rules is not None else None)
 
 
 def _finding(finding: Mapping[str, Any]) -> dict[str, Any]:
@@ -517,8 +520,12 @@ def register_flow_change_routes(app: FastAPI, *, token: str, store: FlowChangeSt
                                 segment_labels: Callable[[], list[dict[str, str]]] | None = None,
                                 runtime: InstanceRuntime | None = None,
                                 template_images: frozenset[str] = frozenset(),
-                                literal_variables: bool = False) -> None:
+                                literal_variables: bool = False,
+                                keyword_rules: Callable[[], frozenset[str]] | None = None) -> None:
     """Las rutas, detras del flag (lo mira quien llama: con el flag apagado no existen).
+
+    ``keyword_rules`` (Z2 3.9): las claves de las reglas de palabra clave que el bridge sirve, para que un
+    flujo con ``dispara.palabra_clave`` nombre una regla andando (``keyword_rule_unknown``). Sin el, no se mira.
 
     ``segment_labels`` (E-316): las etiquetas de segmento que acepta etiquetar, con su estado al
     validar. Sin el, solo cliente, como antes.
@@ -534,6 +541,7 @@ def register_flow_change_routes(app: FastAPI, *, token: str, store: FlowChangeSt
     context = _Context(instance={"tenant_ref": tenant_ref, "ally_ref": ally_ref}, time_zone=time_zone,
                        inbox_id=inbox_id, git_sha=git_sha or os.getenv("GIT_SHA", "") or "unknown",
                        runtime=runtime, template_images=template_images, literal_variables=literal_variables,
+                       keyword_rules=keyword_rules,
                        **({"segment_labels": segment_labels} if segment_labels is not None else {}))
     slots = asyncio.Semaphore(2)
 

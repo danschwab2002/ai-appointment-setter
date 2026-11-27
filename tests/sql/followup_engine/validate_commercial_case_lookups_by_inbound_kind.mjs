@@ -127,6 +127,8 @@ const DERIVED_FROM_MIGRATION = [
   '20261126700000_flow_audience_country_and_event_hour_v1.sql',
   // El texto fijo en las variables de un paso nativo (20261127300000, F4): exige la marca de 20261126700000.
   '20261127300000_flow_engine_literal_variables_v1.sql',
+  // El flujo de la palabra clave (20261127400000, Z2 3.9): exige la admision de la audiencia de 20261112210600.
+  '20261127400000_flow_engine_keyword_trigger_v1.sql',
 ];
 for (const name of DERIVED_FROM_MIGRATION) {
   if (!MIGRATIONS.includes(name) || name <= MIGRATION) {
