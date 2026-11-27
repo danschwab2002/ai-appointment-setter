@@ -1498,7 +1498,8 @@ class _Run:
                     self.blocks.extend(
                         finding_at(finding, at)
                         for finding in check_definition(target, published=True, path=(index, "version"),
-                                                         labels=self.instance.labels)
+                                                         labels=self.instance.labels,
+                                                         literal_variables=self.instance.literal_variables)
                     )
                     self.subjects.append(_Subject(
                         index=index, item=item, flow=flow, definition=target, emitter=emitter,

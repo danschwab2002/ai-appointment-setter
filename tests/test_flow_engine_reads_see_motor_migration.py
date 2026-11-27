@@ -219,6 +219,8 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
         "20261126800000_agent_campaign_phases_v1.sql",
         # Los frenos ante Meta (20261127100000, F1).
         "20261127100000_meta_enforcement_brakes_v1.sql",
+        # El texto fijo en las variables de un paso nativo (20261127300000, F4).
+        "20261127300000_flow_engine_literal_variables_v1.sql",
     ]
     native = (MIGRATIONS / "20261024000200_flow_engine_native_v1.sql").read_text(encoding="utf-8")
     assert "read_automation_expert_flows_v1" not in native

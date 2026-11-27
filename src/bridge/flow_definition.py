@@ -106,6 +106,22 @@ EXITS = ("compra", "contesta", "ficha_vencida")
 # zona del pais del telefono de cada persona (flow_audience.event_hour_text). Solo con ``evento`` (regla 1).
 VARIABLES = ("nombre", "producto", "medio_de_pago", "cuando", "precio", "vence", "vencimiento",
              EVENT_HOUR_VARIABLE)
+# F4 (2026-11-27, flag FLOW_LITERAL_VARIABLES_ENABLED): ademas de un nombre de VARIABLES, un elemento de
+# ``variables`` puede ser ``{"texto": "…"}``, un texto fijo que el paso manda tal cual en ese marcador (la
+# gramatica del masivo, flow_change_api._bulk_variables). Lo aprueba Dan entero en la pagina de aprobacion.
+# D-F4.1: la forma vale con el flag de la instancia (InstanceView.literal_variables); apagado, el
+# validador lo rechaza (invalid_value, con su motivo) y la base lo acepta siempre porque nadie lo escribe.
+# D-F4.2: de 1 a 400 caracteres (los textos de los borradores de Maribel miden de 217 a 321), en una linea:
+# sin salto de linea, tab ni cinco espacios seguidos (Meta rechaza el parametro, error 132018), sin «{{»
+# (no es un marcador), sin link (va en un boton) y sin telefono ni mail (identifier_not_allowed, la regla del
+# masivo).
+LITERAL_KEY = "texto"
+LITERAL_MAX_CHARS = 400
+_LITERAL_LINK = re.compile(r"(?i)https?://|\bwww\.")
+# Un dominio suelto (pay.hotmart.com/X, marca.com.mx): WhatsApp tambien lo vuelve link (template_request._BARE_DOMAIN).
+_LITERAL_BARE_DOMAIN = re.compile(
+    r"(?i)\b[a-z0-9-]+(\.[a-z0-9-]+)*\.(com|net|org|mx|ar|co|cl|pe|es|us|io|app|link|ly|me|info|site|online|"
+    r"shop|store|page|gle|tv|biz|xyz)\b")
 # Las que solo valen en un paso con cupon: hablan del cupon personal (regla 5).
 COUPON_VARIABLES = ("precio", "vence")
 # La que solo vale con un disparador de evento: es la hora del evento (regla 5).
@@ -366,6 +382,56 @@ def _is_int(value: object) -> bool:
 def is_unresolved(value: object) -> bool:
     """``a_medir`` o ``a_decidir``: un valor que todavia no se sabe."""
     return isinstance(value, str) and value in UNRESOLVED_VALUES
+
+
+@dataclass(frozen=True)
+class TemplateLiteral:
+    """El texto fijo de un marcador (``{"texto": "…"}`` en ``variables``, F4), como lo lleva el bridge.
+
+    Es hashable a proposito: el envio nativo arma conjuntos con las variables del paso.
+    """
+
+    text: str
+
+
+def is_literal_variable(value: object) -> bool:
+    """Si el elemento de ``variables`` tiene la forma del texto fijo: un objeto con ``texto`` solo, de texto."""
+    return isinstance(value, Mapping) and set(value) == {LITERAL_KEY} and isinstance(value[LITERAL_KEY], str)
+
+
+def literal_text_problem(text: object) -> str | None:
+    """Lo que tiene mal el texto fijo de un marcador (D-F4.2), o None. El telefono y el mail los mira aparte la
+    regla de identificadores (``identifier_not_allowed``)."""
+    if not isinstance(text, str) or not text.strip() or len(text) > LITERAL_MAX_CHARS:
+        return f"El texto fijo de una variable va de 1 a {LITERAL_MAX_CHARS} caracteres."
+    if any(character in text for character in "\n\r\t") or "     " in text:
+        return "El texto fijo va en una línea: sin saltos de línea, tabs ni cinco espacios seguidos (Meta lo rechaza)."
+    if "{{" in text:
+        return "El texto fijo no lleva «{{»: no es un marcador de la plantilla."
+    if _LITERAL_LINK.search(text) or _LITERAL_BARE_DOMAIN.search(text):
+        return "El texto fijo no lleva links: un link va en un botón."
+    return None
+
+
+def literal_from_variable(value: object) -> TemplateLiteral | None:
+    """El ``TemplateLiteral`` de un elemento de ``variables`` bien formado (forma y D-F4.2), o None."""
+    if not is_literal_variable(value):
+        return None
+    assert isinstance(value, Mapping)
+    text = value[LITERAL_KEY]
+    if literal_text_problem(text) is not None or has_control_or_format(text) or looks_like_identifier(text):
+        return None
+    return TemplateLiteral(text)
+
+
+def variable_label(value: object) -> str:
+    """Como se nombra un elemento de ``variables`` en un texto para una persona: el nombre, o el texto fijo."""
+    if isinstance(value, TemplateLiteral):
+        return f"«{value.text}»"
+    if is_literal_variable(value):
+        assert isinstance(value, Mapping)
+        return f"«{value[LITERAL_KEY]}»"
+    return str(value)
 
 
 def parse_duration(value: object) -> int | None:
@@ -836,8 +902,13 @@ class InstanceView:
     runtime: InstanceRuntime | None = None
     # E-370: las plantillas con su imagen de encabezado declarada en el manifiesto. Vacio: ninguna.
     template_images: frozenset[str] = frozenset()
+    # F4 (D-F4.1): FLOW_LITERAL_VARIABLES_ENABLED del bridge. False (el default, y el comando del operador sin
+    # la clave): un ``{"texto": …}`` en variables es invalid_value, como antes de F4.
+    literal_variables: bool = False
 
     def __post_init__(self) -> None:
+        if not isinstance(self.literal_variables, bool):
+            raise ValueError("instance_literal_variables_invalid")
         if not isinstance(self.template_images, frozenset) or not all(
             isinstance(name, str) for name in self.template_images
         ):
@@ -1358,11 +1429,14 @@ def as_published(definition: Mapping[str, Any], version: int) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 class _Collector:
-    def __init__(self, base: Sequence[Segment], labels: Sequence[str] = LABELS) -> None:
+    def __init__(self, base: Sequence[Segment], labels: Sequence[str] = LABELS,
+                 literal_variables: bool = False) -> None:
         self.base = tuple(base)
         self.findings: list[Finding] = []
         # Lo que acepta etiquetar (E-316): cliente y, con la instancia, sus segmentos.
         self.labels = tuple(labels)
+        # F4 (D-F4.1): si un elemento de variables puede ser {"texto": …}.
+        self.literal_variables = literal_variables
 
     def add(self, spec: CodeSpec, segments: Sequence[Segment], *, reason: str | None = None) -> None:
         self.findings.append(spec.at(finding_path(self.base + tuple(segments)), reason=reason))
@@ -1411,15 +1485,17 @@ def _check_keys(out: _Collector, value: Mapping[str, Any], segments: tuple[Segme
 
 
 def check_definition(definition: object, *, published: bool = False,
-                     path: Sequence[Segment] = (), labels: Sequence[str] = LABELS) -> tuple[Finding, ...]:
+                     path: Sequence[Segment] = (), labels: Sequence[str] = LABELS,
+                     literal_variables: bool = False) -> tuple[Finding, ...]:
     """La regla 1 sobre una definicion ya normalizada, mas los textos sin identificadores.
 
     ``published`` acepta ``version`` y ``estado: publicada`` (el destino de un
     ``volver``); en un borrador son ``version_set_by_cycle``. Lo que tiene
     regla propia queda para esa regla: el disparador (2), las horas y la zona
-    del horario (8) y los numeros de los topes (9).
+    del horario (8) y los numeros de los topes (9). ``literal_variables`` (F4) deja
+    pasar ``{"texto": …}`` en las variables de un paso.
     """
-    out = _Collector(path, labels)
+    out = _Collector(path, labels, literal_variables)
     if not isinstance(definition, Mapping):
         out.add(INVALID_VALUE, (), reason="Una definición es un objeto.")
         return tuple(out.findings)
@@ -1656,7 +1732,7 @@ def _check_template_step(out: _Collector, step: Mapping[str, Any], segments: tup
             out.add(INVALID_VALUE, segments + ("idioma",), reason="El idioma se escribe como en Meta: es_MX.")
     if "variables" in step:
         _check_list(out, step["variables"], segments + ("variables",),
-                    lambda value, at: _check_enum(out, value, at, VARIABLES))
+                    lambda value, at: _check_variable(out, value, at))
     if "boton" in step:
         button = step["boton"]
         at = segments + ("boton",)
@@ -1670,6 +1746,24 @@ def _check_template_step(out: _Collector, step: Mapping[str, Any], segments: tup
             _check_enum(out, button["link"], at + ("link",), LINKS)
         if "cupon" in button and not is_unresolved(button["cupon"]) and not is_coupon_code(button["cupon"]):
             out.add(INVALID_VALUE, at + ("cupon",), reason="El código del cupón lleva letras, dígitos, _ o -, hasta 64.")
+
+
+def _check_variable(out: _Collector, value: object, at: tuple[Segment, ...]) -> None:
+    """Un elemento de ``variables``: un nombre de VARIABLES o, con el flag (F4), ``{"texto": …}``."""
+    if not isinstance(value, Mapping):
+        _check_enum(out, value, at, VARIABLES)
+        return
+    if not out.literal_variables:
+        out.add(INVALID_VALUE, at, reason="Esta cuenta todavía no acepta un texto fijo en las variables "
+                                          "({texto: …}): va uno de " + ", ".join(VARIABLES) + ".")
+        return
+    _check_keys(out, value, at, (LITERAL_KEY,))
+    if LITERAL_KEY not in value:
+        out.add(REQUIRED_KEY_MISSING, at + (LITERAL_KEY,))
+        return
+    problem = literal_text_problem(value[LITERAL_KEY])
+    if problem is not None:
+        out.add(INVALID_VALUE, at + (LITERAL_KEY,), reason=problem)
 
 
 def _check_condition_step(out: _Collector, step: Mapping[str, Any], segments: tuple[Segment, ...]) -> None:
@@ -1801,6 +1895,12 @@ def _check_identifiers(out: _Collector, definition: Mapping[str, Any]) -> None:
             text = step.get(key)
             if step_type(step) == key and isinstance(text, str) and looks_like_identifier(text):
                 out.add(IDENTIFIER_NOT_ALLOWED, segments + (key,))
+        # F4: el texto fijo de una variable, como el texto de un masivo (flow_change_api._bulk_variables).
+        variables = step.get("variables") if step_type(step) == "plantilla" else None
+        if isinstance(variables, list):
+            for index, variable in enumerate(variables):
+                if is_literal_variable(variable) and looks_like_identifier(variable[LITERAL_KEY]):
+                    out.add(IDENTIFIER_NOT_ALLOWED, segments + ("variables", index, LITERAL_KEY))
 
 
 def check_client_ok(value: object, *, path: Sequence[Segment]) -> tuple[Finding, ...]:
@@ -2206,7 +2306,8 @@ def normalize_definition(
               other_schedules=other_schedules, catalog=catalog).run()
     normalized = _ordered(normalized)
     findings = list(out.findings)
-    findings.extend(check_definition(normalized, path=path, labels=instance.labels))
+    findings.extend(check_definition(normalized, path=path, labels=instance.labels,
+                                     literal_variables=instance.literal_variables))
     return NormalizedDefinition(definition=normalized, findings=tuple(_dedupe(findings)))
 
 

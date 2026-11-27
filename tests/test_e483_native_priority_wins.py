@@ -61,7 +61,7 @@ def test_the_new_test_runs_with_npm_test() -> None:
         " && node validate_e483_payment_failure_by_phone.mjs && node validate_e483_native_personal_coupon.mjs --check"
         " && node validate_e483_native_audience_source.mjs && node validate_flow_audience_triggers.mjs && node validate_flow_audience_native_e2e.mjs"
         " && node validate_e483_native_legacy_double_case_touches.mjs --check && node validate_e483_native_person_cap.mjs"
-        " && node validate_e528_native_payment_slip.mjs && node validate_identity_link_decider.mjs && node validate_hotmart_unknown_offers.mjs && node validate_agent_products.mjs && node validate_agent_products_publish.mjs && node validate_flow_audience_reach.mjs && node validate_permission_registry.mjs && node validate_flow_engine_native_audience_recipient.mjs --check && node validate_flow_audience_repeat_started.mjs && node validate_flow_audience_start_reasons.mjs --check && node validate_flow_engine_admission_identity_mismatch.mjs && node validate_bulk_send_store.mjs")
+        " && node validate_e528_native_payment_slip.mjs && node validate_identity_link_decider.mjs && node validate_hotmart_unknown_offers.mjs && node validate_agent_products.mjs && node validate_agent_products_publish.mjs && node validate_flow_audience_reach.mjs && node validate_permission_registry.mjs && node validate_flow_engine_native_audience_recipient.mjs --check && node validate_flow_audience_repeat_started.mjs && node validate_flow_audience_start_reasons.mjs --check && node validate_flow_engine_admission_identity_mismatch.mjs && node validate_bulk_send_store.mjs && node validate_flow_engine_literal_variables.mjs")
 
 
 # -- El bridge -------------------------------------------------------------------

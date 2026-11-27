@@ -113,6 +113,7 @@ from bridge.payment_slip_first_touch import (
 )
 from bridge.flow_engine_runtime import READ_OK, FlowEngineRuntime
 from bridge.flow_audience import EVENT_HOUR_VARIABLE, audience_event, event_hour_text
+from bridge.flow_definition import TemplateLiteral
 from bridge.flow_engine import (
     NATIVE_PAYMENT_SLIP_VARIABLES,
     NATIVE_TOUCH_STEP_PREFIX,
@@ -1044,6 +1045,7 @@ class DurableDispatcher:
         payment_failure_followup: PaymentFailureFollowupConfig | None = None,
         flow_engine_enabled: bool = False,
         native_multitouch_enabled: bool = False,
+        native_literal_variables_enabled: bool = False,
         native_person_cap: NativePersonCap | None = None,
         native_personal_coupon: NativePersonalCouponConfig | None = None,
         native_payment_slip: PaymentSlipFirstTouchConfig | None = None,
@@ -1186,6 +1188,9 @@ class DurableDispatcher:
         self._flow_engine_enabled = flow_engine_enabled
         # E-483: los toques siguientes de un flujo nativo (native_touch_2 y 3, 20261112210000).
         self._native_multitouch_enabled = native_multitouch_enabled
+        # F4 (20261127300000): FLOW_LITERAL_VARIABLES_ENABLED. Un paso nativo con un texto fijo
+        # ({"texto": …}) lo manda en su marcador; sin el flag, cierra sin salir (flow_engine_step_unsupported).
+        self._native_literal_variables_enabled = native_literal_variables_enabled
         # E-483 (C6, 20261112230000): el tope por persona del nativo. None (el flag
         # apagado): el arranque del motor es la v1, como hoy.
         self._native_person_cap = native_person_cap
@@ -2272,10 +2277,20 @@ class DurableDispatcher:
         if not personal and variables and EVENT_HOUR_VARIABLE in variables:
             # 4.4: la hora del evento, solo en un paso sin cupon (el de la audiencia).
             allowed_variables = allowed_variables | {EVENT_HOUR_VARIABLE}
+        # F4 (20261127300000): el texto fijo de un marcador va tal cual; solo con FLOW_LITERAL_VARIABLES_ENABLED.
+        literals = [item for item in variables if isinstance(item, TemplateLiteral)]
+        names = [item for item in variables if not isinstance(item, TemplateLiteral)]
+        if literals and not self._native_literal_variables_enabled:
+            logger.warning(
+                "flow_engine_native_literal_variables_disabled action_id=%s step=%s",
+                action.action_id,
+                action.step_key,
+            )
+            return self._native_step_unsupported(action, step_template)
         if (
             not variables
-            or len(set(variables)) != len(variables)
-            or not set(variables) <= allowed_variables
+            or len(set(names)) != len(names)
+            or not set(names) <= allowed_variables
         ):
             return self._native_step_unsupported(action, step_template)
         coupon_values: dict[str, str] = {}
@@ -2296,7 +2311,7 @@ class DurableDispatcher:
                 supabase=self._supabase,
                 action=action,
                 attempt=attempt,
-                variables=tuple(variables),
+                variables=tuple(names),
                 buyer_phone=execution_context.buyer_phone,
                 following=following,
                 now=self._clock(),
@@ -2343,7 +2358,10 @@ class DurableDispatcher:
         name_value, greeting_name = self._neutral_if_unsafe(
             action, variables=variables, name_value=name_value, greeting_name=greeting_name
         )
-        source: dict[str, str | None] = {"nombre": name_value, "producto": product_name, **coupon_values}
+        source: dict[object, str | None] = {"nombre": name_value, "producto": product_name, **coupon_values}
+        # F4: el texto fijo, tal cual (sin colapsar espacios: es el que aprobo Dan). render() frena el que Meta
+        # rechazaria (salto de linea, tab, cinco espacios) y el cuerpo de mas de 1.024 caracteres.
+        source.update({literal: literal.text for literal in literals})
         if any(
             not isinstance(source.get(item), str) or not source[item].strip()  # type: ignore[union-attr]
             for item in variables
@@ -2354,7 +2372,7 @@ class DurableDispatcher:
                 failure_reason=APPROVED_TEMPLATE_PARAMETERS_MISSING, retryable=False
             )
         ordered = {
-            str(position): " ".join(str(source[item]).split())
+            str(position): item.text if isinstance(item, TemplateLiteral) else " ".join(str(source[item]).split())
             for position, item in enumerate(variables, start=1)
         }
         assert self._chatwoot is not None

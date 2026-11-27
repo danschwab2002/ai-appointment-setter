@@ -66,6 +66,8 @@ from .flow_definition import (
     PERSONAL_COUPONS_PER_PATH,
     REGISTRATION_KEY,
     TO_CREATE,
+    TemplateLiteral,
+    is_literal_variable,
     is_pool,
     parse_due_anchor,
     parse_duration,
@@ -140,6 +142,9 @@ class EngineCapabilities:
     # E-483: la salida contesta tambien con un disparo de evento (el nativo de varios toques: la
     # reevaluacion corta el toque siguiente con la respuesta, prospect_replied).
     reply_exit_with_events: bool = False
+    # F4 (20261127300000): el texto fijo de un marcador, ``{"texto": …}`` en variables. Lo manda el envio
+    # nativo generico (worker._compose_native_step_proposal); el legado, el silencio y la ficha no (D-F4.3).
+    literal_variables: bool = False
 
 
 ENGINE_CAPABILITIES_V1 = EngineCapabilities(
@@ -235,7 +240,11 @@ def not_supported(definition: Mapping[str, Any], capabilities: EngineCapabilitie
         if kind == "plantilla":
             assert isinstance(step, Mapping)
             for variable in step.get("variables") or ():
-                if variable not in capabilities.variables:
+                if is_literal_variable(variable) or isinstance(variable, Mapping):
+                    # F4: el texto fijo no es un nombre; lo manda solo un motor que lo sabe armar.
+                    if not capabilities.literal_variables:
+                        add("variable_texto")
+                elif variable not in capabilities.variables:
                     add(f"variable_{variable}")
             button = step.get("boton")
             if isinstance(button, Mapping) and button.get("link") not in capabilities.buttons:
@@ -298,6 +307,9 @@ ENGINE_CAPABILITIES_NATIVE = EngineCapabilities(
     buttons=frozenset(),
     exits=frozenset({"compra"}),
     relations_between_engine_flows_only=True,
+    # F4: el texto fijo, en la compra, el carrito, el pago rechazado, el formulario y (por las que se derivan de
+    # estas) la audiencia; la base marca esas formas con texto_fijo (20261127300000).
+    literal_variables=True,
 )
 # El disparador nativo del seguimiento a 24 h con cupon (P22-1 de M16): un silencio en el que lo ultimo lo
 # dijo el agente. El silencio con lo ultimo de la persona (la reactivacion) sigue fuera del motor nativo.
@@ -486,17 +498,21 @@ def native_audience_form(definition: Mapping[str, Any]) -> str | None:
 NATIVE_PURCHASE_VARIABLES = ("nombre", "producto")
 
 
-def native_variables_fit(variables: object, allowed: tuple[str, ...] = NATIVE_PURCHASE_VARIABLES) -> bool:
-    """Las variables de un paso nativo: una lista no vacia, sin repetidas, de ``allowed``.
+def native_variables_fit(variables: object, allowed: tuple[str, ...] = NATIVE_PURCHASE_VARIABLES, *,
+                         literal: bool = False) -> bool:
+    """Las variables de un paso nativo: una lista no vacia, sin nombres repetidos, de ``allowed``.
 
     El mismo criterio que el compilador de la base con ``variables_de`` (20261026000100) y, con el cupon
-    propio, con ``coupon_variables_de`` (20261112210500).
+    propio, con ``coupon_variables_de`` (20261112210500). Con ``literal`` (F4, una forma con ``texto_fijo``,
+    20261127300000), tambien ``{"texto": …}``, que puede repetirse; su texto lo mira la regla 1.
     """
+    if not isinstance(variables, list) or not variables:
+        return False
+    names = [item for item in variables if isinstance(item, str)]
     return (
-        isinstance(variables, list)
-        and bool(variables)
-        and all(isinstance(item, str) and item in allowed for item in variables)
-        and len(set(variables)) == len(variables)
+        all(item in allowed for item in names)
+        and all(isinstance(item, str) or (literal and is_literal_variable(item)) for item in variables)
+        and len(set(names)) == len(names)
     )
 
 
@@ -783,7 +799,7 @@ def _native_personal_coupon_not_supported(definition: Mapping[str, Any], key: st
         allowed = NATIVE_AUDIENCE_VARIABLES if key == NATIVE_AUDIENCE_TRIGGER else NATIVE_PURCHASE_VARIABLES
         if personal and in_path and key in NATIVE_PERSONAL_COUPON_TRIGGERS:
             allowed = NATIVE_COUPON_FIRST_VARIABLES if sends == 0 else NATIVE_COUPON_NEXT_VARIABLES
-        if not native_variables_fit(step.get("variables"), allowed):
+        if not native_variables_fit(step.get("variables"), allowed, literal=True):
             add(f"{NOT_SUPPORTED}:variables_differ")
         if in_path:
             sends += 1
@@ -968,7 +984,7 @@ class PlannedStep:
                                       # aceptado (la regla del legado, 20260813000100:337-350). No es opcional.
     template: str
     language: str
-    variables: tuple[str, ...]
+    variables: tuple[str | TemplateLiteral, ...]   # F4: el texto fijo como TemplateLiteral (hashable)
     button: str | None
     step_key: str | None              # el del legado en ese indice (flow_policy.STEPS_BY_LEGACY_KIND), o None
 
@@ -1054,7 +1070,8 @@ def plan_steps(flow: EngineFlow, firing: Firing, *,
             after=timedelta(minutes=waited),
             template=template if isinstance(template, str) else "",
             language=step.get("idioma") if isinstance(step.get("idioma"), str) else "",
-            variables=tuple(step.get("variables") or DEFAULT_VARIABLES),
+            variables=tuple(TemplateLiteral(item["texto"]) if is_literal_variable(item) else item
+                            for item in (step.get("variables") or DEFAULT_VARIABLES)),
             button=button.get("link") if isinstance(button, Mapping) else None,
             step_key=_legacy_step_key(flow.legacy_kind, len(planned)),
         ))

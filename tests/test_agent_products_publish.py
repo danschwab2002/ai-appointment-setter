@@ -37,8 +37,8 @@ def _function(name: str) -> str:
 def test_it_is_one_transaction_and_is_the_last() -> None:
     sql = _sql()
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
-    assert names[-20] == MIGRATION.name
-    assert names[-21] == "20261115000100_agent_products_v1.sql"
+    assert names[-21] == MIGRATION.name
+    assert names[-22] == "20261115000100_agent_products_v1.sql"
     assert sql.count("\nbegin;\n") == 1 and sql.rstrip().endswith("commit;")
     assert "set local lock_timeout = '5s';" in sql
     assert "agent_products_publish_already_applied" in sql and "agent_products_publish_prerequisite_missing" in sql
@@ -111,7 +111,7 @@ def test_each_public_function_has_only_its_role() -> None:
 
 def test_the_validator_is_last_in_the_npm_chain() -> None:
     chain = json.loads((ROOT / "tests/sql/followup_engine/package.json").read_text(encoding="utf-8"))["scripts"]["test"]
-    assert chain.endswith("node validate_agent_products.mjs && node validate_agent_products_publish.mjs && node validate_flow_audience_reach.mjs && node validate_permission_registry.mjs && node validate_flow_engine_native_audience_recipient.mjs --check && node validate_flow_audience_repeat_started.mjs && node validate_flow_audience_start_reasons.mjs --check && node validate_flow_engine_admission_identity_mismatch.mjs && node validate_bulk_send_store.mjs")
+    assert chain.endswith("node validate_agent_products.mjs && node validate_agent_products_publish.mjs && node validate_flow_audience_reach.mjs && node validate_permission_registry.mjs && node validate_flow_engine_native_audience_recipient.mjs --check && node validate_flow_audience_repeat_started.mjs && node validate_flow_audience_start_reasons.mjs --check && node validate_flow_engine_admission_identity_mismatch.mjs && node validate_bulk_send_store.mjs && node validate_flow_engine_literal_variables.mjs")
 
 
 # ------------------------------------------------------------------ descartar, la ruta del AE

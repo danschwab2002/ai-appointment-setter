@@ -44,7 +44,9 @@ PROPOSE_FLOW_CHANGE = {
                                "a: \"cohorte\"}; un flujo nuevo → "
                                "{producto, flujo, tipo: \"nuevo\", prender: \"cohorte\", definicion} y, con "
                                "permiso: compra, ok_del_cliente {quien, medio, fecha}. producto y flujo son el "
-                               "product_ref y el flow_key del almacén.",
+                               "product_ref y el flow_key del almacén. En las variables de un paso plantilla va "
+                               "un nombre por marcador o, si la cuenta lo tiene prendido, un texto fijo "
+                               "{texto: \"…\"} (1 a 400 caracteres, una línea, sin links, teléfonos ni mails).",
                 "items": {"type": "object"},
             },
             "base": {

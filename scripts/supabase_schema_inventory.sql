@@ -8041,6 +8041,25 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'meta_enforcement_brakes'
+    union all
+    select
+        '20261127300000',
+        '20261127300000_flow_engine_literal_variables_v1.sql',
+        -- El texto fijo en los toques nativos, menos la ficha (F4) ...
+        coalesce((
+            select (position('flow_literal_variables_steps' in definition) > 0
+                    and position('"texto_fijo": true' in definition) > 0)::int
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_steps(text)')
+        ), 0)
+        -- ... y el compilador que lo acepta.
+        + coalesce((
+            select (position('flow_literal_variables: el texto fijo' in definition) > 0)::int
+            from functions
+            where oid = to_regprocedure('public._flow_engine_compile_policy_core(jsonb,text,integer,text,text)')
+        ), 0),
+        2,
+        'flow_engine_literal_variables'
 )
 select
     version,

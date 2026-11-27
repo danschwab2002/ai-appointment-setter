@@ -99,6 +99,8 @@ Se corrige con **otra plantilla con el número siguiente** (`_02`): la rechazada
 
 Meta puede aprobar como marketing una que se pidió de utilidad. Eso cambia qué se puede hacer: decilo sin vueltas.
 
+Para que no pase, si la validación avisa `template_utility_sounds_promotional`: dejá el cuerpo de utilidad (qué pasó y qué tiene que hacer la persona) y lo comercial en un marcador que el flujo llena con un texto fijo (`{texto: "…"}` en las variables del paso, solo con `FLOW_LITERAL_VARIABLES_ENABLED`; guía `crear-un-flujo`). Decilo como es: Meta igual mira lo que se manda y la puede pasar a marketing.
+
 - **Si el flujo es de la compra**, no la puede usar. Ofrecé una versión de utilidad, sin vender, con el número siguiente, o cambiar el flujo.
 - **En otro flujo**, una de marketing lleva «No más mensajes». Si no lo tiene, no se usa: otra con ese botón y el número siguiente.
 

@@ -113,7 +113,9 @@ if (JSON.stringify(names.slice(position + 2)) !== JSON.stringify(['2026111400030
     // Las fases del lanzamiento (20261126800000, 4.8).
     '20261126800000_agent_campaign_phases_v1.sql',
     // Los frenos ante Meta (20261127100000, F1).
-    '20261127100000_meta_enforcement_brakes_v1.sql'])) fail('despues de la pregunta van solo la de E-565, la de E-569, la de E-575, la de E-622, la de E-627, la de E-661, la de E-665, la de E-666 y la de E-656', names.slice(position + 2));
+    '20261127100000_meta_enforcement_brakes_v1.sql',
+    // El texto fijo en las variables de un paso nativo (20261127300000, F4).
+    '20261127300000_flow_engine_literal_variables_v1.sql'])) fail('despues de la pregunta van solo la de E-565, la de E-569, la de E-575, la de E-622, la de E-627, la de E-661, la de E-665, la de E-666 y la de E-656', names.slice(position + 2));
 const readMigration = (name) => readFileSync(join(root, 'supabase/migrations', name), 'utf8')
   .replace(/create extension if not exists pgcrypto;/gi, '-- pgcrypto is built into PGlite');
 

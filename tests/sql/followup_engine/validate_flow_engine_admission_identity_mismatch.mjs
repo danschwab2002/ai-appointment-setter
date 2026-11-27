@@ -65,7 +65,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026112500020
     // Las fases del lanzamiento (20261126800000).
     '20261126800000_agent_campaign_phases_v1.sql',
     // Los frenos ante Meta (20261127100000, F1).
-    '20261127100000_meta_enforcement_brakes_v1.sql'])) {
+    '20261127100000_meta_enforcement_brakes_v1.sql',
+    // El texto fijo en las variables de un paso nativo (20261127300000, F4).
+    '20261127300000_flow_engine_literal_variables_v1.sql'])) {
   fail(`despues de ${MIGRATION} van solo las del masivo`, names.slice(position + 1));
 }
 if (shape.rechazos.reason !== 'error_interno:23514' || shape.identidad_del_destino.es_de_otro_contacto !== true

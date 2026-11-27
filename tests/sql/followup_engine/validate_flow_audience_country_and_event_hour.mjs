@@ -38,8 +38,10 @@ if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Despues van solo las fases del lanzamiento (20261126800000, 4.8), que no tocan la audiencia.
 if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261126800000_agent_campaign_phases_v1.sql',
   // Los frenos ante Meta (20261127100000, F1).
-  '20261127100000_meta_enforcement_brakes_v1.sql'])) {
-  fail(`despues de ${MIGRATION} van solo la de las fases del lanzamiento y la de los frenos ante Meta`, names.slice(position + 1));
+  '20261127100000_meta_enforcement_brakes_v1.sql',
+  // El texto fijo en las variables de un paso nativo (20261127300000, F4).
+  '20261127300000_flow_engine_literal_variables_v1.sql'])) {
+  fail(`despues de ${MIGRATION} van solo la de las fases del lanzamiento, la de los frenos ante Meta y la del texto fijo`, names.slice(position + 1));
 }
 
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(
@@ -121,9 +123,10 @@ const shapes = async (db) => {
 }
 
 // ---------------------------------------------------------------------------
-// El mundo: ATT1 sin esta migracion.
+// El mundo: ATT1 sin esta migracion (ni la del texto fijo, que la necesita).
 // ---------------------------------------------------------------------------
-const world = await buildWorld({ skip: [MIGRATION] });
+// El texto fijo (20261127300000, F4) pide esta migracion aplicada: sin ella aborta, asi que tampoco va.
+const world = await buildWorld({ skip: [MIGRATION, '20261127300000_flow_engine_literal_variables_v1.sql'] });
 const { db, A, A2, INSTANCE, person, admitForm, register, cycle, versionItem, dbNow } = world;
 const sql = async (text, params = []) => (await db.query(text, params)).rows;
 const call = async (text, params) => JSON.parse(one(await sql(`select ${text}::text as r`, params), text).r);

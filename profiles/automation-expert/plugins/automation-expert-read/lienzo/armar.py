@@ -164,7 +164,10 @@ def traducir(defi: dict, plantillas: dict, estado: str) -> tuple[list, list]:
         a_crear = isinstance(ref, dict)
         nombre = ref.get("a_crear") if a_crear else ref
         p = copy.deepcopy(plantillas.get(nombre) or {})
-        p.setdefault("variables", [VARIABLES.get(v, v) for v in paso.get("variables") or []])
+        # F4: un texto fijo ({"texto": ...}) se muestra entre comillas, tal cual.
+        p.setdefault("variables", [VARIABLES.get(v, v) if isinstance(v, str)
+                                   else f"«{v.get('texto')}»" if isinstance(v, dict) else str(v)
+                                   for v in paso.get("variables") or []])
         p["nombre"] = nombre
         p.setdefault("idioma", paso.get("idioma"))
         if paso.get("boton"):

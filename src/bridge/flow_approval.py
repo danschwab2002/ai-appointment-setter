@@ -92,7 +92,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from slack_correlation.catalog import NotificationCommand
 
 from .flow_change_operator import OperatorInputError, validate_proposal
-from .flow_definition import InstanceRuntime
+from .flow_definition import LITERAL_KEY, InstanceRuntime, is_literal_variable
 from .flow_validator import structural_changes
 from .review_theme import REVIEW_BUTTONS_CSS, REVIEW_SHELL_CSS
 
@@ -939,6 +939,18 @@ def _end_text(definition: Mapping[str, Any]) -> str:
     return " ".join(parts) if parts else "—"
 
 
+def _literal_lines(step: Mapping[str, Any]) -> str:
+    """F4: cada texto fijo del paso, entero y escapado, con su marcador: lo que se aprueba es el copy exacto.
+
+    Sale de la definicion y no de la vista previa, asi se ve aunque la plantilla no este en el catalogo.
+    """
+    variables = step.get("variables") if isinstance(step.get("variables"), list) else []
+    return "".join(
+        f'<p class="meta literal">Texto fijo en el marcador {{{{{position}}}}}, igual para todas: '
+        f"«{_esc(variable[LITERAL_KEY])}»</p>"
+        for position, variable in enumerate(variables, start=1) if is_literal_variable(variable))
+
+
 def _message_bubble(message: Mapping[str, Any] | None, step: Mapping[str, Any]) -> str:
     name = step.get("plantilla")
     if isinstance(name, Mapping):
@@ -954,7 +966,7 @@ def _message_bubble(message: Mapping[str, Any] | None, step: Mapping[str, Any]) 
             message is not None and message.get("encontrada") is False)
                else "Esta propuesta no trae la vista previa del texto.")
         return (f'<div class="message"><p class="actor">{actor}</p>'
-                f'<div class="bubble bubble--missing">{_esc(why)}</div></div>')
+                f'<div class="bubble bubble--missing">{_esc(why)}</div>{_literal_lines(step)}</div>')
     inner = ""
     if seen.get("encabezado"):
         inner += f'<div class="bubble-head">{_esc(seen.get("encabezado"))}</div>'
@@ -964,7 +976,8 @@ def _message_bubble(message: Mapping[str, Any] | None, step: Mapping[str, Any]) 
     for button in seen.get("botones") or []:
         if isinstance(button, Mapping):
             inner += f'<span class="bubble-button">{_esc(button.get("texto"))}</span>'
-    return f'<div class="message"><p class="actor">{actor}</p><div class="bubble">{inner}</div></div>'
+    return (f'<div class="message"><p class="actor">{actor}</p><div class="bubble">{inner}</div>'
+            f"{_literal_lines(step)}</div>")
 
 
 def _render_steps(steps: object, at: str, messages: Mapping[str, Mapping[str, Any]], depth: int = 0) -> str:
@@ -2057,6 +2070,7 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
                                   segment_labels: Callable[[], list[dict[str, str]]] | None = None,
                                   runtime: InstanceRuntime | None = None,
                                   template_images: frozenset[str] = frozenset(),
+                                  literal_variables: bool = False,
                                   extra_routes: Callable[[FastAPI, PageTools], None] | None = None) -> None:
     """Las rutas de la pagina. Solo se llama con el flag prendido.
 
@@ -2067,6 +2081,8 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
     validar no publique sin efecto. Sin el, no se bloquea por eso.
 
     ``template_images`` (E-370): las plantillas con imagen de encabezado declarada, para revalidar.
+
+    ``literal_variables`` (F4): FLOW_LITERAL_VARIABLES_ENABLED, para revalidar un paso con un texto fijo.
 
     ``chatwoot`` e ``inbox_id`` dan el catalogo de plantillas para revalidar al
     publicar (sin ellos, publicar contesta ``template_catalog_unavailable``);
@@ -2482,7 +2498,8 @@ def register_flow_approval_routes(app: FastAPI, *, config: FlowApprovalConfig, s
                          # E-316: las etiquetas de segmento que acepta etiquetar, con su estado de ahora.
                          "segment_labels": segment_labels() if segment_labels is not None else [],
                          **({"runtime": runtime.to_json()} if runtime is not None else {}),
-                         **({"template_images": sorted(template_images)} if template_images else {})},
+                         **({"template_images": sorted(template_images)} if template_images else {}),
+                         **({"literal_variables": True} if literal_variables else {})},
             "store": snapshot,
             "proposal": {"id": proposal_id, "revision": found.get("revision"), "items": found.get("items"),
                          "draft_base": found.get("draft_base"), "purpose": found.get("purpose"),

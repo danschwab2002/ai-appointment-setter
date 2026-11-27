@@ -408,6 +408,8 @@ class _Context:
     runtime: InstanceRuntime | None = None
     # E-370: las plantillas con imagen de encabezado declarada en el manifiesto.
     template_images: frozenset[str] = frozenset()
+    # F4: FLOW_LITERAL_VARIABLES_ENABLED, el texto fijo en las variables de un paso.
+    literal_variables: bool = False
 
 
 def _instance_view(context: _Context, store: Mapping[str, Any]) -> InstanceView:
@@ -418,7 +420,8 @@ def _instance_view(context: _Context, store: Mapping[str, Any]) -> InstanceView:
                         products=frozenset(products), time_zone=context.time_zone,
                         segment_labels=tuple((entry["etiqueta"], entry["estado"])
                                              for entry in context.segment_labels()),
-                        runtime=context.runtime, template_images=context.template_images)
+                        runtime=context.runtime, template_images=context.template_images,
+                        literal_variables=context.literal_variables)
 
 
 def _finding(finding: Mapping[str, Any]) -> dict[str, Any]:
@@ -513,7 +516,8 @@ def register_flow_change_routes(app: FastAPI, *, token: str, store: FlowChangeSt
                                 git_sha: str | None = None,
                                 segment_labels: Callable[[], list[dict[str, str]]] | None = None,
                                 runtime: InstanceRuntime | None = None,
-                                template_images: frozenset[str] = frozenset()) -> None:
+                                template_images: frozenset[str] = frozenset(),
+                                literal_variables: bool = False) -> None:
     """Las rutas, detras del flag (lo mira quien llama: con el flag apagado no existen).
 
     ``segment_labels`` (E-316): las etiquetas de segmento que acepta etiquetar, con su estado al
@@ -523,10 +527,13 @@ def register_flow_change_routes(app: FastAPI, *, token: str, store: FlowChangeSt
 
     ``template_images`` (E-370): las plantillas con imagen de encabezado declarada. Sin ellas, la
     regla 13 bloquea toda plantilla con encabezado de imagen.
+
+    ``literal_variables`` (F4): FLOW_LITERAL_VARIABLES_ENABLED. Sin el, ``{"texto": …}`` en las variables
+    de un paso es invalid_value, como antes.
     """
     context = _Context(instance={"tenant_ref": tenant_ref, "ally_ref": ally_ref}, time_zone=time_zone,
                        inbox_id=inbox_id, git_sha=git_sha or os.getenv("GIT_SHA", "") or "unknown",
-                       runtime=runtime, template_images=template_images,
+                       runtime=runtime, template_images=template_images, literal_variables=literal_variables,
                        **({"segment_labels": segment_labels} if segment_labels is not None else {}))
     slots = asyncio.Semaphore(2)
 

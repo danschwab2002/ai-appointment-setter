@@ -609,6 +609,18 @@ Escrito al construirlo, el 2026-11-13, antes del merge: no afirma nada desplegad
 - **Lo que no cambia.** Con el flag apagado, nada: el bridge llama a la v1 con el mismo cuerpo, y la v1 cierra el flujo apagado con el mismo motivo. El legado de ATT1 no pasa por la autorización nativa.
 - **Las pruebas:** `tests/sql/followup_engine/validate_e483_native_person_cap.mjs` y `tests/test_e483_native_person_cap.py`.
 
+## 36. El texto fijo en un marcador (F4, D15-D16 del mapa «Frenos ante Meta y calentamiento»)
+
+Escrito al construirlo, el 2026-11-27, antes del merge: no afirma nada desplegado ni activado. Migración `20261127300000_flow_engine_literal_variables_v1.sql`. Va a correr solo con `FLOW_LITERAL_VARIABLES_ENABLED` (apagado por defecto, portable).
+
+- **La forma.** En `variables` de un paso `plantilla`, además de un nombre, va `{"texto": "…"}`: un texto que le llega igual a todas en ese marcador (la gramática del masivo). Es válido con 1 a 400 caracteres, no en blanco, en una línea (sin salto de línea, retorno, tab ni cinco espacios seguidos), sin `{{`, sin links (`https://`, `www.` o un dominio suelto) y sin teléfonos ni mails (`identifier_not_allowed`, en `/pasos/<i>/variables/<j>/texto`). Dos textos iguales pueden ir; los nombres siguen sin repetirse.
+- **El flag.** Lo mira el validador (`InstanceView.literal_variables`; la página de aprobación lo pasa al revalidar y el comando del operador lo lee de `instance.literal_variables`, ausente = apagado). Apagado, `{"texto": …}` es `invalid_value` con su motivo, como antes de F4. La base lo acepta siempre (nadie lo escribe con el flag apagado).
+- **Dónde va.** En los pasos nativos con plantilla de la compra, el carrito (también con el cupón propio), el pago rechazado (también en sus ramas), el formulario y la audiencia: la base marca esas formas con `"texto_fijo": true` en `_flow_engine_native_steps` y el compilador acepta el objeto en ellas. No va en la ficha (C1 y C3 arman sus parámetros por nombre, D-F4.3), en el seguimiento por silencio (D17: el tercer parámetro va aparte) ni en el legado: la regla 14 da `engine_not_supported:variable_texto` o `variables_differ`.
+- **El envío.** `flow_engine_execution_context_v1` no cambia: `template_variables` trae el texto JSON del objeto (`jsonb_array_elements_text`), y el bridge lo decodifica a un `TemplateLiteral` en su posición (D-F4.4; las ramas del pago rechazado lo traen como objeto). El envío nativo lo pone tal cual en su marcador, sin colapsar espacios; `ApprovedTemplate.render` frena un valor que Meta rechazaría (salto, tab, cinco espacios) y un cuerpo de más de 1.024 caracteres (`template_parameters_missing`, `approved_template_mismatch`). Con el flag apagado, un paso con un texto fijo cierra sin salir (`flow_engine_step_unsupported`).
+- **Lo que ve quien aprueba.** La vista previa pone el texto en su marcador, sin corchetes, y lo lista entero en `como_lo_ve.textos_fijos` (`{marcador, texto}`); la página lo muestra entero y escapado debajo del mensaje, aunque la plantilla no esté en el catálogo.
+- **Lo que no cambia.** Un paso sin texto fijo valida, compila y sale igual que antes. Ninguna tabla ni permiso; la migración reemplaza por conteo dos funciones con su marca.
+- **Las pruebas:** `tests/sql/followup_engine/validate_flow_engine_literal_variables.mjs` y `tests/test_flow_literal_variables.py`.
+
 ## Varios productos por aliada (E-350)
 
 Con `[[productos]]` y más de un producto, un flujo nativo es de **un** producto (`producto`, que es el `funnel_ref`), y solo lo disparan los eventos de ese producto:

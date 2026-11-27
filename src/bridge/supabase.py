@@ -19,6 +19,7 @@ import httpx
 
 from bridge.agent_provenance import AgentTurn
 from bridge.commercial_ally import CommercialAllyConfig, OfferLanding
+from bridge.flow_definition import TemplateLiteral, is_literal_variable
 from bridge.lead_first_name import FirstNameInference
 from bridge.correlation_preresolution import (
     CorrelationCandidate,
@@ -356,15 +357,36 @@ def _native_branches(value: object, *, operation: str) -> tuple[FlowEngineNative
                                               step.get("boton"))
         if (not isinstance(name, str) or not name or not isinstance(language, str) or not language
                 or not isinstance(variables, list)
-                or any(not isinstance(entry, str) or not entry for entry in variables)
+                # F4: el texto fijo de un marcador ({"texto": …}) viene como objeto en la rama.
+                or any(not (isinstance(entry, str) and entry) and not is_literal_variable(entry)
+                       for entry in variables)
                 or (button is not None and (not isinstance(button, dict) or any(
                     not isinstance(key, str) or not isinstance(entry, str) for key, entry in button.items())))):
             raise SupabaseError(f"{operation}_invalid_row")
         branches.append(FlowEngineNativeBranch(
             datum=datum, values=values, template_name=name, template_language=language,
-            template_variables=tuple(variables), template_button=dict(button) if button is not None else None,
+            template_variables=tuple(TemplateLiteral(entry["texto"]) if is_literal_variable(entry) else entry
+                                     for entry in variables),
+            template_button=dict(button) if button is not None else None,
         ))
     return tuple(branches)
+
+
+def _step_variable(item: str) -> str | TemplateLiteral:
+    """Un elemento de ``template_variables`` de ``flow_engine_execution_context_v1`` (F4, D-F4.4).
+
+    La base lo da con ``jsonb_array_elements_text``: un nombre es el nombre, y un texto fijo es el texto JSON
+    del objeto (``{"texto": "…"}``). Lo que empieza con ``{`` y es ese objeto vuelve como ``TemplateLiteral``;
+    cualquier otra cosa queda como estaba (el envio la cierra como antes, flow_engine_step_unsupported).
+    """
+    if item.startswith("{"):
+        try:
+            decoded = json.loads(item)
+        except ValueError:
+            return item
+        if is_literal_variable(decoded):
+            return TemplateLiteral(decoded["texto"])
+    return item
 
 
 def _pilot_plan_rejection(response: httpx.Response) -> str | None:
@@ -1182,7 +1204,8 @@ class FlowEngineStepContext:
     send_ordinal: int
     template_name: str
     template_language: str
-    template_variables: tuple[str, ...]
+    # F4 (20261127300000): un texto fijo del paso es un TemplateLiteral, en su posicion.
+    template_variables: tuple[str | TemplateLiteral, ...]
     template_button: dict[str, str] | None
     legacy_dispatch_ok: bool
     # El entra.permiso de la version fijada (20261028000200, E-161). None con una
@@ -1205,7 +1228,7 @@ class FlowEngineNativeBranch:
     values: tuple[str, ...] | None
     template_name: str
     template_language: str
-    template_variables: tuple[str, ...]
+    template_variables: tuple[str | TemplateLiteral, ...]
     template_button: dict[str, str] | None
 
 
@@ -7519,7 +7542,7 @@ class SupabaseClient:
             send_ordinal=_required_positive_int(row, "send_ordinal", operation=operation),
             template_name=_required_string(row, "template_name", operation=operation),
             template_language=_required_string(row, "template_language", operation=operation),
-            template_variables=tuple(variables),
+            template_variables=tuple(_step_variable(item) for item in variables),
             template_button=dict(button) if button is not None else None,
             legacy_dispatch_ok=_required_bool(row, "legacy_dispatch_ok", operation=operation),
             entry_permission=permission,
