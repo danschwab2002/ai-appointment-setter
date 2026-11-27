@@ -38,4 +38,4 @@ Las reglas de `crear-un-flujo`: lenguaje de negocio, mensajes cortos, una o dos 
 - **Si preguntan cómo va**, `get_knowledge_change` (con el `knowledge_id`) o `list_knowledge_changes`: el estado y, si está aprobada, si el agente la está usando (`serving`).
 - **Si vuelve `agent_knowledge_base_changed`**, lo vigente cambió mientras tanto (se aprobó otra o se volvió a lo de siempre): leé de nuevo con `get_knowledge` y armalo otra vez.
 - **Una versión aprobada no se edita**: se arma la siguiente sobre ella. Volver a lo de siempre lo hace un aprobador en la página.
-- **El arnés de conversaciones no corre desde acá** (`knowledge_harness_not_run`): sugerí probarlo con el equipo después de aprobarlo.
+- **El arnés de conversaciones:** si al guardar la respuesta trae `harness`, el bridge lo está corriendo sobre la versión y la página no deja aprobarla hasta que dé verde; decilo, y si preguntan cómo va, `get_knowledge_change` trae `harness` (`verde`, `rojo` con lo que empeora, `error` para volver a correrlo desde la página). Si en cambio vuelve el aviso `knowledge_harness_not_run`, no corre desde acá: sugerí probarlo con el equipo después de aprobarlo.

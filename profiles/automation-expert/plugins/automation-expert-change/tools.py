@@ -69,6 +69,11 @@ guardarlo validado (``propose_knowledge_change``) y releer las versiones. Aproba
 hace un aprobador en la pagina. Sin ``AGENT_LIVE_KNOWLEDGE_ENABLED`` el bridge no tiene esas rutas:
 ``knowledge_not_enabled``.
 
+Desde la 0.17.0 (4.9 parte 2, D-49.9) suma probar una campana validada conversando: pedirlo
+(``try_campaign_conversation``, corre en el bridge en segundo plano, no le manda nada a nadie) y leer la
+transcripcion (``get_campaign_conversation``). Sin ``AUTOMATION_EXPERT_CAMPAIGN_CONVERSATION_ENABLED`` el
+bridge no tiene esas rutas: ``conversation_not_enabled``.
+
 Con el canal del link prendido (ciclo 1.9.0), una validacion que deja la
 propuesta ``validada`` postea el boton «Revisar y aprobar» en el mismo DM
 (``approval_button.py``). El boton es un link a la pagina del bridge: tampoco
@@ -401,6 +406,10 @@ def _request(method: str, path: str, body: dict[str, object] | None = None) -> d
         if exc.code in (404, 405) and detail in ("Not Found", "Method Not Allowed") \
                 and path.startswith(CAMPAIGNS) and path.endswith("/judge"):
             return {"error": "judge_not_enabled"}
+        # 4.9 parte 2: sin AUTOMATION_EXPERT_CAMPAIGN_CONVERSATION_ENABLED su ruta no existe.
+        if exc.code in (404, 405) and detail in ("Not Found", "Method Not Allowed") \
+                and path.startswith(CAMPAIGNS) and path.endswith("/conversation"):
+            return {"error": "conversation_not_enabled"}
         # Lo mismo con las campanas: sin AGENT_CAMPAIGNS_ENABLED sus rutas no existen.
         if exc.code == 404 and detail == "Not Found" and path.startswith(CAMPAIGNS):
             return {"error": "campaigns_not_enabled"}
@@ -1097,6 +1106,34 @@ def get_campaign_judge(params: dict[str, object], **kwargs: object) -> str:
     if campaign_id is None:
         return _dumps({"error": "invalid_campaign_id"})
     return _dumps(_request("GET", f"{CAMPAIGNS}/{campaign_id}/judge"))
+
+
+# 4.9 parte 2 (D-49.9): la conversacion de ensayo. Corre en el bridge; nadie recibe nada. Sin
+# AUTOMATION_EXPERT_CAMPAIGN_CONVERSATION_ENABLED su ruta no existe: conversation_not_enabled.
+def try_campaign_conversation(params: dict[str, object], **kwargs: object) -> str:
+    del kwargs
+    campaign_id = _uuid(params.get("campaign_id"))
+    if campaign_id is None:
+        return _dumps({"error": "invalid_campaign_id"})
+    messages = params.get("mensajes")
+    if not isinstance(messages, list) or not 1 <= len(messages) <= 5 \
+            or not all(isinstance(item, str) and 1 <= len(item.strip()) <= 300 for item in messages):
+        return _dumps({"error": "invalid_body", "reason": {"field": "mensajes", "problem": "list_of_1_to_5_texts"}})
+    if any(looks_like_identifier(item) for item in messages):
+        return _dumps({"error": "identifier_not_allowed"})
+    requested = _campaign_requester()
+    if isinstance(requested, str):
+        return requested
+    return _dumps(_request("POST", f"{CAMPAIGNS}/{campaign_id}/conversation",
+                           {"requested_by": requested, "mensajes": [item.strip() for item in messages]}))
+
+
+def get_campaign_conversation(params: dict[str, object], **kwargs: object) -> str:
+    del kwargs
+    campaign_id = _uuid(params.get("campaign_id"))
+    if campaign_id is None:
+        return _dumps({"error": "invalid_campaign_id"})
+    return _dumps(_request("GET", f"{CAMPAIGNS}/{campaign_id}/conversation"))
 
 
 # live-knowledge-v1 (pieza 5.5): el conocimiento base por secciones. No hay herramienta para publicarlo ni

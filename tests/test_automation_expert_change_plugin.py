@@ -51,7 +51,7 @@ TOOLS = ["get_flow_definitions", "propose_flow_change", "validate_flow_change", 
          # keyword-rules-v1 (Z1 3.9): la regla de palabra clave; publicarla es de la pagina.
          "preview_keyword_rule", "propose_keyword_rule", "get_keyword_rule", "list_keyword_rules",
          # 4.9 (agent-campaign-judge-v1): pedir el control de calidad de una campana y leerlo.
-         "judge_campaign", "get_campaign_judge",
+         "judge_campaign", "get_campaign_judge", "try_campaign_conversation", "get_campaign_conversation",
          # live-knowledge-v1 (5.5): el conocimiento; publicarlo y volver al archivo son de la pagina.
          "get_knowledge", "preview_knowledge_change", "propose_knowledge_change",
          "get_knowledge_change", "list_knowledge_changes"]
@@ -574,6 +574,34 @@ def test_the_judge_tools_go_to_their_routes_and_say_when_the_judge_is_not_on(bri
         bridge.routes[f"POST {PREFIX}/campaigns/{PROPOSAL}/judge"] = (409, {"detail": code})
         assert json.loads(tools.judge_campaign({"campaign_id": PROPOSAL})) == {"error": code}
     assert json.loads(tools.judge_campaign({"campaign_id": "no-es"})) == {"error": "invalid_campaign_id"}
+
+
+def test_the_conversation_tools_go_to_their_routes_and_never_send_a_phone(bridge: type[_Bridge]) -> None:
+    # 4.9 parte 2 (D-49.9): sin AUTOMATION_EXPERT_CAMPAIGN_CONVERSATION_ENABLED la ruta no existe.
+    tools = _tools()
+    bridge.routes[f"POST {PREFIX}/campaigns/{PROPOSAL}/conversation"] = (404, {"detail": "Not Found"})
+    assert json.loads(tools.try_campaign_conversation({"campaign_id": PROPOSAL, "mensajes": ["hola"]})) == {
+        "error": "conversation_not_enabled"}
+    envelope = {"contract": "agent-campaign-judge-v1", "contract_version": "1.0.0"}
+    bridge.routes[f"POST {PREFIX}/campaigns/{PROPOSAL}/conversation"] = (
+        202, {**envelope, "data": {"resultado": "CORRIENDO", "tipo": "conversacion"}})
+    sent = tools.try_campaign_conversation({"campaign_id": PROPOSAL, "mensajes": [" hola ", "¿cuánto sale?"]})
+    assert json.loads(sent)["data"]["tipo"] == "conversacion"
+    assert json.loads(str(bridge.seen[-1]["body"])) == {"requested_by": {"slack_user": "U0123456789"},
+                                                         "mensajes": ["hola", "¿cuánto sale?"]}
+    seen = len(bridge.seen)
+    assert json.loads(tools.try_campaign_conversation({"campaign_id": PROPOSAL, "mensajes": ["Soy el 5512345678"]})) \
+        == {"error": "identifier_not_allowed"}
+    assert json.loads(tools.try_campaign_conversation({"campaign_id": PROPOSAL, "mensajes": []}))["error"] \
+        == "invalid_body"
+    assert len(bridge.seen) == seen
+    bridge.routes[f"GET {PREFIX}/campaigns/{PROPOSAL}/conversation"] = (
+        200, {**envelope, "data": {"last_conversation": None, "ultima_corrida": "juez"}})
+    assert json.loads(tools.get_campaign_conversation({"campaign_id": PROPOSAL}))["data"]["ultima_corrida"] == "juez"
+    bridge.routes[f"POST {PREFIX}/campaigns/{PROPOSAL}/conversation"] = (
+        409, {"detail": "agent_campaign_judge_daily_limit"})
+    assert json.loads(tools.try_campaign_conversation({"campaign_id": PROPOSAL, "mensajes": ["hola"]})) == {
+        "error": "agent_campaign_judge_daily_limit"}
 
 
 def test_the_campaign_tools_never_send_a_phone_in_the_purpose(bridge: type[_Bridge]) -> None:

@@ -295,8 +295,12 @@ class Evaluation:
         return self.knowledge.render() if self.knowledge is not None else None
 
 
-def evaluate(change: Mapping[str, Any], *, base: ServedKnowledge, context: KnowledgeContext) -> Evaluation:
-    """El cambio (ya normalizado) sobre ``base``: bloqueos, avisos y la version armada."""
+def evaluate(change: Mapping[str, Any], *, base: ServedKnowledge, context: KnowledgeContext,
+             harness: bool = False) -> Evaluation:
+    """El cambio (ya normalizado) sobre ``base``: bloqueos, avisos y la version armada.
+
+    ``harness`` (5.5 parte 2, ``AGENT_LIVE_KNOWLEDGE_HARNESS_ENABLED``): el bridge corre el arnes F-055
+    sobre la version guardada, asi que no se avisa ``knowledge_harness_not_run``. Sin el flag, igual que antes."""
     try:
         sections = apply_change(base.sections, change)
     except KnowledgeChangeInvalid as error:
@@ -312,7 +316,7 @@ def evaluate(change: Mapping[str, Any], *, base: ServedKnowledge, context: Knowl
     blocks = instance_blocks(knowledge, context=context)
     if knowledge.rendered_sha256 == base.sha256:
         blocks.append(_finding("knowledge_change_empty"))
-    warnings = [_finding("knowledge_harness_not_run")]
+    warnings = [] if harness else [_finding("knowledge_harness_not_run")]
     size = len(knowledge.render().encode("utf-8"))
     if size > MAX_RENDERED_BYTES * NEAR_LIMIT_RATIO:
         warnings.append(_finding("knowledge_near_size_limit", detail=f"{size}/{MAX_RENDERED_BYTES}"))

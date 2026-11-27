@@ -222,9 +222,13 @@ def register_campaign_judge_routes(
     app: FastAPI, *, token: str, store: JudgeRunStore, manifest: Any,
     run: Callable[[str], tuple[str, dict[str, Any] | None, str | None]],
     clock: Callable[[], datetime] = lambda: datetime.now(UTC), git_sha: str | None = None,
-    daily_limit: int = DAILY_LIMIT,
+    daily_limit: int = DAILY_LIMIT, show_kind: bool = False,
 ) -> None:
     """Las dos rutas, detras del flag (lo mira quien llama: apagado no existen).
+
+    ``show_kind`` (con ``AUTOMATION_EXPERT_CAMPAIGN_CONVERSATION_ENABLED``, D-49.11): la ultima corrida
+    puede ser una conversacion de ensayo, que comparte la tabla; la lectura suma ``tipo``. Sin el flag,
+    la respuesta es la de antes.
 
     ``run`` es la corrida sincrona (``run_judge`` con su ``JudgeJob``); va en un hilo y su resultado se
     anota con ``finish_run``. Si el bridge se reinicia en el medio, la base la da por abandonada a los 30
@@ -330,6 +334,10 @@ def register_campaign_judge_routes(
             shown = {"run_id": last.get("run_id"), "status": state, "resultado": _WORD.get(state, "ERROR"),
                      "error_code": last.get("error_code"), "result": last.get("result"),
                      "started_at": last.get("started_at"), "finished_at": last.get("finished_at")}
+            if show_kind:
+                from .campaign_conversation import kind_of
+
+                shown["tipo"] = kind_of(last) or "desconocida"
         logger.info("campaign_judge route=read campaign=%s status=200", checked)
         return envelope({"campaign_id": checked, "last_run": shown, "runs_today": runs_today,
                          "daily_limit": daily_limit, "window": window(),

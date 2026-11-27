@@ -834,6 +834,45 @@ GET_CAMPAIGN_JUDGE = {
 }
 
 
+TRY_CAMPAIGN_CONVERSATION = {
+    "name": "try_campaign_conversation",
+    "description": (
+        "Prueba una campaña validada conversando: le pasás de 1 a 5 mensajes de un lead inventado (sin teléfonos "
+        "ni mails, hasta 300 caracteres cada uno) y el bridge los juega uno por uno contra el agente comercial con "
+        "la campaña servida, sin mandarle nada a nadie. Corre en segundo plano (uno o dos minutos): contesta "
+        "enseguida con status corriendo. Comparte con judge_campaign el tope de 3 por campaña por día y la franja "
+        "de 09:00 a 21:00 de la instancia. La transcripción se lee con get_campaign_conversation. Con "
+        "conversation_not_enabled la instancia no lo tiene prendido."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "campaign_id": {"type": "string", "format": "uuid"},
+            "mensajes": {"type": "array", "minItems": 1, "maxItems": 5,
+                         "items": {"type": "string", "minLength": 1, "maxLength": 300}},
+        },
+        "required": ["campaign_id", "mensajes"],
+        "additionalProperties": False,
+    },
+}
+
+GET_CAMPAIGN_CONVERSATION = {
+    "name": "get_campaign_conversation",
+    "description": (
+        "La última conversación de ensayo de una campaña: resultado CORRIENDO, LIMPIO (el bridge habría mandado "
+        "una respuesta a cada mensaje), CON-PREGUNTAS (en algún mensaje la respuesta no pasaba las reglas del "
+        "bridge) o ERROR; en result.turnos cada mensaje con lo que contestó el agente. Si ultima_corrida es juez, "
+        "la última corrida fue el control de calidad. Solo lee."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"campaign_id": {"type": "string", "format": "uuid"}},
+        "required": ["campaign_id"],
+        "additionalProperties": False,
+    },
+}
+
+
 # live-knowledge-v1 (pieza 5.5): el conocimiento base, por secciones. Ninguna lo publica.
 _KNOWLEDGE_CHANGES = {
     "type": "object",
