@@ -308,7 +308,9 @@ expected_service_role(signature) as (
         ('public.finish_agent_campaign_judge_run_v1(jsonb, uuid, text, jsonb, text)'),
         ('public.get_agent_campaign_judge_run_v1(jsonb, uuid, timestamp with time zone)'),
         -- 20261126600000: la version publicada del conocimiento vivo del AE (pieza 5.5).
-        ('public.get_live_agent_knowledge_v1(jsonb)')
+        ('public.get_live_agent_knowledge_v1(jsonb)'),
+        -- 20261126800000: las campanas en reposo con bloque minimo (4.8, agent-campaign-phases-v1).
+        ('public.get_agent_campaign_rests_v1(jsonb)')
 ),
 functions as (
     select

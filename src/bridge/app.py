@@ -489,6 +489,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # Portable: por instancia, solo prenderlo; apagado no existen las rutas, no
     # se lee la base y el pedido a Hermes es el de siempre.
     "agent_temporary_instruction_enabled",
+    # 4.8 (agent-campaign-phases-v1): las fases fechadas de una campana del AE y
+    # su bloque minimo. Exige AGENT_CAMPAIGNS_ENABLED. Por instancia, solo
+    # prenderlo; apagado una campana con fases no se guarda ni se sirve.
+    "agent_campaign_phases_enabled",
     # E-569 (product-card-v1, MP-07): el producto que suma el Automation
     # Expert, como dato (proponer, validar, listar). Portable: por instancia,
     # solo prenderlo; apagado no existen las rutas ni se llama a la base.
@@ -1182,6 +1186,11 @@ class Settings:
     # default) no existen las rutas ni la pagina, no se lee la base y el pedido
     # a Hermes es byte a byte el de siempre.
     agent_temporary_instruction_enabled: bool = False
+    # 4.8 (bridge/agent_campaigns.py, contrato agent-campaign-phases-v1):
+    # AGENT_CAMPAIGN_PHASES_ENABLED. Con el flag una campana del AE puede traer
+    # fases fechadas y un bloque minimo, y el catalogo lee tambien las campanas en
+    # reposo (get_agent_campaign_rests_v1). Apagado (el default), todo como hoy.
+    agent_campaign_phases_enabled: bool = False
     # E-569 (bridge/agent_product_api.py, contrato product-card-v1, MP-07):
     # AGENT_PRODUCTS_ENABLED. Con el flag existen las rutas del AE para
     # proponer, validar, obtener y listar productos. Apagado (el default) no
@@ -2777,6 +2786,9 @@ class Settings:
             ),
             agent_temporary_instruction_enabled=(
                 os.getenv(temporary_instruction.FLAG_ENV, "false").strip().lower() == "true"
+            ),
+            agent_campaign_phases_enabled=(
+                os.getenv(agent_campaign_api.PHASES_ENV, "false").strip().lower() == "true"
             ),
             agent_products_enabled=(
                 os.getenv(agent_product_api.AGENT_PRODUCTS_ENV, "false").strip().lower()
@@ -5607,6 +5619,7 @@ def create_app(
             base=settings.commercial_knowledge,
             manifest_catalog=settings.agent_segment_catalog,
             offer_link_enabled=settings.agent_campaign_offer_link_enabled,
+            phases_enabled=settings.agent_campaign_phases_enabled,
             reserved_macros=frozenset(
                 macro
                 for macro in (
@@ -5622,6 +5635,16 @@ def create_app(
         async def _fetch_live_campaigns() -> dict[str, object]:
             assert shared_supabase is not None
             return await shared_supabase.get_live_agent_campaigns(
+                {
+                    "tenant_ref": campaign_manifest.tenant_ref,
+                    "ally_ref": campaign_manifest.ally_ref,
+                }
+            )
+
+        async def _fetch_campaign_rests() -> dict[str, object]:
+            # 4.8: las pausadas y las terminadas con bloque minimo. Solo con el flag de fases.
+            assert shared_supabase is not None
+            return await shared_supabase.get_agent_campaign_rests(
                 {
                     "tenant_ref": campaign_manifest.tenant_ref,
                     "ally_ref": campaign_manifest.ally_ref,
@@ -5648,6 +5671,9 @@ def create_app(
             context=agent_campaigns_context,
             fetch=_fetch_live_campaigns,
             notify=_announce_campaign_not_served,
+            fetch_rests=(
+                _fetch_campaign_rests if settings.agent_campaign_phases_enabled else None
+            ),
         )
         segment_catalog = agent_campaign_live
     # 5.4 (agent-global-pause-v1): con el flag, las pausas vivas del agente,
@@ -5966,6 +5992,8 @@ def create_app(
     agent_campaign_api.check_settings(settings)
     # 5.3 de Z1: la instruccion temporal exige las rutas del agente y la pagina.
     temporary_instruction_api.check_settings(settings)
+    # 4.8: las fases exigen las campanas.
+    agent_campaign_api.check_phases_settings(settings)
     # E-569: los productos del AE exigen sus rutas y el manifiesto.
     agent_product_api.check_settings(settings)
     # 4.9: el juez por el AE exige las campanas, la base, el SOUL y la clave del modelo.
@@ -12704,6 +12732,8 @@ def create_app(
             commercial_ally_readiness = {
                 **commercial_ally_readiness,
                 "agent_campaigns": agent_campaign_live.status_line(),
+                # 4.8: «disabled» sin AGENT_CAMPAIGN_PHASES_ENABLED.
+                "agent_campaign_phases": agent_campaign_live.phases_status_line(),
             }
         if agent_pause_live is not None:
             # 5.4: si hay una pausa viva del agente, de que alcance, y como

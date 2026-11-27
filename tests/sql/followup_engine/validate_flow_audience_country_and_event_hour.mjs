@@ -35,7 +35,10 @@ const sha = (text) => createHash('sha256').update(text).digest('hex');
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-if (names.slice(position + 1).length !== 0) fail(`${MIGRATION} es la ultima`, names.slice(position + 1));
+// Despues van solo las fases del lanzamiento (20261126800000, 4.8), que no tocan la audiencia.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261126800000_agent_campaign_phases_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de las fases del lanzamiento`, names.slice(position + 1));
+}
 
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(
   /create extension if not exists pgcrypto;/gi, '-- pgcrypto is built into PGlite'));

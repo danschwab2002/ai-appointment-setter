@@ -181,6 +181,28 @@ def _entry_lines(draft: Mapping[str, Any], preview: Mapping[str, Any]) -> str:
     return f'<ul class="meta">{lines}</ul>{link_html}'
 
 
+_PIECE_KIND = {"fase": "Fase", "campana": "Toda la campaña", "minimo": "Bloque mínimo"}
+
+
+def _pieces_html(pieces: Any, time_zone: str | None) -> str:
+    """4.8: cada fase y el bloque minimo, con su ventana y lo que el agente va a saber en cada una."""
+    if not isinstance(pieces, list) or not pieces:
+        return ""
+    parts = ['<p>Esta campaña cambia sola de fase a la hora de cada una. Fuera de toda fase (entre fases, '
+             "después del cierre y mientras esté pausada) el agente usa el bloque mínimo, sin precio ni cupón "
+             "de lanzamiento. Se aprueban todas juntas.</p>"]
+    for piece in pieces:
+        if not isinstance(piece, Mapping):
+            continue
+        kind = _PIECE_KIND.get(str(piece.get("tipo")), "—")
+        window = (f"del {_esc(_when(piece.get('desde'), time_zone))} al {_esc(_when(piece.get('hasta'), time_zone))}"
+                  if piece.get("tipo") != "minimo" else
+                  f"fuera de toda fase, hasta el {_esc(_when(piece.get('hasta'), time_zone))}")
+        parts.append(f"<h3>{_esc(kind)}: {_esc(piece.get('nombre'))}</h3><p class=\"meta\">{window}</p>"
+                     f'<pre class="bubble">{_esc(piece.get("render"))}</pre>')
+    return "".join(parts)
+
+
 def render_campaign(found: Mapping[str, Any], campaign_id: str, *, serving: str | None, can_publish: bool,
                     check_stale: bool, csrf: str = "", done: Mapping[str, str] | None = None,
                     time_zone: str | None = None) -> str:
@@ -200,6 +222,8 @@ def render_campaign(found: Mapping[str, Any], campaign_id: str, *, serving: str 
     coupon_html = (f'<p>El link de pago sale con el cupón <strong>{_esc(coupon)}</strong>. '
                    "Confirmá que exista en Hotmart y que dure toda la campaña: esto no se puede verificar desde acá.</p>"
                    if coupon else "")
+    pieces = _pieces_html(preview.get("piezas"), time_zone)
+    knows = pieces or f'<pre class="bubble">{_esc(rendered)}</pre>'
     window = (f"Del {_esc(_when(found.get('valid_from'), time_zone))} al "
               f"{_esc(_when(found.get('valid_until'), time_zone))}.")
     side = (f'<section class="panel panel--side"><div class="panel-heading"><h2>{_esc(label)}</h2>'
@@ -213,7 +237,7 @@ def render_campaign(found: Mapping[str, Any], campaign_id: str, *, serving: str 
             f'<section class="panel"><div class="panel-heading"><h2>Cuándo corre y quién entra</h2></div>'
             f'<div class="panel-body"><p>{window}</p>{_entry_lines(draft, preview)}{coupon_html}</div></section>'
             '<section class="panel"><div class="panel-heading"><h2>Lo que el agente va a saber</h2></div>'
-            f'<div class="panel-body"><pre class="bubble">{_esc(rendered)}</pre></div></section>'
+            f'<div class="panel-body">{knows}</div></section>'
             f"</div>{side}</div>")
 
 
@@ -223,7 +247,7 @@ def routes(*, live: rules.LiveSegmentCatalog) -> Callable[[FastAPI, PageTools], 
     def expected(found: Mapping[str, Any]) -> str | None:
         """El chequeo_sha de hoy para esta fila, o None si la fila ya no se puede armar."""
         try:
-            draft = rules.parse_campaign(found.get("draft"))
+            draft = rules.parse_campaign(found.get("draft"), phases=live.context.phases_enabled)
             return rules.expected_check_sha(draft, version=int(found.get("segment_version") or 0), context=live.context)
         except (rules.CampaignInvalid, ChequeoError, SegmentCheckError, TypeError, ValueError):
             return None

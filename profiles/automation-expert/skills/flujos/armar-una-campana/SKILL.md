@@ -51,6 +51,16 @@ No inventes precios, fechas, bonos ni garantías. Lo que falta, se pregunta; lo 
 6. **Contá cómo sigue.** «Ya quedó armada. Falta el control de calidad, que lo corre el equipo; cuando pase, alguien de la lista la aprueba en la página y queda andando. Nadie la recibe antes.» No digas que quedó publicada.
 7. **El link para aprobar.** `validate_campaign` y `get_campaign` traen `approval_url`: mandáselo a la persona, así, sin explicar qué es un id. La página pide entrar con Slack; solo entran los de la lista.
 
+## Un lanzamiento por fases (si la instancia lo tiene prendido)
+
+Si el lanzamiento cambia a horas fijas (preventa, carrito abierto, último día, cierre), no hace falta una campaña por fase ni que alguien la cambie a mano: va **una** campaña con `fases` y un `bloque_minimo`.
+
+- **`fases`** (1 a 6, en orden, sin pisarse, adentro del desde y el hasta de la campaña; puede haber horas sin fase): cada una con `clave` corta (`preventa`, `carrito`, `ultimo-dia`; nunca `minimo`), `nombre`, `desde`, `hasta` y lo que cambia en esa fase (`oferta`, `asesoramiento`, `instruccion`, `se_puede_decir`, `no_confirmado`, `promesas_prohibidas`, `faq`). Lo que una fase trae reemplaza entero lo de la campaña; lo que no trae, lo hereda. Si la preventa no tiene precio, la oferta va en las fases que la tienen, no arriba.
+- **`bloque_minimo`** (obligatorio con fases): lo que el agente sabe **fuera de toda fase** (entre fases, después del cierre y mientras la campaña esté pausada): qué es el producto, el precio de siempre, que es digital, los medios y «las novedades se informan por aquí». Sin cupón, sin oferta propia y sin precio de antes. Si no escribís `instruccion`, va una fija: que no hay fase abierta y no ofrezca nada del lanzamiento.
+- **Si vuelve `campaign_invalid` con `fases` o `bloque_minimo` en `extra`**, la instancia no tiene prendidas las fases: decilo y armala como siempre (una campaña por fase, que alguien cambia a mano).
+- **En el resumen**, una línea por fase con su horario y qué sabe el agente, y una para el bloque mínimo. Contá que **cambia sola de fase a esa hora**, que se aprueban todas juntas en la misma página, que el control de calidad mira cada fase (tarda más) y que si alguien la pausa, el agente sigue con el bloque mínimo en vez de quedarse sin nada.
+- La vista previa trae `piezas`: una por fase y el bloque mínimo, con su horario y su render. Un bloqueo de una fase dice cuál (`fases[1]`, `bloque_minimo`).
+
 ## Después
 
 - **Si preguntan cómo va**, `get_campaign`: el estado, y en `check_report` lo que dio el control de calidad.

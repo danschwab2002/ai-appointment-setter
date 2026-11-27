@@ -41,13 +41,14 @@ import os
 import sys
 import tempfile
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import httpx
 
-from .agent_campaigns import parse_campaign, render_toml, segment_mapping
+from .agent_campaigns import campaign_pieces, has_pieces, parse_campaign, phased_check_sha, render_toml, segment_mapping
 from .campaign_gate import CRITERIO, razon_de_freno
 from .instance_manifest import InstanceManifest
 from .segment_check import (
@@ -200,15 +201,20 @@ def run_check(store: Any, *, manifest: InstanceManifest, instance_dir: Path, cam
     fingerprint = row.get("fingerprint")
     if not isinstance(fingerprint, str) or row.get("status") not in ("validada", "publicada", "pausada"):
         raise SegmentCheckError(f"la campana esta {row.get('status')}: se chequea una vez validada")
-    draft = parse_campaign(row.get("draft"))
+    # 4.8: el comando lee lo que se guardo; si se guardo con fases, fue con el flag prendido.
+    draft = parse_campaign(row.get("draft"), phases=True)
     version = int(row["segment_version"])
-    text = render_toml(segment_mapping(draft, ally_ref=manifest.ally_ref, version=version))
-    with tempfile.TemporaryDirectory(prefix="campaign-check-") as folder:
-        path = Path(folder) / f"{draft['clave']}-v{version}.toml"
-        path.write_text(text, encoding="utf-8")
-        report = check_files(path, judge=_recording(judge, grabar, on_error=_warn_capture) if grabar is not None else judge,
-                             instance_dir=instance_dir, soul_path=soul_path, runs=runs,
-                             label=draft["etiqueta"], compuerta=gate)
+    recorded = _recording(judge, grabar, on_error=_warn_capture) if grabar is not None else judge
+    if has_pieces(draft):
+        report, text = _check_pieces(draft, manifest=manifest, version=version, judge=recorded,
+                                     instance_dir=instance_dir, soul_path=soul_path, runs=runs, gate=gate)
+    else:
+        text = render_toml(segment_mapping(draft, ally_ref=manifest.ally_ref, version=version))
+        with tempfile.TemporaryDirectory(prefix="campaign-check-") as folder:
+            path = Path(folder) / f"{draft['clave']}-v{version}.toml"
+            path.write_text(text, encoding="utf-8")
+            report = check_files(path, judge=recorded, instance_dir=instance_dir, soul_path=soul_path, runs=runs,
+                                 label=draft["etiqueta"], compuerta=gate)
     if grabar is not None:
         try:
             _save_capture(grabar, report, campaign_id=campaign_id, toml=text, criterio=name)
@@ -220,6 +226,42 @@ def run_check(store: Any, *, manifest: InstanceManifest, instance_dir: Path, cam
         "p_instance": instance, "p_campaign_id": campaign_id, "p_fingerprint": fingerprint,
         "p_report": report_for_row(report, criterio=name), "p_check_sha": report.chequeo_sha if report.clean else None})
     return report, saved
+
+
+def _check_pieces(draft: Mapping[str, Any], *, manifest: InstanceManifest, version: int, judge: Judge,
+                  instance_dir: Path, soul_path: Path | None, runs: int, gate: Gate | None) -> tuple[Report, str]:
+    """4.8 (D-48.5): el juez corre sobre cada pieza (cada fase y el bloque minimo) y el control cubre la
+    campana entera: limpio solo si todas dan limpio, y el ``chequeo_sha`` es la huella de los de cada una.
+
+    Los items de cada pieza llevan su clave adelante del numero, para que la pagina diga de cual son."""
+    reports: list[tuple[str, Report]] = []
+    texts: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="campaign-check-") as folder:
+        for piece in campaign_pieces(draft):
+            text = render_toml(segment_mapping(piece.draft, ally_ref=manifest.ally_ref, version=version))
+            texts.append(f"# pieza {piece.key}\n{text}")
+            path = Path(folder) / f"{piece.key}-v{version}.toml"
+            path.write_text(text, encoding="utf-8")
+            reports.append((piece.key, check_files(path, judge=judge, instance_dir=instance_dir, soul_path=soul_path,
+                                                   runs=runs, label=draft["etiqueta"], compuerta=gate)))
+    items, notices, every_run = [], [], []
+    for key, report in reports:
+        suffix = key.rsplit("--", 1)[-1]
+        for item in report.items:
+            item.number = f"{suffix}:{item.number}"
+            items.append(item)
+        for item in report.notices:
+            item.number = f"{suffix}:{item.number}"
+            notices.append(item)
+        every_run.extend(report.runs)
+    clean = all(report.clean for _, report in reports)
+    sha = phased_check_sha([(key, report.chequeo_sha) for key, report in reports]) \
+        if clean and all(isinstance(report.chequeo_sha, str) for _, report in reports) else None
+    first = reports[0][1]
+    merged = replace(first, items=items, notices=notices, runs=every_run,
+                     requested_runs=sum(report.requested_runs for _, report in reports),
+                     warnings=[warning for _, report in reports for warning in report.warnings], chequeo_sha=sha)
+    return merged, "\n".join(texts)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

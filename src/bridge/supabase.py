@@ -5169,6 +5169,25 @@ class SupabaseClient:
             raise SupabaseError(f"{operation}_invalid")
         return payload
 
+    async def get_agent_campaign_rests(self, instance: dict[str, str]) -> dict[str, object]:
+        """Las campanas en reposo con bloque minimo (``get_agent_campaign_rests_v1``, 4.8).
+
+        Solo lectura: las pausadas y las terminadas hace menos de 14 dias que traen
+        ``bloque_minimo``. Devuelve ``{"campaigns": [...]}``; lo demas lo decide el catalogo vivo.
+        """
+        operation = "agent_campaign_rests"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_agent_campaign_rests_v1",
+            content=json.dumps({"p_instance": instance}),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        payload = response.json()
+        if not isinstance(payload, dict) or not isinstance(payload.get("campaigns"), list):
+            raise SupabaseError(f"{operation}_invalid")
+        return payload
+
     async def claim_slack_handoff_notifications(
         self,
         *,
