@@ -11866,6 +11866,13 @@ def create_app(
                     for config in change_manifest.to_commercial_ally_configs()
                 ),
                 approval_origin=settings.flow_approval_base_url or "",
+                # F2 (BULK_SEND_WARMUP_ENABLED): el calentamiento del numero en cada
+                # masivo. Apagado, None y las respuestas no cambian.
+                warmup=(
+                    bulk_send.warmup.view_for
+                    if bulk_send is not None and bulk_send.warmup is not None
+                    else None
+                ),
             )
         if settings.contact_export_enabled:
             # 1.3 (contact-export-v1): el agente pide la exportacion y recibe el

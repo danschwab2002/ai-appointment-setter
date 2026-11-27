@@ -219,7 +219,7 @@ def _health(calidad: str = "GREEN", *, att1: str = "GREEN", hours_ago: float = 1
 class Harness:
     def __init__(self, *, reviewer: bool = True, failures: int = 0, image: bool = False,
                  report: Any = None, max_upload_bytes: int = bp.DEFAULT_MAX_BYTES,
-                 with_audience: bool = False, campaigns: Any = None) -> None:
+                 with_audience: bool = False, campaigns: Any = None, warmup: Any = None) -> None:
         self.db, self.slack, self.clock = BulkDb(), SlackEmulator(), _Clock()
         self.health = _health()
         self.reviewer = FakeReviewer(self.db, failures=failures) if reviewer else None
@@ -234,7 +234,8 @@ class Harness:
         bulk = bp.routes(chatwoot=FakeChatwoot(image=image), inbox_id=11, country_code="57",
                          sending_key="maribel", portfolio_keys=("maribel", "att1", "johanna"),
                          health=lambda: self.health, reviewer=self.reviewer, report=report,
-                         campaigns=campaigns, image_probe=probe, max_upload_bytes=max_upload_bytes)
+                         campaigns=campaigns, image_probe=probe, max_upload_bytes=max_upload_bytes,
+                         warmup=warmup)
         extra = bulk
         if with_audience:
             from test_flow_audience_page import FakeSweeper
