@@ -215,6 +215,8 @@ def test_it_is_one_transaction_and_is_the_last() -> None:
         "20261126600000_agent_live_knowledge_v1.sql",
         # El pais y la hora del evento de la audiencia (20261126700000, piezas 4.4 y 4.5).
         "20261126700000_flow_audience_country_and_event_hour_v1.sql",
+        # Las fases del lanzamiento (20261126800000).
+        "20261126800000_agent_campaign_phases_v1.sql",
     ]
     native = (MIGRATIONS / "20261024000200_flow_engine_native_v1.sql").read_text(encoding="utf-8")
     assert "read_automation_expert_flows_v1" not in native

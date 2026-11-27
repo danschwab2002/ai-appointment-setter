@@ -7985,6 +7985,27 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'flow_audience_country_and_event_hour'
+    union all
+    select
+        '20261126800000',
+        '20261126800000_agent_campaign_phases_v1.sql',
+        -- Las campanas en reposo con bloque minimo, solo de service_role ...
+        coalesce((
+            select (prosecdef
+                    and has_function_privilege('service_role', oid, 'EXECUTE')
+                    and not has_function_privilege('anon', oid, 'EXECUTE')
+                    and not has_function_privilege('authenticated', oid, 'EXECUTE'))::int
+            from functions
+            where oid = to_regprocedure('public.get_agent_campaign_rests_v1(jsonb)')
+        ), 0)
+        -- ... y la forma del borrador que acepta fases y bloque minimo.
+        + coalesce((
+            select (definition like '%bloque_minimo%')::int
+            from functions
+            where oid = to_regprocedure('public._agent_campaign_draft_is_valid(jsonb)')
+        ), 0),
+        2,
+        'agent_campaign_phases'
 )
 select
     version,

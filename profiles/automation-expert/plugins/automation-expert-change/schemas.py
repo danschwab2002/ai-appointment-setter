@@ -342,7 +342,10 @@ _CAMPAIGN = {
         "obligatoria); "
         "se_puede_decir, no_confirmado, promesas_prohibidas (listas opcionales); faq y preguntas_del_alta "
         "(listas de {pregunta, respuesta, fuente}). Los precios por país van adentro de la oferta o de "
-        "se_puede_decir, no en otra campaña."
+        "se_puede_decir, no en otra campaña. Si la instancia tiene prendidas las fases: fases (1 a 6, en orden y sin "
+        "pisarse: clave corta, nombre, desde, hasta y las secciones que cambian en esa fase) y bloque_minimo "
+        "(asesoramiento y, opcional, instruccion, oferta sin cupon ni codigo_oferta, se_puede_decir, no_confirmado, "
+        "promesas_prohibidas, faq): lo que el agente sabe fuera de toda fase y con la campaña pausada."
     ),
 }
 

@@ -230,6 +230,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261126600000",
         # El pais y la hora del evento de la audiencia (20261126700000, piezas 4.4 y 4.5).
         "20261126700000",
+        # Las fases del lanzamiento (20261126800000).
+        "20261126800000",
     ]
 
     sql = _sql()

@@ -372,7 +372,9 @@ const rows = await db.query(`
       ('finish_agent_campaign_judge_run_v1(jsonb,uuid,text,jsonb,text)'),
       ('get_agent_campaign_judge_run_v1(jsonb,uuid,timestamp with time zone)'),
       -- 20261126600000: la version publicada del conocimiento vivo del AE (pieza 5.5).
-      ('get_live_agent_knowledge_v1(jsonb)')
+      ('get_live_agent_knowledge_v1(jsonb)'),
+      -- 20261126800000: las campanas en reposo con bloque minimo (4.8, agent-campaign-phases-v1).
+      ('get_agent_campaign_rests_v1(jsonb)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -420,6 +422,7 @@ const result = rows.rows[0];
 // 20261126400000 (las reglas de palabra clave, Z1 3.9) suma la lectura de las vivas: 261.
 // 20261126500000 (las corridas del juez de una campana que pide el AE, 4.9) suma sus tres: 264.
 // 20261126600000 (el conocimiento vivo del AE, pieza 5.5) suma la lectura de la publicada: 265.
+// 20261126800000 (las fases del lanzamiento, 4.8) suma la lectura del reposo: 255.
 // Historical baseline guard was `result.expected_count !== 63`; the current
 // baseline is 68 RPCs, daily feedback adds fourteen, payment links add three,
 // the one-shot operator disposition adds one, and correlation event context
@@ -471,7 +474,7 @@ const result = rows.rows[0];
 // claim, settle and block the retry, and mark the 131026 notice.
 // The personal coupon of a native step (20261112210500, E-483, C2) adds the read of the bridge.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 265) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 266) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

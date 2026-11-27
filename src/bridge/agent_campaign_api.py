@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import json
 import logging
 import os
 import re
@@ -103,6 +104,17 @@ def check_settings(settings: Any) -> None:
         raise ValueError(f"{flag} requires FLOW_APPROVAL_ENABLED")
     if getattr(settings, "instance_manifest", None) is None:
         raise ValueError(f"{flag} requires an instance manifest")
+    check_phases_settings(settings)
+
+
+PHASES_ENV = "AGENT_CAMPAIGN_PHASES_ENABLED"
+
+
+def check_phases_settings(settings: Any) -> None:
+    """4.8: las fases viven adentro de una campana del AE; sin las campanas no hay nada que fasear."""
+    if getattr(settings, "agent_campaign_phases_enabled", False) and not getattr(
+            settings, "agent_campaigns_enabled", False):
+        raise ValueError(f"{PHASES_ENV} requires AGENT_CAMPAIGNS_ENABLED")
 
 
 def _validator(environ: Mapping[str, str]) -> dict[str, Any] | None:
@@ -189,13 +201,26 @@ def register_agent_campaign_routes(app: FastAPI, *, token: str, store: CampaignS
         """El link de la pagina donde un aprobador la publica. Solo lleva el id, que no da acceso."""
         return f"{approval_origin.rstrip('/')}/flow-approval/c/{campaign_id}"
 
-    def view(draft: Mapping[str, Any], segment: rules.LoadedSegment | None, link: str | None) -> dict[str, Any]:
-        return {"render": segment.rendered if segment is not None else None,
-                "rendered_bytes": segment.rendered_bytes if segment is not None else None,
-                "nombre": draft["nombre"], "desde": draft["desde"], "hasta": draft["hasta"],
-                "etiqueta": draft["etiqueta"], "palabras_clave": list(draft.get("palabras_clave", ())),
-                "pregunta_entrada": draft.get("pregunta_entrada"), "cupon": draft.get("oferta", {}).get("cupon"),
-                "wa_me": link}
+    def view(draft: Mapping[str, Any], segment: rules.LoadedSegment | None, link: str | None,
+             version: int = 1) -> dict[str, Any]:
+        shown = {"render": segment.rendered if segment is not None else None,
+                 "rendered_bytes": segment.rendered_bytes if segment is not None else None,
+                 "nombre": draft["nombre"], "desde": draft["desde"], "hasta": draft["hasta"],
+                 "etiqueta": draft["etiqueta"], "palabras_clave": list(draft.get("palabras_clave", ())),
+                 "pregunta_entrada": draft.get("pregunta_entrada"), "cupon": draft.get("oferta", {}).get("cupon"),
+                 "wa_me": link}
+        pieces = rules.pieces_preview(draft, context=context, version=version)
+        if pieces is not None:
+            # 4.8: cada fase y el bloque minimo, con su ventana y su render (se aprueban juntos).
+            shown["piezas"] = pieces
+        return shown
+
+    def too_large(preview_view: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """4.8: la vista previa de una campana por piezas tiene que entrar en la fila (65536 bytes)."""
+        if "piezas" not in preview_view:
+            return []
+        size = len(json.dumps(preview_view, ensure_ascii=False).encode("utf-8"))
+        return [{"code": "campaign_preview_too_large"}] if size > rules.MAX_PREVIEW_BYTES else []
 
     def busy() -> None:
         if slots.locked():
@@ -207,14 +232,16 @@ def register_agent_campaign_routes(app: FastAPI, *, token: str, store: CampaignS
         authenticate(authorization)
         body = _check_keys(await _body(request), required={"campaign"}, allowed={"campaign"})
         try:
-            draft = rules.parse_campaign(body["campaign"])
+            draft = rules.parse_campaign(body["campaign"], phases=context.phases_enabled)
         except rules.CampaignInvalid as error:
             raise _refused(error) from None
         blocks, warnings, segment = rules.instance_blocks(draft, context=context, now=datetime.now(UTC))
         link, link_warnings = await wa_me(draft)
+        preview_view = view(draft, segment, link)
+        blocks = [*blocks, *too_large(preview_view)]
         logger.info("agent_campaign route=preview status=200 blocks=%s", len(blocks))
         return envelope({"ok": not blocks, "blocks": blocks, "warnings": [*warnings, *link_warnings],
-                         "preview": view(draft, segment, link)})
+                         "preview": preview_view})
 
     @app.post(f"{PREFIX}/campaigns", status_code=201)
     async def propose(request: Request, authorization: str | None = Header(default=None)) -> Any:
@@ -234,7 +261,7 @@ def register_agent_campaign_routes(app: FastAPI, *, token: str, store: CampaignS
         if campaign_id is not None:
             campaign_id = _campaign_id(campaign_id) if isinstance(campaign_id, str) else _campaign_id("")
         try:
-            draft = rules.parse_campaign(body["campaign"])
+            draft = rules.parse_campaign(body["campaign"], phases=context.phases_enabled)
         except rules.CampaignInvalid as error:
             raise _refused(error) from None
         blocks, warnings, segment = rules.instance_blocks(draft, context=context, now=datetime.now(UTC))
@@ -284,11 +311,12 @@ def register_agent_campaign_routes(app: FastAPI, *, token: str, store: CampaignS
             if stored.get("status") != "borrador":
                 raise HTTPException(status_code=409, detail="agent_campaign_not_draft")
             try:
-                draft = rules.parse_campaign(stored.get("draft"))
+                draft = rules.parse_campaign(stored.get("draft"), phases=context.phases_enabled)
             except rules.CampaignInvalid:
                 raise failure(StoreUnavailable(), "validate", checked) from None
+            version = int(stored.get("segment_version") or 1)
             blocks, warnings, segment = rules.instance_blocks(draft, context=context, now=datetime.now(UTC),
-                                                              version=int(stored.get("segment_version") or 1))
+                                                              version=version)
             # El macro tiene que sumar exactamente esta etiqueta (lo que despues exige ProductLabeler al usarlo).
             try:
                 actions = await chatwoot.get_macro_actions(macro_id=draft["macro_etiqueta"])
@@ -298,8 +326,9 @@ def register_agent_campaign_routes(app: FastAPI, *, token: str, store: CampaignS
                 if actions != [{"action_name": "add_label", "action_params": [draft["etiqueta"]]}]:
                     blocks.append({"code": "campaign_macro_does_more_than_add_the_label", "field": "macro_etiqueta"})
             link, link_warnings = await wa_me(draft)
+            preview_view = view(draft, segment, link, version=version)
+            blocks.extend(too_large(preview_view))
             result = {"blocks": blocks, "warnings": [*warnings, *link_warnings]}
-            preview_view = view(draft, segment, link)
             try:
                 recorded = await store.record_validation(instance.refs, campaign_id=checked, revision=body["revision"],
                                                          validator=validator, result=result, preview=preview_view,

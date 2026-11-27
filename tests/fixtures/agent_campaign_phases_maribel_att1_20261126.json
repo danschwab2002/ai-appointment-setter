@@ -1,0 +1,41 @@
+{
+  "_capture": {
+    "origen": "agent_campaigns y agent_campaign_events de las bases de Maribel (maribel_db, stack maribel) y ATT1 (att1-db, stack setter-att1), leidas en una sesion de solo lectura (default_transaction_read_only=on) por ssh al VPS",
+    "fecha": "2026-11-26",
+    "para": "4.8, el lanzamiento por fechas (agent-campaign-phases-v1): como cambio de fase a mano el lanzamiento real",
+    "sin": "texto de la campana, ids completos, IDs de Slack, telefonos y mails: solo claves de la campana, versiones, estados, vigencias, horas y las claves del borrador (no sus valores)"
+  },
+  "maribel": {
+    "campaign_key": "forever-young-2026",
+    "label": "forever-young-2026",
+    "versions": [
+      {"v": 1, "id8": "22879a58", "status": "terminada", "valid_from": "2026-11-14T15:22:00Z", "valid_until": "2026-11-19T16:00:00Z",
+       "approved_at": "2026-11-15T00:53:16Z", "closed_at": "2026-11-19T16:21:15Z", "closed_by_kind": "sistema",
+       "draft_keys": ["asesoramiento", "clave", "desde", "etiqueta", "hasta", "instruccion", "macro_etiqueta", "no_confirmado", "nombre", "palabras_clave", "preguntas_del_alta", "promesas_prohibidas", "se_puede_decir"],
+       "offer_keys": null, "draft_bytes": 3347},
+      {"v": 2, "id8": "88d42681", "status": "validada", "valid_from": "2026-11-19T16:00:00Z", "valid_until": "2026-12-01T05:59:00Z",
+       "approved_at": null, "offer_keys": ["incluye", "moneda", "precio", "producto"], "draft_bytes": 6294},
+      {"v": 3, "id8": "2736fa73", "status": "pausada", "valid_from": "2026-11-19T16:00:00Z", "valid_until": "2026-12-01T05:59:00Z",
+       "approved_at": "2026-11-19T16:21:15Z", "paused_at": "2026-11-19T22:38:16Z",
+       "offer_keys": ["incluye", "moneda", "precio", "producto"], "draft_bytes": 7006},
+      {"v": 4, "id8": "ea48fba8", "status": "validada", "valid_from": "2026-11-19T16:00:00Z", "valid_until": "2026-12-01T05:59:00Z",
+       "approved_at": null, "offer_keys": ["incluye", "moneda", "precio", "producto"], "draft_bytes": 7664},
+      {"v": 5, "id8": "f422762f", "status": "publicada", "valid_from": "2026-11-21T16:00:00Z", "valid_until": "2026-12-01T05:59:00Z",
+       "approved_at": "2026-11-21T18:20:00Z", "offer_keys": ["incluye", "moneda", "precio", "producto"], "draft_bytes": 7752}
+    ],
+    "sin_bloque": [
+      {"desde": "2026-11-19T16:00:00Z", "hasta": "2026-11-19T16:21:15Z", "por": "la v1 termino a las 16:00 y la v3 se publico a mano 21 minutos despues"},
+      {"desde": "2026-11-19T22:38:16Z", "hasta": "2026-11-21T18:20:00Z", "por": "la v3 se pauso a mano con el trafico prendido; la v5 entro casi 44 horas despues (la ola del 20/11: 15 derivaciones en 90 minutos)"}
+    ]
+  },
+  "att1": {
+    "campaign_key": "black-november-2026",
+    "label": "black-november",
+    "versions": [
+      {"v": 1, "id8": "b3c6b1ee", "status": "publicada", "revision": 3, "valid_from": "2026-11-12T17:00:00Z", "valid_until": "2026-12-01T06:00:00Z",
+       "approved_at": "2026-11-12T19:43:00Z", "live_scope": "",
+       "offer_keys": ["codigo_oferta", "garantia", "incluye", "medios", "moneda", "precio", "producto", "reemplaza"], "draft_bytes": 2588}
+    ],
+    "sin_bloque": []
+  }
+}

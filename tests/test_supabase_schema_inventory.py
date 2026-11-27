@@ -496,9 +496,11 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261126400000 (las reglas de palabra clave, Z1 3.9) suma la lectura de las vivas.
     # 20261126500000 (las corridas del juez de una campana que pide el AE, 4.9) suma sus tres.
     # 20261126600000 (el conocimiento vivo del AE, pieza 5.5) suma la lectura de la publicada.
-    assert len(allowlisted) == 265
+    # 20261126800000 (las fases del lanzamiento, 4.8) suma la lectura del reposo.
+    assert len(allowlisted) == 266
     assert "start_agent_campaign_judge_run_v1(jsonb, uuid, text, timestamp with time zone, integer)" in allowlisted
     assert "get_live_agent_knowledge_v1(jsonb)" in allowlisted
+    assert "get_agent_campaign_rests_v1(jsonb)" in allowlisted
     assert "record_permission_grant_v1(jsonb)" in allowlisted
     assert "close_permission_notice_v1(text, text, timestamp with time zone)" in allowlisted
     assert "record_hotmart_unknown_offer_v1(text, bigint, text, text, text, text, text, uuid)" in allowlisted
@@ -2600,15 +2602,28 @@ def test_agent_live_knowledge_fingerprint_counts_the_rows() -> None:
     assert "approver_publish_agent_knowledge_v1(jsonb,text,uuid,text,text)" in compact
 
 
-def test_flow_audience_country_and_event_hour_fingerprint_is_last() -> None:
+def test_flow_audience_country_and_event_hour_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261126700000 (4.5 y 4.4): hora_evento en los toques de la audiencia y la lista por prefijo
     # de la pagina, solo para flow_change_approver.
-    row = sql.split("'20261126700000'", 1)[1].split("select\n    version,", 1)[0]
+    row = sql.split("'20261126700000'", 1)[1].split("'20261126800000'", 1)[0].rsplit("union all", 1)[0]
     compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
 
-    assert compact.endswith(",2,'flow_audience_country_and_event_hour')")
+    assert compact.endswith(",2,'flow_audience_country_and_event_hour'")
     assert "_flow_engine_native_steps(text)" in compact
     assert "flow_audience_event_hour_steps" in compact
     assert "approver_read_flow_audience_countries_v1(jsonb,text)" in compact
     assert "nothas_function_privilege('service_role',oid,'EXECUTE')" in compact
+
+
+def test_agent_campaign_phases_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261126800000 (4.8): la lectura del reposo solo de service_role, y la forma del borrador que
+    # acepta fases y bloque minimo.
+    row = sql.split("'20261126800000'", 1)[1].split("select\n    version,", 1)[0]
+    compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
+
+    assert compact.endswith(",2,'agent_campaign_phases')")
+    assert "get_agent_campaign_rests_v1(jsonb)" in compact
+    assert "_agent_campaign_draft_is_valid(jsonb)" in compact
+    assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact

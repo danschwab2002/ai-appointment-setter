@@ -19,6 +19,15 @@ traductor y el sosten:
   no cambien. Se refresca de la base con cache corta y se queda con lo ultimo bueno
   si la base no contesta.
 
+Fases del lanzamiento (4.8, ``AGENT_CAMPAIGN_PHASES_ENABLED``, apagado por defecto;
+contrato ``docs/contracts/agent-campaign-phases-v1.md``): con el flag, una campana
+puede traer ``fases`` fechadas y un ``bloque_minimo``. Cada fase y el bloque minimo
+son una *pieza*: un segmento con su clave (``<clave>--<fase>``, ``<clave>--minimo``),
+su vigencia y su render, validados, juzgados y aprobados juntos. El catalogo sirve
+la fase cuya ventana contiene ahora y, fuera de toda fase (entre fases, despues del
+cierre o con la campana pausada), el bloque minimo. Sin el flag una campana con
+fases no se guarda ni se sirve, y una sin fases es byte a byte la de siempre.
+
 Decisiones de Dan del 2026-11-08: un ``chequeo_sha`` que no calza en una campana de
 la base **no se sirve, avisa y el bridge sigue** (la regla del 06/11 que frena el
 arranque queda solo para los archivos del manifiesto), y una sola campana viva por
@@ -34,8 +43,8 @@ import hashlib
 import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from dataclasses import dataclass, replace
+from datetime import UTC, date, datetime, timedelta
 from types import MappingProxyType
 from typing import Any
 from urllib.parse import quote
@@ -52,7 +61,7 @@ from .segment_labels import ORIGIN_AGENT_CAMPAIGN, SegmentLabel
 from .commercial_knowledge import CommercialKnowledge
 from .flow_change_api import looks_like_identifier
 from .instance_manifest import RESERVED_CHATWOOT_LABELS, InstanceManifest
-from .segment_check import ChequeoError, SegmentCheckError, calcular_chequeo_sha
+from .segment_check import ChequeoError, SegmentCheckError, _canonical, _sha, calcular_chequeo_sha
 from .segment_check import verificar_chequeo as verificar_huella
 from .segment_knowledge import (
     MAX_INSTRUCTION_CHARS,
@@ -60,6 +69,7 @@ from .segment_knowledge import (
     SegmentCatalog,
     SegmentError,
     SegmentKnowledge,
+    STATE_ACTIVE,
     SegmentSelection,
     build_catalog,
     knowledge_product_names,
@@ -71,9 +81,12 @@ __all__ = [
     "CampaignContext",
     "CampaignInvalid",
     "LiveSegmentCatalog",
+    "campaign_pieces",
     "expected_check_sha",
+    "has_pieces",
     "instance_blocks",
     "parse_campaign",
+    "phased_check_sha",
     "render_toml",
     "segment_mapping",
     "wa_me_link",
@@ -104,6 +117,39 @@ _LIST_SECTIONS = ("se_puede_decir", "no_confirmado", "promesas_prohibidas")
 _QA_SECTIONS = ("faq", "preguntas_del_alta")
 # Las etiquetas que no pueden abrir una campana: las mismas que un segmento del manifiesto.
 _FORBIDDEN_LABELS = frozenset((*RESERVED_CHATWOOT_LABELS, "cliente"))
+
+# -- Fases del lanzamiento (4.8, agent-campaign-phases-v1) --------------------------
+PHASES_CONTRACT = "agent-campaign-phases-v1"
+# D-48.2: de 1 a 6 fases; cada una con su clave corta, que va en la clave del segmento.
+MAX_PHASES = 6
+MAX_PHASE_KEY_CHARS = 24
+# La clave de la campana deja lugar para «--» y la clave de la fase (128 en total).
+MAX_PHASED_CAMPAIGN_KEY_CHARS = 128 - 2 - MAX_PHASE_KEY_CHARS
+PIECE_SEPARATOR = "--"
+MINIMAL_PIECE = "minimo"
+# D-48.4: el bloque minimo sigue sirviendose hasta 14 dias despues del cierre.
+MINIMAL_GRACE = timedelta(days=14)
+# Lo que cabe en la fila (_agent_campaign_draft_is_valid, 32768 bytes) y en la vista previa (65536).
+MAX_DRAFT_BYTES = 32_768
+MAX_PREVIEW_BYTES = 60_000
+# Las prioridades: la fase y la campana van en 1000; el bloque minimo despues, asi se pisa con
+# la fase sin chocar (se elige en el turno: nunca van los dos); los de las campanas en reposo, detras.
+MINIMAL_PRIORITY = CAMPAIGN_PRIORITY + 1
+REST_PRIORITY = CAMPAIGN_PRIORITY + 2
+MAX_RESTS = 5
+_PHASE_REQUIRED = {"clave", "nombre", "desde", "hasta"}
+_PHASE_SECTIONS = {"instruccion", "oferta", "asesoramiento", "se_puede_decir", "no_confirmado",
+                   "promesas_prohibidas", "faq"}
+_MINIMAL_REQUIRED = {"asesoramiento"}
+_MINIMAL_OPTIONAL = {"instruccion", "oferta", "se_puede_decir", "no_confirmado", "promesas_prohibidas", "faq"}
+# D-48.3: el bloque minimo no ofrece nada del lanzamiento: ni cupon, ni oferta propia, ni precio tachado.
+_MINIMAL_OFFER_FORBIDDEN = {"cupon", "codigo_oferta", "precio_antes", "frenar_descuento_carrito"}
+# D-48.3: si el AE no la escribe, el bloque minimo lleva esta instruccion (va en la fila: se juzga y se aprueba).
+MINIMAL_DEFAULT_INSTRUCTION = (
+    "Ahora no hay ninguna fase del lanzamiento abierta. No ofrezcas precio de lanzamiento, cupón, "
+    "bonos ni fechas del lanzamiento. Contesta sobre el producto con lo que dice este bloque y, si "
+    "preguntan por el lanzamiento, di que las novedades se informan por este mismo chat."
+)
 
 
 class CampaignInvalid(ValueError):
@@ -190,11 +236,15 @@ def _qa(raw: Any, field: str) -> list[dict[str, str]]:
     return out
 
 
-def parse_campaign(raw: Any) -> dict[str, Any]:
-    """Lo que manda el agente, normalizado. Lo que no cierra se rechaza con el campo, sin el valor."""
+def parse_campaign(raw: Any, *, phases: bool = False) -> dict[str, Any]:
+    """Lo que manda el agente, normalizado. Lo que no cierra se rechaza con el campo, sin el valor.
+
+    ``phases`` es ``AGENT_CAMPAIGN_PHASES_ENABLED``: sin el, ``fases`` y ``bloque_minimo`` son
+    claves de mas (D-48.1: una campana con fases no se guarda ni se sirve con el flag apagado)."""
     if not isinstance(raw, Mapping):
         raise _refused("campaign", "not_an_object")
-    missing, extra = _REQUIRED - set(raw), set(raw) - _REQUIRED - _OPTIONAL
+    optional = _OPTIONAL | ({"fases", "bloque_minimo"} if phases else set())
+    missing, extra = _REQUIRED - set(raw), set(raw) - _REQUIRED - optional
     if missing or extra:
         reason: dict[str, Any] = {"field": "campaign"}
         if missing:
@@ -245,7 +295,157 @@ def parse_campaign(raw: Any) -> dict[str, Any]:
     for field in ("nombre", "pregunta_entrada"):
         if isinstance(draft.get(field), str) and looks_like_identifier(draft[field]):
             raise CampaignInvalid("identifier_not_allowed", {"field": field, "problem": "phone_or_mail"})
+    if "fases" in raw or "bloque_minimo" in raw:
+        _parse_pieces(raw, draft)
     return draft
+
+
+def _sections(raw: Mapping[str, Any], out: dict[str, Any], where: str, keys: set[str]) -> None:
+    """Las secciones de contenido de una fase o del bloque minimo, con las reglas de la campana."""
+    if "instruccion" in keys and "instruccion" in raw:
+        out["instruccion"] = _text(raw, "instruccion", f"{where}.instruccion", limit=MAX_INSTRUCTION_CHARS)
+    if "oferta" in keys and "oferta" in raw:
+        try:
+            out["oferta"] = _offer(raw["oferta"])
+        except CampaignInvalid as error:
+            raise _refused(f"{where}.{error.reason.get('field', 'oferta')}", str(error.reason.get("problem"))) \
+                from None
+    if "asesoramiento" in keys and "asesoramiento" in raw:
+        out["asesoramiento"] = _texts(raw, "asesoramiento", f"{where}.asesoramiento", required=True)
+    for section in _LIST_SECTIONS:
+        if section in keys and section in raw:
+            out[section] = _texts(raw, section, f"{where}.{section}", required=True)
+    if "faq" in keys and "faq" in raw:
+        out["faq"] = _qa(raw["faq"], f"{where}.faq")
+
+
+def _parse_pieces(raw: Mapping[str, Any], draft: dict[str, Any]) -> None:
+    """``fases`` y ``bloque_minimo`` (D-48.1 a D-48.3). Sin fases se puede traer solo el bloque minimo."""
+    if "fases" in raw and "bloque_minimo" not in raw:
+        raise _refused("bloque_minimo", "required_with_fases")
+    if len(draft["clave"]) > MAX_PHASED_CAMPAIGN_KEY_CHARS:
+        raise _refused("clave", f"longer_than_{MAX_PHASED_CAMPAIGN_KEY_CHARS}_with_pieces")
+    start, end = datetime.fromisoformat(draft["desde"]), datetime.fromisoformat(draft["hasta"])
+    if "fases" in raw:
+        phases = raw["fases"]
+        if not isinstance(phases, list) or not 1 <= len(phases) <= MAX_PHASES:
+            raise _refused("fases", f"one_to_{MAX_PHASES}")
+        parsed: list[dict[str, Any]] = []
+        for index, phase in enumerate(phases):
+            where = f"fases[{index}]"
+            if not isinstance(phase, Mapping) or _PHASE_REQUIRED - set(phase) \
+                    or set(phase) - _PHASE_REQUIRED - _PHASE_SECTIONS:
+                raise _refused(where, "clave_nombre_desde_hasta_and_sections")
+            key = phase.get("clave")
+            if not isinstance(key, str) or not 1 <= len(key) <= MAX_PHASE_KEY_CHARS or set(key) - _KEY_CHARS \
+                    or key[0] == "-" or key[-1] == "-" or PIECE_SEPARATOR in key or key == MINIMAL_PIECE:
+                raise _refused(f"{where}.clave", "short_lowercase_slug")
+            out: dict[str, Any] = {"clave": key, "nombre": _line(phase, "nombre", f"{where}.nombre",
+                                                                  limit=MAX_NAME_CHARS)}
+            try:
+                out["desde"], out["hasta"] = _instant(phase, "desde"), _instant(phase, "hasta")
+            except CampaignInvalid as error:
+                raise _refused(f"{where}.{error.reason['field']}", "not_a_date_with_zone") from None
+            phase_start, phase_end = datetime.fromisoformat(out["desde"]), datetime.fromisoformat(out["hasta"])
+            if phase_start >= phase_end:
+                raise _refused(f"{where}.desde", "must_be_before_hasta")
+            if phase_start < start or phase_end > end:
+                raise _refused(where, "outside_the_campaign_window")
+            if looks_like_identifier(out["nombre"]):
+                raise CampaignInvalid("identifier_not_allowed", {"field": f"{where}.nombre", "problem": "phone_or_mail"})
+            _sections(phase, out, where, _PHASE_SECTIONS)
+            parsed.append(out)
+        if len({phase["clave"] for phase in parsed}) != len(parsed):
+            raise _refused("fases", "repeated_clave")
+        ordered = sorted(parsed, key=lambda phase: datetime.fromisoformat(phase["desde"]))
+        if ordered != parsed:
+            raise _refused("fases", "not_in_order")
+        for first, second in zip(parsed, parsed[1:]):
+            if datetime.fromisoformat(second["desde"]) < datetime.fromisoformat(first["hasta"]):
+                raise _refused("fases", "windows_overlap")
+        draft["fases"] = parsed
+    minimal = raw["bloque_minimo"]
+    if not isinstance(minimal, Mapping) or _MINIMAL_REQUIRED - set(minimal) \
+            or set(minimal) - _MINIMAL_REQUIRED - _MINIMAL_OPTIONAL:
+        raise _refused("bloque_minimo", "asesoramiento_and_sections")
+    if isinstance(minimal.get("oferta"), Mapping) and set(minimal["oferta"]) & _MINIMAL_OFFER_FORBIDDEN:
+        raise _refused("bloque_minimo.oferta", "no_coupon_no_offer_code_no_old_price")
+    out_minimal: dict[str, Any] = {}
+    _sections(minimal, out_minimal, "bloque_minimo", _MINIMAL_REQUIRED | _MINIMAL_OPTIONAL)
+    out_minimal.setdefault("instruccion", MINIMAL_DEFAULT_INSTRUCTION)
+    draft["bloque_minimo"] = {key: out_minimal[key] for key in ("instruccion", *sorted(set(out_minimal) - {"instruccion"}))}
+    if len(json.dumps(draft, ensure_ascii=False).encode("utf-8")) > MAX_DRAFT_BYTES:
+        raise _refused("campaign", f"longer_than_{MAX_DRAFT_BYTES}_bytes")
+
+
+def has_pieces(draft: Mapping[str, Any]) -> bool:
+    """Si la campana trae fases o bloque minimo: entonces se sirve por piezas."""
+    return "fases" in draft or "bloque_minimo" in draft
+
+
+@dataclass(frozen=True)
+class CampaignPiece:
+    """Una pieza de una campana con fases: una fase, la campana entera (sin fases) o el bloque minimo.
+
+    ``draft`` tiene la forma de una campana sin fases, para que ``segment_mapping`` la arme igual."""
+
+    key: str
+    kind: str  # "fase", "campana" o "minimo"
+    phase: str | None
+    draft: Mapping[str, Any]
+    # Lo que muestra la pagina: el nombre de la fase, o el de la campana.
+    title: str = ""
+
+    @property
+    def minimal(self) -> bool:
+        return self.kind == MINIMAL_PIECE
+
+
+_SHARED = ("instruccion", "oferta", "asesoramiento", *_LIST_SECTIONS, "faq")
+
+
+def campaign_pieces(draft: Mapping[str, Any]) -> tuple[CampaignPiece, ...]:
+    """Las piezas en orden: las fases (o la campana entera) y al final el bloque minimo.
+
+    Una fase hereda de la campana cada seccion que no trae y reemplaza entera la que trae
+    (D-48.2). El bloque minimo tiene su propio contenido (no hereda la oferta ni el cupon de la
+    campana) y corre desde el inicio de la campana hasta 14 dias despues del cierre (D-48.4)."""
+    if not has_pieces(draft):
+        return (CampaignPiece(key=draft["clave"], kind="campana", phase=None, draft=draft, title=draft["nombre"]),)
+    common = {key: draft[key] for key in ("etiqueta", "macro_etiqueta") if key in draft}
+    if "preguntas_del_alta" in draft:
+        common["preguntas_del_alta"] = draft["preguntas_del_alta"]
+    pieces: list[CampaignPiece] = []
+    if "fases" in draft:
+        for phase in draft["fases"]:
+            # El bloque se titula con la campana y la fase: el agente sabe de que lanzamiento es.
+            flat: dict[str, Any] = {**common, "clave": f"{draft['clave']}{PIECE_SEPARATOR}{phase['clave']}",
+                                    "nombre": f"{draft['nombre']} · {phase['nombre']}", "desde": phase["desde"],
+                                    "hasta": phase["hasta"]}
+            for section in _SHARED:
+                if section in phase:
+                    flat[section] = phase[section]
+                elif section in draft:
+                    flat[section] = draft[section]
+            pieces.append(CampaignPiece(key=flat["clave"], kind="fase", phase=phase["clave"], draft=flat,
+                                        title=phase["nombre"]))
+    else:
+        flat = {key: value for key, value in draft.items() if key not in ("fases", "bloque_minimo")}
+        pieces.append(CampaignPiece(key=draft["clave"], kind="campana", phase=None, draft=flat, title=draft["nombre"]))
+    minimal = draft["bloque_minimo"]
+    until = datetime.fromisoformat(draft["hasta"]) + MINIMAL_GRACE
+    flat_minimal: dict[str, Any] = {**common, "clave": f"{draft['clave']}{PIECE_SEPARATOR}{MINIMAL_PIECE}",
+                                    "nombre": draft["nombre"], "desde": draft["desde"],
+                                    "hasta": until.isoformat(timespec="seconds").replace("+00:00", "Z")}
+    flat_minimal.update({key: minimal[key] for key in _SHARED if key in minimal})
+    pieces.append(CampaignPiece(key=flat_minimal["clave"], kind=MINIMAL_PIECE, phase=None, draft=flat_minimal,
+                                title=draft["nombre"]))
+    return tuple(pieces)
+
+
+def phased_check_sha(piece_shas: Sequence[tuple[str, str]]) -> str:
+    """El ``chequeo_sha`` de una campana por piezas: la huella de los de cada pieza, en orden (D-48.5)."""
+    return _sha(_canonical({"esquema": PHASES_CONTRACT, "piezas": [[key, sha] for key, sha in piece_shas]}))
 
 
 def _as_list(value: Any, field: str) -> list[Any]:
@@ -334,6 +534,9 @@ class CampaignContext:
     # oferta.codigo_oferta no se valida ni se sirve: su bloque prometeria un link
     # con esa oferta que no sale.
     offer_link_enabled: bool = False
+    # 4.8: AGENT_CAMPAIGN_PHASES_ENABLED. Sin el, una campana con fases o bloque minimo
+    # no se valida, no se guarda y no se sirve (D-48.1).
+    phases_enabled: bool = False
 
     @property
     def product_names(self) -> dict[str, str]:
@@ -347,7 +550,8 @@ class CampaignContext:
 
 
 def load_campaign_segment(draft: Mapping[str, Any], *, version: int, context: CampaignContext, status: str = "borrador",
-                          check_sha: str | None = None, approved_on: date | None = None) -> LoadedSegment:
+                          check_sha: str | None = None, approved_on: date | None = None,
+                          priority: int = CAMPAIGN_PRIORITY) -> LoadedSegment:
     """La campana como un segmento cargado. Lanza ``SegmentError`` si el esquema no la acepta."""
     raw = segment_mapping(draft, ally_ref=context.manifest.ally_ref, version=version, status=status,
                           check_sha=check_sha, approved_on=approved_on)
@@ -356,16 +560,30 @@ def load_campaign_segment(draft: Mapping[str, Any], *, version: int, context: Ca
                                               principal_name=context.base.products[0].offer_name,
                                               require_approved=status == "aprobado")
     rendered = knowledge.render()
-    return LoadedSegment(key=knowledge.key, label=draft["etiqueta"], priority=CAMPAIGN_PRIORITY,
+    return LoadedSegment(key=knowledge.key, label=draft["etiqueta"], priority=priority,
                          knowledge_path=f"agent_campaigns/{knowledge.key}-v{knowledge.version}",
                          label_macro_id=draft["macro_etiqueta"], knowledge=knowledge, rendered=rendered,
                          sha256=hashlib.sha256(rendered.encode("utf-8")).hexdigest(), raw=MappingProxyType(raw))
 
 
 def expected_check_sha(draft: Mapping[str, Any], *, version: int, context: CampaignContext) -> str:
-    """El ``chequeo_sha`` que tiene que tener hoy esta campana (la misma funcion que el cargador)."""
+    """El ``chequeo_sha`` que tiene que tener hoy esta campana (la misma funcion que el cargador).
+
+    Con fases o bloque minimo, la huella de los ``chequeo_sha`` de cada pieza (D-48.5)."""
+    if has_pieces(draft):
+        return phased_check_sha(piece_check_shas(draft, version=version, context=context))
     raw = segment_mapping(draft, ally_ref=context.manifest.ally_ref, version=version)
     return calcular_chequeo_sha(raw, base_sha256=context.base.rendered_sha256, otros=context.others)
+
+
+def piece_check_shas(draft: Mapping[str, Any], *, version: int, context: CampaignContext) -> list[tuple[str, str]]:
+    """El ``chequeo_sha`` de cada pieza, en orden: lo que imprime el juez para cada una."""
+    out = []
+    for piece in campaign_pieces(draft):
+        raw = segment_mapping(piece.draft, ally_ref=context.manifest.ally_ref, version=version)
+        out.append((piece.key, calcular_chequeo_sha(raw, base_sha256=context.base.rendered_sha256,
+                                                    otros=context.others)))
+    return out
 
 
 def declared_offers(manifest: InstanceManifest) -> tuple[Any, ...]:
@@ -425,6 +643,8 @@ def instance_blocks(draft: Mapping[str, Any], *, context: CampaignContext, now: 
         blocks.append(_finding("campaign_keyword_taken", "palabras_clave"))
     if datetime.fromisoformat(draft["hasta"]) <= now:
         blocks.append(_finding("campaign_window_over", "hasta"))
+    if has_pieces(draft):
+        return _piece_blocks(draft, context=context, version=version, blocks=blocks, warnings=warnings)
     loaded = None
     try:
         loaded = load_campaign_segment(draft, version=version, context=context)
@@ -460,6 +680,99 @@ def instance_blocks(draft: Mapping[str, Any], *, context: CampaignContext, now: 
                 blocks.append(_finding("campaign_offer_entry_taken", "oferta.codigo_oferta"))
             warnings.append(_finding("campaign_offer_not_verified", "oferta.codigo_oferta"))
     return blocks, warnings, loaded
+
+
+def _offer_findings(loaded: LoadedSegment, *, context: CampaignContext, field: str, blocks: list[dict[str, Any]],
+                    warnings: list[dict[str, Any]]) -> None:
+    """Las reglas de la oferta (E-410, E-411) para una pieza, con el campo de la pieza."""
+    manifest = context.manifest
+    offer = loaded.knowledge.offer
+    if offer is None:
+        return
+    if offer.coupon is not None:
+        warnings.append(_finding("campaign_coupon_not_verified", f"{field}.cupon"))
+    code = offer.offer_code
+    if code is None:
+        return
+    codes = manifest.offer_codes_of_product(offer.product)
+    if not context.offer_link_enabled:
+        blocks.append(_finding("campaign_offer_link_disabled", f"{field}.codigo_oferta"))
+    if codes is None or code not in codes:
+        blocks.append(_finding("campaign_offer_unknown", f"{field}.codigo_oferta"))
+    elif code in default_offer_codes(manifest):
+        blocks.append(_finding("campaign_offer_is_default", f"{field}.codigo_oferta"))
+    elif offer_entry_taken(manifest, code):
+        blocks.append(_finding("campaign_offer_entry_taken", f"{field}.codigo_oferta"))
+    warnings.append(_finding("campaign_offer_not_verified", f"{field}.codigo_oferta"))
+
+
+def _piece_field(draft: Mapping[str, Any], piece: CampaignPiece) -> str:
+    if piece.minimal:
+        return "bloque_minimo"
+    if piece.kind == "fase":
+        index = [phase["clave"] for phase in draft["fases"]].index(piece.phase)
+        return f"fases[{index}]"
+    return "campaign"
+
+
+def _piece_blocks(draft: Mapping[str, Any], *, context: CampaignContext, version: int, blocks: list[dict[str, Any]],
+                  warnings: list[dict[str, Any]],
+                  ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], LoadedSegment | None]:
+    """Las reglas de una campana por piezas: cada pieza se arma y se mide sola, y todas juntas entran
+    con el catalogo del manifiesto. Devuelve como segmento la primera pieza (el ``render`` de la vista
+    previa); todas van en ``piezas`` (``pieces_preview``)."""
+    if not context.phases_enabled:
+        # D-48.1: el parser ya no la deja pasar sin el flag; esto es por si alguien la arma a mano.
+        blocks.append(_finding("campaign_phases_disabled", "fases"))
+        return blocks, warnings, None
+    loaded: list[LoadedSegment] = []
+    invalid = False
+    if "fases" in draft and "oferta" in draft:
+        # La oferta de arriba la heredan las fases que no traen la suya y es la de la entrada por oferta:
+        # pasa por las mismas reglas aunque ninguna fase la herede.
+        top = {key: value for key, value in draft.items() if key not in ("fases", "bloque_minimo")}
+        try:
+            _offer_findings(load_campaign_segment(top, version=version, context=context), context=context,
+                            field="oferta", blocks=blocks, warnings=warnings)
+        except SegmentError as error:
+            blocks.append(_finding("campaign_segment_invalid", "oferta", detail=str(error)))
+            invalid = True
+    for piece in campaign_pieces(draft):
+        field = _piece_field(draft, piece)
+        try:
+            segment = load_campaign_segment(piece.draft, version=version, context=context,
+                                            priority=MINIMAL_PRIORITY if piece.minimal else CAMPAIGN_PRIORITY)
+        except SegmentError as error:
+            blocks.append(_finding("campaign_segment_invalid", field, detail=str(error)))
+            invalid = True
+            continue
+        _offer_findings(segment, context=context, field="oferta" if field == "campaign" else f"{field}.oferta",
+                        blocks=blocks, warnings=warnings)
+        loaded.append(segment)
+    if loaded and not invalid:
+        try:
+            build_catalog([*context.manifest_catalog.segments, *loaded], base_bytes=context.manifest_catalog.base_bytes)
+        except SegmentError as error:
+            blocks.append(_finding("campaign_does_not_fit", detail=str(error)))
+    return blocks, warnings, (loaded[0] if loaded else None)
+
+
+def pieces_preview(draft: Mapping[str, Any], *, context: CampaignContext, version: int = 1,
+                   ) -> list[dict[str, Any]] | None:
+    """Lo que la pagina muestra de cada pieza: clave, tipo, nombre, ventana y el render.
+
+    None para una campana sin piezas: la vista previa queda como siempre."""
+    if not has_pieces(draft) or not context.phases_enabled:
+        return None
+    out = []
+    for piece in campaign_pieces(draft):
+        try:
+            rendered: str | None = load_campaign_segment(piece.draft, version=version, context=context).rendered
+        except SegmentError:
+            rendered = None
+        out.append({"clave": piece.phase or piece.kind, "tipo": piece.kind, "nombre": piece.title,
+                    "desde": piece.draft["desde"], "hasta": piece.draft["hasta"], "render": rendered})
+    return out
 
 
 class _LiveLabels:
@@ -505,6 +818,39 @@ class _NotServable(Exception):
         self.reason = reason
 
 
+@dataclass(frozen=True)
+class _Served:
+    """Una fila que se sirve: sus segmentos (una pieza o varias) y lo que leen la entrada y las etiquetas.
+
+    Sin piezas, ``segments`` es el segmento de siempre y el resto sale de el: nada cambia."""
+
+    campaign_id: str
+    row: Mapping[str, Any]
+    draft: Mapping[str, Any]
+    segments: tuple[LoadedSegment, ...]
+    key: str
+    label: str
+    name: str
+    version: int
+    macro: int | None
+    valid_from: datetime
+    valid_until: datetime
+    offer_code: str | None
+    pieced: bool = False
+    # 4.8: la campana pausada o terminada de la que solo se sirve el bloque minimo.
+    resting: bool = False
+
+    @classmethod
+    def of(cls, campaign_id: str, row: Mapping[str, Any], draft: Mapping[str, Any],
+           segment: LoadedSegment) -> "_Served":
+        offer = segment.knowledge.offer
+        return cls(campaign_id=campaign_id, row=row, draft=draft, segments=(segment,), key=segment.key,
+                   label=segment.label, name=segment.knowledge.name, version=segment.version,
+                   macro=segment.label_macro_id, valid_from=segment.knowledge.valid_from,
+                   valid_until=segment.knowledge.valid_until,
+                   offer_code=offer.offer_code if offer is not None else None)
+
+
 class LiveSegmentCatalog:
     """El catalogo del bridge con la campana de la base. Misma interfaz que ``SegmentCatalog``.
 
@@ -515,9 +861,18 @@ class LiveSegmentCatalog:
     """
 
     def __init__(self, *, context: CampaignContext, fetch: Callable[[], Awaitable[Mapping[str, Any]]],
-                 notify: _Notify | None = None, refresh_seconds: float = REFRESH_SECONDS) -> None:
+                 notify: _Notify | None = None, refresh_seconds: float = REFRESH_SECONDS,
+                 fetch_rests: Callable[[], Awaitable[Mapping[str, Any]]] | None = None) -> None:
         self._context = context
         self._fetch = fetch
+        # 4.8: las campanas en reposo (``get_agent_campaign_rests_v1``). Solo con el flag de fases.
+        self._fetch_rests = fetch_rests if context.phases_enabled else None
+        self._rest_rows: list[Mapping[str, Any]] = []
+        self._rest_failures = 0
+        self._resting: set[str] = set()
+        self._rest_not_served: dict[str, str] = {}
+        # clave del bloque minimo -> las claves de las otras piezas de su campana (para no servir los dos).
+        self._minimal_of: dict[str, frozenset[str]] = {}
         self._notify = notify
         self._refresh_seconds = refresh_seconds
         self._catalog = context.manifest_catalog
@@ -555,7 +910,17 @@ class LiveSegmentCatalog:
         return self._catalog.base_bytes
 
     def select(self, *, labels: Any, now: datetime) -> SegmentSelection:
-        return self._catalog.select(labels=labels, now=now)
+        if not self._minimal_of:
+            return self._catalog.select(labels=labels, now=now)
+        # 4.8 (D-48.4): el bloque minimo de una campana va solo si ninguna otra pieza suya esta vigente.
+        active = {segment.key for segment in self._catalog.segments if segment.state_at(now) == STATE_ACTIVE}
+        hidden = {key for key, others in self._minimal_of.items() if others & active}
+        if not hidden:
+            return self._catalog.select(labels=labels, now=now)
+        visible = SegmentCatalog(segments=tuple(segment for segment in self._catalog.segments
+                                                if segment.key not in hidden),
+                                 base_bytes=self._catalog.base_bytes)
+        return visible.select(labels=labels, now=now)
 
     def blocks_for(self, entries: object) -> tuple[LoadedSegment, ...]:
         return self._catalog.blocks_for(entries)
@@ -579,6 +944,15 @@ class LiveSegmentCatalog:
         """Para ``/ready``: cuantas se sirven, cuantas no y si la lectura viene andando."""
         state = "ok" if self._failures == 0 else f"failing:{self._failures}"
         return f"served={len(self._served)},not_served={len(self._not_served)},refresh={state}"
+
+    def phases_status_line(self) -> str:
+        """Para ``/ready`` (clave ``agent_campaign_phases``): ``disabled`` sin el flag; si no, cuantas
+        se sirven por piezas, cuantas en reposo con su bloque minimo y si la lectura del reposo anda."""
+        if not self._context.phases_enabled:
+            return "disabled"
+        state = "ok" if self._rest_failures == 0 else f"failing:{self._rest_failures}"
+        return (f"pieced={len(self._minimal_of)},resting={len(self._resting)},"
+                f"rest_not_served={len(self._rest_not_served)},rests_refresh={state}")
 
     def bind_entry(self, entry: CampaignEntry, *, make_labeler: Callable[[str, int], Any]) -> None:
         """La entrada por palabra clave y pregunta: se recarga con cada cambio de la fila."""
@@ -621,26 +995,28 @@ class LiveSegmentCatalog:
     def entry_source(self) -> "_LiveEntries":
         return _LiveEntries(self)
 
-    def _rebuild_labels(self, loaded: Sequence[tuple[str, Mapping[str, Any], LoadedSegment]]) -> None:
+    def _rebuild_labels(self, loaded: Sequence[_Served]) -> None:
         segments: list[SegmentLabel] = []
         labelers: dict[str, Any] = {}
         served: list[tuple[SegmentLabel, str | None]] = []
-        for _, _row, segment in loaded:
-            macro = segment.label_macro_id
-            label = SegmentLabel(key=segment.key, label=segment.label, macro_id=macro,
-                                 valid_from=segment.knowledge.valid_from,
-                                 valid_until=segment.knowledge.valid_until, origin=ORIGIN_AGENT_CAMPAIGN)
+        for item in loaded:
+            if item.resting:
+                # 4.8: una campana en reposo no hereda ni etiqueta por flujo ni por oferta.
+                continue
+            macro = item.macro
+            label = SegmentLabel(key=item.key, label=item.label, macro_id=macro,
+                                 valid_from=item.valid_from,
+                                 valid_until=item.valid_until, origin=ORIGIN_AGENT_CAMPAIGN)
             segments.append(label)
             if macro is not None:
-                labelers[segment.label] = self._labeler(segment.label, int(macro))
-            offer = segment.knowledge.offer
-            code = offer.offer_code if offer is not None else None
+                labelers[item.label] = self._labeler(item.label, int(macro))
+            code = item.offer_code
             if code is not None and code in default_offer_codes(self._context.manifest):
                 # La oferta por defecto no entra por oferta: etiquetaria todo carrito de su landing.
                 code = None
             if code is not None and offer_entry_taken(self._context.manifest, code):
                 # D3 de E-411: se sigue sirviendo (bloque y palabra clave), sin la entrada por oferta.
-                logger.warning("agent_campaign_entry_skipped key=%s reason=offer_taken", segment.key)
+                logger.warning("agent_campaign_entry_skipped key=%s reason=offer_taken", item.key)
                 code = None
             served.append((label, code))
         entries = agent_campaign_entries(served, declared_offers(self._context.manifest))
@@ -656,78 +1032,181 @@ class LiveSegmentCatalog:
         # El mismo objeto entre recargas: recuerda el macro verificado y las conversaciones etiquetadas.
         return self._labelers.setdefault((label, macro), self._make_labeler(label, macro))
 
-    def _entry_segment(self, row: Mapping[str, Any], segment: LoadedSegment) -> EntrySegment:
-        draft = row["draft"]
-        return EntrySegment(key=segment.key, label=segment.label, name=segment.knowledge.name,
-                            version=segment.version, valid_from=segment.knowledge.valid_from,
-                            valid_until=segment.knowledge.valid_until,
-                            keywords=tuple(normalize_entry_text(keyword) for keyword in draft.get("palabras_clave", ())),
-                            question=draft.get("pregunta_entrada"))
+    def _entry_segments(self, item: _Served) -> list[EntrySegment]:
+        """La entrada de una fila. Sin piezas, la de siempre: palabra clave y pregunta en la vigencia.
 
-    def _load_row(self, row: Mapping[str, Any]) -> LoadedSegment:
+        4.8 (D-48.4): con piezas, la palabra clave sigue etiquetando hasta 14 dias despues del cierre
+        (para que quien llega por la pauta reciba el bloque minimo) y la pregunta solo en la vigencia;
+        en reposo, solo la palabra clave."""
+        draft = item.draft
+        keywords = tuple(normalize_entry_text(keyword) for keyword in draft.get("palabras_clave", ()))
+        question = draft.get("pregunta_entrada")
+        if not item.pieced:
+            return [EntrySegment(key=item.key, label=item.label, name=item.name, version=item.version,
+                                 valid_from=item.valid_from, valid_until=item.valid_until,
+                                 keywords=keywords, question=question)]
+        out = []
+        if keywords:
+            out.append(EntrySegment(key=item.key, label=item.label, name=item.name, version=item.version,
+                                    valid_from=item.valid_from, valid_until=item.valid_until + MINIMAL_GRACE,
+                                    keywords=keywords))
+        if question is not None and not item.resting:
+            out.append(EntrySegment(key=item.key, label=item.label, name=item.name, version=item.version,
+                                    valid_from=item.valid_from, valid_until=item.valid_until, question=question))
+        return out
+
+    def _load_row(self, row: Mapping[str, Any], *, resting: bool = False) -> _Served:
+        campaign_id = str(row.get("campaign_id"))
+        phases = self._context.phases_enabled
         try:
-            draft = parse_campaign(row["draft"])
+            draft = parse_campaign(row["draft"], phases=phases)
             approved = datetime.fromisoformat(str(row["approved_at"])).date()
             check_sha = row["check_sha"]
             if not isinstance(check_sha, str):
                 raise _NotServable(NOT_SERVED_CHECK)
-            segment = load_campaign_segment(draft, version=row["segment_version"], context=self._context,
-                                            status="aprobado", check_sha=check_sha, approved_on=approved)
+            version = row["segment_version"]
+            pieced = has_pieces(draft)
+            if resting and not pieced:
+                raise _NotServable(NOT_SERVED_DRAFT)
+            if not pieced:
+                segment = load_campaign_segment(draft, version=version, context=self._context,
+                                                status="aprobado", check_sha=check_sha, approved_on=approved)
+                pieces: tuple[CampaignPiece, ...] = ()
+            else:
+                pieces = campaign_pieces(draft)
         except (CampaignInvalid, SegmentError, KeyError, TypeError, ValueError) as error:
             raise _NotServable(NOT_SERVED_DRAFT) from error
         if draft["macro_etiqueta"] in self._context.reserved_macros:
             raise _NotServable(NOT_SERVED_CONFLICT)
-        if draft.get("oferta", {}).get("codigo_oferta") is not None and not self._context.offer_link_enabled:
+        offers = [draft.get("oferta", {})] + [piece.draft.get("oferta", {}) for piece in pieces]
+        if any(offer.get("codigo_oferta") is not None for offer in offers) and not self._context.offer_link_enabled:
             # E-410: sin AGENT_CAMPAIGN_OFFER_LINK_ENABLED el bloque prometeria un link que no sale.
             raise _NotServable(NOT_SERVED_DRAFT)
+        if not pieced:
+            try:
+                verificar_huella(dict(segment.raw), base=self._context.base, otros=self._context.others)
+            except (ChequeoError, SegmentCheckError) as error:
+                raise _NotServable(NOT_SERVED_CHECK) from error
+            return _Served.of(campaign_id, row, draft, segment)
+        # D-48.5: la huella de la campana es la de sus piezas; cada pieza lleva la suya en la cabecera.
         try:
-            verificar_huella(dict(segment.raw), base=self._context.base, otros=self._context.others)
-        except (ChequeoError, SegmentCheckError) as error:
+            shas = piece_check_shas(draft, version=version, context=self._context)
+        except (ChequeoError, SegmentCheckError, SegmentError, ValueError) as error:
             raise _NotServable(NOT_SERVED_CHECK) from error
-        return segment
+        if phased_check_sha(shas) != check_sha:
+            raise _NotServable(NOT_SERVED_CHECK)
+        segments = []
+        try:
+            for index, (piece, (_, piece_sha)) in enumerate(zip(pieces, shas)):
+                if resting and not piece.minimal:
+                    continue
+                priority = (REST_PRIORITY if resting else MINIMAL_PRIORITY) if piece.minimal else CAMPAIGN_PRIORITY
+                segments.append(load_campaign_segment(piece.draft, version=version, context=self._context,
+                                                      status="aprobado", check_sha=piece_sha, approved_on=approved,
+                                                      priority=priority))
+        except SegmentError as error:
+            raise _NotServable(NOT_SERVED_DRAFT) from error
+        offer = draft.get("oferta", {})
+        return _Served(campaign_id=campaign_id, row=row, draft=draft, segments=tuple(segments), key=draft["clave"],
+                       label=draft["etiqueta"], name=draft["nombre"], version=version,
+                       macro=draft["macro_etiqueta"], valid_from=datetime.fromisoformat(draft["desde"]),
+                       valid_until=datetime.fromisoformat(draft["hasta"]), offer_code=offer.get("codigo_oferta"),
+                       pieced=True, resting=resting)
 
-    def _rebuild(self, rows: Sequence[Mapping[str, Any]]) -> None:
-        loaded: list[tuple[str, Mapping[str, Any], LoadedSegment]] = []
+    def _rebuild(self, rows: Sequence[Mapping[str, Any]], rests: Sequence[Mapping[str, Any]] = ()) -> None:
+        loaded: list[_Served] = []
         not_served: dict[str, str] = {}
         manifest_catalog = self._context.manifest_catalog
+
+        def fits(item: _Served) -> None:
+            build_catalog([*manifest_catalog.segments, *(segment for other in loaded for segment in other.segments),
+                           *item.segments], base_bytes=manifest_catalog.base_bytes)
+
         for row in rows:
             campaign_id = str(row.get("campaign_id"))
             try:
-                segment = self._load_row(row)
-                build_catalog([*manifest_catalog.segments, *(item[2] for item in loaded), segment],
-                              base_bytes=manifest_catalog.base_bytes)
+                item = self._load_row(row)
+                fits(item)
             except _NotServable as error:
                 not_served[campaign_id] = error.reason
                 continue
             except SegmentError:
                 not_served[campaign_id] = NOT_SERVED_CONFLICT
                 continue
-            loaded.append((campaign_id, row, segment))
+            loaded.append(item)
+        rest_not_served: dict[str, str] = {}
+        if rests:
+            # D-48.6: en reposo, solo si ninguna servida tiene su etiqueta o su clave; una por clave
+            # (la version mas alta) y hasta MAX_RESTS, la mas reciente primero.
+            taken_labels = {item.label for item in loaded}
+            taken_keys = {item.key for item in loaded}
+            ordered = sorted(rests, key=lambda row: (str(row.get("approved_at")), int(row.get("segment_version") or 0)),
+                             reverse=True)
+            seen_keys: set[str] = set()
+            for row in ordered:
+                campaign_id = str(row.get("campaign_id"))
+                key = str(row.get("campaign_key"))
+                if key in taken_keys or key in seen_keys or str(row.get("label")) in taken_labels:
+                    continue
+                seen_keys.add(key)
+                if len([item for item in loaded if item.resting]) >= MAX_RESTS:
+                    break
+                try:
+                    item = self._load_row(row, resting=True)
+                    index = len([other for other in loaded if other.resting])
+                    item = replace(item, segments=tuple(replace(segment, priority=REST_PRIORITY + index)
+                                                        for segment in item.segments))
+                    fits(item)
+                except _NotServable as error:
+                    rest_not_served[campaign_id] = error.reason
+                    continue
+                except SegmentError:
+                    rest_not_served[campaign_id] = NOT_SERVED_CONFLICT
+                    continue
+                taken_labels.add(item.label)
+                loaded.append(item)
         if self._entry is not None:
-            kept: list[tuple[str, Mapping[str, Any], LoadedSegment]] = []
+            kept: list[_Served] = []
             for item in loaded:
                 try:
                     self._reload_entry([*kept, item])
                 except CampaignEntryConfigError:
-                    not_served[item[0]] = NOT_SERVED_CONFLICT
+                    if item.resting:
+                        # La palabra clave ya es de otra: el bloque minimo sigue para quien ya tiene la etiqueta.
+                        kept.append(replace(item, draft={**item.draft, "palabras_clave": []}))
+                        continue
+                    not_served[item.campaign_id] = NOT_SERVED_CONFLICT
                     continue
                 kept.append(item)
             loaded = kept
             self._reload_entry(loaded)
         if self._labels_bound:
             self._rebuild_labels(loaded)
-        self._catalog = build_catalog([*manifest_catalog.segments, *(item[2] for item in loaded)],
+        self._catalog = build_catalog([*manifest_catalog.segments,
+                                       *(segment for item in loaded for segment in item.segments)],
                                       base_bytes=manifest_catalog.base_bytes)
-        self._served = {item[0] for item in loaded}
+        self._served = {item.campaign_id for item in loaded if not item.resting}
         self._not_served = not_served
+        self._resting = {item.campaign_id for item in loaded if item.resting}
+        self._rest_not_served = rest_not_served
+        minimal_of: dict[str, frozenset[str]] = {}
+        for item in loaded:
+            if item.pieced and not item.resting:
+                minimal = [segment.key for segment in item.segments if segment.key.endswith(
+                    f"{PIECE_SEPARATOR}{MINIMAL_PIECE}")]
+                others = frozenset(segment.key for segment in item.segments if segment.key not in minimal)
+                minimal_of.update({key: others for key in minimal})
+        self._minimal_of = minimal_of
 
-    def _reload_entry(self, loaded: Sequence[tuple[str, Mapping[str, Any], LoadedSegment]]) -> None:
+    def _reload_entry(self, loaded: Sequence[_Served]) -> None:
         assert self._entry is not None
         segments = list(self._entry_base)
         labelers = dict(self._entry_base_labelers)
-        for _, row, segment in loaded:
-            segments.append(self._entry_segment(row, segment))
-            labelers[segment.label] = self._labeler(segment.label, int(segment.label_macro_id or 0))
+        for item in loaded:
+            entries = self._entry_segments(item)
+            segments.extend(entries)
+            if entries:
+                labelers[item.label] = self._labeler(item.label, int(item.macro or 0))
         self._entry.reload(segments, labelers)
 
     async def refresh(self) -> bool:
@@ -745,10 +1224,16 @@ class LiveSegmentCatalog:
         self._failures = 0
         key = tuple(sorted((str(row.get("campaign_id")), str(row.get("fingerprint")), str(row.get("check_sha")))
                            for row in rows))
+        rests: list[Mapping[str, Any]] = []
+        if self._fetch_rests is not None:
+            rests = await self._read_rests()
+            key = (*key, ("rests",), *sorted(
+                (str(row.get("campaign_id")), str(row.get("status")), str(row.get("fingerprint")),
+                 str(row.get("check_sha"))) for row in rests))
         if key == self._applied:
             return True
         try:
-            self._rebuild(rows)
+            self._rebuild(rows, rests)
         except Exception as error:  # noqa: BLE001 - lo ultimo bueno sigue en pie
             self._failures += 1
             logger.warning("agent_campaigns_rebuild_failed error=%s", type(error).__name__)
@@ -757,11 +1242,36 @@ class LiveSegmentCatalog:
         await self._after_change(rows)
         return True
 
+    async def _read_rests(self) -> list[Mapping[str, Any]]:
+        """Las campanas en reposo. Si la base no contesta, las ultimas buenas: el resto sigue igual."""
+        assert self._fetch_rests is not None
+        try:
+            payload = await self._fetch_rests()
+            rows = payload["campaigns"]
+            if not isinstance(rows, list) or not all(isinstance(row, Mapping) for row in rows):
+                raise TypeError("campaigns")
+        except Exception as error:  # noqa: BLE001 - sin el reposo, se sirve lo de siempre
+            self._rest_failures += 1
+            logger.warning("agent_campaign_rests_refresh_failed failures=%s error=%s", self._rest_failures,
+                           type(error).__name__)
+            return self._rest_rows
+        self._rest_failures = 0
+        self._rest_rows = list(rows)
+        return self._rest_rows
+
     async def _after_change(self, rows: Sequence[Mapping[str, Any]]) -> None:
         keys = {str(row.get("campaign_id")): row for row in rows}
         for campaign_id in self._served:
             row = keys[campaign_id]
             logger.info("agent_campaign_served key=%s version=%s", row.get("campaign_key"), row.get("segment_version"))
+        for campaign_id in self._resting:
+            row = next((item for item in self._rest_rows if str(item.get("campaign_id")) == campaign_id), {})
+            logger.info("agent_campaign_resting key=%s version=%s status=%s", row.get("campaign_key"),
+                        row.get("segment_version"), row.get("status"))
+        for campaign_id, reason in self._rest_not_served.items():
+            row = next((item for item in self._rest_rows if str(item.get("campaign_id")) == campaign_id), {})
+            logger.warning("agent_campaign_rest_not_served key=%s version=%s reason=%s", row.get("campaign_key"),
+                           row.get("segment_version"), reason)
         for campaign_id, reason in self._not_served.items():
             row = keys[campaign_id]
             logger.warning("agent_campaign_not_served key=%s version=%s reason=%s", row.get("campaign_key"),
