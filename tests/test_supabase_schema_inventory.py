@@ -495,8 +495,10 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # flow_change_approver).
     # 20261126400000 (las reglas de palabra clave, Z1 3.9) suma la lectura de las vivas.
     # 20261126500000 (las corridas del juez de una campana que pide el AE, 4.9) suma sus tres.
-    assert len(allowlisted) == 264
+    # 20261126600000 (el conocimiento vivo del AE, pieza 5.5) suma la lectura de la publicada.
+    assert len(allowlisted) == 265
     assert "start_agent_campaign_judge_run_v1(jsonb, uuid, text, timestamp with time zone, integer)" in allowlisted
+    assert "get_live_agent_knowledge_v1(jsonb)" in allowlisted
     assert "record_permission_grant_v1(jsonb)" in allowlisted
     assert "close_permission_notice_v1(text, text, timestamp with time zone)" in allowlisted
     assert "record_hotmart_unknown_offer_v1(text, bigint, text, text, text, text, text, uuid)" in allowlisted
@@ -2568,14 +2570,14 @@ def test_keyword_rules_fingerprint_counts_the_rows() -> None:
     assert "approver_publish_keyword_rule_v1(jsonb,text,uuid,text)" in compact
 
 
-def test_agent_campaign_judge_runs_fingerprint_is_last() -> None:
+def test_agent_campaign_judge_runs_fingerprint_counts_the_rows() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261126500000: la tabla de las corridas del juez con RLS, una sola corriendo por instancia y
     # las tres funciones, solo de service_role.
-    row = sql.split("'20261126500000'", 1)[1].split("select\n    version,", 1)[0]
+    row = sql.split("'20261126500000'", 1)[1].split("'20261126600000'", 1)[0].rsplit("union all", 1)[0]
     compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
 
-    assert compact.endswith(",3,'agent_campaign_judge_runs')")
+    assert compact.endswith(",3,'agent_campaign_judge_runs'")
     assert "to_regclass('public.agent_campaign_judge_runs')" in compact
     assert "agent_campaign_judge_runs_one_running" in compact
     for function in ("start_agent_campaign_judge_run_v1(jsonb,uuid,text,timestamptz,integer)",
@@ -2583,3 +2585,16 @@ def test_agent_campaign_judge_runs_fingerprint_is_last() -> None:
                      "get_agent_campaign_judge_run_v1(jsonb,uuid,timestamptz)"):
         assert function in compact
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact
+
+
+def test_agent_live_knowledge_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261126600000 (live-knowledge-v1, pieza 5.5): las dos tablas con RLS, la lectura de la
+    # publicada solo de service_role y publicar desde la pagina sin execute para la API ni service_role.
+    row = sql.split("'20261126600000'", 1)[1].split("select\n    version,", 1)[0]
+    compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
+
+    assert compact.endswith(",3,'agent_live_knowledge')")
+    assert "to_regclass('public.agent_knowledge_versions')" in compact
+    assert "get_live_agent_knowledge_v1(jsonb)" in compact
+    assert "approver_publish_agent_knowledge_v1(jsonb,text,uuid,text,text)" in compact

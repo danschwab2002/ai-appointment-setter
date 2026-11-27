@@ -214,6 +214,8 @@ def test_it_is_one_transaction_and_comes_right_after_the_t4b() -> None:
         "20261126400000_keyword_rules_v1.sql",
         # Las corridas del juez (20261126500000, 4.9).
         "20261126500000_agent_campaign_judge_runs_v1.sql",
+        # El conocimiento vivo del AE (20261126600000, pieza 5.5).
+        "20261126600000_agent_live_knowledge_v1.sql",
     ]
 
 

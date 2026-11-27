@@ -51,7 +51,10 @@ TOOLS = ["get_flow_definitions", "propose_flow_change", "validate_flow_change", 
          # keyword-rules-v1 (Z1 3.9): la regla de palabra clave; publicarla es de la pagina.
          "preview_keyword_rule", "propose_keyword_rule", "get_keyword_rule", "list_keyword_rules",
          # 4.9 (agent-campaign-judge-v1): pedir el control de calidad de una campana y leerlo.
-         "judge_campaign", "get_campaign_judge"]
+         "judge_campaign", "get_campaign_judge",
+         # live-knowledge-v1 (5.5): el conocimiento; publicarlo y volver al archivo son de la pagina.
+         "get_knowledge", "preview_knowledge_change", "propose_knowledge_change",
+         "get_knowledge_change", "list_knowledge_changes"]
 
 
 def _load_plugin() -> ModuleType:
@@ -649,3 +652,40 @@ def test_the_temporary_instruction_tools_never_publish_nor_retire_and_never_send
     assert json.loads(tools.list_temporary_instructions({"limit": 99}))["error"] == "invalid_query"
     source = (PLUGIN / "tools.py").read_text(encoding="utf-8")
     assert "/retire" not in source and "temporary-instructions/{instruction_id}/publish" not in source
+
+
+# ------------------------------------------------------------- el conocimiento vivo (live-knowledge-v1)
+
+
+def test_a_bridge_without_the_live_knowledge_says_so(bridge: type[_Bridge]) -> None:
+    # Sin AGENT_LIVE_KNOWLEDGE_ENABLED las rutas no existen: FastAPI contesta su 404 generico.
+    bridge.routes[f"GET {PREFIX}/knowledge"] = (404, {"detail": "Not Found"})
+    assert json.loads(_tools().get_knowledge({})) == {"error": "knowledge_not_enabled"}
+    bridge.routes[f"GET {PREFIX}/knowledge/versions/{PROPOSAL}"] = (404, {"detail": "agent_knowledge_not_found"})
+    assert json.loads(_tools().get_knowledge_change({"knowledge_id": PROPOSAL})) == {
+        "error": "agent_knowledge_not_found"}
+
+
+def test_the_knowledge_tools_go_to_their_routes_with_who_asks_from_the_session(bridge: type[_Bridge]) -> None:
+    tools = _tools()
+
+    def respond(status: int, data: dict[str, object]) -> tuple[int, object]:
+        return status, {"contract": "live-knowledge-v1", "contract_version": "1.0.0", "data": data}
+
+    bridge.routes[f"POST {PREFIX}/knowledge/preview"] = respond(200, {"ok": True})
+    bridge.routes[f"POST {PREFIX}/knowledge"] = respond(201, {"knowledge_id": PROPOSAL})
+    bridge.routes[f"GET {PREFIX}/knowledge/versions?estado=todas"] = respond(200, {"versions": []})
+    cambios = {"faq": [{"pregunta": "a", "respuesta": "b", "fuente": "c", "vigencia": "d"}]}
+    assert json.loads(tools.preview_knowledge_change({"cambios": cambios}))["data"]["ok"] is True
+    assert json.loads(str(bridge.seen[-1]["body"])) == {"cambios": cambios}
+    saved = json.loads(tools.propose_knowledge_change({"cambios": cambios, "purpose": "Suma una FAQ"}))
+    assert saved["data"]["knowledge_id"] == PROPOSAL
+    assert json.loads(str(bridge.seen[-1]["body"]))["requested_by"] == {"slack_user": "U0123456789"}
+    assert json.loads(tools.list_knowledge_changes({"estado": "todas"}))["data"] == {"versions": []}
+    assert json.loads(tools.propose_knowledge_change({"cambios": cambios, "purpose": "Llamar al 5512345678"})) == {
+        "error": "identifier_not_allowed"}
+    bridge.routes[f"POST {PREFIX}/knowledge"] = (422, {"detail": "knowledge_change_blocked",
+                                                       "data": {"blocks": [{"code": "knowledge_change_empty"}],
+                                                                "warnings": []}})
+    assert json.loads(tools.propose_knowledge_change({"cambios": cambios, "purpose": "x"})) == {
+        "error": "knowledge_change_blocked", "blocks": [{"code": "knowledge_change_empty"}], "warnings": []}

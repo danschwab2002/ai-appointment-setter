@@ -87,7 +87,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026111500010
     // Las reglas de palabra clave (20261126400000, Z1 3.9).
     '20261126400000_keyword_rules_v1.sql',
     // Las corridas del juez (20261126500000, 4.9).
-    '20261126500000_agent_campaign_judge_runs_v1.sql'])) fail(`despues de ${MIGRATION} van solo la de E-569, la de E-575 y la de E-622`, names.slice(position + 1));
+    '20261126500000_agent_campaign_judge_runs_v1.sql',
+    // El conocimiento vivo del AE (20261126600000, pieza 5.5).
+    '20261126600000_agent_live_knowledge_v1.sql'])) fail(`despues de ${MIGRATION} van solo la de E-569, la de E-575 y la de E-622`, names.slice(position + 1));
 const apply = async (file) => db.exec(readFileSync(file, 'utf8').replace(
   /create extension if not exists pgcrypto;/gi,
   '-- pgcrypto is built into PGlite',

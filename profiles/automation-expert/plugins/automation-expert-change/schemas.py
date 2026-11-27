@@ -827,3 +827,87 @@ GET_CAMPAIGN_JUDGE = {
         "additionalProperties": False,
     },
 }
+
+
+# live-knowledge-v1 (pieza 5.5): el conocimiento base, por secciones. Ninguna lo publica.
+_KNOWLEDGE_CHANGES = {
+    "type": "object",
+    "minProperties": 1,
+    "description": (
+        "Las secciones que cambian, enteras, con la misma forma que en get_knowledge: identidad, voz, oferta, "
+        "contenido, no_confirmado, promesas_prohibidas, limites_sensibles, faq, pagos, se_puede_decir, o "
+        "productos.<clave> en un conocimiento por producto. Cada una reemplaza la sección entera; null saca faq, "
+        "pagos o se_puede_decir. Lo que no nombrás queda igual. La cabecera no se toca."
+    ),
+}
+
+GET_KNOWLEDGE = {
+    "name": "get_knowledge",
+    "description": (
+        "Lee el conocimiento vigente del agente comercial: de dónde sale (el archivo de la instancia o una versión "
+        "viva aprobada), qué recibe hoy el agente, y las secciones editables tal cual, para copiarlas y cambiarlas. "
+        "Solo lee. Con knowledge_not_enabled esto no está prendido en la instancia: el cambio va por el repo."
+    ),
+    "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+}
+
+PREVIEW_KNOWLEDGE_CHANGE = {
+    "name": "preview_knowledge_change",
+    "description": (
+        "Valida un cambio del conocimiento contra esta instancia (el mismo cargador del bridge, los precios del "
+        "catálogo y los productos) y muestra el diff contra lo vigente, sin guardar. Vuelve con ok, blocks (qué "
+        "corregir), warnings y diff."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"cambios": _KNOWLEDGE_CHANGES},
+        "required": ["cambios"],
+        "additionalProperties": False,
+    },
+}
+
+PROPOSE_KNOWLEDGE_CHANGE = {
+    "name": "propose_knowledge_change",
+    "description": (
+        "Guarda un cambio del conocimiento como versión validada, por 24 horas, y devuelve el link de la página "
+        "(approval_url). No la publica: el agente no la usa hasta que un aprobador la apruebe ahí. No se puede "
+        "aprobar mientras haya una campaña o un segmento en vigencia."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "cambios": _KNOWLEDGE_CHANGES,
+            "purpose": {"type": "string", "minLength": 1, "maxLength": 500,
+                        "description": "Qué cambia y por qué, en una línea, como lo pidió la persona. Sin teléfonos ni mails."},
+        },
+        "required": ["cambios", "purpose"],
+        "additionalProperties": False,
+    },
+}
+
+GET_KNOWLEDGE_CHANGE = {
+    "name": "get_knowledge_change",
+    "description": (
+        "Relee una versión del conocimiento: su estado, el diff, si el agente la está usando (serving) y el link "
+        "de la página. Solo lee."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"knowledge_id": {"type": "string", "format": "uuid"}},
+        "required": ["knowledge_id"],
+        "additionalProperties": False,
+    },
+}
+
+LIST_KNOWLEDGE_CHANGES = {
+    "name": "list_knowledge_changes",
+    "description": (
+        "Las versiones del conocimiento de la instancia y en qué estado están. estado: abiertas (por defecto: "
+        "la que está en uso y las que esperan el sí) o todas. Solo lee."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"estado": {"type": "string", "enum": ["abiertas", "todas"]}},
+        "additionalProperties": False,
+    },
+}

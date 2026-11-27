@@ -13,6 +13,7 @@ import re
 import socket
 import tempfile
 import time
+import tomllib
 import unicodedata
 import uuid
 from contextlib import asynccontextmanager, nullcontext
@@ -21,7 +22,7 @@ from datetime import UTC, datetime, timedelta
 from datetime import time as dt_time
 from pathlib import Path
 from types import MappingProxyType
-from typing import AsyncGenerator, Awaitable, Callable, Iterable, Mapping, Protocol
+from typing import Any, AsyncGenerator, Awaitable, Callable, Iterable, Mapping, Protocol
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -192,6 +193,7 @@ from bridge import template_approval, template_request, template_request_api
 from bridge import agent_campaign_api, agent_campaigns, campaign_approval, campaign_judge_api
 from bridge import agent_global_pause
 from bridge import temporary_instruction, temporary_instruction_api, temporary_instruction_page
+from bridge import knowledge_approval, live_knowledge, live_knowledge_api
 from bridge import agent_product_api
 from bridge import contact_export
 from bridge.flow_audience_store import ChatwootLabelIndex
@@ -487,6 +489,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # 4.9 (agent-campaign-judge-v1): el AE pide el juez de una campana y el
     # bridge lo corre. Portable: por instancia, prenderlo con el SOUL comun.
     "automation_expert_judge_enabled",
+    # live-knowledge-v1 (5.5): el conocimiento base editado por el AE, aprobado
+    # en la pagina y servido en vivo. Portable: por instancia, solo prenderlo;
+    # apagado no existen las rutas ni se lee la base para esto.
+    "agent_live_knowledge_enabled",
     # Encargo 6 del masivo manejado por el AE: el borrador, el estado y la
     # lista de masivos. Portable: por instancia, solo prenderlo; apagado no
     # existen las rutas ni se llama a la base.
@@ -1181,6 +1187,15 @@ class Settings:
     # modelo. El SOUL comun del agente, como archivo (la imagen no lo trae).
     automation_expert_judge_enabled: bool = False
     automation_expert_judge_soul_path: Path | None = None
+    # live-knowledge-v1 (bridge/live_knowledge.py, pieza 5.5):
+    # AGENT_LIVE_KNOWLEDGE_ENABLED. Con el flag, el AE propone una version del
+    # conocimiento, un aprobador la publica en la pagina y el turno la recibe en
+    # vivo (o el archivo, como hoy). Apagado no existen las rutas, no se lee la
+    # base y el pedido a Hermes es byte a byte el de siempre.
+    agent_live_knowledge_enabled: bool = False
+    # El archivo de conocimiento que cargo COMMERCIAL_KNOWLEDGE_ENABLED. Lo usa
+    # solo el conocimiento vivo, para tener sus secciones como datos.
+    commercial_knowledge_path: Path | None = None
     # Encargo 6 del masivo (bridge/flow_change_api.py, register_bulk_send_routes):
     # BULK_SEND_ENABLED. Con el flag existen las rutas del AE para armar el
     # borrador de un masivo y leer su estado. Apagado (el default) no existen y
@@ -1507,14 +1522,18 @@ class Settings:
                 else JOHANNA_COMMERCIAL_ALLY
             )
         commercial_knowledge: CommercialKnowledge | None = None
+        commercial_knowledge_path: Path | None = None
         if os.getenv("COMMERCIAL_KNOWLEDGE_ENABLED", "false").lower() == "true":
             if instance_manifest is None:
                 raise ValueError(
                     "COMMERCIAL_KNOWLEDGE_ENABLED requires INSTANCE_MANIFEST_PATH"
                 )
-            commercial_knowledge = CommercialKnowledge.from_toml_file(
+            commercial_knowledge_path = (
                 Path(instance_manifest_path).parent
                 / instance_manifest.agent_knowledge_path
+            )
+            commercial_knowledge = CommercialKnowledge.from_toml_file(
+                commercial_knowledge_path
             )
         shadow_enabled = os.getenv("HERMES_SHADOW_ENABLED", "false").lower() == "true"
         automated_replies_enabled = (
@@ -2756,6 +2775,10 @@ class Settings:
                 if os.getenv(campaign_judge_api.SOUL_ENV, "").strip()
                 else None
             ),
+            agent_live_knowledge_enabled=(
+                os.getenv(live_knowledge.FLAG_ENV, "false").strip().lower() == "true"
+            ),
+            commercial_knowledge_path=commercial_knowledge_path,
             bulk_send_enabled=(
                 os.getenv(flow_change_api.BULK_SEND_ENV, "false").strip().lower()
                 == "true"
@@ -4285,6 +4308,55 @@ def _contact_export_labels(chatwoot: object, inbox_id: int) -> ChatwootLabelInde
     return ChatwootLabelIndex(chatwoot=chatwoot, inbox_id=inbox_id)
 
 
+def _live_knowledge_setup(
+    settings: Settings,
+    supabase: Any,
+    processor: Any,
+    segments: Any,
+) -> live_knowledge.LiveKnowledgeSource | None:
+    """La fuente del conocimiento vivo (live-knowledge-v1). None con el flag apagado.
+
+    D-55.4: ``segments`` es el catalogo de segmentos del turno (el del manifiesto o
+    el vivo con las campanas del AE). Mientras alguno este vigente o por empezar, la
+    fuente sirve el archivo, contra el que se firmo su ``chequeo_sha``.
+    """
+    if not settings.agent_live_knowledge_enabled:
+        return None
+    live_knowledge_api.check_settings(settings)
+    if supabase is None:
+        raise ValueError(f"{live_knowledge.FLAG_ENV} requires Supabase")
+    if not hasattr(processor, "bind_knowledge_source"):
+        raise ValueError(f"{live_knowledge.FLAG_ENV} requires an agent processor that reads the live knowledge")
+    manifest = settings.instance_manifest
+    knowledge = settings.commercial_knowledge
+    path = settings.commercial_knowledge_path
+    assert manifest is not None and knowledge is not None and path is not None
+    raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    file = live_knowledge.file_knowledge(knowledge, raw)
+    instance = {"tenant_ref": manifest.tenant_ref, "ally_ref": manifest.ally_ref}
+
+    async def fetch() -> Mapping[str, object]:
+        return await supabase.get_live_agent_knowledge(instance)
+
+    def in_force() -> tuple[str, ...]:
+        if segments is None:
+            return ()
+        now = datetime.now(UTC)
+        return tuple(
+            str(segment.key)
+            for segment in segments.segments
+            if getattr(getattr(segment, "knowledge", None), "valid_until", now) > now
+        )
+
+    source = live_knowledge.LiveKnowledgeSource(
+        context=live_knowledge.KnowledgeContext.build(manifest, file),
+        fetch=fetch,
+        segments_in_force=in_force,
+    )
+    processor.bind_knowledge_source(source)
+    return source
+
+
 def _join_extra_routes(
     *registers: Callable[[FastAPI, flow_approval.PageTools], None] | None,
 ) -> Callable[[FastAPI, flow_approval.PageTools], None] | None:
@@ -5351,6 +5423,7 @@ def create_app(
     campaign_judge_store: campaign_judge_api.JudgeRunStore | None = None,
     campaign_judge_runner: Callable[[str], tuple[str, dict[str, object] | None, str | None]] | None = None,
     agent_product_store: agent_product_api.ProductStore | None = None,
+    live_knowledge_store: live_knowledge_api.KnowledgeStore | None = None,
     bulk_send_store: flow_change_api.BulkSendStore | None = None,
     agent_pause_store: agent_global_pause.PauseStore | None = None,
     contact_export_store: contact_export.ContactExportStore | None = None,
@@ -6425,6 +6498,12 @@ def create_app(
             "CAMPAIGN_INBOUND_ENTRY_ENABLED: pregunta_entrada requires an agent "
             "processor that reads campana_respuesta"
         )
+    # live-knowledge-v1 (5.5): con el flag, el conocimiento de cada turno sale
+    # de la fuente viva (la version aprobada en la pagina o el archivo). Apagado,
+    # None: no se lee la base y el pedido a Hermes es el de siempre.
+    live_knowledge_source = _live_knowledge_setup(
+        settings, shared_supabase, shadow_processor, segment_catalog
+    )
     # La procedencia del prompt se anota si hay con que: el turno del agente
     # no depende de esto, pero sin esto el feedback no se puede atribuir a
     # una version del agente.
@@ -7607,6 +7686,10 @@ def create_app(
             if keyword_rule_live is not None:
                 # Z1 3.9: lo mismo con las reglas de palabra clave.
                 await keyword_rule_live.start()
+            if live_knowledge_source is not None:
+                # live-knowledge-v1: la primera lectura antes de los turnos. Si
+                # la base no contesta sirve el archivo y reintenta.
+                await live_knowledge_source.start()
             if permission_connectors is not None:
                 # E-628: los avisos a la base antes del primer evento. Si la base
                 # no contesta, se reintenta antes de cada evento con aviso.
@@ -7706,6 +7789,7 @@ def create_app(
                 ("agent_global_pause", agent_pause_live),
                 ("temporary_instruction", temporary_instruction_live),
                 ("keyword_rules", keyword_rule_live),
+                ("live_knowledge", live_knowledge_source),
                 ("flow_audience", flow_audience),
                 ("bulk_send", bulk_send),
             ):
@@ -11576,6 +11660,19 @@ def create_app(
                 manifest=change_manifest,
                 run=campaign_judge_runner or campaign_judge_api.default_runner(settings),
             )
+        if live_knowledge_source is not None:
+            # live-knowledge-v1 (5.5): el agente lee, propone y guarda; nunca
+            # publica ni vuelve al archivo (eso es de la pagina).
+            live_knowledge_api.register_live_knowledge_routes(
+                app,
+                token=settings.automation_expert_change_token,
+                store=live_knowledge_store or live_knowledge_api.KnowledgeStore(
+                    base_url=settings.supabase_base_url or "",
+                    db_key=settings.automation_expert_change_db_key or "",
+                ),
+                source=live_knowledge_source,
+                approval_origin=settings.flow_approval_base_url or "",
+            )
         if settings.agent_products_enabled:
             # E-569 (product-card-v1, MP-07): el agente propone y valida un
             # producto; nunca lo publica (MP-08).
@@ -11756,6 +11853,9 @@ def create_app(
                     inbox_id=settings.instance_manifest.chatwoot_inbox_id,
                 )
                 if keyword_rule_live is not None else None,
+                # live-knowledge-v1: la pagina de una version del conocimiento.
+                knowledge_approval.routes(source=live_knowledge_source)
+                if live_knowledge_source is not None else None,
                 # E-484: ver cuantos van a salir y confirmar un envio manual.
                 flow_audience_page.routes(sweeper=flow_audience.sweeper)
                 if flow_audience is not None else None,
@@ -12592,6 +12692,13 @@ def create_app(
             commercial_ally_readiness = {
                 **commercial_ally_readiness,
                 "automation_expert_judge": "enabled",
+            }
+        if live_knowledge_source is not None:
+            # live-knowledge-v1: que conocimiento sirve y si la lectura viene
+            # andando. Solo con el flag: apagado, /ready no cambia.
+            commercial_ally_readiness = {
+                **commercial_ally_readiness,
+                "live_knowledge": live_knowledge_source.status_line(),
             }
         if product_labelers:
             # La etiqueta de producto no responde 503: no atiende a nadie, y un

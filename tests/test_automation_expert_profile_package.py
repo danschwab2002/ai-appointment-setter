@@ -112,7 +112,9 @@ def test_the_distribution_copies_the_plugin_and_names_its_variables() -> None:
                                         "export_contacts", "get_contact_export",
                                         "preview_keyword_rule", "propose_keyword_rule", "get_keyword_rule",
                                         "list_keyword_rules", "judge_campaign",
-                                        "get_campaign_judge"]
+                                        "get_campaign_judge",
+                                        "get_knowledge", "preview_knowledge_change", "propose_knowledge_change",
+                                        "get_knowledge_change", "list_knowledge_changes"]
 
 
 def test_the_soul_sends_the_approval_page_without_a_proposal() -> None:
@@ -142,6 +144,7 @@ SKILLS = ("flujos/armar-una-campana", "flujos/instruccion-temporal", "flujos/cre
           "flujos/pausar-el-agente",
           "flujos/exportar-contactos",
           "flujos/link-con-palabra-clave",
+          "flujos/editar-el-conocimiento",
           "plataformas/hotmart", "plataformas/ghl-formularios", "plataformas/chatwoot-whatsapp")
 
 

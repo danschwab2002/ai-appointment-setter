@@ -7928,6 +7928,38 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'agent_campaign_judge_runs'
+    union all
+    select
+        '20261126600000',
+        '20261126600000_agent_live_knowledge_v1.sql',
+        -- El conocimiento vivo del AE: las dos tablas, con RLS ...
+        (
+            select count(*) = 2
+            from pg_class c
+            where c.oid in (to_regclass('public.agent_knowledge_versions'),
+                            to_regclass('public.agent_knowledge_events'))
+              and c.relrowsecurity
+        )::int
+        -- ... la lectura de la publicada, solo de service_role ...
+        + coalesce((
+            select (prosecdef
+                    and has_function_privilege('service_role', oid, 'EXECUTE')
+                    and not has_function_privilege('anon', oid, 'EXECUTE')
+                    and not has_function_privilege('authenticated', oid, 'EXECUTE'))::int
+            from functions
+            where oid = to_regprocedure('public.get_live_agent_knowledge_v1(jsonb)')
+        ), 0)
+        -- ... y publicar desde la pagina, sin execute para la API ni para service_role.
+        + coalesce((
+            select (prosecdef
+                    and not has_function_privilege('anon', oid, 'EXECUTE')
+                    and not has_function_privilege('authenticated', oid, 'EXECUTE')
+                    and not has_function_privilege('service_role', oid, 'EXECUTE'))::int
+            from functions
+            where oid = to_regprocedure('public.approver_publish_agent_knowledge_v1(jsonb,text,uuid,text,text)')
+        ), 0),
+        3,
+        'agent_live_knowledge'
 )
 select
     version,
