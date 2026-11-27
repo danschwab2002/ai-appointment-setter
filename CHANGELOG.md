@@ -28,6 +28,7 @@ Lo que ya está en `main` y todavía no tiene versión. El número se elige al p
 
 ### Arreglado
 
+- **El selector de país de un formulario propio vuelve a aparecer cuando el formulario no declara `paises` (own-forms-v1).** `DEFAULT_COUNTRIES` estaba definido y no se usaba: el `embed.js` salía con `"paises": []`, sin selector, y los 10 dígitos de un celular de México salían como `+55` y los mismos dígitos, un número de Brasil inválido que no llegaba al checkout (medido el 27/11 en `att1-org-b`). Ahora, con `paises` ausente o vacío, el selector trae los 21 países por defecto con México primero; si `pais` no está en esa lista, va primero. Sin flag ni migración. Quien actualiza: nada; un formulario con `paises` declarado no cambia.
 - **El aviso de una plantilla de Meta ya no se pierde por falta de hilo (5.7, template-request-v1 1.3.1).** Una solicitud nueva que llega sin hilo de Slack se guarda con el canal de la aliada (`[slack].canal`) y el aviso sale en la raíz del canal con el nombre y el estado, en vez de quedar `no_thread`. Sin flag ni migración. Quien actualiza: nada; para que salga, el bot del Automation Expert tiene que estar en el canal de la aliada (si no, el aviso espera en `waiting`).
 
 ## [1.42.0] - 2026-11-26
