@@ -39,7 +39,11 @@ const fail = (message, detail) => {
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-if (names.slice(position + 1).length !== 0) fail(`despues de ${MIGRATION} no va ninguna`, names.slice(position + 1));
+// Despues va solo el flujo de la palabra clave (20261127400000, Z2 3.9), que suma la forma nativo:palabra_clave
+// con texto_fijo.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261127400000_flow_engine_keyword_trigger_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de la palabra clave`, names.slice(position + 1));
+}
 
 const boot = async (files) => {
   const db = new PGlite();

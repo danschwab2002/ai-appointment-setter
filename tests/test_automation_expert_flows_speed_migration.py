@@ -224,6 +224,8 @@ def test_it_is_one_transaction_and_comes_before_the_motor() -> None:
         "20261127100000_meta_enforcement_brakes_v1.sql",
         # El texto fijo en las variables de un paso nativo (20261127300000, F4).
         "20261127300000_flow_engine_literal_variables_v1.sql",
+        # El flujo de la palabra clave (20261127400000, Z2 3.9).
+        "20261127400000_flow_engine_keyword_trigger_v1.sql",
     ]
     for later in names[position + 1:]:
         if later != reads:

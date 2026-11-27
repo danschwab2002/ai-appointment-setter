@@ -68,6 +68,7 @@ from .flow_definition import (
     TO_CREATE,
     TemplateLiteral,
     is_literal_variable,
+    is_keyword_rule_key,
     is_pool,
     parse_due_anchor,
     parse_duration,
@@ -80,7 +81,7 @@ from .flow_policy import STEPS_BY_LEGACY_KIND
 from .flow_schedule import DEFAULT_ZONE, LAST_MINUTE, Franja, franja_of, is_open, next_open
 
 __all__ = [
-    "ENGINE_CAPABILITIES_NATIVE", "ENGINE_CAPABILITIES_NATIVE_AUDIENCE", "NATIVE_AUDIENCE_FORMS", "NATIVE_AUDIENCE_VARIABLES", "NATIVE_AUDIENCE_PERMISSIONS", "NATIVE_AUDIENCE_TRIGGER", "ENGINE_CAPABILITIES_NATIVE_MULTITOUCH", "ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE", "ENGINE_CAPABILITIES_NATIVE_CART_MULTITOUCH", "NATIVE_COUPON_FIRST_VARIABLES", "NATIVE_COUPON_NEXT_VARIABLES", "NATIVE_MAX_PERSONAL_COUPONS", "NATIVE_PERSONAL_COUPON_BUTTON", "NATIVE_PERSONAL_COUPON_TRIGGERS", "NATIVE_MULTITOUCH_TRIGGERS", "NATIVE_TOUCH_STEP_PREFIX", "ENGINE_CAPABILITIES_NATIVE_SILENCE", "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_PARAMETERS", "NATIVE_CAPABILITIES_BY_TRIGGER", "ENGINE_CAPABILITIES_NATIVE_PAYMENT_SLIP", "NATIVE_PAYMENT_SLIP_DUE_ANCHORS", "NATIVE_PAYMENT_SLIP_TRIGGER", "NATIVE_PAYMENT_SLIP_VARIABLES", "NATIVE_SILENCE_TRIGGER", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
+    "ENGINE_CAPABILITIES_NATIVE", "ENGINE_CAPABILITIES_NATIVE_AUDIENCE", "ENGINE_CAPABILITIES_NATIVE_KEYWORD", "NATIVE_KEYWORD_TRIGGER", "NATIVE_KEYWORD_VARIABLES", "NATIVE_AUDIENCE_FORMS", "NATIVE_AUDIENCE_VARIABLES", "NATIVE_AUDIENCE_PERMISSIONS", "NATIVE_AUDIENCE_TRIGGER", "ENGINE_CAPABILITIES_NATIVE_MULTITOUCH", "ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE", "ENGINE_CAPABILITIES_NATIVE_CART_MULTITOUCH", "NATIVE_COUPON_FIRST_VARIABLES", "NATIVE_COUPON_NEXT_VARIABLES", "NATIVE_MAX_PERSONAL_COUPONS", "NATIVE_PERSONAL_COUPON_BUTTON", "NATIVE_PERSONAL_COUPON_TRIGGERS", "NATIVE_MULTITOUCH_TRIGGERS", "NATIVE_TOUCH_STEP_PREFIX", "ENGINE_CAPABILITIES_NATIVE_SILENCE", "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_PARAMETERS", "NATIVE_CAPABILITIES_BY_TRIGGER", "ENGINE_CAPABILITIES_NATIVE_PAYMENT_SLIP", "NATIVE_PAYMENT_SLIP_DUE_ANCHORS", "NATIVE_PAYMENT_SLIP_TRIGGER", "NATIVE_PAYMENT_SLIP_VARIABLES", "NATIVE_SILENCE_TRIGGER", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
     "BolsaLedger", "ControlLine", "Eligible", "EngineCapabilities", "EngineFlow", "Firing", "FlowRef",
     "GateDecision", "GateFacts", "PersonView", "Plan", "PlanInvalid", "PlanNotSupported", "PlannedStep",
     "RunView", "StartDecision", "evaluate_gate", "first_eligible", "legacy_motivo", "native_audience_form", "native_not_supported", "native_payment_failure_branches", "native_payment_failure_paths", "native_trigger_key", "native_variables_fit", "is_native_personal_coupon_button", "not_supported", "plan_start",
@@ -225,6 +226,10 @@ def not_supported(definition: Mapping[str, Any], capabilities: EngineCapabilitie
             speaker = silence.get("lo_ultimo") if isinstance(silence, Mapping) else None
             if f"silencio:{speaker}" not in capabilities.triggers:
                 add("disparo_silencio")
+        elif trigger.is_keyword:
+            # Z2 3.9: la palabra clave (el valor es la clave de una regla, no un evento).
+            if NATIVE_KEYWORD_TRIGGER not in capabilities.triggers:
+                add("disparo_palabra_clave")
         elif trigger.event not in capabilities.triggers:
             add(f"disparo_{trigger.event or 'desconocido'}")
         # D-43.2 (4.3): el filtro del formulario de registro. Ningun motor lo ejecuta todavia (la base no
@@ -479,6 +484,21 @@ ENGINE_CAPABILITIES_NATIVE_AUDIENCE = dataclasses.replace(
     triggers=frozenset({NATIVE_AUDIENCE_TRIGGER}),
     variables=frozenset(NATIVE_AUDIENCE_VARIABLES),
 )
+# Z2 3.9 (keyword-flow-trigger-v1, 20261127400000): ``dispara: {palabra_clave: <clave de una regla>}``. Cuando el
+# primer mensaje de una conversacion que abrio la persona trae la palabra de esa regla, el bridge le pasa la
+# conversacion a la admision nativa (``fuente: palabra_clave``) y la base elige los flujos de la regla. La forma
+# ``nativo:palabra_clave``: hasta tres toques con nombre y producto, sin boton despues del primero y sin cupon,
+# la salida contesta escrita si hay mas de uno (como la audiencia). Entra con permiso ``conversacion`` (la
+# persona nos escribio, D-Z2.3) y sin ``contesto_a`` (no es una respuesta a una plantilla). La base lo abre
+# siempre; lo que deja publicarlo es ``native_not_supported(..., keyword=True)``, solo con
+# KEYWORD_RULES_ENABLED, FLOW_ENGINE_ENABLED y KEYWORD_FLOW_TRIGGER_ENABLED (``NativeRuntime.native_keyword``).
+NATIVE_KEYWORD_TRIGGER = "palabra_clave"
+NATIVE_KEYWORD_VARIABLES = ("nombre", "producto")
+ENGINE_CAPABILITIES_NATIVE_KEYWORD = dataclasses.replace(
+    ENGINE_CAPABILITIES_NATIVE_MULTITOUCH,
+    triggers=frozenset({NATIVE_KEYWORD_TRIGGER}),
+    variables=frozenset(NATIVE_KEYWORD_VARIABLES),
+)
 
 
 def native_audience_form(definition: Mapping[str, Any]) -> str | None:
@@ -527,17 +547,21 @@ NATIVE_UNSUPPORTED_PRIORITY = "motor_nativo:prioridad"
 
 
 def native_trigger_key(definition: Mapping[str, Any], *, audience: bool = False,
-                       payment_slip: bool = False) -> str | None:
+                       payment_slip: bool = False, keyword: bool = False) -> str | None:
     """El disparador nativo de la definicion (``compra``, ``carrito``, ``pago_fallido`` o ``silencio:agente``).
 
     ``None`` si ``dispara`` no es exactamente un evento o un silencio que el motor nativo ejecuta. Con
     ``audience`` (E-483, para E-484: FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED), tambien ``audiencia`` para un
     disparo por fecha, cada cierto tiempo o manual; sin el, ``None`` como antes. Con ``payment_slip``
-    (E-528, C4: FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED), tambien ``ficha_impresa``; sin el, ``None``.
+    (E-528, C4: FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED), tambien ``ficha_impresa``; sin el, ``None``. Con
+    ``keyword`` (Z2 3.9, ``NativeRuntime.native_keyword``), tambien ``palabra_clave`` para
+    ``dispara: {palabra_clave: <clave>}`` con una clave con forma; sin el, ``None``.
     """
     trigger = definition.get("dispara")
     if not isinstance(trigger, Mapping):
         return None
+    if set(trigger) == {NATIVE_KEYWORD_TRIGGER}:
+        return NATIVE_KEYWORD_TRIGGER if keyword and is_keyword_rule_key(trigger[NATIVE_KEYWORD_TRIGGER]) else None
     if payment_slip and dict(trigger) == {"evento": NATIVE_PAYMENT_SLIP_TRIGGER}:
         return NATIVE_PAYMENT_SLIP_TRIGGER
     if native_audience_form(definition) is not None:
@@ -757,7 +781,8 @@ def _native_multitouch_not_supported(definition: Mapping[str, Any], key: str | N
         exits = ends.get("si") if isinstance(ends, Mapping) else None
         if multi and (not isinstance(exits, list) or "contesta" not in exits):
             add(f"{NOT_SUPPORTED}:varios_envios_sin_contesta")
-    if len(sends) <= 1 or (key not in NATIVE_MULTITOUCH_TRIGGERS and key != NATIVE_AUDIENCE_TRIGGER):
+    if len(sends) <= 1 or (key not in NATIVE_MULTITOUCH_TRIGGERS
+                           and key not in (NATIVE_AUDIENCE_TRIGGER, NATIVE_KEYWORD_TRIGGER)):
         return
     ends = definition.get("termina")
     exits = ends.get("si") if isinstance(ends, Mapping) else None
@@ -845,7 +870,7 @@ def _native_payment_slip_not_supported(definition: Mapping[str, Any], add: Calla
 
 
 def native_not_supported(definition: Mapping[str, Any], *, audience: bool = False,
-                         payment_slip: bool = False) -> tuple[str, ...]:
+                         payment_slip: bool = False, keyword: bool = False) -> tuple[str, ...]:
     """Lo que el motor nativo no ejecuta de una definicion, en orden; vacio si la ejecuta.
 
     Es la regla 14 de un flujo nativo (flow-engine-v2 §9): lo que la base mira al abrirlo y al admitirlo
@@ -868,6 +893,10 @@ def native_not_supported(definition: Mapping[str, Any], *, audience: bool = Fals
     ``payment_slip`` (E-528, C4, 20261113200000) es FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED: con el, la ficha
     impresa tiene las capacidades de ``ENGINE_CAPABILITIES_NATIVE_PAYMENT_SLIP`` y la forma de
     ``_native_payment_slip_not_supported``; sin el, ``motor_nativo:disparador`` como antes.
+
+    ``keyword`` (Z2 3.9, 20261127400000) es ``NativeRuntime.native_keyword``: con el, la palabra clave tiene las
+    capacidades de ``ENGINE_CAPABILITIES_NATIVE_KEYWORD``, entra con permiso ``conversacion`` y sin
+    ``contesto_a``; sin el, ``motor_nativo:disparador`` como antes.
     """
     found: list[str] = []
 
@@ -875,15 +904,21 @@ def native_not_supported(definition: Mapping[str, Any], *, audience: bool = Fals
         if code not in found:
             found.append(code)
 
-    key = native_trigger_key(definition, audience=audience, payment_slip=payment_slip)
+    key = native_trigger_key(definition, audience=audience, payment_slip=payment_slip, keyword=keyword)
     if key is None:
         add(NATIVE_UNSUPPORTED_TRIGGER)
     capabilities = ENGINE_CAPABILITIES_NATIVE_AUDIENCE if key == NATIVE_AUDIENCE_TRIGGER \
+        else ENGINE_CAPABILITIES_NATIVE_KEYWORD if key == NATIVE_KEYWORD_TRIGGER \
         else NATIVE_CAPABILITIES_BY_TRIGGER.get(key or "", ENGINE_CAPABILITIES_NATIVE)
     entry = definition.get("entra")
     permission = entry.get("permiso") if isinstance(entry, Mapping) else None
     if key == NATIVE_AUDIENCE_TRIGGER:
         if permission not in NATIVE_AUDIENCE_PERMISSIONS:
+            add(NATIVE_UNSUPPORTED_PERMISSION)
+    elif key == NATIVE_KEYWORD_TRIGGER:
+        # La persona abrio la conversacion con el link: no es una respuesta a una plantilla (D-39.5).
+        replied_to = entry.get("contesto_a") if isinstance(entry, Mapping) else None
+        if permission != "conversacion" or replied_to not in (None, []):
             add(NATIVE_UNSUPPORTED_PERMISSION)
     elif permission != NATIVE_PERMISSION_BY_TRIGGER.get(key or "compra"):
         add(NATIVE_UNSUPPORTED_PERMISSION)

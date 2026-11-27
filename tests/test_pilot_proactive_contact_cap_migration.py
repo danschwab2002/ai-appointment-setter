@@ -235,6 +235,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         # Los frenos ante Meta (20261127100000, F1).
         "20261127100000",
         "20261127300000",
+        # El flujo de la palabra clave (20261127400000, Z2 3.9).
+        "20261127400000",
     ]
 
     sql = _sql()

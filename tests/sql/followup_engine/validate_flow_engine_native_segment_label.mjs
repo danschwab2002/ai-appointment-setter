@@ -40,7 +40,10 @@ if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // cupon: personal: revisada, la etiqueta no pasa por ahi.
 // El disparo por audiencia (20261112210600, E-483, para E-484) suma el permiso y los toques solo para el
 // disparador audiencia: revisada, la etiqueta de los eventos no pasa por ahi.
+// La palabra clave (20261127400000, Z2 3.9) suma el permiso, contesto_a y los toques solo para el disparador
+// palabra_clave: revisada, la etiqueta de los eventos no pasa por ahi.
 const ONLY_CALLS = new Set(['20261108004100_flow_change_publish_native_version_guard_v1.sql',
+  '20261127400000_flow_engine_keyword_trigger_v1.sql',
   '20261112210000_e483_native_multitouch_v1.sql', '20261112210300_e483_native_condition_after_send_v1.sql',
   '20261112210500_e483_native_personal_coupon_v1.sql', '20261112210600_e483_native_audience_source_v1.sql', '20261112220000_flow_audience_triggers_v1.sql', '20261112230000_e483_native_person_cap_v1.sql',
   // La ficha de OXXO nativa (20261113200000, E-528, C4).

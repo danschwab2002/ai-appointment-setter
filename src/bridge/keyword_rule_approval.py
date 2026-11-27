@@ -11,6 +11,10 @@ de «Entrar con Slack» y la misma lista de aprobadores que la pagina de flujos:
 * ``POST .../pause``, ``POST .../resume``: «Pausar» y «Reanudar» (reanudar vuelve a mirar los choques).
 * ``POST .../discard``: «Descartar», un borrador o una pausada.
 
+Con ``KEYWORD_FLOW_TRIGGER_ENABLED`` (Z2 3.9, ``flows=True``) la pagina muestra ademas que flujo arranca
+la regla: los flujos del almacen cuya version activa dice ``dispara: {palabra_clave: <clave>}``, con su
+nombre y su estado. Sin el flag la pagina es la de antes.
+
 Lo que se publica es la fila guardada, atada por la huella: nunca algo del
 formulario. El log lleva la ruta, el id y el codigo; nunca el texto de la regla.
 Quien perdio la sesion entra y vuelve al inicio de la pagina (no a la regla): el
@@ -28,6 +32,8 @@ from fastapi.responses import HTMLResponse, Response
 
 from . import keyword_rules as rules
 from .flow_approval import (
+    _ESTADO_CHIP,
+    _ESTADO_FLUJO,
     _FINGERPRINT,
     DISCARD_REASON_MAX,
     PREFIX,
@@ -151,9 +157,49 @@ def _actions(found: Mapping[str, Any], rule_id: str, *, csrf: str) -> str:
     return "".join(parts)
 
 
+def flows_of_rule(store: Mapping[str, Any], rule_key: object) -> list[dict[str, Any]]:
+    """Los flujos del almacen que arranca la regla: version activa con ``dispara: {palabra_clave: <clave>}``."""
+    flows = store.get("flows") if isinstance(store.get("flows"), list) else []
+    out: list[dict[str, Any]] = []
+    for flow in flows:
+        if not isinstance(flow, Mapping) or flow.get("active_version") is None:
+            continue
+        versions = flow.get("versions") if isinstance(flow.get("versions"), Mapping) else {}
+        active = versions.get(str(flow.get("active_version")))
+        trigger = active.get("dispara") if isinstance(active, Mapping) else None
+        if isinstance(trigger, Mapping) and dict(trigger) == {"palabra_clave": rule_key}:
+            out.append({"nombre": active.get("nombre") if isinstance(active.get("nombre"), str) else None,
+                        "producto": flow.get("product_ref"), "flujo": flow.get("flow_key"),
+                        "estado": flow.get("state"), "version": flow.get("active_version")})
+    return out
+
+
+def _flows_html(flows: list[Mapping[str, Any]] | None) -> str:
+    if flows is None:
+        return ""
+    if not flows:
+        rows = ('<p class="empty">Ningún flujo arranca con esta regla. Para que arranque uno, el flujo dice '
+                "<code>dispara: palabra_clave</code> con la clave de esta regla.</p>")
+    else:
+        rows = "".join(
+            f'<div class="row"><div><div class="row-name">{_esc(flow.get("nombre") or f"{flow.get("producto")}/{flow.get("flujo")}")} '
+            f'{_chip(_ESTADO_FLUJO.get(str(flow.get("estado")), flow.get("estado")), _ESTADO_CHIP.get(str(flow.get("estado"))))}</div>'
+            f'<div class="row-sub">{_esc(flow.get("producto"))}/{_esc(flow.get("flujo"))} · versión {_esc(flow.get("version"))}'
+            "</div></div></div>"
+            for flow in flows)
+    return ('<section class="panel"><div class="panel-heading"><h2>Qué flujo arranca</h2>'
+            "<p>A quien empieza la conversación con este texto le arranca este flujo, con los frenos de siempre "
+            "(la baja, la salud de Meta, el masivo en curso y el tope por persona).</p></div>"
+            f"{rows}</section>")
+
+
 def render_rule(found: Mapping[str, Any], rule_id: str, *, serving: str | None, csrf: str = "",
-                done: Mapping[str, str] | None = None, wa_me: str | None = None) -> str:
-    """El cuerpo de la pagina. Sin el id, la huella ni el ID de Slack a la vista."""
+                done: Mapping[str, str] | None = None, wa_me: str | None = None,
+                flows: list[Mapping[str, Any]] | None = None) -> str:
+    """El cuerpo de la pagina. Sin el id, la huella ni el ID de Slack a la vista.
+
+    ``flows`` (Z2 3.9): los flujos que arranca la regla, o None sin ``KEYWORD_FLOW_TRIGGER_ENABLED`` (la
+    pagina de antes, byte a byte)."""
     status = str(found.get("status"))
     label, chip, meaning = _STATE.get(status, ("—", None, ""))
     rule = found.get("rule") if isinstance(found.get("rule"), Mapping) else {}
@@ -175,13 +221,18 @@ def render_rule(found: Mapping[str, Any], rule_id: str, *, serving: str | None, 
             f'<p>Si el primer mensaje de una conversación que empieza la persona trae «{_esc(rule.get("palabra_clave"))}», '
             f'la conversación recibe la etiqueta <strong>{_esc(rule.get("etiqueta"))}</strong>.</p>'
             "<p>El agente sabe, en ese turno, que el mensaje es el texto de un link y no un pedido de hablar con "
-            "una persona. No manda ningún mensaje ni arranca ningún flujo.</p>"
-            f"{link_html}</div></section>"
+            + ("una persona. No manda ningún mensaje ni arranca ningún flujo.</p>" if flows is None
+               else "una persona.</p>")
+            + f"{link_html}</div></section>"
+            f"{_flows_html(flows)}"
             f"</div>{side}</div>")
 
 
-def routes(*, live: rules.KeywordRules, chatwoot: Any, inbox_id: int) -> Callable[[FastAPI, PageTools], None]:
-    """Las rutas, para ``register_flow_approval_routes(extra_routes=...)``."""
+def routes(*, live: rules.KeywordRules, chatwoot: Any, inbox_id: int,
+           flows: bool = False) -> Callable[[FastAPI, PageTools], None]:
+    """Las rutas, para ``register_flow_approval_routes(extra_routes=...)``.
+
+    ``flows`` (Z2 3.9, ``KEYWORD_FLOW_TRIGGER_ENABLED``): la pagina muestra que flujo arranca la regla."""
 
     def register(app: FastAPI, tools: PageTools) -> None:
         instance = tools.instance
@@ -222,8 +273,16 @@ def routes(*, live: rules.KeywordRules, chatwoot: Any, inbox_id: int) -> Callabl
             logger.info("flow_approval route=keyword_rule rule=%s status=%s", rule_id, found.get("status"))
             csrf = tools.config.csrf_token(secret)
             rule = found.get("rule") if isinstance(found.get("rule"), Mapping) else {}
+            fired: list[dict[str, Any]] | None = None
+            if flows:
+                try:
+                    fired = flows_of_rule(await tools.store.read_store(instance, session_hash=_sha(secret)),
+                                          rule.get("clave"))
+                except (SessionInvalid, StoreRejected, StoreUnavailable):
+                    fired = None  # el flujo es un dato de mas: sin el almacen, la pagina de la regla igual
             body = render_rule(found, rule_id, serving=live.serving_state(rule_id), csrf=csrf,
-                               done=_done_from_query(request, tools.config, secret), wa_me=await link_of(rule))
+                               done=_done_from_query(request, tools.config, secret), wa_me=await link_of(rule),
+                               flows=fired)
             return HTMLResponse(_shell("Regla de palabra clave", body, user=user, csrf=csrf, show_user_id=False))
 
         async def run(request: Request, rule_id: str, *, title: str, fields: set[str], optional: frozenset[str],

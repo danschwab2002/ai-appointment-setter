@@ -201,7 +201,7 @@ from bridge import knowledge_approval, live_knowledge, live_knowledge_api
 from bridge import agent_product_api
 from bridge import contact_export
 from bridge.flow_audience_store import ChatwootLabelIndex
-from bridge import keyword_rule_api, keyword_rule_approval, keyword_rules
+from bridge import keyword_flow_trigger, keyword_rule_api, keyword_rule_approval, keyword_rules
 from bridge import flow_audience_page
 from bridge.flow_audience_wiring import FlowAudience, build_flow_audience
 from bridge.bulk_send_wiring import BulkSend, build_bulk_send
@@ -640,6 +640,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # etiqueta» que redacta el AE y aprueba una persona en la pagina. Lo
     # especifico (palabras, etiquetas) es de la base; por instancia, solo prenderlo.
     "keyword_rules_enabled",
+    # Z2 3.9 (keyword-rules-v1 §5): el flujo nativo de una regla, con
+    # KEYWORD_RULES_ENABLED y FLOW_ENGINE_ENABLED. Lo especifico (que regla, que
+    # flujo) es de la base; por instancia, solo prenderlo con la salud y el candado.
+    "keyword_flow_trigger_enabled",
     # E-321 (campaign-entry-v1): la etiqueta de una campana por la landing que
     # vio la persona. Lo especifico (que landings, que ofertas) es de
     # [[campanas]]; por instancia, solo prenderlo.
@@ -1488,6 +1492,10 @@ class Settings:
     # primer mensaje y la nota del turno de que es el texto de un link. Apagado,
     # no existen las rutas ni la pagina y el pedido a Hermes es el de siempre.
     keyword_rules_enabled: bool = False
+    # Z2 3.9 (keyword-rules-v1 §5): el flujo nativo con dispara.palabra_clave de la
+    # regla que se aplico arranca por la admision nativa. Necesita tambien
+    # KEYWORD_RULES_ENABLED y FLOW_ENGINE_ENABLED; apagado, la regla sigue como hoy.
+    keyword_flow_trigger_enabled: bool = False
     # E-321 (campaign-entry-v1): un recorrido nativo que nace de una intencion de
     # una landing (o de una oferta) de una [[campanas]] vigente lleva la etiqueta
     # de su segmento antes del primer envio. Apagado, el despacho no lee nada nuevo.
@@ -3252,6 +3260,9 @@ class Settings:
             keyword_rules_enabled=(
                 os.getenv(keyword_rules.FLAG, "false").strip().lower() == "true"
             ),
+            keyword_flow_trigger_enabled=(
+                os.getenv(keyword_flow_trigger.FLAG, "false").strip().lower() == "true"
+            ),
             flow_engine_campaign_entry_enabled=(
                 os.getenv("FLOW_ENGINE_CAMPAIGN_ENTRY_ENABLED", "false").strip().lower()
                 == "true"
@@ -4106,6 +4117,15 @@ def flow_engine_cart_touches_enabled(settings: Settings) -> bool:
     )
 
 
+def _served_keyword_rule_keys(
+    live: keyword_rules.KeywordRules | None,
+) -> Callable[[], frozenset[str]] | None:
+    """Z2 3.9: las claves de las reglas que el bridge sirve ahora, o None sin KEYWORD_RULES_ENABLED."""
+    if live is None:
+        return None
+    return lambda: frozenset(rule.key for rule in live.rules)
+
+
 def instance_runtime_from(
     settings: Settings, *, native_silence_sweeper: bool
 ) -> InstanceRuntime | None:
@@ -4121,6 +4141,12 @@ def instance_runtime_from(
         native_multitouch=settings.flow_engine_native_multitouch_enabled,
         native_personal_coupon=settings.flow_engine_native_personal_coupon_enabled,
         native_payment_slip=settings.flow_engine_native_payment_slip_enabled,
+        # Z2 3.9: el flujo de una regla de palabra clave, con los tres flags.
+        native_keyword=(
+            settings.keyword_flow_trigger_enabled
+            and settings.keyword_rules_enabled
+            and settings.flow_engine_enabled
+        ),
     )
 
 
@@ -7141,6 +7167,14 @@ def create_app(
             native_audience=settings.flow_engine_native_multitouch_enabled,
             payment_failure_by_phone_offers=payment_failure_by_phone_offers,
         )
+    # Z2 3.9 (keyword-rules-v1 §5): el flujo de una regla de palabra clave. Sin
+    # los tres flags, None y la regla sigue como hoy (etiqueta y nota).
+    keyword_flow_live = keyword_flow_trigger.keyword_flow_trigger_setup(
+        settings,
+        keyword_rules=keyword_rule_live,
+        flow_engine_runtime=flow_engine_runtime,
+        supabase=shared_supabase,
+    )
     # MOT-001 (flow-engine-v1, seccion 8): comparte el productor del conector
     # de Slack; sin conector, no avisa y /ready dice sin_slack.
     flow_engine_divergence_notifier: DivergenceNotifier | None = None
@@ -8978,6 +9012,20 @@ def create_app(
                 batch_refs=expected_refs,
                 agent_replies_before=agent_replies_before,
             )
+            if (
+                keyword_flow_live is not None
+                and keyword_turn.rule is not None
+                and keyword_turn.message_ref is not None
+            ):
+                # Z2 3.9: el flujo de la regla, si lo hay. La conversacion y el
+                # contacto de la bandeja (quien escribio); la base resuelve el
+                # contacto y aplica los frenos. Nunca frena el turno (D-Z2.8).
+                await keyword_flow_live.start(
+                    rule=keyword_turn.rule,
+                    conversation_id=conversation_id,
+                    message_ref=keyword_turn.message_ref,
+                    destination=external_user_id,
+                )
         if (
             settings.recovery_coupon_by_reply_enabled
             and whatsapp_inbound_equivalence
@@ -11730,6 +11778,8 @@ def create_app(
             runtime=instance_runtime,
             # F4: el texto fijo en las variables de un paso.
             literal_variables=settings.flow_literal_variables_enabled,
+            # Z2 3.9: las reglas de palabra clave servidas, para dispara.palabra_clave.
+            keyword_rules=_served_keyword_rule_keys(keyword_rule_live),
         )
         if settings.meta_templates_enabled:
             # F-146 (template-request-v1): el agente redacta y valida una
@@ -12062,6 +12112,8 @@ def create_app(
             runtime=instance_runtime,
             # F4: el texto fijo en las variables de un paso, para revalidar al publicar.
             literal_variables=settings.flow_literal_variables_enabled,
+            # Z2 3.9: las reglas de palabra clave servidas, al revalidar para publicar.
+            keyword_rules=_served_keyword_rule_keys(keyword_rule_live),
             # F-146 parte 3: la pagina de una solicitud de plantilla y el envio
             # a Meta. Con el flag apagado las rutas no existen, y el cliente de
             # Meta ni se crea.
@@ -12087,6 +12139,8 @@ def create_app(
                     live=keyword_rule_live,
                     chatwoot=control_client,
                     inbox_id=settings.instance_manifest.chatwoot_inbox_id,
+                    # Z2 3.9: con el flujo de la regla, la pagina dice que flujo arranca.
+                    flows=keyword_flow_live is not None,
                 )
                 if keyword_rule_live is not None else None,
                 # live-knowledge-v1: la pagina de una version del conocimiento.
@@ -12943,6 +12997,12 @@ def create_app(
             commercial_ally_readiness = {
                 **commercial_ally_readiness,
                 "keyword_rules": keyword_rule_live.status_line(),
+                # Z2 3.9: el flujo de la regla; sin su flag (o sin el motor), disabled.
+                "keyword_flow_trigger": (
+                    keyword_flow_live.status_line()
+                    if keyword_flow_live is not None
+                    else "disabled"
+                ),
             }
         if settings.automation_expert_judge_enabled:
             # 4.9: solo con el flag; apagado, /ready no cambia.

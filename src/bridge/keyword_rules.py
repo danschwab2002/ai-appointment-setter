@@ -25,7 +25,8 @@ Precedencia (D-39.3): la campana gana. Una regla cuya palabra choca con la de un
 campana cargada no se sirve. Solo se aplica una regla por conversacion: la de la
 palabra que aparece primero en el mensaje (D-39.4).
 
-La regla v1 no dispara flujos (D-39.1): ver el contrato, «El flujo».
+La regla v1 no dispara flujos (D-39.1): ver el contrato, «El flujo». Desde Z2 3.9 un flujo nativo con
+``dispara: {palabra_clave: <clave>}`` arranca por la regla (``keyword_flow_trigger``), detras de su flag.
 
 Sin ``KEYWORD_RULES_ENABLED`` no se crea nada de esto y el turno es byte a byte el
 de hoy. Los logs no llevan telefono, mail, nombre ni el texto de la persona: la
@@ -258,10 +259,15 @@ class KeywordNote:
 
 @dataclass(frozen=True)
 class KeywordTurn:
-    """Lo que la regla le suma a un turno: la regla que se aplico y la nota."""
+    """Lo que la regla le suma a un turno: la regla que se aplico, la nota y el primer mensaje que la trajo.
+
+    ``message_ref`` (Z2 3.9) es el id de Chatwoot de ese primer mensaje: el disparador del flujo
+    (``keyword_flow_trigger``) lo usa para que la admision sea una por mensaje.
+    """
 
     rule: KeywordRule | None = None
     note: KeywordNote | None = None
+    message_ref: str | None = None
 
 
 NO_KEYWORD = KeywordTurn()
@@ -371,7 +377,8 @@ class KeywordRules:
         outcome = await self.labeler(rule).ensure(conversation_id, source=LABEL_SOURCE)
         logger.info("keyword_rule_label conversation=%s rule=%s label=%s outcome=%s", conversation_id, rule.key,
                     rule.label, outcome)
-        return KeywordTurn(rule=rule, note=KeywordNote(agent_replies_before=agent_replies_before))
+        return KeywordTurn(rule=rule, note=KeywordNote(agent_replies_before=agent_replies_before),
+                           message_ref=str(first.get("_message_ref")) if first.get("_message_ref") is not None else None)
 
     # -- la recarga -----------------------------------------------------------------
 

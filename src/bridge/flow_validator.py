@@ -308,6 +308,13 @@ UNKNOWN_FLOW_REFERENCE = _spec(
     "unknown_flow_reference", 10, KIND_FORM,
     "Nombra un flujo que no existe en la instancia.",
 )
+# Z2 3.9 (keyword-flow-trigger-v1, D-Z2.2): dispara.palabra_clave nombra una regla que el bridge no sirve
+# (no existe, no esta publicada, esta pausada o no se esta usando). Solo con la lista de reglas a mano.
+KEYWORD_RULE_UNKNOWN = _spec(
+    "keyword_rule_unknown", 10, KIND_FORM,
+    "palabra_clave nombra una regla de palabra clave que no está andando en la instancia.",
+    alternative="Usar la clave de una regla aprobada y andando (list_keyword_rules), o aprobar la regla antes.",
+)
 MUTUAL_LE_GANA_A = _spec(
     "mutual_le_gana_a", 10, KIND_FORM,
     "Dos flujos no pueden ganarse uno al otro.",
@@ -769,22 +776,32 @@ class NativeRuntime(InstanceRuntime):
     native_personal_coupon: bool = False
     # E-528 (C4): FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED, la ficha de OXXO nativa (ficha_impresa).
     native_payment_slip: bool = False
+    # Z2 3.9 (keyword-flow-trigger-v1): KEYWORD_RULES_ENABLED, FLOW_ENGINE_ENABLED y KEYWORD_FLOW_TRIGGER_ENABLED,
+    # el flujo que arranca con la palabra clave de una regla.
+    native_keyword: bool = False
 
     def __post_init__(self) -> None:
         super().__post_init__()
         if not isinstance(self.native_multitouch, bool) or not isinstance(self.native_personal_coupon, bool) \
-                or not isinstance(self.native_payment_slip, bool):
+                or not isinstance(self.native_payment_slip, bool) or not isinstance(self.native_keyword, bool):
             raise ValueError("instance_runtime_invalid")
 
     def to_json(self) -> dict[str, Any]:
+        # La palabra clave va solo prendida: apagado, el JSON es el de antes.
         return {**super().to_json(), "native_multitouch_enabled": self.native_multitouch,
                 "native_personal_coupon_enabled": self.native_personal_coupon,
-                "native_payment_slip_enabled": self.native_payment_slip}
+                "native_payment_slip_enabled": self.native_payment_slip,
+                **({"native_keyword_enabled": True} if self.native_keyword else {})}
 
 
 def runtime_runs_multitouch(runtime: InstanceRuntime | None) -> bool:
     """Si el bridge manda los toques siguientes de un nativo (E-483); un runtime sin el dato, no."""
     return isinstance(runtime, NativeRuntime) and runtime.native_multitouch
+
+
+def runtime_runs_keyword(runtime: InstanceRuntime | None) -> bool:
+    """Si el bridge arranca un flujo por la palabra clave de una regla (Z2 3.9); un runtime sin el dato, no."""
+    return isinstance(runtime, NativeRuntime) and runtime.native_keyword
 
 
 def runtime_runs_payment_slip(runtime: InstanceRuntime | None) -> bool:
@@ -951,7 +968,7 @@ _VALIDATOR_CODES: tuple[CodeSpec, ...] = (
     SILENCE_FORBIDS_VENCE, CONVERSAR_OUTSIDE_OPEN_WINDOW_BRANCH, TERMINAL_STEP_NOT_LAST,
     NESTED_CONDITION, HOUR_INVALID, WINDOW_NOT_INCREASING, ZONE_INVALID, ZONE_CHANGED,
     POOL_ZONE_MISMATCH, CAP_INVALID, DAILY_CAP_EXCEEDS_TOTAL, UNKNOWN_FLOW_REFERENCE,
-    MUTUAL_LE_GANA_A, PRODUCT_NOT_DECLARED, PRODUCT_REQUIRED, DUPLICATE_FLOW_KEY,
+    MUTUAL_LE_GANA_A, PRODUCT_NOT_DECLARED, PRODUCT_REQUIRED, DUPLICATE_FLOW_KEY, KEYWORD_RULE_UNKNOWN,
     UNRESOLVED_VALUE, VENCE_NOT_AFTER_WAITS, TEMPLATE_NOT_IN_CATALOG, TEMPLATE_NOT_APPROVED,
     TEMPLATE_LANGUAGE_MISMATCH, TEMPLATE_VARIABLE_COUNT_MISMATCH, TEMPLATE_BUTTON_MISMATCH,
     TEMPLATE_CATALOG_UNAVAILABLE, COUPON_CHANGE_NOT_SUPPORTED, COUPON_PERSONAL_LIMIT,
@@ -1888,7 +1905,10 @@ class _Run:
             if permission == "formulario":
                 fits: bool | None = trigger.kind == "evento"
             elif permission == "conversacion":
-                fits = trigger.kind == "silencio"
+                # Z2 3.9 (D-Z2.3): la palabra clave entra con conversacion, como el silencio.
+                fits = trigger.kind in ("silencio", "palabra_clave")
+            elif trigger.is_keyword:
+                fits = False
             elif trigger.kind == "evento" and trigger.event is None:
                 fits = None
             else:
@@ -2130,6 +2150,10 @@ class _Run:
                 emitter.add(PRODUCT_REQUIRED, ("producto",))
         elif is_product_ref(definition["producto"]) and definition["producto"] not in self.instance.products:
             emitter.add(PRODUCT_NOT_DECLARED, ("producto",))
+        trigger = trigger_of(definition)
+        if trigger is not None and trigger.is_keyword and trigger.event is not None \
+                and self.instance.keyword_rules is not None and trigger.event not in self.instance.keyword_rules:
+            emitter.add(KEYWORD_RULE_UNKNOWN, ("dispara", "palabra_clave"))
         own_product = _own_product(definition, flow)
         for keys in (("entra", "contesto_a"), ("prioridad", "le_gana_a"),
                      ("prioridad", "no_arranca_mientras")):
@@ -2391,8 +2415,10 @@ class _Run:
         # E-483, para E-484 (20261112210600): el disparo por audiencia lo admite la base solo si el bridge lo
         # pide (FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED); sin el flag, motor_nativo:disparador como antes.
         # E-528 (C4, 20261113200000): la ficha, solo con FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED.
+        # Z2 3.9 (20261127400000): la palabra clave, solo con los tres flags (NativeRuntime.native_keyword).
         codes = native_not_supported(definition, audience=runtime_runs_multitouch(self.instance.runtime),
-                                     payment_slip=runtime_runs_payment_slip(self.instance.runtime))
+                                     payment_slip=runtime_runs_payment_slip(self.instance.runtime),
+                                     keyword=runtime_runs_keyword(self.instance.runtime))
         if self.actor == "automation_expert" and f"{NOT_SUPPORTED}:{TOO_MANY_SENDS}" in codes:
             # Dos mensajes seguidos son dos problemas para el motor (la espera en el medio y el segundo envio) y
             # uno solo para el dueno: el del mensaje de mas. Los dos caen en el mismo camino y se contaria solo el primero.

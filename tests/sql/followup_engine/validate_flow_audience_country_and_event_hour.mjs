@@ -40,8 +40,10 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026112680000
   // Los frenos ante Meta (20261127100000, F1).
   '20261127100000_meta_enforcement_brakes_v1.sql',
   // El texto fijo en las variables de un paso nativo (20261127300000, F4).
-  '20261127300000_flow_engine_literal_variables_v1.sql'])) {
-  fail(`despues de ${MIGRATION} van solo la de las fases del lanzamiento, la de los frenos ante Meta y la del texto fijo`, names.slice(position + 1));
+  '20261127300000_flow_engine_literal_variables_v1.sql',
+  // El flujo de la palabra clave (20261127400000, Z2 3.9).
+  '20261127400000_flow_engine_keyword_trigger_v1.sql'])) {
+  fail(`despues de ${MIGRATION} van solo la de las fases del lanzamiento, la de los frenos ante Meta, la del texto fijo y la de la palabra clave`, names.slice(position + 1));
 }
 
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(

@@ -18,7 +18,7 @@ description: "El link wa.me de un segmento que pone una etiqueta"
 
 Dicho en una frase: **si el primer mensaje de una conversación trae el texto del link, la conversación recibe la etiqueta, y el agente sabe que es el texto de un link y no un pedido de hablar con alguien.**
 
-- **No manda ningún mensaje y no arranca ningún flujo.** Si quiere que además le llegue algo, eso es otro pedido (`crear-un-flujo`), y hoy un flujo no arranca por una etiqueta.
+- **No manda ningún mensaje y no arranca ningún flujo** por sí sola. Si quiere que además le llegue algo, eso es otro pedido (`crear-un-flujo`): un flujo nuevo con `dispara: {palabra_clave: <clave de la regla>}`, `entra: {permiso: conversacion}` y hasta tres plantillas. Solo se puede publicar si la instancia tiene prendido el flujo de la palabra clave (si la validación dice `motor_nativo:disparador`, no lo tiene) y la regla ya está andando (si dice `keyword_rule_unknown`, falta aprobar la regla).
 - **Solo el primer mensaje** de una conversación que empieza la persona. Si responde a un mensaje nuestro con esa palabra, no cuenta.
 - **La campaña gana**: si el texto choca con la palabra clave de una campaña, no se puede guardar.
 - **No publicás, ni pausás, ni descartás vos.** Lo hace una persona de la lista de aprobadores en la página.

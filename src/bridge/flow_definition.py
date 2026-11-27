@@ -207,7 +207,14 @@ _TOP_KEYS = (
 )
 # Los disparadores (E-484): un evento, un silencio, o una de las tres formas del
 # disparo por audiencia (flow_audience), que van con ``para`` y, opcional, ``ritmo``.
-TRIGGER_KEYS = ("evento", "silencio") + AUDIENCE_FORMS
+TRIGGER_KEYS = ("evento", "silencio") + AUDIENCE_FORMS + ("palabra_clave",)
+# Z2 3.9 (keyword-flow-trigger-v1, D-Z2.1): ``dispara: {palabra_clave: <clave de una regla>}``. El flujo nombra
+# la regla de ``keyword_rules`` (la clave de la regla aprobada en la pagina ``/w/``); la regla no nombra al
+# flujo (D-39.1 sigue: una regla con ``flujo`` se rechaza). Lo admite el motor nativo cuando el primer mensaje
+# de una conversacion que abrio la persona trae la palabra de esa regla.
+KEYWORD_TRIGGER = "palabra_clave"
+# La forma de la clave de una regla (``keyword_rules.parse_rule``): minusculas, digitos y guiones, hasta 64.
+_KEYWORD_RULE_KEY = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 # D-43.2 (4.3, confirmacion de registro): ``dispara: {evento: intencion, registro: <clave>}`` toma solo los
 # envios de un formulario propio de registro cuyo ``evento`` es esa clave ([[formularios_propios]],
 # ``tipo = "registro"``). No es otro disparador (``trigger_of`` sigue viendo ``intencion``): es un filtro del
@@ -905,10 +912,17 @@ class InstanceView:
     # F4 (D-F4.1): FLOW_LITERAL_VARIABLES_ENABLED del bridge. False (el default, y el comando del operador sin
     # la clave): un ``{"texto": …}`` en variables es invalid_value, como antes de F4.
     literal_variables: bool = False
+    # Z2 3.9 (keyword-flow-trigger-v1): las claves de las reglas de palabra clave que el bridge sirve ahora.
+    # None: no se sabe (sin KEYWORD_RULES_ENABLED, o quien llama no las tiene), y no se bloquea por eso.
+    keyword_rules: frozenset[str] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.literal_variables, bool):
             raise ValueError("instance_literal_variables_invalid")
+        if self.keyword_rules is not None and (not isinstance(self.keyword_rules, frozenset) or not all(
+            is_keyword_rule_key(key) for key in self.keyword_rules
+        )):
+            raise ValueError("instance_keyword_rules_invalid")
         if not isinstance(self.template_images, frozenset) or not all(
             isinstance(name, str) for name in self.template_images
         ):
@@ -1627,6 +1641,9 @@ def _check_trigger(out: _Collector, trigger: object) -> None:
             _add_problems(out, check_audience_trigger(form, trigger[form]))
     if "evento" in trigger:
         _check_enum(out, trigger["evento"], ("dispara", "evento"), EVENTS)
+    if KEYWORD_TRIGGER in trigger and not is_keyword_rule_key(trigger[KEYWORD_TRIGGER]):
+        out.add(INVALID_VALUE, ("dispara", KEYWORD_TRIGGER),
+                reason="palabra_clave es la clave de una regla de palabra clave (a-z, 0-9, guiones, hasta 64).")
     if "silencio" in trigger:
         silence = trigger["silencio"]
         segments = ("dispara", "silencio")
@@ -1645,6 +1662,11 @@ def _check_trigger(out: _Collector, trigger: object) -> None:
         if "conversaciones" in silence:
             _check_list(out, silence["conversaciones"], segments + ("conversaciones",),
                         lambda value, at: _check_enum(out, value, at, CONVERSATION_STATES))
+
+
+def is_keyword_rule_key(value: object) -> bool:
+    """Si ``value`` tiene la forma de la clave de una regla de palabra clave (Z2 3.9)."""
+    return isinstance(value, str) and _KEYWORD_RULE_KEY.fullmatch(value) is not None
 
 
 def _check_flow_ref(out: _Collector, value: object, segments: tuple[Segment, ...]) -> None:
@@ -1944,9 +1966,11 @@ def _is_date(value: object) -> bool:
 
 @dataclass(frozen=True)
 class Trigger:
-    """El disparador de una definicion: ``evento`` (con su valor si se sabe), ``silencio`` o ``audiencia``.
+    """El disparador de una definicion: ``evento`` (con su valor si se sabe), ``silencio``, ``audiencia`` o
+    ``palabra_clave``.
 
-    Con ``audiencia`` (E-484), ``event`` es la forma: ``fecha``, ``cada`` o ``manual``.
+    Con ``audiencia`` (E-484), ``event`` es la forma: ``fecha``, ``cada`` o ``manual``. Con ``palabra_clave``
+    (Z2 3.9), ``event`` es la clave de la regla, si tiene forma.
     """
 
     kind: str
@@ -1968,6 +1992,10 @@ class Trigger:
     def is_audience(self) -> bool:
         return self.kind == "audiencia"
 
+    @property
+    def is_keyword(self) -> bool:
+        return self.kind == KEYWORD_TRIGGER
+
 
 def trigger_of(definition: Mapping[str, Any]) -> Trigger | None:
     """El disparador, si hay exactamente uno. Un evento sin valor conocido va con ``event`` en None."""
@@ -1981,6 +2009,9 @@ def trigger_of(definition: Mapping[str, Any]) -> Trigger | None:
         return Trigger("silencio")
     if present[0] in AUDIENCE_FORMS:
         return Trigger("audiencia", audience_form(trigger))
+    if present[0] == KEYWORD_TRIGGER:
+        key = trigger[KEYWORD_TRIGGER]
+        return Trigger(KEYWORD_TRIGGER, key if is_keyword_rule_key(key) else None)
     event = trigger["evento"]
     return Trigger("evento", event if isinstance(event, str) and event in EVENTS else None)
 
@@ -2058,8 +2089,10 @@ class _Defaults:
         entry = self._container(definition, (), "entra")
         if entry is not None:
             if trigger is not None:
+                # Z2 3.9 (D-Z2.3): la palabra clave entra con conversacion: la persona nos escribio.
                 self._key(entry, ("entra",), "permiso",
-                          lambda: "conversacion" if trigger.kind == "silencio" else "formulario")
+                          lambda: "conversacion" if trigger.kind in ("silencio", KEYWORD_TRIGGER)
+                          else "formulario")
             self._key(entry, ("entra",), "contesto_a", lambda: [])
 
         steps = definition.get("pasos")
@@ -2071,7 +2104,8 @@ class _Defaults:
             if trigger.event_known:
                 self._key(exits, ("termina",), "si",
                           lambda: [] if trigger.is_purchase else ["compra"])
-            if trigger.kind == "evento":
+            # Z2 3.9 (D-Z2.4): la palabra clave tambien vence a 1d (la politica compilada lo exige).
+            if trigger.kind in ("evento", KEYWORD_TRIGGER):
                 self._key(exits, ("termina",), "vence", lambda: "1d")
 
         self._schedule()
@@ -2087,8 +2121,9 @@ class _Defaults:
                 if repeat is not None:
                     if trigger.kind == "silencio":
                         pair = ("conversacion", NEVER)
-                    elif trigger.is_audience:
-                        # DEFAULT_REVISAR_DAN (mapa §2.3): la misma persona, otra vez a los 7 dias.
+                    elif trigger.is_audience or trigger.is_keyword:
+                        # DEFAULT_REVISAR_DAN (mapa §2.3): la misma persona, otra vez a los 7 dias. Z2 3.9
+                        # (D-Z2.4): la palabra clave, igual.
                         pair = ("persona", "7d")
                     elif trigger.is_purchase:
                         pair = ("persona", NEVER)

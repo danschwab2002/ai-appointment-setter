@@ -85,7 +85,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026111700060
     // Los frenos ante Meta (20261127100000, F1).
     '20261127100000_meta_enforcement_brakes_v1.sql',
     // El texto fijo en las variables de un paso nativo (20261127300000, F4).
-    '20261127300000_flow_engine_literal_variables_v1.sql'])) {
+    '20261127300000_flow_engine_literal_variables_v1.sql',
+    // El flujo de la palabra clave (20261127400000, Z2 3.9).
+    '20261127400000_flow_engine_keyword_trigger_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de la repeticion de E-665`, names.slice(position + 1));
 }
 
@@ -160,7 +162,9 @@ const snapshot = async (db) => new Map((await db.query(`
 // ---------------------------------------------------------------------------
 // El mundo: ATT1 (buildWorld, la cadena entera) sin esta migracion.
 // ---------------------------------------------------------------------------
-const world = await buildWorld({ skip: [MIGRATION] });
+// La palabra clave (20261127400000, Z2 3.9) exige esta migracion: se salta y se aplica despues de ella.
+const KEYWORD = '20261127400000_flow_engine_keyword_trigger_v1.sql';
+const world = await buildWorld({ skip: [MIGRATION, KEYWORD] });
 const { db, A, A2, INSTANCE, person, admitForm, register, cycle, versionItem, reserve, dbNow } = world;
 const sql = async (text, params = []) => (await db.query(text, params)).rows;
 const call = async (text, params) => JSON.parse(one(await sql(`select ${text}::text as r`, params), text).r);
@@ -270,6 +274,7 @@ const readContext = () => as('service_role', async () => one((await db.query(
 const red = await readContext();
 if (red.offer_code !== null || COLUMN in red) fail('rojo: sin la migracion no hay oferta ni producto', red);
 await applyFile(db, join(root, 'supabase/migrations', MIGRATION));
+await applyFile(db, join(root, 'supabase/migrations', KEYWORD));
 const context = await readContext();
 if (context[COLUMN] !== A.funnel || context.offer_code !== null || context.product_name !== A.productName
     || context.buyer_phone !== ana.phone) {
