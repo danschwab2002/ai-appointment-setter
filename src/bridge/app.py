@@ -195,10 +195,12 @@ from bridge.opt_out_confirmation import (
 from bridge import automation_expert_chatwoot, flow_approval, flow_change_api
 from bridge import template_approval, template_request, template_request_api
 from bridge import agent_campaign_api, agent_campaigns, campaign_approval, campaign_judge_api
+from bridge import campaign_conversation
 from bridge import agent_global_pause
 from bridge import meta_enforcement
 from bridge import temporary_instruction, temporary_instruction_api, temporary_instruction_page
 from bridge import knowledge_approval, live_knowledge, live_knowledge_api
+from bridge import knowledge_harness
 from bridge import agent_product_api
 from bridge import contact_export
 from bridge.flow_audience_store import ChatwootLabelIndex
@@ -509,10 +511,16 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # 4.9 (agent-campaign-judge-v1): el AE pide el juez de una campana y el
     # bridge lo corre. Portable: por instancia, prenderlo con el SOUL comun.
     "automation_expert_judge_enabled",
+    # 4.9 parte 2 (D-49.9): probar una campana conversando. Portable: por
+    # instancia, prenderlo junto con el juez.
+    "automation_expert_campaign_conversation_enabled",
     # live-knowledge-v1 (5.5): el conocimiento base editado por el AE, aprobado
     # en la pagina y servido en vivo. Portable: por instancia, solo prenderlo;
     # apagado no existen las rutas ni se lee la base para esto.
     "agent_live_knowledge_enabled",
+    # 5.5 parte 2: el arnes F-055 sobre un borrador del conocimiento. Portable:
+    # por instancia, prenderlo con el SOUL comun y los casos de la instancia.
+    "agent_live_knowledge_harness_enabled",
     # Encargo 6 del masivo manejado por el AE: el borrador, el estado y la
     # lista de masivos. Portable: por instancia, solo prenderlo; apagado no
     # existen las rutas ni se llama a la base.
@@ -1232,12 +1240,27 @@ class Settings:
     # modelo. El SOUL comun del agente, como archivo (la imagen no lo trae).
     automation_expert_judge_enabled: bool = False
     automation_expert_judge_soul_path: Path | None = None
+    # 4.9 parte 2 (bridge/campaign_conversation.py, D-49.9):
+    # AUTOMATION_EXPERT_CAMPAIGN_CONVERSATION_ENABLED. Con el flag (y el del juez)
+    # el AE juega una conversacion de ensayo contra el agente con la campana
+    # servida, sin mandar nada a nadie, con la misma franja y el mismo tope del
+    # juez. Apagado (el default) la ruta no existe y la del juez no cambia.
+    automation_expert_campaign_conversation_enabled: bool = False
     # live-knowledge-v1 (bridge/live_knowledge.py, pieza 5.5):
     # AGENT_LIVE_KNOWLEDGE_ENABLED. Con el flag, el AE propone una version del
     # conocimiento, un aprobador la publica en la pagina y el turno la recibe en
     # vivo (o el archivo, como hoy). Apagado no existen las rutas, no se lee la
     # base y el pedido a Hermes es byte a byte el de siempre.
     agent_live_knowledge_enabled: bool = False
+    # 5.5 parte 2 (bridge/knowledge_harness.py): AGENT_LIVE_KNOWLEDGE_HARNESS_ENABLED.
+    # Con el flag el bridge corre el arnes F-055 sobre cada version guardada y no
+    # deja aprobarla hasta que de verde. Apagado (el default) nada llama al
+    # modelo y la pagina es la de antes. El SOUL comun como archivo; los casos,
+    # por defecto los de conocimiento/prueba/casos.json de la instancia.
+    agent_live_knowledge_harness_enabled: bool = False
+    agent_live_knowledge_harness_soul_path: Path | None = None
+    agent_live_knowledge_harness_cases_path: Path | None = None
+    agent_live_knowledge_harness_dir: Path | None = None
     # El archivo de conocimiento que cargo COMMERCIAL_KNOWLEDGE_ENABLED. Lo usa
     # solo el conocimiento vivo, para tener sus secciones como datos.
     commercial_knowledge_path: Path | None = None
@@ -2860,9 +2883,18 @@ class Settings:
                 if os.getenv(campaign_judge_api.SOUL_ENV, "").strip()
                 else None
             ),
+            automation_expert_campaign_conversation_enabled=(
+                os.getenv(campaign_conversation.FLAG, "false").strip().lower() == "true"
+            ),
             agent_live_knowledge_enabled=(
                 os.getenv(live_knowledge.FLAG_ENV, "false").strip().lower() == "true"
             ),
+            agent_live_knowledge_harness_enabled=(
+                os.getenv(knowledge_harness.FLAG_ENV, "false").strip().lower() == "true"
+            ),
+            agent_live_knowledge_harness_soul_path=_optional_path_env(knowledge_harness.SOUL_ENV),
+            agent_live_knowledge_harness_cases_path=_optional_path_env(knowledge_harness.CASES_ENV),
+            agent_live_knowledge_harness_dir=_optional_path_env(knowledge_harness.DIR_ENV),
             commercial_knowledge_path=commercial_knowledge_path,
             bulk_send_enabled=(
                 os.getenv(flow_change_api.BULK_SEND_ENV, "false").strip().lower()
@@ -4430,6 +4462,11 @@ def _contact_export_labels(chatwoot: object, inbox_id: int) -> ChatwootLabelInde
     return ChatwootLabelIndex(chatwoot=chatwoot, inbox_id=inbox_id)
 
 
+def _optional_path_env(name: str) -> Path | None:
+    value = os.getenv(name, "").strip()
+    return Path(value) if value else None
+
+
 def _live_knowledge_setup(
     settings: Settings,
     supabase: Any,
@@ -5544,8 +5581,10 @@ def create_app(
     keyword_rule_store: keyword_rule_api.KeywordRuleStore | None = None,
     campaign_judge_store: campaign_judge_api.JudgeRunStore | None = None,
     campaign_judge_runner: Callable[[str], tuple[str, dict[str, object] | None, str | None]] | None = None,
+    campaign_conversation_runner: Callable[..., tuple[str, dict[str, object] | None, str | None]] | None = None,
     agent_product_store: agent_product_api.ProductStore | None = None,
     live_knowledge_store: live_knowledge_api.KnowledgeStore | None = None,
+    knowledge_harness_runner: knowledge_harness.HarnessRunner | None = None,
     bulk_send_store: flow_change_api.BulkSendStore | None = None,
     agent_pause_store: agent_global_pause.PauseStore | None = None,
     contact_export_store: contact_export.ContactExportStore | None = None,
@@ -6118,6 +6157,10 @@ def create_app(
     agent_product_api.check_settings(settings)
     # 4.9: el juez por el AE exige las campanas, la base, el SOUL y la clave del modelo.
     campaign_judge_api.check_settings(settings)
+    # 4.9 parte 2: probarla conversando exige el juez y el modelo del agente.
+    campaign_conversation.check_settings(settings)
+    # 5.5 parte 2: el arnes F-055 exige el conocimiento vivo, el SOUL, los casos y el modelo.
+    knowledge_harness.check_settings(settings)
     # Encargo 6 del masivo: las rutas del agente, la pagina (el link de la
     # lista) y la base con service_role.
     flow_change_api.check_bulk_send_settings(settings)
@@ -6701,6 +6744,12 @@ def create_app(
     # None: no se lee la base y el pedido a Hermes es el de siempre.
     live_knowledge_source = _live_knowledge_setup(
         settings, shared_supabase, shadow_processor, segment_catalog
+    )
+    # 5.5 parte 2: el arnes F-055 sobre las versiones del conocimiento. Apagado, None.
+    live_knowledge_harness = (
+        (knowledge_harness_runner or knowledge_harness.default_runner(settings))
+        if live_knowledge_source is not None and settings.agent_live_knowledge_harness_enabled
+        else None
     )
     # La procedencia del prompt se anota si hay con que: el turno del agente
     # no depende de esto, pero sin esto el feedback no se puede atribuir a
@@ -11919,7 +11968,23 @@ def create_app(
                 ),
                 manifest=change_manifest,
                 run=campaign_judge_runner or campaign_judge_api.default_runner(settings),
+                show_kind=settings.automation_expert_campaign_conversation_enabled,
             )
+            if settings.automation_expert_campaign_conversation_enabled:
+                # 4.9 parte 2 (D-49.9): probarla conversando. Misma corrida y mismo
+                # tope que el juez; nadie recibe nada. Apagado no existe.
+                assert agent_campaigns_context is not None
+                campaign_conversation.register_campaign_conversation_routes(
+                    app,
+                    token=settings.automation_expert_change_token,
+                    store=campaign_judge_store or campaign_judge_api.JudgeRunStore(
+                        base_url=settings.supabase_base_url or "",
+                        db_key=settings.supabase_service_role_key or "",
+                    ),
+                    manifest=change_manifest,
+                    run=campaign_conversation_runner
+                    or campaign_conversation.default_runner(settings, agent_campaigns_context),
+                )
         if live_knowledge_source is not None:
             # live-knowledge-v1 (5.5): el agente lee, propone y guarda; nunca
             # publica ni vuelve al archivo (eso es de la pagina).
@@ -11932,6 +11997,7 @@ def create_app(
                 ),
                 source=live_knowledge_source,
                 approval_origin=settings.flow_approval_base_url or "",
+                harness=live_knowledge_harness,
             )
         if settings.agent_products_enabled:
             # E-569 (product-card-v1, MP-07): el agente propone y valida un
@@ -12175,7 +12241,7 @@ def create_app(
                 )
                 if keyword_rule_live is not None else None,
                 # live-knowledge-v1: la pagina de una version del conocimiento.
-                knowledge_approval.routes(source=live_knowledge_source)
+                knowledge_approval.routes(source=live_knowledge_source, harness=live_knowledge_harness)
                 if live_knowledge_source is not None else None,
                 # E-484: ver cuantos van a salir y confirmar un envio manual.
                 flow_audience_page.routes(sweeper=flow_audience.sweeper)
@@ -13041,12 +13107,24 @@ def create_app(
                 **commercial_ally_readiness,
                 "automation_expert_judge": "enabled",
             }
+        if settings.automation_expert_campaign_conversation_enabled:
+            # 4.9 parte 2: solo con el flag; apagado, /ready no cambia.
+            commercial_ally_readiness = {
+                **commercial_ally_readiness,
+                "automation_expert_campaign_conversation": "enabled",
+            }
         if live_knowledge_source is not None:
             # live-knowledge-v1: que conocimiento sirve y si la lectura viene
             # andando. Solo con el flag: apagado, /ready no cambia.
             commercial_ally_readiness = {
                 **commercial_ally_readiness,
                 "live_knowledge": live_knowledge_source.status_line(),
+            }
+        if live_knowledge_harness is not None:
+            # 5.5 parte 2: solo con el flag; apagado, /ready no cambia.
+            commercial_ally_readiness = {
+                **commercial_ally_readiness,
+                "knowledge_harness": "enabled",
             }
         if product_labelers:
             # La etiqueta de producto no responde 503: no atiende a nadie, y un

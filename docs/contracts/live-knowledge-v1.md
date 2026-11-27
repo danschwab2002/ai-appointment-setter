@@ -42,7 +42,7 @@ Bloquean (no se guarda):
 | `knowledge_price_not_in_catalog` | El precio de una oferta no es un precio del manifiesto (`[hotmart]`, `[[productos]]`, `[guarda_precio] montos_extra`). |
 | `knowledge_amount_not_in_catalog` | Un monto nuevo del texto (fuera de «No confirmado» y «Promesas prohibidas») que no esta en el catalogo ni en el vigente, con la comparacion de `price_guard`. |
 
-Avisa (no frena): `knowledge_harness_not_run` (el arnes F-055 no corre desde aca, D-55.8) y `knowledge_near_size_limit` (pasa el 90 % del tope).
+Avisa (no frena): `knowledge_harness_not_run` (el arnes F-055 no corre desde aca, D-55.8) y `knowledge_near_size_limit` (pasa el 90 % del tope). Con `AGENT_LIVE_KNOWLEDGE_HARNESS_ENABLED` el primero no se avisa: el arnes corre (abajo, «El arnes F-055»).
 
 ## El ciclo
 
@@ -84,7 +84,15 @@ Con la clave del plugin de cambios y el JWT de `automation_expert_change`:
 
 ## Lo que no hace la v1
 
-- No corre el arnes F-055 ni el juez (D-55.8): queda para cuando el juez corra por el AE (4.9).
+- No corre el juez. El arnes F-055 lo corre con su propio flag (abajo).
 - No escribe el repo de la instancia: la version viva no se vuelve archivo sola. Pasarla al repo es un PR como hoy.
 - No avisa por Slack al aprobar.
 - La pagina no vuelve sola despues de entrar con Slack: hay que abrir el link otra vez (D-55.9).
+
+## El arnes F-055 (5.5 parte 2, `knowledge_harness.py`)
+
+- **Flag:** `AGENT_LIVE_KNOWLEDGE_HARNESS_ENABLED`, apagado por defecto; exige `AGENT_LIVE_KNOWLEDGE_ENABLED`, `OPENROUTER_API_KEY`, el SOUL comun como archivo (`AGENT_LIVE_KNOWLEDGE_HARNESS_SOUL_PATH`), los casos (`AGENT_LIVE_KNOWLEDGE_HARNESS_CASES_PATH` o `conocimiento/prueba/casos.json` de la carpeta de la instancia, con la forma del arnes de las instancias, E-194) y el modelo del agente (`AGENT_REHEARSAL_MODEL` o `hermes.toml`). Apagado, nada llama al modelo, la pagina y las rutas son las de arriba y `/ready` no cambia; prendido, `/ready` suma `knowledge_harness: enabled`.
+- **Cuando corre:** al guardar una version validada (`POST .../knowledge`, que devuelve `harness.status`), en segundo plano. Una a la vez por instancia y hasta 6 por dia; una que dio error o se abandono (el bridge se reinicio: 30 minutos) se vuelve a correr desde la pagina (`POST /flow-approval/k/{id}/harness`). Un verde o un rojo del mismo texto no se vuelve a correr (D-55.14).
+- **Que corre (D-55.12):** cada caso 2 veces contra lo vigente (aquello sobre lo que se armo) y 2 contra el borrador, con el mismo SOUL y modelo, por `agent_rehearsal` (las reglas y el reintento del bridge), mirado con las reglas fijas de `evaluar.py` del arnes de las instancias (sin modelo juez). **Rojo** = un caso que el borrador falla en todas sus repeticiones y lo vigente en ninguna; **verde** = ninguno asi (lo demas va como aviso, porque las reglas tienen falsos positivos); **error** = mas de una de cada cinco llamadas sin respuesta, los casos o el SOUL ilegibles, o abandonada. `solo_observar` no cuenta y su respuesta se muestra.
+- **Aprobar (D-55.11):** `publish_refusal` exige, al final de lo de siempre, un verde para el mismo `rendered_sha256`: `knowledge_harness_not_run`, `knowledge_harness_running`, `knowledge_harness_red` o `knowledge_harness_error`. La base no lo sabe: el bloqueo es del bridge, como las reglas contra la instancia.
+- **Donde queda (D-55.13, sin migracion):** un JSON por version en `AGENT_LIVE_KNOWLEDGE_HARNESS_DIR` (por defecto `<SHADOW_DIR>/knowledge-harness`), con estado, conteos, hasta 25 regresiones, 25 avisos y 25 para leer (id, que se espera, cuantas veces falla en cada version, las fallas y una respuesta del borrador de hasta 500 caracteres). `GET .../knowledge/versions/{id}` suma `harness`.

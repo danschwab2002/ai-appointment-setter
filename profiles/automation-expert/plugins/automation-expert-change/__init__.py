@@ -90,6 +90,10 @@ from .tools import export_contacts, get_contact_export  # noqa: E402
 from .schemas import GET_CAMPAIGN_JUDGE, JUDGE_CAMPAIGN  # noqa: E402
 from .tools import get_campaign_judge, judge_campaign  # noqa: E402
 
+# 4.9 parte 2 (D-49.9): probar una campana conversando, sin mandar nada a nadie. No publica.
+from .schemas import GET_CAMPAIGN_CONVERSATION, TRY_CAMPAIGN_CONVERSATION  # noqa: E402
+from .tools import get_campaign_conversation, try_campaign_conversation  # noqa: E402
+
 # live-knowledge-v1 (5.5): el conocimiento por secciones. Publicarlo y volver al archivo son de la pagina.
 from .schemas import (  # noqa: E402
     GET_KNOWLEDGE,
@@ -132,6 +136,8 @@ _TOOLS = frozenset({"get_flow_definitions", "propose_flow_change", "validate_flo
                     "preview_keyword_rule", "propose_keyword_rule", "get_keyword_rule", "list_keyword_rules",
                     # 4.9: el control de calidad de una campana, pedirlo y leerlo.
                     "judge_campaign", "get_campaign_judge",
+                    # 4.9 parte 2: la conversacion de ensayo, pedirla y leerla.
+                    "try_campaign_conversation", "get_campaign_conversation",
                     # live-knowledge-v1: el conocimiento, solo leer y proponer.
                     "get_knowledge", "preview_knowledge_change", "propose_knowledge_change",
                     "get_knowledge_change", "list_knowledge_changes"})
@@ -194,6 +200,8 @@ def register(ctx):
         ("list_keyword_rules", LIST_KEYWORD_RULES, list_keyword_rules),
         ("judge_campaign", JUDGE_CAMPAIGN, judge_campaign),
         ("get_campaign_judge", GET_CAMPAIGN_JUDGE, get_campaign_judge),
+        ("try_campaign_conversation", TRY_CAMPAIGN_CONVERSATION, try_campaign_conversation),
+        ("get_campaign_conversation", GET_CAMPAIGN_CONVERSATION, get_campaign_conversation),
         ("get_knowledge", GET_KNOWLEDGE, get_knowledge),
         ("preview_knowledge_change", PREVIEW_KNOWLEDGE_CHANGE, preview_knowledge_change),
         ("propose_knowledge_change", PROPOSE_KNOWLEDGE_CHANGE, propose_knowledge_change),

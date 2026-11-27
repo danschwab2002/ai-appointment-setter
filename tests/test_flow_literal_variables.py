@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -366,5 +367,6 @@ def test_the_ae_knows_the_literal() -> None:
     template = (skills / "pedir-plantilla-a-meta" / "SKILL.md").read_text(encoding="utf-8")
     assert "template_utility_sounds_promotional" in template
     plugin = ROOT / "profiles" / "automation-expert" / "plugins" / "automation-expert-change"
-    assert 'version: "0.16.0"' in (plugin / "plugin.yaml").read_text(encoding="utf-8")
+    version = re.search(r'^version: "(\d+)\.(\d+)\.(\d+)"', (plugin / "plugin.yaml").read_text(encoding="utf-8"), re.M)
+    assert version is not None and tuple(int(x) for x in version.groups()) >= (0, 16, 0)
     assert "{texto: \\\"…\\\"}" in (plugin / "schemas.py").read_text(encoding="utf-8")

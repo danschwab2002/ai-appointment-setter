@@ -135,8 +135,13 @@ def preview_payload(evaluation: rules.Evaluation, *, base: rules.ServedKnowledge
 
 def register_live_knowledge_routes(app: FastAPI, *, token: str, store: KnowledgeStore,
                                    source: rules.LiveKnowledgeSource, approval_origin: str,
-                                   environ: Mapping[str, str] | None = None) -> None:
-    """Las rutas, detras del flag (lo mira quien llama: con el flag apagado no existen)."""
+                                   environ: Mapping[str, str] | None = None,
+                                   harness: Any | None = None) -> None:
+    """Las rutas, detras del flag (lo mira quien llama: con el flag apagado no existen).
+
+    ``harness`` (``knowledge_harness.HarnessRunner``, solo con ``AGENT_LIVE_KNOWLEDGE_HARNESS_ENABLED``):
+    al guardar una version validada arranca el arnes F-055 sobre ella, y la lectura de una version
+    suma ``harness`` con el resultado. None, todo como antes."""
     manifest = source.context.manifest
     instance = {"tenant_ref": manifest.tenant_ref, "ally_ref": manifest.ally_ref}
     image_environ: Mapping[str, str] = environ if environ is not None else os.environ
@@ -204,7 +209,7 @@ def register_live_knowledge_routes(app: FastAPI, *, token: str, store: Knowledge
         body = _check_keys(await _body(request), required={"cambios"}, allowed={"cambios"})
         change = parse(body)
         base = source.edit_base()
-        evaluation = rules.evaluate(change, base=base, context=source.context)
+        evaluation = rules.evaluate(change, base=base, context=source.context, harness=harness is not None)
         logger.info("live_knowledge route=preview status=200 blocks=%s", len(evaluation.blocks))
         return envelope({"ok": not evaluation.blocks, **preview_payload(evaluation, base=base, change=change)})
 
@@ -221,7 +226,7 @@ def register_live_knowledge_routes(app: FastAPI, *, token: str, store: Knowledge
             raise EntryRefused("identifier_not_allowed", {"field": "purpose", "problem": "phone_or_mail"})
         change = parse(body)
         base = source.edit_base()
-        evaluation = rules.evaluate(change, base=base, context=source.context)
+        evaluation = rules.evaluate(change, base=base, context=source.context, harness=harness is not None)
         payload = preview_payload(evaluation, base=base, change=change)
         if evaluation.blocks:
             logger.info("live_knowledge route=propose status=422 code=knowledge_change_blocked blocks=%s",
@@ -253,9 +258,16 @@ def register_live_knowledge_routes(app: FastAPI, *, token: str, store: Knowledge
         knowledge_id = str(saved.get("knowledge_id"))
         logger.info("live_knowledge route=propose knowledge=%s status=201 live_version=%s", knowledge_id,
                     saved.get("live_version"))
+        extra: dict[str, Any] = {}
+        if harness is not None:
+            # 5.5 parte 2 (D-55.11): el arnes corre sobre lo guardado; hasta que de verde no se aprueba.
+            started = harness.start(knowledge_id, base_rendered=base.rendered,
+                                    draft_rendered=evaluation.knowledge.render(),
+                                    rendered_sha256=evaluation.knowledge.rendered_sha256)
+            extra["harness"] = {"status": started}
         return envelope({"knowledge_id": knowledge_id, "live_version": saved.get("live_version"),
                          "status": saved.get("status"), "expires_at": saved.get("expires_at"),
-                         "approval_url": approval_url(knowledge_id), **payload})
+                         "approval_url": approval_url(knowledge_id), **payload, **extra})
 
     @app.get(f"{KNOWLEDGE}/versions")
     async def list_versions(estado: str = "abiertas", limit: str = str(LIST_DEFAULT_LIMIT),
@@ -294,5 +306,8 @@ def register_live_knowledge_routes(app: FastAPI, *, token: str, store: Knowledge
                 "events", "preview")
         data = {key: stored.get(key) for key in keys}
         data["serving"] = source.serving_state(checked)
+        if harness is not None:
+            sha = stored.get("rendered_sha256")
+            data["harness"] = harness.view(checked, sha if isinstance(sha, str) else None)
         data["approval_url"] = approval_url(checked) if stored.get("status") in ("validada", "publicada") else None
         return envelope(data)

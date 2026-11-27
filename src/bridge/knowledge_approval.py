@@ -10,6 +10,12 @@ de «Entrar con Slack» y la misma lista de aprobadores que la pagina de flujos:
   se armo y que no haya un segmento en vigencia (D-55.4). La base exige la huella.
 * ``POST .../discard``: «Descartar», solo una validada.
 * ``POST .../return-to-file``: «Volver al archivo»: retira la viva publicada.
+* ``POST .../harness`` (solo con ``AGENT_LIVE_KNOWLEDGE_HARNESS_ENABLED``): «Volver a correr el
+  arnés», solo si la corrida de esa version dio error o se abandono (D-55.14).
+
+Con ``AGENT_LIVE_KNOWLEDGE_HARNESS_ENABLED`` la pagina muestra el resultado del arnes F-055 sobre
+esa version (``knowledge_harness``) y «Aprobar y usar» no aparece hasta que de verde para el mismo
+texto; el boton lo vuelve a mirar al apretarlo (D-55.11). Sin el flag, la pagina es la de antes.
 
 Lo que se publica sale de la fila validada, atada por la huella: nunca algo del
 formulario. El log lleva la ruta, el id y el codigo; nunca el texto.
@@ -80,6 +86,19 @@ _DONE_WARN = {
                                     "de hoy: no se puede cambiar mientras dure. Para algo urgente, usá la "
                                     "instrucción temporal."),
     "agent_knowledge_no_live": "No había ninguna versión en uso: el agente ya usa el archivo.",
+    # 5.5 parte 2: el arnés F-055 (D-55.11). Sin verde para este mismo texto no se aprueba.
+    "knowledge_harness_not_run": ("El arnés de conversaciones todavía no corrió sobre esta versión: no se puede "
+                                  "aprobar hasta que dé verde."),
+    "knowledge_harness_running": "El arnés de conversaciones está corriendo. Volvé a abrir la página en unos minutos.",
+    "knowledge_harness_red": ("El arnés encontró respuestas que esta versión empeora respecto de lo vigente: no se "
+                              "puede aprobar. Pedile al agente que la corrija."),
+    "knowledge_harness_error": ("El arnés no pudo terminar (el modelo no contestó o se reinició el bridge): no se "
+                                "puede aprobar hasta que corra de nuevo y dé verde."),
+    "knowledge_harness_busy": "Ya hay otra corrida del arnés en curso. Probá en unos minutos.",
+    "knowledge_harness_daily_limit": "Ya se corrió el arnés las veces que permite el día. Probá mañana.",
+    "knowledge_harness_already_ran": "El arnés ya dio un resultado para esta versión: no se vuelve a correr.",
+    "knowledge_harness_store_unavailable": "No se pudo guardar la corrida del arnés. Probá en un rato.",
+    "knowledge_harness_started": "Listo: el arnés empezó a correr. Volvé a abrir la página en unos minutos.",
     "flow_store_text_invalid": "El motivo no se pudo guardar: escribilo en una línea.",
 }
 _NOT_SERVED = {
@@ -102,6 +121,8 @@ def _done(done: Mapping[str, str]) -> str:
     code = done.get("hecho")
     if not code:
         return ""
+    if code == "knowledge_harness_started":
+        return f'<div class="notice notice--ok" role="status"><p>{_esc(_DONE_WARN[code])}</p></div>'
     if code in _DONE_OK:
         return f'<div class="notice notice--ok" role="status"><p>{_esc(_DONE_OK[code])}</p></div>'
     text = _DONE_WARN.get(code, "No se pudo completar. Probá de nuevo en un rato.")
@@ -120,9 +141,59 @@ def _diff_html(preview: Mapping[str, Any]) -> str:
     return f'{summary}<pre class="bubble">{_esc(text)}</pre>{cut}'
 
 
+_HARNESS_STATE = {
+    "corriendo": ("Corriendo", "chip--info", "Está probando las respuestas de esta versión contra las de lo vigente."),
+    "verde": ("Verde", "chip--ok", "Ninguna respuesta empeora respecto de lo vigente."),
+    "rojo": ("Rojo", "chip--warn", "Hay respuestas que esta versión empeora en todas las pruebas."),
+    "error": ("Sin resultado", "chip--warn", "No pudo terminar: hay que correrlo de nuevo."),
+}
+
+
+def _harness_cases(title: str, items: Any) -> str:
+    rows = [item for item in items if isinstance(item, Mapping)] if isinstance(items, list) else []
+    if not rows:
+        return ""
+    shown = "".join(
+        f'<li><p><strong>{_esc(item.get("id"))}</strong>: {_esc(item.get("espera"))}</p>'
+        f'<p class="meta">Falla en el borrador {_esc(item.get("borrador_falla"))}, en lo vigente '
+        f'{_esc(item.get("vigente_falla"))}. {_esc(", ".join(str(x) for x in item.get("fallas") or []))}</p>'
+        + (f'<pre class="bubble">{_esc(item.get("respuesta"))}</pre>' if item.get("respuesta") else "")
+        + "</li>" for item in rows)
+    return f"<h3>{_esc(title)}</h3><ul>{shown}</ul>"
+
+
+def _harness_html(harness: Mapping[str, Any] | None, *, rerun: str) -> str:
+    """El panel del arnés F-055 (5.5 parte 2). ``rerun`` es el formulario para volver a correrlo, o vacío."""
+    if harness is None:
+        body = ('<p>Todavía no corrió sobre esta versión. Sin el arnés en verde no se puede aprobar.</p>'
+                f"{rerun}")
+        return (f'<section class="panel"><div class="panel-heading"><h2>Arnés de conversaciones</h2></div>'
+                f'<div class="panel-body">{body}</div></section>')
+    status = str(harness.get("status"))
+    label, chip, meaning = _HARNESS_STATE.get(status, ("—", None, ""))
+    result = harness.get("result") if isinstance(harness.get("result"), Mapping) else {}
+    counts = ""
+    if result:
+        counts = (f'<p class="meta">{_esc(result.get("casos"))} casos, {_esc(result.get("repeticiones"))} veces cada '
+                  f"uno contra lo vigente y contra esta versión ({_esc(result.get('llamadas'))} respuestas, "
+                  f"{_esc(result.get('sin_respuesta'))} sin respuesta del modelo).</p>")
+    body = (f"<p>{_chip(label, chip)} {_esc(meaning)}</p>{counts}"
+            + _harness_cases("Lo que empeora (frena)", result.get("regresiones"))
+            + _harness_cases("Para mirar (no frena: las reglas fijas tienen falsos positivos)", result.get("avisos"))
+            + _harness_cases("Para leer siempre", result.get("para_leer"))
+            + rerun)
+    return (f'<section class="panel"><div class="panel-heading"><h2>Arnés de conversaciones</h2></div>'
+            f'<div class="panel-body">{body}</div></section>')
+
+
 def render_knowledge(found: Mapping[str, Any], knowledge_id: str, *, serving: str | None, refusal: str | None,
-                     csrf: str = "", done: Mapping[str, str] | None = None, time_zone: str | None = None) -> str:
-    """El cuerpo de la pagina. Sin el id, la huella ni el ID de Slack a la vista."""
+                     csrf: str = "", done: Mapping[str, str] | None = None, time_zone: str | None = None,
+                     harness: Mapping[str, Any] | None = None, harness_enabled: bool = False,
+                     harness_rerun: bool = False) -> str:
+    """El cuerpo de la pagina. Sin el id, la huella ni el ID de Slack a la vista.
+
+    ``harness_enabled`` (5.5 parte 2): suma el panel del arnés con ``harness`` (None si no corrió) y, con
+    ``harness_rerun``, el botón para volver a correrlo. Sin el flag, la página de antes."""
     status = str(found.get("effective_status") or found.get("status"))
     label, chip, meaning = _STATE.get(status, ("—", None, ""))
     preview = found.get("preview") if isinstance(found.get("preview"), Mapping) else {}
@@ -164,6 +235,13 @@ def render_knowledge(found: Mapping[str, Any], knowledge_id: str, *, serving: st
     approved = (f'<p class="meta">Aprobada el {_esc(_when(found.get("approved_at"), time_zone))}.</p>'
                 if found.get("approved_at") else "")
     touched = ", ".join(_esc(section) for section in sections)
+    harness_section = ""
+    if harness_enabled:
+        rerun = ""
+        if harness_rerun and status == "validada":
+            rerun = (f'<form method="post" action="{path}/harness">{_hidden("csrf_token", csrf)}'
+                     '<button type="submit" class="button">Volver a correr el arnés</button></form>')
+        harness_section = _harness_html(harness, rerun=rerun)
     warn_list = f'<ul class="meta">{warn_html}</ul>' if warn_html else ""
     return (f'<header class="page-header"><p class="meta"><a href="{PREFIX}/">Aprobación de flujos</a></p>'
             f'<h1>Conocimiento del agente: versión viva {_esc(found.get("live_version"))}</h1>'
@@ -176,11 +254,15 @@ def render_knowledge(found: Mapping[str, Any], knowledge_id: str, *, serving: st
             f"{warn_list}</div></section>"
             '<section class="panel"><div class="panel-heading"><h2>Lo que el agente va a saber distinto</h2></div>'
             f'<div class="panel-body">{_diff_html(preview)}</div></section>'
-            f"</div>{side}</div>")
+            f"{harness_section}</div>{side}</div>")
 
 
-def publish_refusal(found: Mapping[str, Any], source: rules.LiveKnowledgeSource) -> str | None:
-    """Por que el bridge no deja aprobar esta fila hoy, o None. Lo mismo corre al apretar el boton."""
+def publish_refusal(found: Mapping[str, Any], source: rules.LiveKnowledgeSource,
+                    harness: Any | None = None) -> str | None:
+    """Por que el bridge no deja aprobar esta fila hoy, o None. Lo mismo corre al apretar el boton.
+
+    Con ``harness`` (``knowledge_harness.HarnessRunner``), ademas, el arnes tiene que haber dado verde
+    para este mismo texto (D-55.11). Va al final: lo demas dice por que no sirve aunque de verde."""
     if found.get("effective_status") != "validada":
         return None
     file = source.file
@@ -204,11 +286,15 @@ def publish_refusal(found: Mapping[str, Any], source: rules.LiveKnowledgeSource)
         return "agent_knowledge_base_changed"
     if source.segments_in_force():
         return "knowledge_segments_in_force"
+    if harness is not None:
+        return harness.refusal(str(found.get("knowledge_id") or ""), found.get("rendered_sha256"))
     return None
 
 
-def routes(*, source: rules.LiveKnowledgeSource) -> Callable[[FastAPI, PageTools], None]:
-    """Las rutas, para ``register_flow_approval_routes(extra_routes=...)``."""
+def routes(*, source: rules.LiveKnowledgeSource, harness: Any | None = None) -> Callable[[FastAPI, PageTools], None]:
+    """Las rutas, para ``register_flow_approval_routes(extra_routes=...)``.
+
+    ``harness`` solo con ``AGENT_LIVE_KNOWLEDGE_HARNESS_ENABLED``; None, las de antes."""
 
     def register(app: FastAPI, tools: PageTools) -> None:
         store, instance = tools.store, tools.instance
@@ -240,9 +326,13 @@ def routes(*, source: rules.LiveKnowledgeSource) -> Callable[[FastAPI, PageTools
                 return _page("Conocimiento", "El almacén no contestó. Probá en un rato.", 503)
             logger.info("flow_approval route=knowledge knowledge=%s status=%s", knowledge_id, found.get("status"))
             csrf = tools.config.csrf_token(secret)
+            sha = found.get("rendered_sha256") if isinstance(found.get("rendered_sha256"), str) else None
             body = render_knowledge(found, knowledge_id, serving=source.serving_state(knowledge_id),
-                                    refusal=publish_refusal(found, source), csrf=csrf,
-                                    done=_done_from_query(request, tools.config, secret), time_zone=tools.time_zone)
+                                    refusal=publish_refusal(found, source, harness), csrf=csrf,
+                                    done=_done_from_query(request, tools.config, secret), time_zone=tools.time_zone,
+                                    harness=harness.view(knowledge_id, sha) if harness is not None else None,
+                                    harness_enabled=harness is not None,
+                                    harness_rerun=harness is not None and harness.can_rerun(knowledge_id, sha))
             return HTMLResponse(_shell("Conocimiento", body, user=user, csrf=csrf, show_user_id=False))
 
         async def run(request: Request, knowledge_id: str, *, title: str, fields: set[str],
@@ -282,7 +372,7 @@ def routes(*, source: rules.LiveKnowledgeSource) -> Callable[[FastAPI, PageTools
                     code = "agent_knowledge_expired" if found.get("effective_status") == "vencida" \
                         else "agent_knowledge_not_validated"
                     return {"ok": False, "reason_code": code}
-                refusal = publish_refusal(found, source)
+                refusal = publish_refusal(found, source, harness)
                 if refusal is not None:
                     return {"ok": False, "reason_code": refusal}
                 return await store._rpc("approver_publish_agent_knowledge_v1", {  # noqa: SLF001
@@ -314,5 +404,33 @@ def routes(*, source: rules.LiveKnowledgeSource) -> Callable[[FastAPI, PageTools
 
             return await run(request, knowledge_id, title="Volver al archivo", fields={"csrf_token"},
                              optional=frozenset({"motivo"}), call=call, ok_code="archivo")
+
+        if harness is None:
+            return
+
+        @app.post(PREFIX + "/k/{knowledge_id}/harness")
+        async def knowledge_harness_rerun(knowledge_id: str, request: Request) -> Response:
+            # 5.5 parte 2 (D-55.14): solo una corrida que dio error o se abandono, de una version validada
+            # que hoy se podria aprobar (lo vigente es aquello sobre lo que se armo).
+            async def call(session: str, form: dict[str, str]) -> Mapping[str, Any]:
+                found = await read(session, knowledge_id)
+                if found.get("effective_status") != "validada":
+                    return {"ok": False, "reason_code": "agent_knowledge_not_validated"}
+                before = publish_refusal(found, source)
+                if before is not None:
+                    return {"ok": False, "reason_code": before}
+                sections = found.get("knowledge")
+                assert isinstance(sections, Mapping)  # publish_refusal ya lo armo
+                draft = rules.build_knowledge(sections, file_version=source.file.file_version,
+                                              ally_ref=source.file.knowledge.ally_ref)
+                started = harness.start(knowledge_id, base_rendered=source.edit_base().rendered,
+                                        draft_rendered=draft.render(), rendered_sha256=draft.rendered_sha256,
+                                        rerun=True)
+                if started != "corriendo":
+                    return {"ok": False, "reason_code": started}
+                return {"ok": True}
+
+            return await run(request, knowledge_id, title="Volver a correr el arnés", fields={"csrf_token"},
+                             optional=frozenset(), call=call, ok_code="knowledge_harness_started")
 
     return register

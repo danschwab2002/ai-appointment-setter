@@ -50,4 +50,15 @@ Una tabla, `agent_campaign_judge_runs` (una fila por corrida, con RLS y sin perm
 
 - No manda nada a nadie: ni a leads ni al hilo. El AE se entera leyendo `get_campaign_judge` cuando el dueño vuelve a preguntar.
 - No corre sobre una publicada o pausada (volver a certificar sigue siendo del comando del operador).
-- No prueba la campaña conversando: un turno de prueba del agente comercial con el conocimiento de la campaña queda para un PR aparte.
+- No prueba la campaña conversando: eso es §7, con su propio flag.
+
+## 7. Probarla conversando (D-49.9, `campaign_conversation.py`)
+
+- **Flag:** `AUTOMATION_EXPERT_CAMPAIGN_CONVERSATION_ENABLED`, apagado por defecto, y exige `AUTOMATION_EXPERT_JUDGE_ENABLED` y el modelo del agente (`AGENT_REHEARSAL_MODEL` o `[profiles.agente-comercial].modelo` del `hermes.toml` de la carpeta de la instancia). Apagado, la ruta no existe, `/ready` no cambia y la lectura del juez es byte a byte la de §2.
+- `POST /internal/automation-expert/v1/campaigns/{id}/conversation`, cuerpo `{"requested_by": {"slack_user": "U…"}, "mensajes": ["…"]}`: de 1 a 5 mensajes de hasta 300 caracteres, sin teléfonos ni mails (`identifier_not_allowed`). Misma franja que el juez y la misma corrida de la base (`start_agent_campaign_judge_run_v1`): **el tope de 3 por clave por día y la corrida única por instancia son compartidos con el juez** (D-49.10). Contesta `202` y juega la conversación en un hilo.
+- La conversación: cada mensaje va al modelo del agente con el SOUL común (`AUTOMATION_EXPERT_JUDGE_SOUL_PATH`), el conocimiento base del archivo y el bloque de la campaña tal como lo arma el catálogo vivo (`agent_campaigns.load_campaign_segment`; con fases, la primera, D-49.13), y el contexto con la forma del arnés F-055. La propuesta se lee con las reglas del bridge y, como el bridge, con un reintento con la corrección (`agent_rehearsal`, D-REH.1). Sin Hermes ni Chatwoot: no le llega nada a nadie.
+- **Veredicto (D-49.12):** `limpio` si el bridge habría mandado una respuesta a cada mensaje; `con_preguntas` si en alguno la propuesta no pasaba las reglas después del reintento (la conversación termina ahí, como derivada). Un `handoff` o `disqualified` del agente termina la conversación sin ser una falla. El contenido no lo juzga nadie: lo lee el dueño.
+- **Dónde queda (D-49.11, sin migración):** en `agent_campaign_judge_runs`, con `result.tipo = "conversacion"` (también un error lleva el tipo). `result` trae `turnos` (`lead`, `agente` recortado a 800 caracteres, `decision`, `reason_code`, `intentos`, `estado`: `respondio`, `el_bridge_no_lo_mandaria`, `sin_respuesta_del_modelo` o `no_llego`), `rechazados`, `termino_en`, `modelo`, `pieza` y `segmento_sha256`, en menos de 15.000 bytes.
+- `GET …/conversation`: `last_conversation` (con la misma forma que `last_run`) si la última corrida fue una conversación, `ultima_corrida` (`conversacion`, `juez`, `desconocida` para una abandonada sin resultado), `runs_today`, `daily_limit`, `window` y `can_start_now`. Con el flag, `GET …/judge` suma `tipo` en `last_run`.
+- Errores: los de §2 y `agent_campaign_conversation_not_validated`, `…_store_unavailable`, `…_check_failed`, `…_soul_unreadable`, `…_model_unavailable` y `…_failed`.
+- Herramientas del AE (plugin 0.17.0): `try_campaign_conversation` y `get_campaign_conversation`; sin el flag, `conversation_not_enabled`.
