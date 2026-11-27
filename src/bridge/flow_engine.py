@@ -64,6 +64,7 @@ from .flow_definition import (
     NO_CAP,
     PERSONAL_COUPON,
     PERSONAL_COUPONS_PER_PATH,
+    REGISTRATION_EVENT,
     REGISTRATION_KEY,
     TO_CREATE,
     TemplateLiteral,
@@ -81,7 +82,7 @@ from .flow_policy import STEPS_BY_LEGACY_KIND
 from .flow_schedule import DEFAULT_ZONE, LAST_MINUTE, Franja, franja_of, is_open, next_open
 
 __all__ = [
-    "ENGINE_CAPABILITIES_NATIVE", "ENGINE_CAPABILITIES_NATIVE_AUDIENCE", "ENGINE_CAPABILITIES_NATIVE_KEYWORD", "NATIVE_KEYWORD_TRIGGER", "NATIVE_KEYWORD_VARIABLES", "NATIVE_AUDIENCE_FORMS", "NATIVE_AUDIENCE_VARIABLES", "NATIVE_AUDIENCE_PERMISSIONS", "NATIVE_AUDIENCE_TRIGGER", "ENGINE_CAPABILITIES_NATIVE_MULTITOUCH", "ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE", "ENGINE_CAPABILITIES_NATIVE_CART_MULTITOUCH", "NATIVE_COUPON_FIRST_VARIABLES", "NATIVE_COUPON_NEXT_VARIABLES", "NATIVE_MAX_PERSONAL_COUPONS", "NATIVE_PERSONAL_COUPON_BUTTON", "NATIVE_PERSONAL_COUPON_TRIGGERS", "NATIVE_MULTITOUCH_TRIGGERS", "NATIVE_TOUCH_STEP_PREFIX", "ENGINE_CAPABILITIES_NATIVE_SILENCE", "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_PARAMETERS", "NATIVE_CAPABILITIES_BY_TRIGGER", "ENGINE_CAPABILITIES_NATIVE_PAYMENT_SLIP", "NATIVE_PAYMENT_SLIP_DUE_ANCHORS", "NATIVE_PAYMENT_SLIP_TRIGGER", "NATIVE_PAYMENT_SLIP_VARIABLES", "NATIVE_SILENCE_TRIGGER", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
+    "ENGINE_CAPABILITIES_NATIVE", "ENGINE_CAPABILITIES_NATIVE_AUDIENCE", "ENGINE_CAPABILITIES_NATIVE_KEYWORD", "NATIVE_KEYWORD_TRIGGER", "NATIVE_KEYWORD_VARIABLES", "NATIVE_AUDIENCE_FORMS", "NATIVE_AUDIENCE_VARIABLES", "NATIVE_AUDIENCE_PERMISSIONS", "NATIVE_AUDIENCE_TRIGGER", "ENGINE_CAPABILITIES_NATIVE_MULTITOUCH", "ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE", "ENGINE_CAPABILITIES_NATIVE_CART_MULTITOUCH", "NATIVE_COUPON_FIRST_VARIABLES", "NATIVE_COUPON_NEXT_VARIABLES", "NATIVE_MAX_PERSONAL_COUPONS", "NATIVE_PERSONAL_COUPON_BUTTON", "NATIVE_PERSONAL_COUPON_TRIGGERS", "NATIVE_MULTITOUCH_TRIGGERS", "NATIVE_TOUCH_STEP_PREFIX", "ENGINE_CAPABILITIES_NATIVE_SILENCE", "ENGINE_CAPABILITIES_NATIVE_REGISTRATION", "REGISTRATION_TRIGGER", "is_registration_trigger", "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_PARAMETERS", "NATIVE_CAPABILITIES_BY_TRIGGER", "ENGINE_CAPABILITIES_NATIVE_PAYMENT_SLIP", "NATIVE_PAYMENT_SLIP_DUE_ANCHORS", "NATIVE_PAYMENT_SLIP_TRIGGER", "NATIVE_PAYMENT_SLIP_VARIABLES", "NATIVE_SILENCE_TRIGGER", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
     "BolsaLedger", "ControlLine", "Eligible", "EngineCapabilities", "EngineFlow", "Firing", "FlowRef",
     "GateDecision", "GateFacts", "PersonView", "Plan", "PlanInvalid", "PlanNotSupported", "PlannedStep",
     "RunView", "StartDecision", "evaluate_gate", "first_eligible", "legacy_motivo", "native_audience_form", "native_not_supported", "native_payment_failure_branches", "native_payment_failure_paths", "native_trigger_key", "native_variables_fit", "is_native_personal_coupon_button", "not_supported", "plan_start",
@@ -89,7 +90,9 @@ __all__ = [
 ]
 
 NOT_SUPPORTED = "engine_not_supported"
-# D-43.2 (4.3): la capacidad que un motor declarara cuando ejecute ``dispara.registro``. Hoy, ninguno.
+# D-43.2 (4.3): la capacidad que un motor declara cuando ejecuta ``dispara.registro``. Desde la segunda parte
+# (20261127500000) la declara el motor nativo, solo con el registro prendido en el bridge
+# (``native_not_supported(..., registration=True)``, D-43.10); el legado, nunca.
 REGISTRATION_TRIGGER = "intencion:registro"
 # Mas envios por camino de los que ejecuta el motor (las capacidades).
 TOO_MANY_SENDS = "demasiados_envios"
@@ -437,6 +440,8 @@ NATIVE_SILENCE_MAX_MINUTES = 72 * 60
 # esa conversacion, como el seguimiento con cupon del legado.
 NATIVE_PERMISSION_BY_TRIGGER: Mapping[str, str] = MappingProxyType(
     {"compra": "compra", "carrito": "formulario", "pago_fallido": "formulario", "intencion": "formulario",
+     # 4.3 (D-43.6): el registro entra como el formulario, con el envio consentido que lo disparo.
+     REGISTRATION_TRIGGER: "formulario",
      # E-528 (C4): la ficha, con la intencion que la admision v2 correlaciono con esa ficha.
      NATIVE_PAYMENT_SLIP_TRIGGER: "formulario",
      NATIVE_SILENCE_TRIGGER: "conversacion"})
@@ -446,6 +451,15 @@ NATIVE_PERMISSION_BY_TRIGGER: Mapping[str, str] = MappingProxyType(
 # con ``ENGINE_CAPABILITIES_NATIVE`` y da ``motor_nativo:disparador``, como antes. Los eventos salen de
 # ``ENGINE_CAPABILITIES_NATIVE.triggers``: un evento nativo nuevo se suma ahi y en
 # ``NATIVE_PERMISSION_BY_TRIGGER``, como hasta ahora.
+# 4.3 segunda parte (D-43.7, 20261127500000): la confirmacion de un registro a un evento. El formulario propio
+# de registro (``dispara: {evento: intencion, registro: <clave>}``) con las capacidades del primer contacto
+# nativo de un toque: una sola plantilla con nombre y producto, sin boton declarado y sin espera despues del
+# envio, y la salida compra. Una sola confirmacion: los toques siguientes (un recordatorio antes del evento)
+# no entran aunque el bridge mande varios toques. La base dice lo mismo (``motor_nativo:forma`` con dos).
+ENGINE_CAPABILITIES_NATIVE_REGISTRATION = dataclasses.replace(
+    ENGINE_CAPABILITIES_NATIVE,
+    triggers=ENGINE_CAPABILITIES_NATIVE.triggers | {REGISTRATION_TRIGGER},
+)
 NATIVE_CAPABILITIES_BY_TRIGGER: Mapping[str, EngineCapabilities] = MappingProxyType({
     **{event: ENGINE_CAPABILITIES_NATIVE for event in sorted(ENGINE_CAPABILITIES_NATIVE.triggers)},
     **{event: ENGINE_CAPABILITIES_NATIVE_MULTITOUCH for event in sorted(NATIVE_MULTITOUCH_TRIGGERS)},
@@ -454,6 +468,8 @@ NATIVE_CAPABILITIES_BY_TRIGGER: Mapping[str, EngineCapabilities] = MappingProxyT
     NATIVE_SILENCE_TRIGGER: ENGINE_CAPABILITIES_NATIVE_SILENCE,
     # E-528 (C4): la ficha; native_trigger_key la da solo con payment_slip (el flag del bridge).
     NATIVE_PAYMENT_SLIP_TRIGGER: ENGINE_CAPABILITIES_NATIVE_PAYMENT_SLIP,
+    # 4.3 (D-43.10): el registro; native_trigger_key lo da solo con registration (los flags del registro).
+    REGISTRATION_TRIGGER: ENGINE_CAPABILITIES_NATIVE_REGISTRATION,
 })
 # Con que repite cada disparador nativo: un evento, por persona o por persona y oferta; el silencio, como
 # el legado, una vez por conversacion y nunca otra (el indice unico de ``conversation_followup_events``
@@ -462,6 +478,8 @@ NATIVE_EVENT_REPEAT_UNITS = ("persona", "persona_y_oferta")
 NATIVE_REPEAT_BY_TRIGGER: Mapping[str, tuple[str, ...]] = MappingProxyType({
     **{event: NATIVE_EVENT_REPEAT_UNITS for event in sorted(ENGINE_CAPABILITIES_NATIVE.triggers)},
     NATIVE_SILENCE_TRIGGER: ("conversacion",),
+    # 4.3 (D-43.8): por persona (o persona y oferta), contado solo entre los registros al mismo evento.
+    REGISTRATION_TRIGGER: NATIVE_EVENT_REPEAT_UNITS,
 })
 # E-483, para E-484 (20261112210600): el disparo por audiencia (``dispara.fecha``, ``dispara.cada`` o
 # ``dispara.manual``). La persona de la lista congelada de una ocurrencia entra a la admision nativa atada al
@@ -546,8 +564,22 @@ NATIVE_UNSUPPORTED_REPEAT = "motor_nativo:repeticion"
 NATIVE_UNSUPPORTED_PRIORITY = "motor_nativo:prioridad"
 
 
+def is_registration_trigger(trigger: object) -> bool:
+    """``{evento: intencion, registro: <clave>}`` y nada mas, con la clave del esquema (4.3, D-43.6).
+
+    Es lo mismo que reconoce la base (``_flow_engine_native_trigger``, 20261127500000).
+    """
+    return (
+        isinstance(trigger, Mapping)
+        and set(trigger) == {"evento", REGISTRATION_KEY}
+        and trigger.get("evento") == "intencion"
+        and isinstance(trigger.get(REGISTRATION_KEY), str)
+        and REGISTRATION_EVENT.fullmatch(trigger[REGISTRATION_KEY]) is not None
+    )
+
+
 def native_trigger_key(definition: Mapping[str, Any], *, audience: bool = False,
-                       payment_slip: bool = False, keyword: bool = False) -> str | None:
+                       payment_slip: bool = False, keyword: bool = False, registration: bool = False) -> str | None:
     """El disparador nativo de la definicion (``compra``, ``carrito``, ``pago_fallido`` o ``silencio:agente``).
 
     ``None`` si ``dispara`` no es exactamente un evento o un silencio que el motor nativo ejecuta. Con
@@ -564,6 +596,9 @@ def native_trigger_key(definition: Mapping[str, Any], *, audience: bool = False,
         return NATIVE_KEYWORD_TRIGGER if keyword and is_keyword_rule_key(trigger[NATIVE_KEYWORD_TRIGGER]) else None
     if payment_slip and dict(trigger) == {"evento": NATIVE_PAYMENT_SLIP_TRIGGER}:
         return NATIVE_PAYMENT_SLIP_TRIGGER
+    if is_registration_trigger(trigger):
+        # 4.3 (D-43.10): con los flags del registro, ``intencion:registro``; sin ellos, None como antes.
+        return REGISTRATION_TRIGGER if registration else None
     if native_audience_form(definition) is not None:
         return NATIVE_AUDIENCE_TRIGGER if audience else None
     if set(trigger) == {"evento"}:
@@ -870,7 +905,7 @@ def _native_payment_slip_not_supported(definition: Mapping[str, Any], add: Calla
 
 
 def native_not_supported(definition: Mapping[str, Any], *, audience: bool = False,
-                         payment_slip: bool = False, keyword: bool = False) -> tuple[str, ...]:
+                         payment_slip: bool = False, keyword: bool = False, registration: bool = False) -> tuple[str, ...]:
     """Lo que el motor nativo no ejecuta de una definicion, en orden; vacio si la ejecuta.
 
     Es la regla 14 de un flujo nativo (flow-engine-v2 §9): lo que la base mira al abrirlo y al admitirlo
@@ -897,6 +932,12 @@ def native_not_supported(definition: Mapping[str, Any], *, audience: bool = Fals
     ``keyword`` (Z2 3.9, 20261127400000) es ``NativeRuntime.native_keyword``: con el, la palabra clave tiene las
     capacidades de ``ENGINE_CAPABILITIES_NATIVE_KEYWORD``, entra con permiso ``conversacion`` y sin
     ``contesto_a``; sin el, ``motor_nativo:disparador`` como antes.
+
+    ``registration`` (4.3 segunda parte, 20261127500000) son los cuatro flags del registro
+    (``OWN_FORMS_REGISTRATION_FLOW_ENABLED``, ``OWN_FORMS_ENABLED``, ``FLOW_ENGINE_ENABLED`` y
+    ``FLOW_ENGINE_NATIVE_INTENT_ENABLED``): con ellos, ``dispara: {evento: intencion, registro: <clave>}`` tiene
+    las capacidades de ``ENGINE_CAPABILITIES_NATIVE_REGISTRATION`` (una sola confirmacion); sin ellos,
+    ``motor_nativo:disparador`` como antes.
     """
     found: list[str] = []
 
@@ -904,7 +945,7 @@ def native_not_supported(definition: Mapping[str, Any], *, audience: bool = Fals
         if code not in found:
             found.append(code)
 
-    key = native_trigger_key(definition, audience=audience, payment_slip=payment_slip, keyword=keyword)
+    key = native_trigger_key(definition, audience=audience, payment_slip=payment_slip, keyword=keyword, registration=registration)
     if key is None:
         add(NATIVE_UNSUPPORTED_TRIGGER)
     capabilities = ENGINE_CAPABILITIES_NATIVE_AUDIENCE if key == NATIVE_AUDIENCE_TRIGGER \

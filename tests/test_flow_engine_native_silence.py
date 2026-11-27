@@ -65,6 +65,7 @@ from bridge.flow_engine import (
     ENGINE_CAPABILITIES_NATIVE_CART_MULTITOUCH,
     ENGINE_CAPABILITIES_NATIVE_PAYMENT_FAILURE_MULTITOUCH,
     ENGINE_CAPABILITIES_NATIVE_PAYMENT_SLIP,
+    ENGINE_CAPABILITIES_NATIVE_REGISTRATION,
     NATIVE_CAPABILITIES_BY_TRIGGER,
     NATIVE_PERMISSION_BY_TRIGGER,
     NATIVE_SILENCE_TRIGGER,
@@ -150,7 +151,9 @@ def test_the_capabilities_are_per_trigger() -> None:
         "intencion": ENGINE_CAPABILITIES_NATIVE_MULTITOUCH,
         NATIVE_SILENCE_TRIGGER: ENGINE_CAPABILITIES_NATIVE_SILENCE,
         # E-528 (C4, 20261113200000): la ficha de dos toques (native_trigger_key la da solo con el flag).
-        "ficha_impresa": ENGINE_CAPABILITIES_NATIVE_PAYMENT_SLIP}
+        "ficha_impresa": ENGINE_CAPABILITIES_NATIVE_PAYMENT_SLIP,
+        # 4.3 (20261127500000): la confirmacion de un registro (native_trigger_key la da solo con los flags).
+        "intencion:registro": ENGINE_CAPABILITIES_NATIVE_REGISTRATION}
     assert NATIVE_PERMISSION_BY_TRIGGER[NATIVE_SILENCE_TRIGGER] == "conversacion"
     silence = ENGINE_CAPABILITIES_NATIVE_SILENCE
     assert (silence.max_sends_per_path, silence.waits_between_sends) == (1, False)

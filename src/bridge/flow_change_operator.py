@@ -127,9 +127,11 @@ def instance_from_input(value: object) -> InstanceView:
                           # E-528 (C4): la ficha nativa, opcional como las otras dos.
                           native_payment_slip=raw_runtime.get("native_payment_slip_enabled", False),
                           # Z2 3.9: la palabra clave, opcional; sin la clave, apagada.
-                          native_keyword=raw_runtime.get("native_keyword_enabled", False))
+                          native_keyword=raw_runtime.get("native_keyword_enabled", False),
+                          # 4.3 (D-43.10): la confirmacion de un registro, opcional como las otras.
+                          native_registration=raw_runtime.get("native_registration_enabled", False))
             if {"native_multitouch_enabled", "native_personal_coupon_enabled",
-                "native_payment_slip_enabled", "native_keyword_enabled"} & set(raw_runtime)
+                "native_payment_slip_enabled", "native_keyword_enabled", "native_registration_enabled"} & set(raw_runtime)
             else InstanceRuntime(**fields))
     except (KeyError, TypeError, ValueError) as error:
         raise OperatorInputError("operator_instance_invalid") from error

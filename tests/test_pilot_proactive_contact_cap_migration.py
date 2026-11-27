@@ -237,6 +237,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261127300000",
         # El flujo de la palabra clave (20261127400000, Z2 3.9).
         "20261127400000",
+        # La confirmacion de registro (20261127500000, 4.3).
+        "20261127500000",
     ]
 
     sql = _sql()

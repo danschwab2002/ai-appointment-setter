@@ -106,7 +106,9 @@ def test_the_native_engine_runs_the_one_touch_cart() -> None:
     assert dict(NATIVE_PERMISSION_BY_TRIGGER) == {"compra": "compra", "carrito": "formulario", "pago_fallido": "formulario",
                                                   "intencion": "formulario", "silencio:agente": "conversacion",
                                                   # E-528 (C4, 20261113200000): la ficha, con su intencion.
-                                                  "ficha_impresa": "formulario"}
+                                                  "ficha_impresa": "formulario",
+                                                  # 4.3 (20261127500000): el registro, con su envio consentido.
+                                                  "intencion:registro": "formulario"}
 
 
 @pytest.mark.parametrize(("change", "code"), [

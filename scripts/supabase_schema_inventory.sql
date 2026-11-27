@@ -8123,6 +8123,28 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         8,
         'flow_engine_keyword_trigger'
+    union all
+    select
+        '20261127500000',
+        '20261127500000_own_forms_registration_confirmation_v1.sql',
+        -- La entrada del registro, solo de service_role ...
+        coalesce((
+            select (prosecdef
+                    and has_function_privilege('service_role', oid, 'EXECUTE')
+                    and not has_function_privilege('anon', oid, 'EXECUTE')
+                    and not has_function_privilege('authenticated', oid, 'EXECUTE'))::int
+            from functions
+            where oid = to_regprocedure(
+                'public.admit_and_route_registration_lead_precheckout_v1(text,text,integer,text,jsonb,jsonb,text,text)')
+        ), 0)
+        -- ... y el disparador que reconoce la forma con registro.
+        + coalesce((
+            select (position('own_forms_registration_trigger' in definition) > 0)::int
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_trigger(jsonb)')
+        ), 0),
+        2,
+        'own_forms_registration_confirmation'
 )
 select
     version,

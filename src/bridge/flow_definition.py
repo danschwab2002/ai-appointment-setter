@@ -221,6 +221,8 @@ _KEYWORD_RULE_KEY = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 # formulario que la regla 14 marca «todavia no» hasta que la base sepa rutearlo.
 REGISTRATION_KEY = "registro"
 _REGISTRATION_EVENT = re.compile(r"[a-z0-9][a-z0-9-]{2,39}")
+# La misma forma, para quien la necesita afuera (el motor nativo, 4.3 parte 2; la base: 20261127500000).
+REGISTRATION_EVENT = _REGISTRATION_EVENT
 _STEP_KEYS: Mapping[str, tuple[str, ...]] = {
     "esperar": ("esperar",),
     "plantilla": ("plantilla", "idioma", "variables", "boton"),

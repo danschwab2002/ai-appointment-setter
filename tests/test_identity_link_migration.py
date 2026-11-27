@@ -28,17 +28,17 @@ def test_they_are_one_transaction_each_and_the_last_two() -> None:
         assert "already_applied" in sql
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
     # Despues de la ficha de OXXO nativa (20261113200000, E-528, C4), la ultima del #455.
-    assert names[-27] == "20261113200000_e528_native_payment_slip_v1.sql"
-    assert names[-26] == A.name
-    assert names[-25] == B.name
+    assert names[-28] == "20261113200000_e528_native_payment_slip_v1.sql"
+    assert names[-27] == A.name
+    assert names[-26] == B.name
     # Despues va solo la de las ofertas huerfanas de Hotmart (20261114000300, E-565).
-    assert names[-24] == "20261114000300_hotmart_unknown_offers_v1.sql"
+    assert names[-25] == "20261114000300_hotmart_unknown_offers_v1.sql"
     # La ultima arregla el numero de conversacion de los avisos (20261118000300, E-656).
-    assert names[-16] == "20261118000300_identity_link_conversation_number_account_v1.sql"
+    assert names[-17] == "20261118000300_identity_link_conversation_number_account_v1.sql"
     # El choque de identidad en la admision es un rechazo con nombre (20261125000100).
-    assert names[-15] == "20261125000100_flow_engine_admission_identity_mismatch_v1.sql"
+    assert names[-16] == "20261125000100_flow_engine_admission_identity_mismatch_v1.sql"
     # El almacen del masivo (20261125000200): cuatro tablas, diez RPC de service_role y cuatro de la pagina.
-    assert names[-14] == "20261125000200_bulk_send_store_v1.sql"
+    assert names[-15] == "20261125000200_bulk_send_store_v1.sql"
 
 
 def test_the_replacements_are_only_the_four_functions_of_the_cart_and_the_permission() -> None:

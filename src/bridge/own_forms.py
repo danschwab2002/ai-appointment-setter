@@ -332,10 +332,10 @@ def webhook_copy(event: Mapping[str, object], *, form_key: str) -> dict[str, obj
 # D-43.3: como se admite el envio de un formulario propio. ``hoy``: por la admision de siempre
 # (``_admit_portable_lead``, con el primer contacto del legado o el motor nativo de ``intencion`` segun
 # los flags de la instancia). ``registro_sin_flujo``: un formulario de registro con
-# OWN_FORMS_REGISTRATION_FLOW_ENABLED y el motor: se admite y no se planifica nada (ni el primer
-# contacto comercial del legado ni un flujo nativo de ``intencion`` sin ``registro``). La
-# confirmacion la arma un flujo con ``dispara.registro`` cuando la base sepa rutearlo (lo que falta,
-# own-forms-v1 «Registro a un evento»); hasta entonces, el envio queda guardado y no sale nada.
+# OWN_FORMS_REGISTRATION_FLOW_ENABLED y el motor: nunca el primer contacto comercial (ni el del legado
+# ni un flujo nativo de ``intencion`` sin ``registro``). Desde la segunda parte (20261127500000) lo
+# admite ``admit_and_route_registration_lead_precheckout_v1``, que lo prueba solo en los flujos con
+# ``dispara.registro`` igual a su evento: la confirmacion; sin un flujo asi, solo queda guardado.
 OWN_FORM_ADMISSION_TODAY = "hoy"
 OWN_FORM_ADMISSION_REGISTRATION = "registro_sin_flujo"
 # Los flags que exige el registro (D5 del mapa Z1: el suyo y los del motor de flujos).
@@ -361,6 +361,21 @@ def registration_flow_missing(
 
     values = (registration_enabled, own_forms_enabled, flow_engine_enabled, native_intent_enabled)
     return tuple(name for name, on in zip(REGISTRATION_FLOW_FLAGS, values, strict=True) if not on)
+
+
+def registration_health_brake(reading: Mapping[str, object] | None, *, now: datetime) -> str | None:
+    """El freno por salud de Meta de la confirmacion de un registro (4.3, D-43.9), o None si deja salir.
+
+    Es el mismo veredicto que el del disparo por audiencia (``flow_audience_sweeper.health_verdict``, E-484):
+    rojo o amarillo, Meta en ``BLOCKED``, un limite de mensajeria de 2.000 o menos, una lectura vieja (mas de
+    26 h) o que no se puede leer frenan. Sin lectura (el archivo no esta configurado o no se lee), frena:
+    fail-closed, como la audiencia. El motivo es ``meta_salud:<que>``, lo que la base guarda.
+    """
+
+    from .flow_audience_sweeper import health_verdict
+
+    verdict = health_verdict(reading, now=now)
+    return None if verdict.allows else verdict.brake_reason
 
 
 def own_form_admission(form: object, *, registration_active: bool) -> str:

@@ -779,19 +779,25 @@ class NativeRuntime(InstanceRuntime):
     # Z2 3.9 (keyword-flow-trigger-v1): KEYWORD_RULES_ENABLED, FLOW_ENGINE_ENABLED y KEYWORD_FLOW_TRIGGER_ENABLED,
     # el flujo que arranca con la palabra clave de una regla.
     native_keyword: bool = False
+    # 4.3 segunda parte (D-43.10): los cuatro flags del registro a un evento (OWN_FORMS_REGISTRATION_FLOW_ENABLED,
+    # OWN_FORMS_ENABLED, FLOW_ENGINE_ENABLED y FLOW_ENGINE_NATIVE_INTENT_ENABLED), la confirmacion nativa.
+    native_registration: bool = False
 
     def __post_init__(self) -> None:
         super().__post_init__()
         if not isinstance(self.native_multitouch, bool) or not isinstance(self.native_personal_coupon, bool) \
-                or not isinstance(self.native_payment_slip, bool) or not isinstance(self.native_keyword, bool):
+                or not isinstance(self.native_payment_slip, bool) or not isinstance(self.native_keyword, bool) or not isinstance(self.native_registration, bool):
             raise ValueError("instance_runtime_invalid")
 
     def to_json(self) -> dict[str, Any]:
         # La palabra clave va solo prendida: apagado, el JSON es el de antes.
+        # 4.3 (D-43.10): native_registration_enabled solo cuando esta prendido, para que con el registro
+        # apagado el runtime que publica /ready sea byte a byte el de hoy (el operador la acepta opcional).
         return {**super().to_json(), "native_multitouch_enabled": self.native_multitouch,
                 "native_personal_coupon_enabled": self.native_personal_coupon,
                 "native_payment_slip_enabled": self.native_payment_slip,
-                **({"native_keyword_enabled": True} if self.native_keyword else {})}
+                **({"native_keyword_enabled": True} if self.native_keyword else {}),
+                **({"native_registration_enabled": True} if self.native_registration else {})}
 
 
 def runtime_runs_multitouch(runtime: InstanceRuntime | None) -> bool:
@@ -807,6 +813,11 @@ def runtime_runs_keyword(runtime: InstanceRuntime | None) -> bool:
 def runtime_runs_payment_slip(runtime: InstanceRuntime | None) -> bool:
     """Si el bridge ejecuta la ficha nativa (E-528, C4); un runtime sin el dato, no."""
     return isinstance(runtime, NativeRuntime) and runtime.native_payment_slip
+
+
+def runtime_runs_registration(runtime: InstanceRuntime | None) -> bool:
+    """Si el bridge confirma un registro a un evento (4.3, D-43.10); un runtime sin el dato, no."""
+    return isinstance(runtime, NativeRuntime) and runtime.native_registration
 
 
 def runtime_runs_personal_coupon(runtime: InstanceRuntime | None) -> bool:
@@ -2416,9 +2427,11 @@ class _Run:
         # pide (FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED); sin el flag, motor_nativo:disparador como antes.
         # E-528 (C4, 20261113200000): la ficha, solo con FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED.
         # Z2 3.9 (20261127400000): la palabra clave, solo con los tres flags (NativeRuntime.native_keyword).
+        # 4.3 (20261127500000): la confirmacion de un registro, solo con los flags del registro.
         codes = native_not_supported(definition, audience=runtime_runs_multitouch(self.instance.runtime),
                                      payment_slip=runtime_runs_payment_slip(self.instance.runtime),
-                                     keyword=runtime_runs_keyword(self.instance.runtime))
+                                     keyword=runtime_runs_keyword(self.instance.runtime),
+                                     registration=runtime_runs_registration(self.instance.runtime))
         if self.actor == "automation_expert" and f"{NOT_SUPPORTED}:{TOO_MANY_SENDS}" in codes:
             # Dos mensajes seguidos son dos problemas para el motor (la espera en el medio y el segundo envio) y
             # uno solo para el dueno: el del mensaje de mas. Los dos caen en el mismo camino y se contaria solo el primero.
