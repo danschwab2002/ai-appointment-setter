@@ -64,6 +64,7 @@ from .flow_definition import (
     NO_CAP,
     PERSONAL_COUPON,
     PERSONAL_COUPONS_PER_PATH,
+    REGISTRATION_KEY,
     TO_CREATE,
     is_pool,
     parse_due_anchor,
@@ -85,6 +86,8 @@ __all__ = [
 ]
 
 NOT_SUPPORTED = "engine_not_supported"
+# D-43.2 (4.3): la capacidad que un motor declarara cuando ejecute ``dispara.registro``. Hoy, ninguno.
+REGISTRATION_TRIGGER = "intencion:registro"
 # Mas envios por camino de los que ejecuta el motor (las capacidades).
 TOO_MANY_SENDS = "demasiados_envios"
 # El estado del control que deja arrancar (pilot_runtime_controls.runtime_state).
@@ -219,6 +222,10 @@ def not_supported(definition: Mapping[str, Any], capabilities: EngineCapabilitie
                 add("disparo_silencio")
         elif trigger.event not in capabilities.triggers:
             add(f"disparo_{trigger.event or 'desconocido'}")
+        # D-43.2 (4.3): el filtro del formulario de registro. Ningun motor lo ejecuta todavia (la base no
+        # rutea un envio de registro a un flujo): «todavia no», para que el AE no lo publique.
+        if REGISTRATION_KEY in definition["dispara"] and REGISTRATION_TRIGGER not in capabilities.triggers:
+            add("disparo_registro")
     steps = definition.get("pasos")
     for step in _walk_steps(steps):
         kind = step_type(step)

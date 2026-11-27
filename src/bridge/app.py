@@ -148,11 +148,14 @@ from bridge.ghl_precheckout_adapter import (
 )
 from bridge.lead_precheckout import LeadPrecheckoutSubmission, parse_lead_precheckout
 from bridge.own_forms import (
+    OWN_FORM_ADMISSION_REGISTRATION,
     OWN_FORM_BODY_LIMIT_BYTES,
     OwnFormRejection,
     OwnFormSubmission,
     SlidingWindowLimiter,
     render_embed_js,
+    own_form_admission,
+    registration_flow_missing,
     render_page_html,
     translate_own_form_submission,
     webhook_copy,
@@ -380,6 +383,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # de cada aliada son sus [[formularios_propios]]; por instancia, solo
     # prenderlo. Apagado, las rutas no existen (404).
     "own_forms_enabled",
+    # 4.3 (D-43.3): un formulario propio de registro a un evento no recibe el
+    # primer contacto comercial. Lo especifico (que formulario es de registro)
+    # es de [[formularios_propios]]; por instancia, solo prenderlo.
+    "own_forms_registration_flow_enabled",
     "chatwoot_human_pause_enabled",
     # Levantar la pausa no depende del aliado: lo unico especifico es el id del
     # macro de Chatwoot, que ya es configuracion por runtime.
@@ -1232,6 +1239,11 @@ class Settings:
     # El origen publico del bridge (https://dominio): las rutas de la pagina y
     # del script se arman con el. Sin el, FLOW_APPROVAL_BASE_URL.
     own_forms_public_base_url: str | None = None
+    # 4.3 (D-43.3): OWN_FORMS_REGISTRATION_FLOW_ENABLED. Junto con OWN_FORMS_ENABLED,
+    # FLOW_ENGINE_ENABLED y FLOW_ENGINE_NATIVE_INTENT_ENABLED, un formulario propio
+    # con tipo = "registro" se admite sin planificar el primer contacto comercial.
+    # Con cualquiera apagado (el default), el formulario de registro va como hoy.
+    own_forms_registration_flow_enabled: bool = False
     precheckout_first_touch_enabled: bool = False
     precheckout_first_touch_token: str | None = None
     precheckout_delayed_first_touch_enabled: bool = False
@@ -1829,6 +1841,9 @@ class Settings:
             os.getenv("GHL_PRECHECKOUT_ADAPTER_TOKEN", "").strip() or None
         )
         own_forms_enabled = os.getenv("OWN_FORMS_ENABLED", "false").lower() == "true"
+        own_forms_registration_flow_enabled = (
+            os.getenv("OWN_FORMS_REGISTRATION_FLOW_ENABLED", "false").lower() == "true"
+        )
         own_forms_public_base_url = (
             os.getenv("OWN_FORMS_PUBLIC_BASE_URL", "").strip().rstrip("/")
             or os.getenv("FLOW_APPROVAL_BASE_URL", "").strip().rstrip("/")
@@ -2802,6 +2817,7 @@ class Settings:
             ghl_precheckout_adapter_token=ghl_precheckout_adapter_token,
             own_forms_enabled=own_forms_enabled,
             own_forms_public_base_url=own_forms_public_base_url,
+            own_forms_registration_flow_enabled=own_forms_registration_flow_enabled,
             precheckout_first_touch_enabled=precheckout_first_touch_enabled,
             precheckout_first_touch_token=precheckout_first_touch_token,
             precheckout_delayed_first_touch_enabled=(
@@ -4107,6 +4123,16 @@ def _validate_flow_engine_native_personal_coupon(settings: Settings) -> None:
         raise ValueError(f"{flag} requires DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED")
     if settings.recovery_discount_price is not None:
         format_price(settings.recovery_discount_price, settings.recovery_discount_currency)
+
+
+def _own_forms_registration_missing(settings: Settings) -> tuple[str, ...]:
+    """Los flags que faltan para el registro de 4.3 (D-43.4); vacio = activo."""
+    return registration_flow_missing(
+        registration_enabled=settings.own_forms_registration_flow_enabled,
+        own_forms_enabled=settings.own_forms_enabled,
+        flow_engine_enabled=settings.flow_engine_enabled,
+        native_intent_enabled=settings.flow_engine_native_intent_enabled,
+    )
 
 
 def _validate_flow_engine_native_intent(settings: Settings) -> None:
@@ -5520,6 +5546,16 @@ def create_app(
             # own-forms-v1: solo con el flag; apagado, el payload no cambia.
             instance_readiness["own_forms"] = (
                 f"enabled:{len(settings.instance_manifest.own_forms)}"
+            )
+        if settings.own_forms_registration_flow_enabled:
+            # 4.3 (D-43.4): solo con el flag; apagado, el payload no cambia.
+            # Con un flag del motor apagado, inerte (el registro va como hoy).
+            missing = _own_forms_registration_missing(settings)
+            instance_readiness["own_forms_registration"] = (
+                "inerte:" + ",".join(missing)
+                if missing
+                else "admite_sin_flujo:"
+                + str(sum(form.is_registration for form in settings.instance_manifest.own_forms))
             )
         ghl_adapter_risk = _ghl_adapter_risk_readiness(settings.instance_manifest)
         if ghl_adapter_risk is not None:
@@ -13513,6 +13549,36 @@ def create_app(
         )
         return admission
 
+    async def _admit_registration_lead(
+        submission: LeadPrecheckoutSubmission,
+        raw_payload: dict[str, object],
+        route: ProductRoute,
+        form: object,
+    ) -> PrecheckoutAdmissionResult:
+        # 4.3 (D-43.3): un formulario propio de registro con el registro activo.
+        # Se admite en su funnel (lo que lee la historia de la persona) y no se
+        # planifica nada: ni el primer contacto comercial del legado ni un flujo
+        # nativo de intencion. La confirmacion la arma un flujo con
+        # dispara.registro cuando la base lo rutee (own-forms-v1, «Registro a un
+        # evento»); hasta entonces no sale ningun mensaje.
+        assert shared_supabase is not None
+        admission = await shared_supabase.admit_portable_observed_lead_precheckout(
+            config=route.config,
+            external_submission_id=submission.external_submission_id,
+            raw_payload=raw_payload,
+            canonical_payload=submission.as_canonical_payload(),
+        )
+        logger.info(
+            "own_form_registration_admitted form=%s evento=%s product=%s admission=%s "
+            "flow=sin_ruteo_de_la_base submission_id=%s",
+            getattr(form, "key", "-"),
+            getattr(form, "registration_event", None) or "-",
+            route.key,
+            admission.outcome,
+            admission.submission_id,
+        )
+        return admission
+
     @app.post("/webhooks/lead", status_code=status.HTTP_200_OK)
     async def receive_lead_precheckout_webhook(
         request: Request,
@@ -14000,8 +14066,18 @@ def create_app(
             )
         if shared_supabase is None:
             return reply(503, {"detail": {"codigo": "no_disponible"}}, outcome="error", reason="supabase")
+        admission_kind = own_form_admission(
+            form, registration_active=not _own_forms_registration_missing(settings)
+        )
         try:
-            admission = await _admit_portable_lead(submission_event, translation.event, route)
+            if admission_kind == OWN_FORM_ADMISSION_REGISTRATION:
+                admission = await _admit_registration_lead(
+                    submission_event, translation.event, route, form
+                )
+            else:
+                admission = await _admit_portable_lead(
+                    submission_event, translation.event, route
+                )
         except SupabaseError:
             return reply(503, {"detail": {"codigo": "no_disponible"}}, outcome="error", reason="persist")
         result = _lead_admission_response(submission_event, admission, background_tasks)

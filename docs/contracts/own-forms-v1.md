@@ -65,6 +65,26 @@ Después de responder, si el formulario declara `webhooks`, el bridge les manda 
 
 `OWN_FORMS_ENABLED=true` por instancia. Apagado, las tres rutas dan 404 y `/ready` no cambia; prendido, `/ready` dice `own_forms: enabled:<n>`. Con el flag prendido el bridge no arranca sin el evento `intencion`, sin `[[formularios_propios]]` o sin el origen público (`OWN_FORMS_PUBLIC_BASE_URL`, o en su defecto `FLOW_APPROVAL_BASE_URL`).
 
+## Registro a un evento (4.3, propuesto el 2026-11-26)
+
+Propuesto, sin desplegar ni activar. Un formulario propio puede ser la inscripción a un evento (una clase gratuita, un vivo) en vez del formulario de la VSL antes del checkout:
+
+```toml
+[[formularios_propios]]
+clave = "att1-clase-28-11"
+landing_id = "alimenta-tu-tiroides"
+tipo = "registro"                  # default "precheckout": el de arriba
+evento = "clase-28-11"             # a-z, 0-9, guiones; 3 a 40. Solo con tipo = "registro"
+gracias_url = "https://..."        # obligatoria con tipo = "registro" (D-43.5)
+usar_core = false                  # obligatorio con tipo = "registro" (D-43.5)
+```
+
+- **D-43.5.** Un formulario de registro exige `gracias_url` y `usar_core = false`: la persona que se anotó a una clase nunca termina en el checkout de Hotmart.
+- **D-43.3 · la admisión.** Con `OWN_FORMS_REGISTRATION_FLOW_ENABLED`, `OWN_FORMS_ENABLED`, `FLOW_ENGINE_ENABLED` y `FLOW_ENGINE_NATIVE_INTENT_ENABLED` prendidos, el envío de un formulario de registro se admite con `admit_portable_observed_lead_precheckout` (el `lead.precheckout` 1.1.0 de siempre, guardado en `precheckout_submissions`) y **no se planifica nada**: ni el primer contacto comercial del legado ni un flujo nativo de `intencion`. La respuesta HTTP es la misma. Log: `own_form_registration_admitted form=<clave> evento=<clave> product=<producto> admission=<...> flow=sin_ruteo_de_la_base submission_id=<id>` (solo ids y códigos).
+- **D-43.4 · los flags.** Con cualquiera de los cuatro apagado, un formulario de registro va exactamente como hoy (como uno de `precheckout`). El bridge arranca igual; `/ready` dice `own_forms_registration: inerte:<flags que faltan>` con el flag del registro prendido, o `admite_sin_flujo:<formularios de registro>` con los cuatro. Sin el flag, `/ready` no cambia.
+- **La confirmación** la va a mandar un flujo con `dispara: {evento: intencion, registro: <evento>}` (flow-definition-v1, D-43.2). Hasta que la base lo rutee, la regla 14 no lo deja publicar y **no sale ningún mensaje**.
+- **Lo que falta (la pieza de la base, migración en el hueco `20261126700000`):** una entrada `admit_and_route_registration_lead_precheckout_v1` (o un parámetro `p_registration_event` en `admit_and_route_portable_lead_precheckout_v1`) que, con la clave del evento que manda el bridge (el envío crudo no la trae: medido en el envío de prueba de ATT1 del 2026-11-26), admita y pruebe solo los flujos nativos cuya versión activa tenga `dispara.registro` igual a esa clave, nunca el legado; `_flow_engine_native_trigger` que reconozca la forma con `registro` como `intencion`; y la selección de los flujos de `intencion` de hoy que excluya los que tienen `registro` (para que un envío comercial nunca lo tome un flujo de registro). La repetición de D21 y el toque nativo de 24 h tienen que separar el registro del primer contacto comercial: si no, una persona que ya recibió el primer contacto no recibe la confirmación (`ya_disparado`), y al revés. Pasa por los frenos de siempre del arranque nativo (la baja con los locks `chatwoot-opt-out-user`, el tope por persona de flow-engine-v2 §35 con `FLOW_ENGINE_NATIVE_PERSON_CAP_ENABLED`); la salud de Meta hoy solo la lee el disparo por audiencia y el masivo (`FLOW_AUDIENCE_META_HEALTH_PATH`), así que el envío de un registro necesita su propio freno por salud antes de prenderse. Después, `REGISTRATION_TRIGGER` (`intencion:registro`) entra en las capacidades del motor nativo y la regla 14 lo deja publicar.
+
 ## Riesgos y límites
 
 - La ruta es pública: la barrera es el origen, el campo trampa y el límite por IP y por teléfono. Un script que falsifique el `Origin` puede registrar una intención con consentimiento para un teléfono ajeno (el mismo riesgo del token del adaptador de GHL). Turnstile queda para una versión siguiente.

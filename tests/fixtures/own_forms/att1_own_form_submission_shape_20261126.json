@@ -1,0 +1,29 @@
+{
+  "_capture": {
+    "origen": "att1-db (stack setter-att1), public.precheckout_submissions, sesion psql con default_transaction_read_only=on",
+    "fila": "el envio de prueba del formulario propio att1-org-b, received_at 2026-11-26T15:28:48Z",
+    "capturado": "2026-11-26",
+    "anonimizado": "solo claves y valores sin datos personales: el nombre, el email y el telefono no salieron de la base (se leyeron solo las claves de buyer); la atribucion, solo sus claves",
+    "para_que": "4.3: el lead.precheckout de un formulario propio no trae la clave ni el tipo del formulario; la base solo ve source.landing_id y data.offer.code. Por eso la clave del evento de un registro la tiene que mandar el bridge aparte."
+  },
+  "contract_version": "1.1.0",
+  "provisional": false,
+  "activation_authorized": true,
+  "raw_keys": ["created_at", "data", "dedupe_key", "event", "id", "source", "version"],
+  "raw_event": "lead.precheckout",
+  "raw_version": "1.1.0",
+  "raw_source": {
+    "site": "metodoraizana-mx",
+    "aliado": "Dra. Nina Garza",
+    "system": "landing",
+    "page_url": "https://site.metodoraizana.com.mx/alimenta-tu-tiroides",
+    "landing_id": "alimenta-tu-tiroides"
+  },
+  "raw_data_keys": ["attribution", "buyer", "checkout_country", "checkout_url", "consent", "offer", "product"],
+  "raw_offer": {"code": "bmaztyhg"},
+  "raw_product": {"id": null, "name": "Alimenta tu Tiroides", "price": 47, "hotlink": "D98014973Y", "currency": "USD"},
+  "raw_consent": {"copy_version": "att1-whatsapp-contact-v1", "marketing_optin": true, "whatsapp_contact": true},
+  "attribution_keys": ["fbclid", "referrer", "sck", "utm_campaign", "utm_content", "utm_medium", "utm_source", "utm_term"],
+  "buyer_keys": ["email", "name", "phone", "phone_country_code", "phone_national"],
+  "canonical_keys": ["assurance", "commerce", "consent", "contract_version", "dedupe_key", "event_type", "external_submission_id", "identity", "lead", "source", "submitted_at"]
+}

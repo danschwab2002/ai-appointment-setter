@@ -327,6 +327,50 @@ def webhook_copy(event: Mapping[str, object], *, form_key: str) -> dict[str, obj
     }
 
 
+# ------------------------------------------------------------------ registro (4.3)
+
+# D-43.3: como se admite el envio de un formulario propio. ``hoy``: por la admision de siempre
+# (``_admit_portable_lead``, con el primer contacto del legado o el motor nativo de ``intencion`` segun
+# los flags de la instancia). ``registro_sin_flujo``: un formulario de registro con
+# OWN_FORMS_REGISTRATION_FLOW_ENABLED y el motor: se admite y no se planifica nada (ni el primer
+# contacto comercial del legado ni un flujo nativo de ``intencion`` sin ``registro``). La
+# confirmacion la arma un flujo con ``dispara.registro`` cuando la base sepa rutearlo (lo que falta,
+# own-forms-v1 «Registro a un evento»); hasta entonces, el envio queda guardado y no sale nada.
+OWN_FORM_ADMISSION_TODAY = "hoy"
+OWN_FORM_ADMISSION_REGISTRATION = "registro_sin_flujo"
+# Los flags que exige el registro (D5 del mapa Z1: el suyo y los del motor de flujos).
+REGISTRATION_FLOW_FLAGS = (
+    "OWN_FORMS_REGISTRATION_FLOW_ENABLED",
+    "OWN_FORMS_ENABLED",
+    "FLOW_ENGINE_ENABLED",
+    "FLOW_ENGINE_NATIVE_INTENT_ENABLED",
+)
+
+
+def registration_flow_missing(
+    *,
+    registration_enabled: bool,
+    own_forms_enabled: bool,
+    flow_engine_enabled: bool,
+    native_intent_enabled: bool,
+) -> tuple[str, ...]:
+    """Los flags que faltan para que un formulario de registro se admita como registro (D-43.4).
+
+    Vacio = el registro esta activo. Con cualquiera apagado, el formulario de registro va como hoy.
+    """
+
+    values = (registration_enabled, own_forms_enabled, flow_engine_enabled, native_intent_enabled)
+    return tuple(name for name, on in zip(REGISTRATION_FLOW_FLAGS, values, strict=True) if not on)
+
+
+def own_form_admission(form: object, *, registration_active: bool) -> str:
+    """``registro_sin_flujo`` para un formulario de registro con el registro activo; si no, ``hoy``."""
+
+    if registration_active and getattr(form, "is_registration", False) is True:
+        return OWN_FORM_ADMISSION_REGISTRATION
+    return OWN_FORM_ADMISSION_TODAY
+
+
 # ------------------------------------------------------------------ limits
 
 
