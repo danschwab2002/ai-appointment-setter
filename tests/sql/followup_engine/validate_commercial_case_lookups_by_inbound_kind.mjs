@@ -123,6 +123,8 @@ const DERIVED_FROM_MIGRATION = [
   '20261125000300_bulk_send_prepared_and_base_vetoes_v1.sql',
   // El registro por persona del masivo (20261125000400): exige lo preparado de 20261125000300.
   '20261125000400_bulk_send_recipients_read_v1.sql',
+  // El pais y la hora del evento de la audiencia (20261126700000).
+  '20261126700000_flow_audience_country_and_event_hour_v1.sql',
 ];
 for (const name of DERIVED_FROM_MIGRATION) {
   if (!MIGRATIONS.includes(name) || name <= MIGRATION) {

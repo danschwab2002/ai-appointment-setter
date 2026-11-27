@@ -7960,6 +7960,31 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         ), 0),
         3,
         'agent_live_knowledge'
+    union all
+    select
+        '20261126700000',
+        '20261126700000_flow_audience_country_and_event_hour_v1.sql',
+        -- hora_evento en los tres toques de la audiencia (4.4) ...
+        coalesce((
+            select (position('flow_audience_event_hour_steps' in definition) > 0
+                    and position('"variables_de": ["nombre", "producto", "hora_evento"]' in definition) > 0)::int
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_steps(text)')
+        ), 0)
+        -- ... y la lista por prefijo de la pagina (4.5), solo para flow_change_approver.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.approver_read_flow_audience_countries_v1(jsonb,text)')
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+              and coalesce(has_function_privilege(to_regrole('flow_change_approver'), oid, 'EXECUTE'), false)
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+        )::int,
+        2,
+        'flow_audience_country_and_event_hour'
 )
 select
     version,

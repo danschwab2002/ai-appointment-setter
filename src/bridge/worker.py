@@ -15,6 +15,7 @@ import multiprocessing
 import time
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta, timezone
+from collections.abc import Awaitable, Mapping
 from typing import Any, Callable
 
 import httpx
@@ -111,6 +112,7 @@ from bridge.payment_slip_first_touch import (
     payment_slip_ingestion_reason,
 )
 from bridge.flow_engine_runtime import READ_OK, FlowEngineRuntime
+from bridge.flow_audience import EVENT_HOUR_VARIABLE, audience_event, event_hour_text
 from bridge.flow_engine import (
     NATIVE_PAYMENT_SLIP_VARIABLES,
     NATIVE_TOUCH_STEP_PREFIX,
@@ -231,6 +233,13 @@ def _is_native_payment_slip_step(step_template: object) -> bool:
     return (isinstance(button, dict) and button.get("link") == "ficha") or bool(
         {"medio_de_pago", "vencimiento"} & set(variables))
 NATIVE_QUEUE_REFRESH_SECONDS = 60.0
+# 4.4 (flow-audience-trigger-v1, D-44.6): un paso con hora_evento sin la lectura del evento (el disparo por
+# audiencia apagado), sin ``evento`` en la version del flujo, o con el evento ya pasado, cierra sin salir. La
+# lectura que no contesta se reintenta.
+NATIVE_EVENT_HOUR_UNAVAILABLE = "flow_engine_native_event_hour_unavailable"
+NATIVE_EVENT_HOUR_READ_UNAVAILABLE = "flow_engine_native_event_hour_read_unavailable"
+NATIVE_EVENT_MISSING = "flow_engine_native_event_missing"
+NATIVE_EVENT_PASSED = "flow_engine_native_event_passed"
 # E-339: no se pudo leer si la persona viene por una campana con cupon, o no se
 # pudo cerrar su caso. A2 y Z no salen a ciegas: se reintenta.
 SEGMENT_LABELS_UNAVAILABLE = "segment_labels_unavailable"
@@ -1043,6 +1052,7 @@ class DurableDispatcher:
         native_segment_labels: NativeSegmentLabels | None = None,
         segment_catalog: object | None = None,
         unknown_offer_recorder: HotmartUnknownOfferRecorder | None = None,
+        audience_event_reader: Callable[[str, int], Awaitable[Mapping[str, Any] | None]] | None = None,
     ) -> None:
         if payment_failure_followup is not None and (
             not approved_template_direct or payment_failure_variants is None
@@ -1185,6 +1195,9 @@ class DurableDispatcher:
         # FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED. None (el flag apagado): esos pasos cierran sin salir. Es aparte
         # de ``payment_slip`` (la ficha del legado): no pide la plantilla del manifiesto.
         self._native_payment_slip = native_payment_slip
+        # 4.4 (flow-audience-trigger-v1): la definicion de la version de un flujo de audiencia, para la hora
+        # del evento (hora_evento). None (FLOW_AUDIENCE_TRIGGERS_ENABLED apagado): ese paso cierra sin salir.
+        self._audience_event_reader = audience_event_reader
         # flow-engine-v2 (E-065): la etiqueta cliente del paso etiquetar, por
         # un macro que solo la suma. Sin macro configurado, solo la nota.
         self._native_client_labeler = native_client_labeler
@@ -2255,11 +2268,14 @@ class DurableDispatcher:
                     not COUPON_CODE_RE.fullmatch(coupon_code) or coupon_code == "personal"))
             ):
                 return self._native_step_unsupported(action, step_template)
+        allowed_variables = NATIVE_STEP_VARIABLES | NATIVE_COUPON_VARIABLES if personal else NATIVE_STEP_VARIABLES
+        if not personal and variables and EVENT_HOUR_VARIABLE in variables:
+            # 4.4: la hora del evento, solo en un paso sin cupon (el de la audiencia).
+            allowed_variables = allowed_variables | {EVENT_HOUR_VARIABLE}
         if (
             not variables
             or len(set(variables)) != len(variables)
-            or not set(variables) <= (
-                NATIVE_STEP_VARIABLES | NATIVE_COUPON_VARIABLES if personal else NATIVE_STEP_VARIABLES)
+            or not set(variables) <= allowed_variables
         ):
             return self._native_step_unsupported(action, step_template)
         coupon_values: dict[str, str] = {}
@@ -2305,6 +2321,12 @@ class DurableDispatcher:
                 )
             coupon_code = resolved.code
             coupon_values = resolved.values
+        if EVENT_HOUR_VARIABLE in variables:
+            event_hour = await self._native_event_hour(
+                action=action, step_template=step_template, buyer_phone=execution_context.buyer_phone)
+            if isinstance(event_hour, _ApprovedTemplateComposition):
+                return event_hour
+            coupon_values = {**coupon_values, EVENT_HOUR_VARIABLE: event_hour}
         buyer_name = execution_context.buyer_name
         product_name = execution_context.product_name
         greeting_name: str | None = None
@@ -2874,6 +2896,54 @@ class DurableDispatcher:
             failure_reason=outcome.reason,
             retryable=outcome.retryable,
         )
+
+    def set_audience_event_reader(
+        self, reader: Callable[[str, int], Awaitable[Mapping[str, Any] | None]] | None
+    ) -> None:
+        """4.4: la lectura de la definicion de un flujo de audiencia (la arma el disparo por audiencia)."""
+        self._audience_event_reader = reader
+
+    async def _native_event_hour(
+        self, *, action: ScheduledAction, step_template: FlowEngineStepContext, buyer_phone: str | None
+    ) -> str | _ApprovedTemplateComposition:
+        """4.4 (flow-audience-trigger-v1): la hora del ``evento`` de la version fijada, en la zona de la persona."""
+        if self._audience_event_reader is None:
+            logger.warning(
+                "flow_engine_native_event_hour_unavailable action_id=%s flow_id=%s",
+                action.action_id,
+                step_template.flow_id,
+            )
+            return _ApprovedTemplateComposition(
+                failure_reason=NATIVE_EVENT_HOUR_UNAVAILABLE, retryable=False
+            )
+        try:
+            definition = await self._audience_event_reader(step_template.flow_id, step_template.version)
+        except Exception as exc:  # noqa: BLE001 - la lectura que no contesta se reintenta
+            logger.warning(
+                "flow_engine_native_event_hour_read_failed action_id=%s error=%s",
+                action.action_id,
+                type(exc).__name__,
+            )
+            return _ApprovedTemplateComposition(failure_reason=NATIVE_EVENT_HOUR_READ_UNAVAILABLE)
+        event = audience_event(definition) if isinstance(definition, Mapping) else None
+        if event is None:
+            logger.warning(
+                "flow_engine_native_event_missing action_id=%s flow_id=%s version=%s",
+                action.action_id,
+                step_template.flow_id,
+                step_template.version,
+            )
+            return _ApprovedTemplateComposition(failure_reason=NATIVE_EVENT_MISSING, retryable=False)
+        now = self._clock()
+        current = datetime.fromisoformat(now) if isinstance(now, str) else now
+        if current >= event.at:
+            logger.info(
+                "flow_engine_native_event_passed action_id=%s flow_id=%s",
+                action.action_id,
+                step_template.flow_id,
+            )
+            return _ApprovedTemplateComposition(failure_reason=NATIVE_EVENT_PASSED, retryable=False)
+        return event_hour_text(event, phone=buyer_phone)
 
     async def _compose_native_payment_slip_proposal(
         self,

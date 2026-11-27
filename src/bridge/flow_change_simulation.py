@@ -378,6 +378,11 @@ def build_new_audience_flow_simulation(items: Sequence[ProposalItem]) -> dict[st
             audience["etiquetas"] = list(spec.labels)
         if spec.excluded:
             audience["excluye"] = list(spec.excluded)
+        # 4.5: el pais, solo si el flujo lo pide (sin las claves, el resumen de antes byte a byte).
+        if spec.countries:
+            audience["paises"] = list(spec.countries)
+        if spec.excluded_countries:
+            audience["excluye_paises"] = list(spec.excluded_countries)
         trigger = definition.get("dispara")
         body = trigger.get(form) if isinstance(trigger, Mapping) else None
         summary = {
@@ -388,6 +393,9 @@ def build_new_audience_flow_simulation(items: Sequence[ProposalItem]) -> dict[st
             "disparos_por_evento": 0, "nace_en": "cohorte", "cohorte_al_nacer": 0, "alcance_al_nacer": 0,
             "cuenta_la_lista": "cada_envio", "confirma": _AUDIENCE_CONFIRMS[form],
         }
+        # 4.4: el evento del que habla el mensaje, solo si el flujo lo declara.
+        if isinstance(definition.get("evento"), Mapping):
+            summary["evento"] = json.loads(json.dumps(definition["evento"], ensure_ascii=False))
         return {"status": "built", "summary": summary, "summary_sha256": summary_sha256(summary), "cambios": []}
     except _Failed as failed:
         return {"status": "failed", "reason_code": failed.reason_code}
@@ -813,11 +821,19 @@ def build_native_audience_reach_simulation(reach: Any, items: Sequence[ProposalI
             audience["etiquetas"] = list(spec.labels)
         if spec.excluded:
             audience["excluye"] = list(spec.excluded)
+        # 4.5: el pais, solo si el flujo lo pide (sin las claves, el resumen de antes byte a byte).
+        if spec.countries:
+            audience["paises"] = list(spec.countries)
+        if spec.excluded_countries:
+            audience["excluye_paises"] = list(spec.excluded_countries)
         per_send = min(matching, spec.per_occurrence)
         # Por que el numero es un maximo: lo que la base no ve y lo que corta la ocurrencia.
         caveats = []
         if spec.labels or spec.excluded:
             caveats.append("etiquetas_de_chatwoot")
+        if spec.countries or spec.excluded_countries:
+            # 4.5: la base no mira el pais; lo filtra el bridge al armar la lista.
+            caveats.append("pais_del_telefono")
         # topes.repeticion: quien ya recibio una ocurrencia del flujo (la de la cohorte, por ejemplo) puede quedar
         # afuera como repetida; la lista lo mira al armarse.
         caveats.append("repeticion")

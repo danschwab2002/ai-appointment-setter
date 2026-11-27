@@ -11216,6 +11216,10 @@ def create_app(
         producer=slack_runtime.producer if slack_runtime is not None else None,
     )
     app.state.flow_audience = flow_audience
+    if flow_audience is not None and durable_dispatcher is not None:
+        # 4.4 (flow-audience-trigger-v1): la hora del evento de un paso con hora_evento sale de la definicion de
+        # la version del flujo de audiencia. Sin el disparo por audiencia, ese paso cierra sin salir.
+        durable_dispatcher.set_audience_event_reader(flow_audience.store.read_flow_definition)
 
     # El masivo manejado por el AE: la base, la pagina y el motor. Todo el armado
     # vive en bulk_send_wiring; aca solo se crea. Apagado devuelve None.

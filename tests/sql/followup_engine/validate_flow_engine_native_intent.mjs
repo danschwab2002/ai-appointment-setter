@@ -204,7 +204,9 @@ if (JSON.stringify(names.slice(names.indexOf(MIGRATION) + 1)) !== JSON.stringify
     // Las corridas del juez (20261126500000, 4.9).
     '20261126500000_agent_campaign_judge_runs_v1.sql',
     // El conocimiento vivo del AE (20261126600000, pieza 5.5).
-    '20261126600000_agent_live_knowledge_v1.sql'])) {
+    '20261126600000_agent_live_knowledge_v1.sql',
+    // El pais y la hora del evento de la audiencia (20261126700000, piezas 4.4 y 4.5).
+    '20261126700000_flow_audience_country_and_event_hour_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la del seguimiento a 24 h nativo`, names.slice(-3));
 }
 if (maribel.name !== 'maribel_retomar_proceso_01') fail('el fixture no es la plantilla de Maribel');

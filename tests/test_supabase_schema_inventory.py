@@ -2587,14 +2587,28 @@ def test_agent_campaign_judge_runs_fingerprint_counts_the_rows() -> None:
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact
 
 
-def test_agent_live_knowledge_fingerprint_is_last() -> None:
+def test_agent_live_knowledge_fingerprint_counts_the_rows() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261126600000 (live-knowledge-v1, pieza 5.5): las dos tablas con RLS, la lectura de la
     # publicada solo de service_role y publicar desde la pagina sin execute para la API ni service_role.
-    row = sql.split("'20261126600000'", 1)[1].split("select\n    version,", 1)[0]
+    row = sql.split("'20261126600000'", 1)[1].split("'20261126700000'", 1)[0].rsplit("union all", 1)[0]
     compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
 
-    assert compact.endswith(",3,'agent_live_knowledge')")
+    assert compact.endswith(",3,'agent_live_knowledge'")
     assert "to_regclass('public.agent_knowledge_versions')" in compact
     assert "get_live_agent_knowledge_v1(jsonb)" in compact
     assert "approver_publish_agent_knowledge_v1(jsonb,text,uuid,text,text)" in compact
+
+
+def test_flow_audience_country_and_event_hour_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261126700000 (4.5 y 4.4): hora_evento en los toques de la audiencia y la lista por prefijo
+    # de la pagina, solo para flow_change_approver.
+    row = sql.split("'20261126700000'", 1)[1].split("select\n    version,", 1)[0]
+    compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
+
+    assert compact.endswith(",2,'flow_audience_country_and_event_hour')")
+    assert "_flow_engine_native_steps(text)" in compact
+    assert "flow_audience_event_hour_steps" in compact
+    assert "approver_read_flow_audience_countries_v1(jsonb,text)" in compact
+    assert "nothas_function_privilege('service_role',oid,'EXECUTE')" in compact

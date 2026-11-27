@@ -173,7 +173,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026110100030
     // Las corridas del juez (20261126500000, 4.9).
     '20261126500000_agent_campaign_judge_runs_v1.sql',
     // El conocimiento vivo del AE (20261126600000, pieza 5.5).
-    '20261126600000_agent_live_knowledge_v1.sql'])) {
+    '20261126600000_agent_live_knowledge_v1.sql',
+    // El pais y la hora del evento de la audiencia (20261126700000).
+    '20261126700000_flow_audience_country_and_event_hour_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de los frenos del seguimiento`, names.slice(position + 1));
 }
 
@@ -536,7 +538,11 @@ const unsupportedOf = async (definition) => one(await sql(
     }
   };
   visit(join(root, 'tests/fixtures'));
-  const events = definitions.filter((d) => !(d.dispara && typeof d.dispara === 'object' && d.dispara.silencio?.lo_ultimo === 'agente'));
+  // Sin los disparos por audiencia (fecha, cada, manual): los abrio despues 20261112210600 (E-483), no el
+  // silencio, y una definicion real de un aviso de Maribel (fixture de 20261126700000) daria otra cosa que antes.
+  const AUDIENCE = ['fecha', 'cada', 'manual'];
+  const events = definitions.filter((d) => !(d.dispara && typeof d.dispara === 'object'
+    && (d.dispara.silencio?.lo_ultimo === 'agente' || AUDIENCE.some((form) => form in d.dispara))));
   const read = async () => {
     const out = [];
     for (const definition of events) {

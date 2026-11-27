@@ -1,6 +1,6 @@
 # flow-audience-trigger-v1: el disparo por audiencia (fecha, cada, manual)
 
-Versión 0.6.0 (propuesta, E-484 sobre E-483, 13/11/2026; freno de salud de E-547; claves de `/ready` de E-559; la audiencia contada de E-622; la repetición cuenta a quien arrancó, E-665). Extiende `setter-flujo/v1` (`flow-definition-v1.md`) y el ciclo (`flow-change-cycle-v1.md`). Diseño: hito H6 del mapa «el AE maneja todos los flujos» (vault, `coordinacion/etapa-1/mapa-ae-todos-los-flujos.md` §2), decisiones D6, D7, D8 y D10.
+Versión 0.8.0 (propuesta, E-484 sobre E-483, 13/11/2026; freno de salud de E-547; claves de `/ready` de E-559; la audiencia contada de E-622; la repetición cuenta a quien arrancó, E-665; lo que dice cada envío, E-666; el país y la hora del evento, 4.5 y 4.4 de la lista definitiva, 26/11/2026). Extiende `setter-flujo/v1` (`flow-definition-v1.md`) y el ciclo (`flow-change-cycle-v1.md`). Diseño: hito H6 del mapa «el AE maneja todos los flujos» (vault, `coordinacion/etapa-1/mapa-ae-todos-los-flujos.md` §2), decisiones D6, D7, D8 y D10.
 
 Los valores marcados **DEFAULT_REVISAR_DAN** son los del mapa y los tiene que revisar Dan antes de prender nada.
 
@@ -23,6 +23,11 @@ para:
   excluye: [vip]           # ninguna de estas
   producto: el-protocolo   # opcional; si está, es el producto del flujo (otro es invalid_value): «compró» es de ese producto
   formulario_en: 30d       # con prospecta: dejó el formulario con permiso en los últimos N días (DEFAULT_REVISAR_DAN: 30d)
+  paises: [CO, MX]         # opcional (4.5): solo estos países (ISO 3166-1 de dos letras), por el número de WhatsApp
+  excluye_paises: [US]     # opcional (4.5): ninguno de estos
+evento:                    # opcional (4.4): el momento del que habla el mensaje (la clase, el vivo)
+  el: "2026-12-01T20:00"
+  zona: America/Mexico_City
 ritmo:
   por_hora: 200            # DEFAULT_REVISAR_DAN (D10)
   por_ocurrencia: 1000     # DEFAULT_REVISAR_DAN (D10)
@@ -36,6 +41,19 @@ entra:
 - **Una sola definición de «compró» y del formulario (E-483, corrección de la revisión del 13/11; escrito al construirlo, antes del merge, no afirma nada desplegado).** El validador rechaza un `para.producto` distinto del producto del flujo (`invalid_value` en `/para/producto`). La lista (`read_flow_audience_candidates_v1`), el armado (`materialize_flow_audience_occurrence_v1`), la selección del bridge (`select_members`) y la admisión nativa (`_flow_engine_native_audience_reason`, migración `20261112210600`) miran la compra en el producto del flujo, sin reembolso ni contracargo posterior de la misma transacción; el formulario es el del producto del flujo, con `whatsapp_contact_authorized` y dentro de `formulario_en`, que en todas las capas es de `1d` a `365d` (`30d` sin la clave; otra cosa: la lista y el armado fallan con `flow_audience_form_window_invalid` y la admisión da `no_entra:permiso`). Queda distinto: la admisión cuenta además la compra con nuestro link (`_portable_checkout_link_purchase_exists`), que no mira reembolsos.
 - Al normalizar se escriben `ritmo`, `formulario_en` y la repetición `una_por: persona, otra_despues_de: 7d` (DEFAULT_REVISAR_DAN).
 - Con `FLOW_ENGINE_NATIVE_MULTITOUCH_ENABLED` el validador abre las tres formas en el motor nativo (`NativeRuntime.native_multitouch`; `flow-engine-v2` §34, E-483): hasta tres toques con nombre y producto, sin cupón. Sin ese flag, un flujo así vuelve con `motor_nativo:disparador` («todavía no»), como cualquier disparador que el motor no ejecuta.
+
+### El país (4.5, escrito al construirlo, antes del merge: no afirma nada desplegado)
+
+- **De dónde sale (D-45.2).** Del número de WhatsApp de la persona en forma canónica (`bridge.phones.whatsapp_phone_country`), y solo de sus primeros cuatro dígitos: el indicativo (los códigos de la UIT no se pisan) y, dentro de +1 (Estados Unidos, Canadá y el Caribe), el código de área, con la metadata de libphonenumber (`phonenumbers`). Así 1713 es US, 1236 es CA, 1809 es DO y 1787 es PR; un código de área que no es de ninguna región (555) no tiene país. Un indicativo compartido fuera de +1 da su región principal (+7 es RU, +44 es GB).
+- **El filtro (D-45.1, D-45.3).** Lo aplica el bridge al elegir a quién mandar a armar (`select_members`), después de las etiquetas y antes del estado: con `paises`, queda afuera quien no es de uno de esos países (`pais`); con `excluye_paises`, quien es de uno de esos (`pais_excluido`). **Con cualquiera de las dos, un número cuyo país no se reconoce queda afuera** (`pais`): un filtro por país no deja pasar a quien no se sabe de dónde es. Sin las dos claves, la lista es la de antes byte a byte (la huella de la consulta incluye `para`, así que un flujo viejo tiene la misma). La base no mira el país: arma la lista que le manda el bridge, y la audiencia contada (`read_flow_audience_reach_v1`) sigue sin verlo (es un máximo, como con las etiquetas).
+- **La forma.** Listas sin repetir de 1 a 60 códigos de dos letras en mayúsculas que libphonenumber conoce; un país no puede estar en las dos (`invalid_value`, regla 1).
+- **La página.** `/flow-approval/envios` dice en cada ocurrencia «Por país: México 128, Colombia 9, …», contado sobre las personas de la lista que no quedaron omitidas. La base da solo cuántas hay por prefijo de cuatro dígitos (`approver_read_flow_audience_countries_v1(p_instance jsonb, p_session_hash text)`, migración `20261126700000`, security definer, solo `flow_change_approver`, con la sesión de «Entrar con Slack»; devuelve `{"contract": "flow-audience-countries-v1", "occurrences": {<ocurrencia>: {<prefijo>: n}}}` de las 50 más nuevas) y el bridge lo traduce con la misma regla del filtro. Sin teléfonos ni contactos. Con una base sin la migración, la página es la de antes.
+
+### La hora del evento (4.4, escrito al construirlo, antes del merge: no afirma nada desplegado)
+
+- **La forma (D-44.1, D-44.5).** `evento: {el, zona}` con la forma de `dispara.fecha` (fecha y hora local y una zona IANA), solo con un disparo por audiencia (con un evento o un silencio, `invalid_value` en `/evento`). La variable de plantilla `hora_evento` (en `VARIABLES` del esquema y en el pedido de plantillas, con el ejemplo «20:00 (hora de México)») va solo en un flujo con `evento` (si no, `invalid_value` en la variable). El motor nativo la ejecuta solo en la audiencia (`NATIVE_AUDIENCE_VARIABLES`); la base la deja compilar en los tres toques de `nativo:audiencia` desde `20261126700000`.
+- **El texto (D-44.2 a D-44.4).** «HH:MM (hora de <país>)», en 24 h, con la hora del evento en la zona del país del número de la persona según una tabla fija: MX Ciudad de México, CO Bogotá, AR Buenos Aires, PE Lima, EC Guayaquil, CL Santiago, VE Caracas, BO La Paz, PY Asunción, UY Montevideo, CR, GT, SV, HN, NI, PA, DO, PR y ES Madrid (`flow_audience.COUNTRY_ZONES`). Estados Unidos, Canadá y Brasil (varias zonas con horas distintas) y un país que no está en la tabla o que no se reconoce reciben la hora del evento en su zona, con el nombre de esa zona («19:00 (hora de Colombia)»). Si en la zona de la persona el evento cae otro día, se suma la fecha: «01:00 del 23/11 (hora de España)». Los cambios de hora los da la base de zonas del sistema (tzdata).
+- **El envío (D-44.6).** El bridge lee la definición de la versión fijada del recorrido entre los flujos de audiencia que corren (`read_flow_audience_flows_v1`), saca `evento` y llena `hora_evento` con el número de la persona. El paso cierra sin salir y sin reintento si el disparo por audiencia está apagado (no hay lectura: `flow_engine_native_event_hour_unavailable`), si la versión ya no corre o no trae `evento` (`flow_engine_native_event_missing`) o si el evento ya pasó (`flow_engine_native_event_passed`); una lectura que no contesta se reintenta (`flow_engine_native_event_hour_read_unavailable`). Un paso sin `hora_evento` no lee nada nuevo.
 
 ## Cómo corre (propuesta, se mide en el E2E)
 
@@ -69,3 +87,4 @@ entra:
 - 0.6.0 (17/11/2026, E-665): la repetición (regla 6) cuenta solo a quien arrancó un recorrido o sigue sin asentar; `no_arranca` y `sin_flujo` no la consumen. Escrito antes del merge: no afirma nada desplegado.
 - 0.4.1 (14/11/2026, E-559): las claves de `/ready` pasan a texto. Con enteros y un objeto, FastAPI rechazaba la respuesta y `/ready` daba 500 con el flag prendido. Escrito antes del merge: no afirma nada desplegado.
 - 0.7.0 (18/11/2026, E-666): lo que dice cada envío (regla 9 de «Cómo corre»): cuántas arrancaron, cuántas no y por qué, en la lectura de las ocurrencias y en la página. Escrito antes del merge: no afirma nada desplegado.
+- 0.8.0 (26/11/2026, 4.5 y 4.4 de la lista definitiva): `para.paises`, `para.excluye_paises` y el conteo por país de la página; `evento` y la variable `hora_evento`. Sin flag nuevo: viven dentro de `FLOW_AUDIENCE_TRIGGERS_ENABLED`. Migración `20261126700000`. Escrito antes del merge: no afirma nada desplegado.

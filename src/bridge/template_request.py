@@ -83,6 +83,8 @@ SLIP_EXAMPLE_SUFFIX = "0123456789abcdef0123456789abcdef0123456789abcdef"
 EXAMPLE_WHEN = "hoy a las 3:10 p. m."
 EXAMPLE_DUE = "mañana"
 EXAMPLE_PAYMENT_METHOD = "OXXO"
+# 4.4 (flow-audience-trigger-v1): el ejemplo de hora_evento, con la forma de flow_audience.event_hour_text.
+EXAMPLE_EVENT_HOUR = "20:00 (hora de México)"
 
 _NAMED = re.compile(r"\{\{\s*([^{}\s]*)\s*\}\}")
 _POSITIONAL = re.compile(r"\{\{\s*\d+\s*\}\}")
@@ -631,7 +633,8 @@ def _examples(context: TemplateContext) -> dict[str, str]:
         price = f"${amount} {context.currency}" if context.currency else f"${amount}"
     store = context.slip_buttons[0][1] if context.slip_buttons else EXAMPLE_PAYMENT_METHOD
     return {"nombre": EXAMPLE_NAME, "producto": context.product_name, "medio_de_pago": store,
-            "cuando": EXAMPLE_WHEN, "precio": price or "", "vence": EXAMPLE_DUE}
+            "cuando": EXAMPLE_WHEN, "precio": price or "", "vence": EXAMPLE_DUE,
+            "hora_evento": EXAMPLE_EVENT_HOUR}
 
 
 def meta_request(draft: Draft, context: TemplateContext) -> dict[str, Any]:
