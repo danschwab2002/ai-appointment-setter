@@ -192,6 +192,12 @@ _TOP_KEYS = (
 # Los disparadores (E-484): un evento, un silencio, o una de las tres formas del
 # disparo por audiencia (flow_audience), que van con ``para`` y, opcional, ``ritmo``.
 TRIGGER_KEYS = ("evento", "silencio") + AUDIENCE_FORMS
+# D-43.2 (4.3, confirmacion de registro): ``dispara: {evento: intencion, registro: <clave>}`` toma solo los
+# envios de un formulario propio de registro cuyo ``evento`` es esa clave ([[formularios_propios]],
+# ``tipo = "registro"``). No es otro disparador (``trigger_of`` sigue viendo ``intencion``): es un filtro del
+# formulario que la regla 14 marca «todavia no» hasta que la base sepa rutearlo.
+REGISTRATION_KEY = "registro"
+_REGISTRATION_EVENT = re.compile(r"[a-z0-9][a-z0-9-]{2,39}")
 _STEP_KEYS: Mapping[str, tuple[str, ...]] = {
     "esperar": ("esperar",),
     "plantilla": ("plantilla", "idioma", "variables", "boton"),
@@ -1531,7 +1537,15 @@ def _check_trigger(out: _Collector, trigger: object) -> None:
     if not isinstance(trigger, Mapping):
         out.add(INVALID_VALUE, ("dispara",), reason="dispara es un objeto con evento o con silencio.")
         return
-    _check_keys(out, trigger, ("dispara",), TRIGGER_KEYS)
+    _check_keys(out, trigger, ("dispara",), TRIGGER_KEYS + (REGISTRATION_KEY,))
+    if REGISTRATION_KEY in trigger:
+        segments = ("dispara", REGISTRATION_KEY)
+        if trigger.get("evento") != "intencion":
+            out.add(INVALID_VALUE, segments, reason="registro solo va con evento: intencion.")
+        value = trigger[REGISTRATION_KEY]
+        if not isinstance(value, str) or _REGISTRATION_EVENT.fullmatch(value) is None:
+            out.add(INVALID_VALUE, segments,
+                    reason="registro es la clave del evento de un formulario de registro (a-z, 0-9, guiones).")
     for form in AUDIENCE_FORMS:
         if form in trigger:
             _add_problems(out, check_audience_trigger(form, trigger[form]))
@@ -2095,7 +2109,7 @@ _SKIP = object()
 
 
 _SUB_ORDER: Mapping[str, tuple[str, ...]] = {
-    "dispara": TRIGGER_KEYS,
+    "dispara": TRIGGER_KEYS + (REGISTRATION_KEY,),
     "para": ("es", "etiquetas", "producto", "formulario_en", "excluye", "paises", "excluye_paises"),
     "ritmo": ("por_hora", "por_ocurrencia"),
     "evento": ("el", "zona"),

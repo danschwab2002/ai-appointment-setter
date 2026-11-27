@@ -217,6 +217,14 @@ OWN_FORM_DEFAULT_DISCLAIMER = (
     "datos personales conforme a la Política de Privacidad de este sitio."
 )
 MAX_OWN_FORMS = 32
+# D-43.1 (4.3, confirmacion de registro): el tipo de un formulario propio. ``precheckout`` (el
+# default) es el de hoy: el formulario de la VSL antes del checkout. ``registro`` es la inscripcion a
+# un evento (una clase gratuita, un vivo): lleva ``evento`` (la clave con la que un flujo la nombra en
+# ``dispara.registro``) y, con OWN_FORMS_REGISTRATION_FLOW_ENABLED, nunca recibe el primer contacto
+# comercial. Sin el flag, un formulario de registro se comporta como uno de ``precheckout``.
+OWN_FORM_KIND_PRECHECKOUT = "precheckout"
+OWN_FORM_KIND_REGISTRATION = "registro"
+OWN_FORM_KINDS = (OWN_FORM_KIND_PRECHECKOUT, OWN_FORM_KIND_REGISTRATION)
 
 
 @dataclass(frozen=True)
@@ -241,6 +249,13 @@ class OwnForm:
     thanks_url: str | None = None
     webhooks: tuple[str, ...] = ()
     use_core: bool = True
+    # D-43.1: ``precheckout`` o ``registro``; ``registration_event`` solo con ``registro``.
+    kind: str = OWN_FORM_KIND_PRECHECKOUT
+    registration_event: str | None = None
+
+    @property
+    def is_registration(self) -> bool:
+        return self.kind == OWN_FORM_KIND_REGISTRATION
 
 
 class ManifestError(ValueError):
@@ -1326,7 +1341,7 @@ def _own_forms(
             {"clave", "landing_id"},
             {
                 "aclaracion", "titulo", "titulo_pagina", "boton", "links", "origenes",
-                "pais", "paises", "gracias_url", "webhooks", "usar_core",
+                "pais", "paises", "gracias_url", "webhooks", "usar_core", "tipo", "evento",
             },
         )
         form_key = _str(item, "clave", f"{where}.clave")
@@ -1387,6 +1402,24 @@ def _own_forms(
         use_core = item.get("usar_core", True)
         if not isinstance(use_core, bool):
             raise ManifestError(f"{where}.usar_core debe ser true o false")
+        kind = optional_text("tipo", OWN_FORM_KIND_PRECHECKOUT)
+        if kind not in OWN_FORM_KINDS:
+            raise ManifestError(f"{where}.tipo debe ser uno de {', '.join(OWN_FORM_KINDS)}")
+        registration_event: str | None = None
+        if kind == OWN_FORM_KIND_REGISTRATION:
+            registration_event = _str(item, "evento", f"{where}.evento")
+            if _OWN_FORM_KEY.fullmatch(registration_event) is None:
+                raise ManifestError(
+                    f"{where}.evento debe ser un slug de 3 a 40 caracteres (a-z, 0-9, guiones)"
+                )
+            # D-43.5: una inscripcion nunca termina en el checkout de Hotmart. Sin gracias_url,
+            # o con el core armando el checkout, la persona que se anoto a una clase iria a pagar.
+            if thanks_url is None:
+                raise ManifestError(f"{where}: un formulario de registro exige gracias_url")
+            if use_core:
+                raise ManifestError(f"{where}: un formulario de registro exige usar_core = false")
+        elif "evento" in item:
+            raise ManifestError(f"{where}.evento solo vale con tipo = \"registro\"")
         forms.append(
             OwnForm(
                 key=form_key,
@@ -1402,6 +1435,8 @@ def _own_forms(
                 thanks_url=thanks_url,
                 webhooks=webhooks,
                 use_core=use_core,
+                kind=kind,
+                registration_event=registration_event,
             )
         )
     form_keys = [form.key for form in forms]
