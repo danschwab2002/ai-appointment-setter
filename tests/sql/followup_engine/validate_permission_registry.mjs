@@ -112,7 +112,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026111700050
     // El pais y la hora del evento de la audiencia (20261126700000, piezas 4.4 y 4.5).
     '20261126700000_flow_audience_country_and_event_hour_v1.sql',
     // Las fases del lanzamiento (20261126800000).
-    '20261126800000_agent_campaign_phases_v1.sql'])) {
+    '20261126800000_agent_campaign_phases_v1.sql',
+    // Los frenos ante Meta (20261127100000, F1).
+    '20261127100000_meta_enforcement_brakes_v1.sql'])) {
   fail(`despues de ${MIGRATION} van solo la de E-661, la de E-665, la de E-666 y la de E-656`, names.slice(position + 1));
 }
 

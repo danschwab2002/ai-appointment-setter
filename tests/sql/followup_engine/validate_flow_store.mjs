@@ -718,6 +718,9 @@ check(sameJson([...lockTimeouts].sort(), [
   // El conocimiento vivo del AE: publicar, descartar y volver al archivo desde la pagina (20261126600000).
   'approver_discard_agent_knowledge_v1', 'approver_publish_agent_knowledge_v1',
   'approver_return_to_file_agent_knowledge_v1',
+  // Los frenos ante Meta: registrar, actuar a mano y los avisos toman el candado de la instancia (20261127100000).
+  'act_on_meta_enforcement_v1', 'claim_meta_enforcement_notices_v1', 'finish_meta_enforcement_notice_v1',
+  'record_meta_account_event_v1', 'record_meta_template_categories_v1', 'record_meta_template_category_webhook_v1',
 ].sort()), '2: lock_timeout de 5 s en las que esperan locks', lockTimeouts);
 
 // ===========================================================================

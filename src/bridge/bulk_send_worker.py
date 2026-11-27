@@ -856,7 +856,8 @@ class BulkSendWorker:
                  lock: PortfolioLock, templates: TemplateResolver, config: BulkSendWorkerConfig,
                  notifier: BulkBrakeNotifier | None = None, prepare: Prepare | None = None,
                  clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
-                 sleep: Callable[[float], Awaitable[object]] = asyncio.sleep) -> None:
+                 sleep: Callable[[float], Awaitable[object]] = asyncio.sleep,
+                 meta_brake: Callable[[str, str], str | None] | None = None) -> None:
         self._store = store
         self._sender = sender
         self._revalidate = revalidate
@@ -870,6 +871,10 @@ class BulkSendWorker:
         self._prepare = prepare
         self._clock = clock
         self._sleep = sleep
+        # meta-enforcement-brakes-v1: la plantilla retirada por recategorizacion o
+        # la instancia congelada por Meta frenan el masivo (antes de arrancar y
+        # antes de cada lote). None (el flag apagado) no cambia nada.
+        self._meta_brake = meta_brake
         self._frozen: dict[str, SendWindow] = {}
         self._prepared_done: set[str] = set()
         self._busy = asyncio.Lock()
@@ -988,6 +993,10 @@ class BulkSendWorker:
         pasada siguiente; pasada la hora de corte, frena por corte)."""
         if send.template_name in self._config.retry_templates:
             return "plantilla_con_reintento"
+        if self._meta_brake is not None:
+            braked = self._meta_brake(send.template_name, send.template_language)
+            if braked is not None:
+                return braked
         try:
             template = await self._templates.resolve(send.template_name, send.template_language)
         except MetaTemplatesError:
@@ -1134,6 +1143,10 @@ class BulkSendWorker:
             if current.state == "frenado":
                 raise _Stop(f"frenado:{current.brake_reason}")
             raise _Stop(f"estado_{current.state}")
+        if self._meta_brake is not None:
+            braked = self._meta_brake(run.send.template_name, run.send.template_language)
+            if braked is not None:
+                raise _Stop(await self._brake(run.send, braked, notify=True))
         now = self._now()
         if now >= run.window.cut:
             raise _Stop(await self._brake(run.send, "corte_por_hora", notify=True))

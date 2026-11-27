@@ -171,7 +171,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026110300100
     // El pais y la hora del evento de la audiencia (20261126700000, piezas 4.4 y 4.5).
     '20261126700000_flow_audience_country_and_event_hour_v1.sql',
     // Las fases del lanzamiento (20261126800000).
-    '20261126800000_agent_campaign_phases_v1.sql'])) {
+    '20261126800000_agent_campaign_phases_v1.sql',
+    // Los frenos ante Meta (20261127100000, F1).
+    '20261127100000_meta_enforcement_brakes_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la del aviso de derivaciones sin atender`, names.slice(position + 1));
 }
 if (TEMPLATES.length !== 4 || REFUSALS.length !== 3 || REFUSALS[1].persona !== REFUSALS[2].persona) {

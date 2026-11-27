@@ -1,0 +1,142 @@
+{
+ "_que_es": "DOCUMENTADO, NO CAPTURADO. account_update con ACCOUNT_RESTRICTION: la estructura generica de https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/template-categorization (seccion de enforcement) con los valores de su tabla por escenario, copiada el 2026-11-27. La doc trae '<unix_timestamp>' en expiration: aca va un numero inventado. El id de la cuenta es el de los ejemplos de Meta (el mismo que template_category_update). 'restriccion_generica' es el ejemplo de la referencia de account_update (https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/account_update). H2 del mapa: hoy no llega ninguno; reemplazar por una captura cuando llegue el primero.",
+ "advertencia": {
+  "entry": [
+   {
+    "id": "102290129340398",
+    "time": 1746169200,
+    "changes": [
+     {
+      "field": "account_update",
+      "value": {
+       "event": "ACCOUNT_RESTRICTION",
+       "violation_info": {
+        "violation_type": "UTILITY_TEMPLATE_ABUSE"
+       }
+      }
+     }
+    ]
+   }
+  ],
+  "object": "whatsapp_business_account"
+ },
+ "suspension_utilidad": {
+  "entry": [
+   {
+    "id": "102290129340398",
+    "time": 1746169200,
+    "changes": [
+     {
+      "field": "account_update",
+      "value": {
+       "event": "ACCOUNT_RESTRICTION",
+       "violation_info": {
+        "violation_type": "UTILITY_TEMPLATE_ABUSE"
+       },
+       "restriction_info": [
+        {
+         "restriction_type": "RESTRICTED_UTILITY_TEMPLATES",
+         "expiration": 1746774000
+        }
+       ]
+      }
+     }
+    ]
+   }
+  ],
+  "object": "whatsapp_business_account"
+ },
+ "unban": {
+  "entry": [
+   {
+    "id": "102290129340398",
+    "time": 1746169200,
+    "changes": [
+     {
+      "field": "account_update",
+      "value": {
+       "event": "ACCOUNT_RESTRICTION",
+       "violation_info": {
+        "violation_type": "UTILITY_TEMPLATE_ABUSE_UNBAN"
+       }
+      }
+     }
+    ]
+   }
+  ],
+  "object": "whatsapp_business_account"
+ },
+ "limite_utilidad": {
+  "entry": [
+   {
+    "id": "102290129340398",
+    "time": 1746169200,
+    "changes": [
+     {
+      "field": "account_update",
+      "value": {
+       "event": "ACCOUNT_RESTRICTION",
+       "violation_info": {
+        "violation_type": "UTILITY_TEMPLATE_ABUSE_RATE_LIMIT"
+       },
+       "restriction_info": [
+        {
+         "restriction_type": "RATE_LIMITED_UTILITY_TEMPLATE_MESSAGING",
+         "expiration": 1746774000
+        }
+       ]
+      }
+     }
+    ]
+   }
+  ],
+  "object": "whatsapp_business_account"
+ },
+ "recuperacion_limite": {
+  "entry": [
+   {
+    "id": "102290129340398",
+    "time": 1746169200,
+    "changes": [
+     {
+      "field": "account_update",
+      "value": {
+       "event": "ACCOUNT_RESTRICTION",
+       "violation_info": {
+        "violation_type": "UTILITY_TEMPLATE_ABUSE_RATE_LIMIT_RECOVERY"
+       }
+      }
+     }
+    ]
+   }
+  ],
+  "object": "whatsapp_business_account"
+ },
+ "restriccion_generica": {
+  "object": "whatsapp_business_account",
+  "entry": [
+   {
+    "id": "102290129340398",
+    "time": 1641330498,
+    "changes": [
+     {
+      "value": {
+       "event": "ACCOUNT_RESTRICTION",
+       "restriction_info": [
+        {
+         "restriction_type": "RESTRICTED_BIZ_INITIATED_MESSAGING",
+         "expiration": 1641330498
+        },
+        {
+         "restriction_type": "RESTRICTED_ADD_PHONE_NUMBER_ACTION",
+         "expiration": 1641330498
+        }
+       ]
+      },
+      "field": "account_update"
+     }
+    ]
+   }
+  ]
+ }
+}

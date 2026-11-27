@@ -649,8 +649,11 @@ def build_bulk_send(*, enabled: bool, environ: Mapping[str, str] | None, supabas
                     meta_client: MetaTemplatesClient | None = None,
                     supabase_transport: httpx.AsyncBaseTransport | None = None,
                     chatwoot_transport: httpx.AsyncBaseTransport | None = None,
-                    clock: Callable[[], datetime] | None = None) -> BulkSend | None:
+                    clock: Callable[[], datetime] | None = None,
+                    meta_brake: Callable[[str, str], str | None] | None = None) -> BulkSend | None:
     """El masivo de la instancia, o None con ``BULK_SEND_ENABLED`` apagado.
+
+    ``meta_brake``: los frenos ante Meta (meta-enforcement-brakes-v1), solo con su flag.
 
     ``environ`` None es el entorno del proceso (las variables de ``ENV_VARIABLES``). Prendido, todo lo que
     hace falta para mandar seguro tiene que estar; si no, ``BulkSendConfigError`` y el bridge no arranca
@@ -730,7 +733,7 @@ def build_bulk_send(*, enabled: bool, environ: Mapping[str, str] | None, supabas
         status_reader=ChatwootDeliveryStatusReader(control_client), health=health,
         lock=PortfolioLock(config.lock_dir), templates=MetaTemplateResolver(meta), config=config,
         notifier=SlackBulkBrakeNotifier(producer=producer) if producer is not None else None,
-        prepare=prepare, clock=now)
+        prepare=prepare, clock=now, meta_brake=meta_brake)
     page = page_routes(
         chatwoot=control_client, inbox_id=chatwoot_inbox_id, country_code=country_code_for_time_zone(time_zone),
         sending_key=config.instance_key, portfolio_keys=tuple(numbers), health=file_health_reader(Path(health_path)),

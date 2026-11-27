@@ -195,6 +195,7 @@ from bridge import automation_expert_chatwoot, flow_approval, flow_change_api
 from bridge import template_approval, template_request, template_request_api
 from bridge import agent_campaign_api, agent_campaigns, campaign_approval, campaign_judge_api
 from bridge import agent_global_pause
+from bridge import meta_enforcement
 from bridge import temporary_instruction, temporary_instruction_api, temporary_instruction_page
 from bridge import knowledge_approval, live_knowledge, live_knowledge_api
 from bridge import agent_product_api
@@ -512,6 +513,11 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # por producto, desde el AE. Portable: por instancia, solo prenderlo;
     # apagado no se lee la base y las rutas no existen.
     "agent_global_pause_enabled",
+    # F1 (meta-enforcement-brakes-v1): los frenos ante Meta (recategorizacion,
+    # contador y congelamiento). Portable: por instancia, solo prenderlo con el
+    # token de plantillas y el WABA; apagado no existen las rutas, no se lee la
+    # base y ningun envio cambia.
+    "meta_enforcement_brakes_enabled",
     # 1.3 (contact-export-v1): exportar contactos en CSV desde el AE y la
     # pagina. Portable: por instancia, solo prenderlo; apagado no existen las
     # rutas ni se llama a la base.
@@ -1170,6 +1176,13 @@ class Settings:
     # flag, el turno lee las pausas vivas del agente de la base (cache corta) y
     # el AE las pone y las saca. Apagado, nada cambia.
     agent_global_pause_enabled: bool = False
+    # F1 (bridge/meta_enforcement.py, contrato meta-enforcement-brakes-v1): con
+    # el flag, el sondeo de categorias, la ruta /webhooks/meta (solo con su
+    # token de verificacion y el secreto de la app), los frenos en los envios
+    # que inicia el bridge y las acciones a mano. Apagado, nada cambia.
+    meta_enforcement_brakes_enabled: bool = False
+    meta_webhook_verify_token: str | None = None
+    meta_app_secret: str | None = None
     # E-410 (contrato segment-knowledge-v1, «La oferta de la campana en el
     # link»): con el flag, un segmento vigente con [oferta].codigo_oferta hace
     # que el link del agente se reserve con esa oferta. Apagado, la reserva y su
@@ -2779,6 +2792,13 @@ class Settings:
             agent_global_pause_enabled=(
                 os.getenv(agent_global_pause.ENV, "false").strip().lower() == "true"
             ),
+            meta_enforcement_brakes_enabled=(
+                os.getenv(meta_enforcement.ENV, "false").strip().lower() == "true"
+            ),
+            meta_webhook_verify_token=(
+                os.getenv(meta_enforcement.VERIFY_TOKEN_ENV, "").strip() or None
+            ),
+            meta_app_secret=(os.getenv(meta_enforcement.APP_SECRET_ENV, "").strip() or None),
             agent_campaign_offer_link_enabled=agent_campaign_offer_link_enabled,
             agent_campaign_label_paths_enabled=(
                 os.getenv("AGENT_CAMPAIGN_LABEL_PATHS_ENABLED", "false").strip().lower()
@@ -5469,6 +5489,7 @@ def create_app(
     flow_approval_oidc: flow_approval.SlackIdTokenClient | None = None,
     meta_templates_client: MetaTemplatesClient | None = None,
     meta_template_status_store: TemplateStatusStore | None = None,
+    meta_enforcement_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     configure_bridge_event_log()  # los info revisados, al log (E-084)
     boolean_fields = [
@@ -5696,6 +5717,34 @@ def create_app(
             )
 
         agent_pause_live = agent_global_pause.LivePauses(fetch=_fetch_live_pauses)
+    # F1 (meta-enforcement-brakes-v1): con el flag, el estado de los frenos ante
+    # Meta, leido de la base con lo ultimo bueno si no contesta. Apagado no se
+    # crea nada y ningun envio cambia.
+    meta_enforcement_live: meta_enforcement.LiveEnforcement | None = None
+    meta_enforcement_store: meta_enforcement.EnforcementStore | None = None
+    meta_enforcement_instance: dict[str, str] = {}
+    if settings.meta_enforcement_brakes_enabled:
+        meta_enforcement.check_settings(settings)
+        assert settings.instance_manifest is not None
+        assert settings.meta_waba_id is not None
+        meta_enforcement_instance = {
+            "tenant_ref": settings.instance_manifest.tenant_ref,
+            "ally_ref": settings.instance_manifest.ally_ref,
+        }
+        meta_enforcement_store = meta_enforcement.EnforcementStore(
+            base_url=settings.supabase_base_url or "",
+            db_key=settings.supabase_service_role_key or "",
+            transport=meta_enforcement_transport,
+        )
+        enforcement_waba = settings.meta_waba_id
+
+        async def _fetch_meta_enforcement() -> dict[str, object]:
+            assert meta_enforcement_store is not None
+            return await meta_enforcement_store.get_state(
+                meta_enforcement_instance, waba_id=enforcement_waba
+            )
+
+        meta_enforcement_live = meta_enforcement.LiveEnforcement(fetch=_fetch_meta_enforcement)
     # 5.3 de Z1 (agent-temporary-instruction-v1): con el flag, la instruccion
     # publicada de la base, con cache corta. Apagado no se crea nada y ningun
     # turno cambia. La fila se lee recien en el arranque.
@@ -6315,6 +6364,20 @@ def create_app(
                 settings.inbound_attachment_without_text_enabled
             ),
         )
+    # F1 (meta-enforcement-brakes-v1): los envios que inicia el bridge leen el
+    # catalogo con las plantillas retiradas (y, congelada la instancia, todas)
+    # marcadas, y no mandan una plantilla frenada. El link del agente, dentro de
+    # una conversacion abierta, solo ve las retiradas. Apagado, el mismo cliente.
+    initiated_control_client = control_client
+    link_control_client = control_client
+    if meta_enforcement_live is not None and isinstance(control_client, ChatwootClient):
+        initiated_control_client = control_client.with_catalog_filter(
+            meta_enforcement_live.braked_catalog,
+            template_brake=meta_enforcement_live.initiated_brake,
+        )
+        link_control_client = control_client.with_catalog_filter(
+            meta_enforcement_live.retired_catalog
+        )
     # La etiqueta de producto (varios productos por aliada, pasos 2a y 2c-3b): un
     # etiquetador por producto de [[productos]] que la declare. Sin ninguno no se
     # crea nada y nada cambia.
@@ -6738,7 +6801,7 @@ def create_app(
                 raise ValueError("precheckout first touch requires Chatwoot control")
             assert settings.allowed_jid is not None
             first_touch_sender = ChatwootMessageSender(
-                chatwoot=control_client,
+                chatwoot=initiated_control_client,
                 inbox_id=settings.chatwoot_inbox_id,
                 allowed_jid=settings.allowed_jid,
                 template=WhatsAppTemplateConfig(
@@ -6772,7 +6835,7 @@ def create_app(
                 raise ValueError(
                     "delayed precheckout first touch requires Chatwoot control"
                 )
-            delayed_control_client = control_client
+            delayed_control_client = initiated_control_client
             delayed_inbox_id = settings.chatwoot_inbox_id
 
             def build_delayed_precheckout_sender(
@@ -6860,7 +6923,7 @@ def create_app(
             assert settings.chatwoot_inbox_id is not None
             assert settings.allowed_jid is not None
             johanna_abandonment_sender = ChatwootMessageSender(
-                chatwoot=control_client,
+                chatwoot=initiated_control_client,
                 inbox_id=settings.chatwoot_inbox_id,
                 allowed_jid=settings.allowed_jid,
                 template=waba_template,
@@ -7124,7 +7187,7 @@ def create_app(
                 store=identity_link_store,
                 sender=message_sender
                 or ChatwootMessageSender(
-                    chatwoot=control_client,
+                    chatwoot=initiated_control_client,
                     inbox_id=settings.chatwoot_inbox_id,
                     allowed_jid=settings.allowed_jid,
                     dynamic_recipient_enabled=True,
@@ -7303,7 +7366,7 @@ def create_app(
             and isinstance(control_client, ChatwootClient)
         ):
             sender = ChatwootMessageSender(
-                chatwoot=control_client,
+                chatwoot=initiated_control_client,
                 inbox_id=settings.chatwoot_inbox_id,
                 allowed_jid=settings.allowed_jid,
                 dynamic_recipient_enabled=portable_dynamic_recipient,
@@ -7451,7 +7514,7 @@ def create_app(
                 and isinstance(control_client, ChatwootClient)
             ):
                 outbound_sender = ChatwootMessageSender(
-                    chatwoot=control_client,
+                    chatwoot=initiated_control_client,
                     inbox_id=settings.chatwoot_inbox_id,
                     allowed_jid=settings.allowed_jid,
                     dynamic_recipient_enabled=portable_dynamic_recipient,
@@ -7542,7 +7605,7 @@ def create_app(
             worker_id=settings.dispatcher_worker_id,
             poll_interval_seconds=settings.dispatcher_poll_interval_seconds,
             batch_size=settings.dispatcher_batch_size,
-            chatwoot=control_client,
+            chatwoot=initiated_control_client,
             chatwoot_account_id=settings.chatwoot_account_id,
             recovery_agent=outbound_agent,
             sender=outbound_sender,
@@ -7707,6 +7770,8 @@ def create_app(
     meta_delivery_sweeper: MetaDeliveryRejectionSweeper | None = None
     handoff_wait_alert_sweeper: HandoffWaitAlertSweeper | None = None
     meta_template_status_worker: MetaTemplateStatusWorker | None = None
+    # F1 (meta-enforcement-brakes-v1): el sondeo de categorias y los avisos.
+    meta_enforcement_worker: meta_enforcement.MetaEnforcementWorker | None = None
     # El barrido nativo del seguimiento a 24 h (P22-3 de M16, E-269): lo arma
     # el motor (FLOW_ENGINE_ENABLED) con Chatwoot; sin un silencio nativo
     # publicado no arma ningun barredor.
@@ -7743,6 +7808,10 @@ def create_app(
             if agent_pause_live is not None:
                 # Lo mismo con las pausas del agente: sin lectura, ninguna.
                 await agent_pause_live.start()
+            if meta_enforcement_live is not None:
+                # F1: la primera lectura de los frenos, antes de los workers que
+                # mandan. Sin lectura no hay freno conocido (D-F1.6).
+                await meta_enforcement_live.start()
             if temporary_instruction_live is not None:
                 # 5.3 de Z1: la primera lectura, antes de los workers. Si la
                 # base no contesta no va ninguna instruccion y reintenta.
@@ -7810,10 +7879,14 @@ def create_app(
                 await flow_engine_rejection_notifier.start()
             if meta_template_status_worker is not None:
                 await meta_template_status_worker.start()
+            if meta_enforcement_worker is not None:
+                await meta_enforcement_worker.start()
             yield
         finally:
             for worker_name, worker in (
                 ("meta_template_status", meta_template_status_worker),
+                ("meta_enforcement", meta_enforcement_worker),
+                ("meta_enforcement_live", meta_enforcement_live),
                 (
                     "flow_engine_rejection_notifier",
                     flow_engine_rejection_notifier,
@@ -10475,7 +10548,7 @@ def create_app(
                         if whatsapp_inbound_equivalence
                         else shared_supabase
                     ),
-                    control_client=control_client,
+                    control_client=link_control_client,
                     commercial_case_id=admission.commercial_case_id,
                     external_user_id=external_user_id,
                     chatwoot_account_id=settings.chatwoot_account_id,
@@ -10975,7 +11048,7 @@ def create_app(
                     "client, a canonical inbox and Supabase"
                 )
             conversation_reactivation_sweeper = ConversationReactivationSweeper(
-                chatwoot=control_client,
+                chatwoot=initiated_control_client,
                 supabase=shared_supabase,
                 inbox_id=settings.chatwoot_inbox_id,
                 template_name=(
@@ -11036,7 +11109,7 @@ def create_app(
                 )
             conversation_followup_sweeper = ConversationFollowupSweeper(
                 segment_catalog=segment_catalog,
-                chatwoot=control_client,
+                chatwoot=initiated_control_client,
                 supabase=shared_supabase,
                 account_id=settings.chatwoot_account_id,
                 inbox_id=settings.chatwoot_inbox_id,
@@ -11143,7 +11216,7 @@ def create_app(
                     max_age_seconds=settings.meta_account_hold_max_age_seconds,
                 )
             meta_delivery_sweeper = MetaDeliveryRejectionSweeper(
-                chatwoot=control_client,
+                chatwoot=initiated_control_client,
                 supabase=shared_supabase,
                 account_id=settings.chatwoot_account_id,
                 inbox_id=settings.chatwoot_inbox_id,
@@ -11158,6 +11231,13 @@ def create_app(
                 account_hold=meta_account_hold_config,
                 scan_interval_seconds=settings.meta_delivery_scan_interval_seconds,
                 max_pages=settings.meta_delivery_max_pages,
+                # F1: el reintento no manda una plantilla retirada ni con la
+                # instancia congelada. Apagado, None.
+                meta_brake=(
+                    meta_enforcement_live.initiated_brake
+                    if meta_enforcement_live is not None
+                    else None
+                ),
             )
             app.state.meta_delivery_sweeper = meta_delivery_sweeper
         if settings.handoff_wait_alerts_enabled:
@@ -11206,7 +11286,7 @@ def create_app(
             # manifiesto siempre: la identidad resuelta, la reserva portable
             # (la nativa deriva de ella) y el filtro del nombre.
             native_manifest = settings.instance_manifest
-            native_chatwoot = control_client
+            native_chatwoot = initiated_control_client
             native_supabase = shared_supabase
             native_account_id = settings.chatwoot_account_id
             native_inbox_id = settings.chatwoot_inbox_id
@@ -11316,6 +11396,12 @@ def create_app(
             else None
         ),
         meta_client=meta_templates_client,
+        # F1: la plantilla retirada o la instancia congelada frenan el masivo.
+        meta_brake=(
+            meta_enforcement_live.initiated_brake
+            if meta_enforcement_live is not None
+            else None
+        ),
     )
     app.state.bulk_send = bulk_send
 
@@ -11645,6 +11731,13 @@ def create_app(
                 template_context=template_request.context_from_manifest(change_manifest),
                 # D-57.1: sin hilo, el aviso de Meta sale en la raiz del canal de la aliada.
                 ally_slack_channel=change_manifest.slack_channel,
+                # F1 (D4): desde la segunda recategorizacion seguida, el pedido
+                # nuevo de utilidad se frena. Apagado, None.
+                utility_brake=(
+                    meta_enforcement_live.utility_request_brake
+                    if meta_enforcement_live is not None
+                    else None
+                ),
             )
             # F-146 parte 4 (template-request-v1 1.3.0): el sondeo y el aviso en
             # el hilo. Con el flag apagado este worker no existe.
@@ -11823,6 +11916,54 @@ def create_app(
         )
 
     approval_config = flow_approval.check_settings(settings)
+    if meta_enforcement_live is not None:
+        # F1 (meta-enforcement-brakes-v1): el sondeo cada 15 minutos y los
+        # avisos en el canal de la aliada con el bot del AE (D-F1.11); la ruta
+        # /webhooks/meta solo con su token y el secreto de la app (D-F1.10); las
+        # acciones a mano con el token del AE y la lista de aprobadores
+        # (D-F1.9). Apagado no existe nada de esto.
+        assert meta_enforcement_store is not None
+        assert settings.instance_manifest is not None
+        assert settings.meta_waba_id is not None
+        enforcement_manifest = settings.instance_manifest
+        enforcement_slack_problem = slack_token_problem(settings.meta_templates_slack_bot_token)
+        meta_enforcement_worker = meta_enforcement.MetaEnforcementWorker(
+            store=meta_enforcement_store,
+            meta=meta_templates_client or MetaTemplatesClient(
+                access_token=settings.meta_templates_access_token or "",
+                waba_id=settings.meta_waba_id,
+                graph_version=settings.meta_graph_api_version,
+            ),
+            live=meta_enforcement_live,
+            instance=meta_enforcement_instance,
+            waba_id=settings.meta_waba_id,
+            slack=(
+                SlackClient(bot_token=settings.meta_templates_slack_bot_token or "")
+                if enforcement_slack_problem is None
+                else None
+            ),
+            channel=enforcement_manifest.slack_channel,
+            slack_problem=enforcement_slack_problem or "sin_token",
+        )
+        app.state.meta_enforcement_worker = meta_enforcement_worker
+        app.state.meta_enforcement = meta_enforcement_live
+        manual_ready = (
+            approval_config is not None
+            and settings.automation_expert_change_enabled
+            and settings.automation_expert_change_token is not None
+        )
+        meta_enforcement.register_meta_enforcement_routes(
+            app,
+            store=meta_enforcement_store,
+            live=meta_enforcement_live,
+            tenant_ref=enforcement_manifest.tenant_ref,
+            ally_ref=enforcement_manifest.ally_ref,
+            waba_id=settings.meta_waba_id,
+            verify_token=settings.meta_webhook_verify_token,
+            app_secret=settings.meta_app_secret,
+            ae_token=settings.automation_expert_change_token if manual_ready else None,
+            approvers=approval_config.approvers if manual_ready and approval_config is not None else None,
+        )
     if agent_pause_live is not None:
         # 5.4 (agent-global-pause-v1, D4): el AE pone y saca la pausa a pedido de
         # una persona de la lista de aprobadores de la pagina. Con el flag
@@ -12570,6 +12711,25 @@ def create_app(
                 "handoff_wait_alerts_after": (
                     f"{handoff_wait_alert_sweeper.after_hours}h"
                 ),
+            }
+        # F1 (meta-enforcement-brakes-v1): «disabled» sin el flag; si no, si
+        # esta congelada, cuantas retiradas, el contador y el ultimo sondeo.
+        # Nunca 503: un freno no es una falla.
+        stalled_monitor_readiness = {
+            **stalled_monitor_readiness,
+            "meta_enforcement": (
+                meta_enforcement_live.readiness()
+                if meta_enforcement_live is not None
+                else "disabled"
+            ),
+        }
+        if meta_enforcement_worker is not None:
+            stalled_monitor_readiness = {
+                **stalled_monitor_readiness,
+                "meta_enforcement_worker": meta_enforcement_worker.state,
+                "meta_enforcement_last_error": meta_enforcement_worker.last_error or "none",
+                "meta_enforcement_last_poll": meta_enforcement_worker.last_summary,
+                "meta_enforcement_notices": meta_enforcement_worker.notices_state,
             }
         if meta_template_status_worker is not None:
             # F-146 parte 4: el sondeo de Meta y los avisos en el hilo. Un sondeo
@@ -14377,7 +14537,7 @@ def create_app(
                     detail="johanna_abandonment_one_shot_not_configured",
                 )
             delivery_sender = ChatwootMessageSender(
-                chatwoot=control_client,
+                chatwoot=initiated_control_client,
                 inbox_id=9,
                 allowed_jid=f"{started.target_phone}@s.whatsapp.net",
                 template=waba_template,
@@ -14784,7 +14944,7 @@ def create_app(
                     detail="johanna_payment_failure_sender_not_configured",
                 )
             payment_sender = ChatwootMessageSender(
-                chatwoot=control_client,
+                chatwoot=initiated_control_client,
                 inbox_id=9,
                 allowed_jid=f"{started.target_phone}@s.whatsapp.net",
                 template=WhatsAppTemplateConfig(

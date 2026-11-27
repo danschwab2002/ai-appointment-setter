@@ -218,7 +218,9 @@ def test_the_module_has_four_calls_one_write_and_no_edit_or_delete() -> None:
     # La cuarta (masivo, encargo 9) es solo de lectura: la salud del numero.
     verbs, http_gets, paths, indirect = calls_in(Path(meta_templates.__file__).read_text(encoding="utf-8"))
     assert verbs == [("create", "post")]
-    assert sorted(http_gets) == [("find", "get"), ("read", "get"), ("read_phone_health", "get")]
+    # La quinta (frenos ante Meta, meta-enforcement-brakes-v1) lee la misma lista que ``find`` con la categoria.
+    assert sorted(http_gets) == [("find", "get"), ("list_categories", "get"), ("read", "get"),
+                                 ("read_phone_health", "get")]
     assert sorted(set(paths)) == ["/{}/{}", "/{}/{}/message_templates"]
     assert indirect == []
 

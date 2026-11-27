@@ -1,6 +1,8 @@
 """El cliente cerrado de la API de plantillas de Meta (template-request-v1, F-146 parte 3).
 
-Es todo lo que el bridge le pide a Meta, y son cuatro llamadas:
+Es todo lo que el bridge le pide a Meta, y son cuatro llamadas (cinco con
+``list_categories``, la lista de ``find`` con ``correct_category``, para los frenos
+ante Meta):
 
 * ``create``: ``POST /{version}/{waba}/message_templates``. El unico verbo de
   escritura. Crea una plantilla; no edita ni borra.
@@ -60,6 +62,8 @@ PAGE_SIZE = 100
 MAX_PAGES = 70
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 FIELDS = "id,name,language,status,category,components"
+# El sondeo de los frenos ante Meta: ``correct_category`` es el aviso previo de una recategorizacion.
+CATEGORY_FIELDS = "id,name,language,status,category,correct_category"
 _TEMPLATE_ID = re.compile(r"^[0-9]{1,32}$")
 _WABA_ID = re.compile(r"^[0-9]{6,32}$")
 _GRAPH_VERSION = re.compile(r"^v[0-9]{1,3}\.[0-9]{1,2}$")
@@ -298,6 +302,49 @@ class MetaTemplatesClient:
                     paging = page.get("paging")
                     if not isinstance(paging, Mapping) or not paging.get("next"):
                         return None
+                    cursors = paging.get("cursors")
+                    after = cursors.get("after") if isinstance(cursors, Mapping) else None
+                    if not isinstance(after, str) or not after:
+                        raise MetaTemplatesError("meta_unexpected_answer")
+                    params = {**params, "after": after}
+        except httpx.HTTPError:
+            raise MetaTemplatesError("meta_unreachable") from None
+        raise MetaTemplatesError("meta_list_too_long")
+
+    async def list_categories(self) -> list[dict[str, str | None]]:
+        """La categoria de todas las plantillas de la cuenta (meta-enforcement-brakes-v1, el sondeo).
+
+        Cada una: ``id``, ``name``, ``language``, ``category`` y ``correct_category`` (la que
+        Meta anuncia que va a tener; None sin aviso). La misma ruta que ``find``, con los
+        campos de la categoria. Si la lista no se lee hasta el final sale con error: un
+        sondeo a medias no compara contra lo visto.
+        """
+        path = f"/{self._graph_version}/{self._waba_id}/message_templates"
+        params: dict[str, str | int] = {"fields": CATEGORY_FIELDS, "limit": PAGE_SIZE}
+        out: list[dict[str, str | None]] = []
+        try:
+            async with self._http() as client:
+                for _ in range(MAX_PAGES):
+                    page = self._parsed(await client.get(path, params=params))
+                    rows = page.get("data")
+                    if not isinstance(rows, list):
+                        raise MetaTemplatesError("meta_unexpected_answer")
+                    for row in rows:
+                        if not isinstance(row, Mapping):
+                            continue
+                        template_id, name, language = row.get("id"), row.get("name"), row.get("language")
+                        category, correct = row.get("category"), row.get("correct_category")
+                        if not isinstance(name, str) or not isinstance(language, str) or not isinstance(category, str):
+                            continue
+                        out.append({
+                            "id": template_id if isinstance(template_id, str) and _TEMPLATE_ID.fullmatch(template_id)
+                            else None,
+                            "name": name, "language": language, "category": category.upper(),
+                            "correct_category": correct.upper() if isinstance(correct, str) and correct else None,
+                        })
+                    paging = page.get("paging")
+                    if not isinstance(paging, Mapping) or not paging.get("next"):
+                        return out
                     cursors = paging.get("cursors")
                     after = cursors.get("after") if isinstance(cursors, Mapping) else None
                     if not isinstance(after, str) or not after:

@@ -310,7 +310,15 @@ expected_service_role(signature) as (
         -- 20261126600000: la version publicada del conocimiento vivo del AE (pieza 5.5).
         ('public.get_live_agent_knowledge_v1(jsonb)'),
         -- 20261126800000: las campanas en reposo con bloque minimo (4.8, agent-campaign-phases-v1).
-        ('public.get_agent_campaign_rests_v1(jsonb)')
+        ('public.get_agent_campaign_rests_v1(jsonb)'),
+        -- 20261127100000: los frenos ante Meta (F1, meta-enforcement-brakes-v1).
+        ('public.record_meta_template_categories_v1(jsonb, text, jsonb, timestamp with time zone)'),
+        ('public.record_meta_template_category_webhook_v1(jsonb, text, jsonb)'),
+        ('public.record_meta_account_event_v1(jsonb, text, jsonb)'),
+        ('public.get_meta_enforcement_state_v1(jsonb, text)'),
+        ('public.act_on_meta_enforcement_v1(jsonb, text, text, jsonb, text, text)'),
+        ('public.claim_meta_enforcement_notices_v1(jsonb, integer)'),
+        ('public.finish_meta_enforcement_notice_v1(jsonb, uuid, text, text)')
 ),
 functions as (
     select

@@ -568,6 +568,7 @@ class MetaDeliveryRejectionSweeper:
         lookback_seconds: int = DEFAULT_LOOKBACK_SECONDS,
         max_pages: int = DEFAULT_MAX_PAGES,
         clock: Callable[[], float] = time.time,
+        meta_brake: Callable[[str, str], str | None] | None = None,
     ) -> None:
         if (
             type(close_unreachable) is not bool
@@ -585,6 +586,9 @@ class MetaDeliveryRejectionSweeper:
         self._producer = producer
         self._retry = retry
         self._account_hold = account_hold
+        # meta-enforcement-brakes-v1: una plantilla retirada o la instancia
+        # congelada no salen tampoco por el reintento. None, como siempre.
+        self._meta_brake = meta_brake
         # La ultima plantilla entregada que vio este proceso: la senal no se
         # pierde porque la conversacion salga de la ventana del barrido.
         self._account_ok_epoch: int | None = None
@@ -988,6 +992,10 @@ class MetaDeliveryRejectionSweeper:
                         now=self._now_iso(),
                     )
                 continue
+            braked = self._braked(plan)
+            if braked is not None:
+                self._log_skip(plan.message_id, braked, counts)
+                continue
             delivery_id = f"meta-retry:{self._inbox_id}:{plan.message_id}"
             if not retry.gate.authorize(
                 FinalMetaEffect(
@@ -1016,6 +1024,12 @@ class MetaDeliveryRejectionSweeper:
             assert claim.rejection_id is not None
             sent += 1
             await self._send(plan, claim.rejection_id, delivery_id, counts)
+
+    def _braked(self, plan: RetryPlan) -> str | None:
+        """El motivo del freno ante Meta, o None. No es permanente: se vuelve a mirar."""
+        if self._meta_brake is None:
+            return None
+        return self._meta_brake(plan.template_name, plan.template_language)
 
     async def _send(
         self, plan: RetryPlan, rejection_id: str, delivery_id: str, counts: Counter[str]
@@ -1115,6 +1129,10 @@ class MetaDeliveryRejectionSweeper:
                 continue
             # Una por intento: un reintento que vuelve rechazado por la cuenta
             # puede salir otra vez, con otro id de entrega.
+            braked = self._braked(plan)
+            if braked is not None:
+                counts[f"hold_{braked}"] += 1
+                continue
             delivery_id = f"meta-hold:{self._inbox_id}:{plan.message_id}:{item.attempts + 1}"
             if not hold.gate.authorize(
                 FinalMetaEffect(
