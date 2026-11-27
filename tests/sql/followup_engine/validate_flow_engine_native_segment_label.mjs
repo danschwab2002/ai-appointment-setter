@@ -71,7 +71,10 @@ const ONLY_CALLS = new Set(['20261108004100_flow_change_publish_native_version_g
     // El choque de identidad en la admision es un rechazo con nombre (20261125000100).
     '20261125000100_flow_engine_admission_identity_mismatch_v1.sql',
     // El almacen del masivo (20261125000200).
-    '20261125000200_bulk_send_store_v1.sql']);
+    '20261125000200_bulk_send_store_v1.sql',
+    // La confirmacion de registro (20261127500000, 4.3): suma una rama solo para dispara.registro con mas de
+    // una plantilla (motor_nativo:forma); revisada, la etiqueta de un toque sin registro no pasa por ahi.
+    '20261127500000_own_forms_registration_confirmation_v1.sql']);
 for (const name of names.slice(position + 1).filter((candidate) => !ONLY_CALLS.has(candidate))) {
   if (readFileSync(join(root, 'supabase/migrations', name), 'utf8').includes('_flow_engine_native_unsupported')) {
     fail(`${name} toca _flow_engine_native_unsupported: revisar esta prueba`);

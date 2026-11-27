@@ -551,9 +551,14 @@ _RUNTIME_FLAGS = ("engine_enabled", "native_intent_enabled", "native_silence_swe
                   "native_multitouch_enabled", "native_personal_coupon_enabled", "native_payment_slip_enabled")
 
 
+# Z2 3.9 y 4.3 (D-43.10): la palabra clave y la confirmacion de un registro; el bridge las publica solo prendidas.
+_OPTIONAL_RUNTIME_FLAGS = ("native_keyword_enabled", "native_registration_enabled")
+
+
 def _runtime_ok(runtime: object) -> bool:
-    return isinstance(runtime, dict) and set(runtime) == {*_RUNTIME_FLAGS, "main_product"} \
-        and all(type(runtime[key]) is bool for key in _RUNTIME_FLAGS) \
+    return isinstance(runtime, dict) \
+        and {*_RUNTIME_FLAGS, "main_product"} <= set(runtime) <= {*_RUNTIME_FLAGS, *_OPTIONAL_RUNTIME_FLAGS, "main_product"} \
+        and all(type(runtime[key]) is bool for key in (*_RUNTIME_FLAGS, *_OPTIONAL_RUNTIME_FLAGS) if key in runtime) \
         and isinstance(runtime["main_product"], str) and bool(_NAME.fullmatch(runtime["main_product"]))
 
 # La gemela de bridge.flow_change_simulation.native_flow_counts_request (E-241), sin importar el

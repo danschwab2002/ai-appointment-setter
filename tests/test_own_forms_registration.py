@@ -31,6 +31,7 @@ from test_own_forms import BUYER, CONFIG, LANDING, NOW, att1_payload, submission
 import bridge.app as app_module
 from bridge.app import Settings
 from bridge.flow_definition import check_definition
+from bridge.supabase import SupabaseRpcMissing
 from bridge.flow_engine import REGISTRATION_TRIGGER, native_not_supported, not_supported
 from bridge.instance_manifest import (
     OWN_FORM_DEFAULT_DISCLAIMER,
@@ -325,8 +326,15 @@ def test_with_a_flag_off_the_registration_form_goes_as_today(
 def test_with_all_flags_the_registration_form_is_only_admitted(
     att1_instance: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
+    # Una base sin la entrada del registro (sin 20261127500000, la segunda parte): lo de la primera parte,
+    # solo la admision. Con la entrada, test_own_forms_registration_confirmation.py.
     settings = _settings(att1_instance, registration=True, engine=True, native=True)
-    authority = _RouteAuthority()
+
+    class _WithoutTheRegistrationRpc(_RouteAuthority):
+        async def admit_and_route_registration_lead_precheckout(self, **kwargs: object) -> object:
+            raise SupabaseRpcMissing("registration_lead_precheckout_admission_and_route_failed: HTTP 404")
+
+    authority = _WithoutTheRegistrationRpc()
     app = _first_contact_app(settings, authority)
 
     with caplog.at_level("INFO", logger="bridge.app"):
@@ -338,7 +346,7 @@ def test_with_all_flags_the_registration_form_is_only_admitted(
     assert response.json() == {"status": "received", "checkout_url": response.json()["checkout_url"],
                                "gracias_url": THANKS}
     [line] = [r.getMessage() for r in caplog.records if r.getMessage().startswith("own_form_registration_admitted")]
-    assert "form=att1-clase-28-11 evento=clase-28-11" in line and "flow=sin_ruteo_de_la_base" in line
+    assert "form=att1-clase-28-11 evento=clase-28-11" in line and "route=sin_ruteo_de_la_base" in line
     assert BUYER["email"] not in line and BUYER["phone"] not in line
 
     # El formulario comercial de la misma instancia sigue yendo al motor, como hoy.
@@ -357,4 +365,5 @@ def test_ready_reports_the_registration_only_with_its_flag(att1_instance: Path) 
     assert "inerte:FLOW_ENGINE_NATIVE_INTENT_ENABLED" in json.dumps(inert)
     on = _ready(_first_contact_app(_settings(att1_instance, registration=True, engine=True, native=True),
                                    _RouteAuthority()))
-    assert '"own_forms_registration": "admite_sin_flujo:1"' in json.dumps(on)
+    # Desde la segunda parte (D-43.11): confirma, y sin el archivo de la salud de Meta, sin_salud.
+    assert '"own_forms_registration": "confirma:1:sin_salud"' in json.dumps(on)

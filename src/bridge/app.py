@@ -156,6 +156,7 @@ from bridge.own_forms import (
     render_embed_js,
     own_form_admission,
     registration_flow_missing,
+    registration_health_brake,
     render_page_html,
     translate_own_form_submission,
     webhook_copy,
@@ -203,6 +204,13 @@ from bridge import contact_export
 from bridge.flow_audience_store import ChatwootLabelIndex
 from bridge import keyword_flow_trigger, keyword_rule_api, keyword_rule_approval, keyword_rules
 from bridge import flow_audience_page
+from bridge.flow_audience_sweeper import (
+    HEALTH_KEY_VARIABLE as FLOW_AUDIENCE_HEALTH_KEY_VARIABLE,
+)
+from bridge.flow_audience_sweeper import (
+    HEALTH_PATH_VARIABLE as FLOW_AUDIENCE_HEALTH_PATH_VARIABLE,
+)
+from bridge.flow_audience_sweeper import file_health_reader
 from bridge.flow_audience_wiring import FlowAudience, build_flow_audience
 from bridge.bulk_send_wiring import BulkSend, build_bulk_send
 from bridge.meta_templates import MetaTemplatesClient
@@ -1274,6 +1282,12 @@ class Settings:
     # con tipo = "registro" se admite sin planificar el primer contacto comercial.
     # Con cualquiera apagado (el default), el formulario de registro va como hoy.
     own_forms_registration_flow_enabled: bool = False
+    # 4.3 segunda parte (D-43.9): la salud de Meta que frena la confirmacion de un registro. Es la misma
+    # lectura que frena el disparo por audiencia (E-484): FLOW_AUDIENCE_META_HEALTH_PATH (el estado.json de
+    # meta_salud.py) y FLOW_AUDIENCE_META_HEALTH_KEY (la instancia en ese archivo). Sin el archivo, con el
+    # registro activo, la confirmacion no sale (fail-closed).
+    own_forms_registration_meta_health_path: str | None = None
+    own_forms_registration_meta_health_key: str | None = None
     precheckout_first_touch_enabled: bool = False
     precheckout_first_touch_token: str | None = None
     precheckout_delayed_first_touch_enabled: bool = False
@@ -1883,6 +1897,12 @@ class Settings:
         own_forms_enabled = os.getenv("OWN_FORMS_ENABLED", "false").lower() == "true"
         own_forms_registration_flow_enabled = (
             os.getenv("OWN_FORMS_REGISTRATION_FLOW_ENABLED", "false").lower() == "true"
+        )
+        own_forms_registration_meta_health_path = (
+            os.getenv(FLOW_AUDIENCE_HEALTH_PATH_VARIABLE, "").strip() or None
+        )
+        own_forms_registration_meta_health_key = (
+            os.getenv(FLOW_AUDIENCE_HEALTH_KEY_VARIABLE, "").strip() or None
         )
         own_forms_public_base_url = (
             os.getenv("OWN_FORMS_PUBLIC_BASE_URL", "").strip().rstrip("/")
@@ -2868,6 +2888,8 @@ class Settings:
             own_forms_enabled=own_forms_enabled,
             own_forms_public_base_url=own_forms_public_base_url,
             own_forms_registration_flow_enabled=own_forms_registration_flow_enabled,
+            own_forms_registration_meta_health_path=own_forms_registration_meta_health_path,
+            own_forms_registration_meta_health_key=own_forms_registration_meta_health_key,
             precheckout_first_touch_enabled=precheckout_first_touch_enabled,
             precheckout_first_touch_token=precheckout_first_touch_token,
             precheckout_delayed_first_touch_enabled=(
@@ -4147,6 +4169,8 @@ def instance_runtime_from(
             and settings.keyword_rules_enabled
             and settings.flow_engine_enabled
         ),
+        # 4.3 (D-43.10): la confirmacion de un registro, solo con los cuatro flags del registro.
+        native_registration=not _own_forms_registration_missing(settings),
     )
 
 
@@ -5623,12 +5647,19 @@ def create_app(
         if settings.own_forms_registration_flow_enabled:
             # 4.3 (D-43.4): solo con el flag; apagado, el payload no cambia.
             # Con un flag del motor apagado, inerte (el registro va como hoy).
+            # 4.3 segunda parte (D-43.11): con los cuatro, confirma por el motor nativo; sin el archivo
+            # de la salud de Meta, ninguna confirmacion sale (sin_salud).
             missing = _own_forms_registration_missing(settings)
             instance_readiness["own_forms_registration"] = (
                 "inerte:" + ",".join(missing)
                 if missing
-                else "admite_sin_flujo:"
+                else "confirma:"
                 + str(sum(form.is_registration for form in settings.instance_manifest.own_forms))
+                + (
+                    ""
+                    if settings.own_forms_registration_meta_health_path
+                    else ":sin_salud"
+                )
             )
         ghl_adapter_risk = _ghl_adapter_risk_readiness(settings.instance_manifest)
         if ghl_adapter_risk is not None:
@@ -13826,32 +13857,84 @@ def create_app(
         )
         return admission
 
+    registration_health = (
+        file_health_reader(
+            Path(settings.own_forms_registration_meta_health_path),
+            instance_key=settings.own_forms_registration_meta_health_key,
+        )
+        if settings.own_forms_registration_meta_health_path
+        else None
+    )
+
     async def _admit_registration_lead(
         submission: LeadPrecheckoutSubmission,
         raw_payload: dict[str, object],
         route: ProductRoute,
         form: object,
     ) -> PrecheckoutAdmissionResult:
-        # 4.3 (D-43.3): un formulario propio de registro con el registro activo.
-        # Se admite en su funnel (lo que lee la historia de la persona) y no se
-        # planifica nada: ni el primer contacto comercial del legado ni un flujo
-        # nativo de intencion. La confirmacion la arma un flujo con
-        # dispara.registro cuando la base lo rutee (own-forms-v1, «Registro a un
-        # evento»); hasta entonces no sale ningun mensaje.
+        # 4.3 (D-43.3): un formulario propio de registro con el registro activo. Nunca el primer
+        # contacto comercial (ni el del legado ni un flujo nativo de intencion). Desde la segunda parte
+        # (20261127500000) la base lo admite y lo prueba solo en los flujos con dispara.registro igual a
+        # su evento: la confirmacion. La clave del evento la manda el bridge (el envio no la trae). El
+        # freno por salud de Meta (D-43.9) lo decide el bridge con la lectura de la audiencia y la base
+        # no abre ningun caso.
         assert shared_supabase is not None
-        admission = await shared_supabase.admit_portable_observed_lead_precheckout(
-            config=route.config,
-            external_submission_id=submission.external_submission_id,
-            raw_payload=raw_payload,
-            canonical_payload=submission.as_canonical_payload(),
+        event = getattr(form, "registration_event", None)
+        assert isinstance(event, str)
+        brake = registration_health_brake(
+            registration_health() if registration_health is not None else None,
+            now=datetime.now(UTC),
         )
-        logger.info(
+        try:
+            admission = await shared_supabase.admit_and_route_registration_lead_precheckout(
+                config=route.config,
+                external_submission_id=submission.external_submission_id,
+                raw_payload=raw_payload,
+                canonical_payload=submission.as_canonical_payload(),
+                registration_event=event,
+                health_brake=brake,
+            )
+        except SupabaseRpcMissing:
+            # El registro prendido sobre una base sin 20261127500000: lo de la primera parte (solo la
+            # admision, ningun mensaje), con un warning por envio.
+            logger.warning(
+                "own_form_registration_rpc_missing fallback=admission delivery_id=%s",
+                submission.external_submission_id,
+            )
+            admission = await shared_supabase.admit_portable_observed_lead_precheckout(
+                config=route.config,
+                external_submission_id=submission.external_submission_id,
+                raw_payload=raw_payload,
+                canonical_payload=submission.as_canonical_payload(),
+            )
+        # La admision de la primera parte (sin la entrada) no trae ruta ni flujos.
+        native_flows = tuple(getattr(admission, "native_flows", ()) or ())
+        admission_route = getattr(admission, "route", None)
+        native = native_intent_admission(admission_route, native_flows)
+        flows = ",".join(
+            f"{row.flow_id}:{row.outcome}:{row.reason or '-'}"
+            for row in native_flows
+        )
+        failed = any(
+            row.outcome == NATIVE_FLOW_ROW_INVALID
+            or (row.reason or "").startswith(
+                ("error_interno:", "motor_nativo:", "politica_compilada:")
+            )
+            for row in native_flows
+        )
+        # Solo ids y codigos: nunca el nombre, el email ni el telefono.
+        logger.log(
+            logging.WARNING if failed or brake is not None else logging.INFO,
             "own_form_registration_admitted form=%s evento=%s product=%s admission=%s "
-            "flow=sin_ruteo_de_la_base submission_id=%s",
+            "route=%s native=%s brake=%s flows=%s submission_id=%s",
             getattr(form, "key", "-"),
-            getattr(form, "registration_event", None) or "-",
+            event,
             route.key,
             admission.outcome,
+            admission_route or "sin_ruteo_de_la_base",
+            native.outcome,
+            brake or "-",
+            flows or "-",
             admission.submission_id,
         )
         return admission

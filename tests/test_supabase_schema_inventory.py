@@ -498,7 +498,9 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261126600000 (el conocimiento vivo del AE, pieza 5.5) suma la lectura de la publicada.
     # 20261126800000 (las fases del lanzamiento, 4.8) suma la lectura del reposo.
     # 20261127100000 (los frenos ante Meta, F1) suma sus siete.
-    assert len(allowlisted) == 273
+    # 20261127500000 (la confirmacion de registro, 4.3) suma su entrada.
+    assert len(allowlisted) == 274
+    assert "admit_and_route_registration_lead_precheckout_v1(text, text, integer, text, jsonb, jsonb, text, text)" in allowlisted
     assert "act_on_meta_enforcement_v1(jsonb, text, text, jsonb, text, text)" in allowlisted
     assert "start_agent_campaign_judge_run_v1(jsonb, uuid, text, timestamp with time zone, integer)" in allowlisted
     assert "get_live_agent_knowledge_v1(jsonb)" in allowlisted
@@ -2655,13 +2657,26 @@ def test_flow_engine_literal_variables_fingerprint() -> None:
     assert "_flow_engine_compile_policy_core(jsonb,text,integer,text,text)" in compact
 
 
-def test_flow_engine_keyword_trigger_fingerprint_is_last() -> None:
+def test_flow_engine_keyword_trigger_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261127400000 (Z2 3.9): la admision de la palabra clave, privada, y sus siete marcas.
-    row = sql.split("'20261127400000'", 1)[1].split("select\n    version,", 1)[0]
+    row = sql.split("'20261127400000'", 1)[1].split("'20261127500000'", 1)[0].rsplit("union all", 1)[0]
     compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
 
-    assert compact.endswith(",8,'flow_engine_keyword_trigger')")
+    assert compact.endswith(",8,'flow_engine_keyword_trigger'")
     assert "_flow_engine_admit_native_keyword_v1(jsonb,jsonb)" in compact
     assert "flow_engine_keyword_trigger_admit:end" in compact
     assert "nothas_function_privilege('service_role',oid,'EXECUTE')" in compact
+
+
+def test_own_forms_registration_confirmation_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261127500000 (4.3, segunda parte): la entrada del registro solo de service_role y el
+    # disparador que reconoce dispara.registro.
+    row = sql.split("'20261127500000'", 1)[1].split("select\n    version,", 1)[0]
+    compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
+
+    assert compact.endswith(",2,'own_forms_registration_confirmation')")
+    assert "admit_and_route_registration_lead_precheckout_v1(text,text,integer,text,jsonb,jsonb,text,text)" in compact
+    assert "own_forms_registration_trigger" in compact
+    assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact

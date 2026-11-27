@@ -3870,6 +3870,71 @@ class SupabaseClient:
             native_flows=native_flows,
         )
 
+    async def admit_and_route_registration_lead_precheckout(
+        self,
+        *,
+        config: CommercialAllyConfig,
+        external_submission_id: str,
+        raw_payload: dict[str, object],
+        canonical_payload: dict[str, object],
+        registration_event: str,
+        health_brake: str | None,
+    ) -> PrecheckoutAdmissionResult:
+        """Admit a registration form and route it to its confirmation (own-forms-v1, 4.3 second part).
+
+        ``admit_and_route_registration_lead_precheckout_v1`` (20261127500000) admits the submission as
+        always and tries it only on the native flows of the product whose active version fires with
+        ``dispara: {evento: intencion, registro: <registration_event>}``; never the legacy. ``ruta`` is
+        ``nativo`` when such a flow exists and ``sin_flujo`` when none does (only the admission). With
+        ``health_brake`` (``meta_salud:<que>``, D-43.9) no case opens. A 404 is ``SupabaseRpcMissing``
+        (the base without the migration: nothing was written). Never logs a value of the lead.
+        """
+        operation = "registration_lead_precheckout_admission_and_route"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/admit_and_route_registration_lead_precheckout_v1",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": config.tenant_ref,
+                    "p_funnel_ref": config.funnel_ref,
+                    "p_binding_version": config.binding_version,
+                    "p_external_submission_id": external_submission_id,
+                    "p_raw_payload": raw_payload,
+                    "p_canonical_payload": canonical_payload,
+                    "p_registration_event": registration_event,
+                    "p_health_brake": health_brake,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code == 404:
+            raise SupabaseRpcMissing(f"{operation}_failed: HTTP 404")
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        outcome = row.get("outcome")
+        submission_id = row.get("submission_id")
+        purchase_intent_id = row.get("purchase_intent_id")
+        route = row.get("ruta")
+        if outcome not in {"inserted", "duplicate", "semantic_conflict"}:
+            raise SupabaseError(f"{operation}_invalid_outcome")
+        if not isinstance(submission_id, str) or not submission_id:
+            raise SupabaseError(f"{operation}_invalid_submission_id")
+        if not isinstance(purchase_intent_id, str) or not purchase_intent_id:
+            raise SupabaseError(f"{operation}_invalid_purchase_intent_id")
+        if route not in {"nativo", "sin_flujo"}:
+            raise SupabaseError(f"{operation}_invalid_route")
+        return PrecheckoutAdmissionResult(
+            outcome=outcome,
+            submission_id=submission_id,
+            purchase_intent_id=purchase_intent_id,
+            route=route,
+            native_flows=_native_flow_outcomes(row.get("flujos")),
+        )
+
     async def get_lead_first_name_inference(
         self, name_key: str
     ) -> FirstNameInference | None:

@@ -40,9 +40,10 @@ const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.end
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
 // Despues va solo el flujo de la palabra clave (20261127400000, Z2 3.9), que suma la forma nativo:palabra_clave
-// con texto_fijo.
-if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261127400000_flow_engine_keyword_trigger_v1.sql'])) {
-  fail(`despues de ${MIGRATION} va solo la de la palabra clave`, names.slice(position + 1));
+// con texto_fijo, y la confirmacion de registro (20261127500000, 4.3), que suma la forma de un registro.
+if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['20261127400000_flow_engine_keyword_trigger_v1.sql',
+  '20261127500000_own_forms_registration_confirmation_v1.sql'])) {
+  fail(`despues de ${MIGRATION} van solo la de la palabra clave y la de la confirmacion de registro`, names.slice(position + 1));
 }
 
 const boot = async (files) => {

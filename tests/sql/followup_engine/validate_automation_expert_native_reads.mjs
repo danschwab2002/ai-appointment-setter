@@ -217,7 +217,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026102500020
     // El texto fijo en las variables de un paso nativo (20261127300000, F4).
     '20261127300000_flow_engine_literal_variables_v1.sql',
     // El flujo de la palabra clave (20261127400000, Z2 3.9).
-    '20261127400000_flow_engine_keyword_trigger_v1.sql'])) {
+    '20261127400000_flow_engine_keyword_trigger_v1.sql',
+    // La confirmacion de registro (20261127500000, 4.3).
+    '20261127500000_own_forms_registration_confirmation_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la del btrim del nombre del producto`, names.slice(position + 1));
 }
 const applyFile = async (db, file) => db.exec(readFileSync(file, 'utf8').replace(

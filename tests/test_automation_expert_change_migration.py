@@ -217,6 +217,8 @@ def test_it_is_one_transaction_and_comes_before_the_flow_engine_routes() -> None
         "20261127300000_flow_engine_literal_variables_v1.sql",
         # El flujo de la palabra clave (20261127400000, Z2 3.9).
         "20261127400000_flow_engine_keyword_trigger_v1.sql",
+        # La confirmacion de registro (20261127500000, 4.3).
+        "20261127500000_own_forms_registration_confirmation_v1.sql",
     ]
 
 
