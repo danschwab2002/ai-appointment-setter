@@ -6,16 +6,17 @@
 // 'paused_human' para siempre (25 de 50 el 2026-11-13).
 //
 // Verde con la migracion:
-//   A. una derivacion 'projected' sin atender: el cierre la pasa a 'closed'
-//      con closed_at y el evento, y NO toca human_takeover, automation_status,
-//      el caso ni la derivacion (D-P3.2 y D-P3.3); la misma clave da
-//      'replayed', otra 'already_closed'. Medido y anotado como pregunta P-1:
-//      la admision de una cerrada da 'evidence_conflict' (una 'paused_human'
-//      daba 'blocked'). La reanudacion vigente la levanta igual que a una
-//      pausada (frena con la derivacion sin atender y, atendida, reanuda), y
-//      la decision vista (la etiqueta sacada) da 'not_paused' (D-P3.5).
+//   A. una derivacion 'projected' sin atender: el cierre LIBERA al contacto
+//      (Dan, 28/11): 'completed' con closed_at, sin human_takeover, draft_only,
+//      la derivacion atendida y el evento; el caso no cambia. La parada del
+//      primer contacto y el freno de la palabra clave, llamados de verdad,
+//      frenan antes y dejan pasar despues (con 'closed' el primer contacto
+//      seguiria frenado). La misma clave da 'replayed', otra 'already_closed'.
+//      En la misma conversacion la admision da 'evidence_conflict' (P-1: por
+//      eso el bridge solo cierra en bandejas sin lock).
 //   B. el proyector trabajando ('requested', 'projection_failed') da
-//      'blocked_pending_projection' sin escribir.
+//      'blocked_pending_projection' sin escribir; 'dead_letter' y una ya
+//      atendida cierran.
 //   C. una conversacion que maneja el agente, una 'paused_human' sin
 //      human_takeover (D-P3.4), una 'completed' y una 'blocked' dan
 //      'not_paused' sin escribir.
@@ -196,34 +197,86 @@ const after = await open(names);
 }
 
 // ---------------------------------------------------------------------------
-// A. La resuelta con la derivacion sin atender se cierra, y nada mas cambia.
+// A. La resuelta con la derivacion sin atender se cierra y LIBERA al contacto.
 // ---------------------------------------------------------------------------
+// Las lecturas por contacto, llamadas de verdad: la parada del primer contacto
+// (_portable_precheckout_stop_reason, con un intent vivo y su binding) y el
+// freno del disparador nativo por palabra clave (el de la audiencia es el
+// mismo criterio, sin 'closed').
+const readers = async (db, contactId, intentId) => ({
+  primer_contacto: (await db.query(
+    'select public._portable_precheckout_stop_reason($1::uuid, $2::uuid) as r', [intentId, contactId],
+  )).rows[0].r,
+  palabra_clave: (await db.query(
+    `select public._flow_engine_native_keyword_reason('{}'::jsonb, 'tenant-probe', 'product-probe', $1::uuid, '5210000000260') as r`,
+    [contactId],
+  )).rows[0].r,
+});
+const seedIntent = async (db) => {
+  await db.query(`
+    insert into public.commercial_ally_runtime_bindings (
+      tenant_ref, funnel_ref, binding_version, ally_ref, lead_ally_name, lead_site,
+      lead_landing_id, lead_page_host, lead_page_path, product_hotlink, product_name,
+      product_price, currency, offer_code, consent_copy_version, hotmart_product_id,
+      chatwoot_account_id, chatwoot_inbox_id, inbound_scope_key, inbound_scope_version, status
+    ) values (
+      'tenant-probe', 'funnel-probe', 1, 'ally-probe', 'Aliada', 'site-probe',
+      'landing-probe', 'example.test', '/probe', 'https://pay.example.test/x', 'Producto',
+      10, 'USD', 'offerprobe1', 'v1', 1234, 3, 13, 'close-probe', 1, 'active'
+    )`);
+  return (await db.query(`
+    insert into public.purchase_intents (
+      tenant_ref, funnel_ref, landing_ref, product_ref, offer_ref, submitted_at,
+      whatsapp_contact_authorized, provisional, provider_observed, activation_authorized,
+      lifecycle_state, normalized_phone
+    ) values (
+      'tenant-probe', 'funnel-probe', 'landing-probe', 'product-probe', 'offerprobe1', now(),
+      true, false, true, true, 'waiting_for_purchase', '5210000000260'
+    ) returning id`)).rows[0].id;
+};
 {
   const { caseId, handoffId } = await derive(after, 260, 'projected', 'handoff:close-probe:260');
-  const [convBefore, caseBefore, handoffBefore] = [
-    await conversation(after, 260), await commercialCase(after, caseId), await handoffRow(after, handoffId),
-  ];
+  const intentId = await seedIntent(after);
+  const [convBefore, caseBefore] = [await conversation(after, 260), await commercialCase(after, caseId)];
+  const contactId = (await after.query(
+    'select contact_id from public.conversations where id = $1::uuid', [convBefore.id],
+  )).rows[0].contact_id;
+  const held = await readers(after, contactId, intentId);
+  if (held.primer_contacto !== 'precheckout_conversation_handoff' || held.palabra_clave !== 'conversacion_derivada') {
+    fail('rojo: la derivada tenia que frenar el primer contacto y la palabra clave', held);
+  }
+
   const closed = await close(after, 260, closeKey(260, 'a'));
   if (closed?.outcome !== 'closed' || !closed.close_event_id
       || closed.closed_conversation_id !== convBefore.id) {
     fail('la resuelta derivada tenia que cerrarse', closed);
   }
   const convAfter = await conversation(after, 260);
-  if (convAfter.status !== 'closed' || convAfter.closed_at === null
+  if (convAfter.status !== 'completed' || convAfter.closed_at === null
+      || convAfter.human_takeover !== false || convAfter.automation_status !== 'draft_only'
       || Number(convAfter.version) !== Number(convBefore.version) + 1) {
-    fail('la conversacion tenia que quedar closed, con closed_at y version + 1', convAfter);
+    fail('liberar: completed, sin human_takeover, draft_only, closed_at y version + 1', convAfter);
   }
-  // D-P3.2: human_takeover y automation_status quedan como estaban.
-  if (convAfter.human_takeover !== true || convAfter.automation_status !== convBefore.automation_status) {
-    fail('el cierre no toca human_takeover ni automation_status', { convBefore, convAfter });
+  if ((await handoffRow(after, handoffId)).attended_at === null) {
+    fail('liberar: la derivacion projected sin atender queda atendida');
   }
-  // D-P3.3: el caso y la derivacion no cambian.
-  const [caseAfter, handoffAfter] = [await commercialCase(after, caseId), await handoffRow(after, handoffId)];
+  const caseAfter = await commercialCase(after, caseId);
   if (JSON.stringify(caseAfter) !== JSON.stringify(caseBefore)) {
     fail('el cierre no toca el caso', { caseBefore, caseAfter });
   }
-  if (JSON.stringify(handoffAfter) !== JSON.stringify(handoffBefore)) {
-    fail('el cierre no toca la derivacion', { handoffBefore, handoffAfter });
+  const freed = await readers(after, contactId, intentId);
+  if (freed.primer_contacto !== null || freed.palabra_clave !== null) {
+    fail('liberado, el contacto vuelve al primer contacto y a los disparadores nativos', freed);
+  }
+  // Por que 'completed' y no 'closed': con 'closed' el primer contacto sigue
+  // frenado (la parada vigente cuenta 'closed' en cualquier conversacion del
+  // contacto). Se prueba y se deshace.
+  await after.exec('begin');
+  await after.query(`update public.conversations set status = 'closed' where id = $1::uuid`, [convBefore.id]);
+  const withClosed = await readers(after, contactId, intentId);
+  await after.exec('rollback');
+  if (withClosed.primer_contacto !== 'precheckout_conversation_handoff') {
+    fail('con closed el primer contacto tenia que seguir frenado', withClosed);
   }
   const [event] = await closeEvents(after, convBefore.id);
   if (event?.id !== closed.close_event_id || event.actor_type !== 'human_agent'
@@ -231,8 +284,8 @@ const after = await open(names);
       || event.data.external_conversation_id !== 260
       || event.data.previous_status !== 'paused_human'
       || event.data.previous_automation_status !== convBefore.automation_status
-      || event.data.human_takeover !== true
-      || event.data.unattended_projected_handoffs !== 1) {
+      || event.data.previous_human_takeover !== true
+      || event.data.handoffs_marked_attended !== 1) {
     fail('el evento del cierre no dice lo que paso', event);
   }
 
@@ -245,42 +298,22 @@ const after = await open(names);
     fail('otra entrega sobre una cerrada tenia que dar already_closed sin escribir', again);
   }
 
-  // PREGUNTA P-1 (para Dan, por eso el PR queda en draft): si la MISMA
-  // conversacion de Chatwoot vuelve a recibir un mensaje (una bandeja con
-  // lock_to_single_conversation = true la reabre, o una persona la reabre a
-  // mano), la admision base no acepta una 'closed' y da 'evidence_conflict'
-  // con un conflicto 'canonical_drift', donde una 'paused_human' daba
-  // 'blocked'. Con 'evidence_conflict' el bridge no pasa
-  // durable_pause_recorded y no vuelve a pedir la admision: el lead no
-  // recibe respuesta a ese mensaje, y si la etiqueta ya no esta, a ninguno.
-  // Este chequeo fija el comportamiento medido para que cambie solo a
-  // conciencia.
-  const blocked = await admit(after, 260);
-  if (blocked?.outcome !== 'evidence_conflict') {
-    fail('medido: una cerrada da evidence_conflict en la admision (P-1)', blocked);
+  // P-1 (Dan, 28/11: c): la admision base no acepta una 'completed' en la
+  // MISMA conversacion de Chatwoot y da 'evidence_conflict'; por eso el bridge
+  // solo cierra en bandejas sin lock_to_single_conversation. Reabrir a mano
+  // queda como deuda (b). Se fija lo medido.
+  const sameConversation = await admit(after, 260);
+  if (sameConversation?.outcome !== 'evidence_conflict') {
+    fail('medido: la cerrada da evidence_conflict en la misma conversacion (P-1)', sameConversation);
   }
-  const conflicts = (await after.query(`
-    select count(*)::int as total from public.inbound_commercial_case_conflicts
-    where reason = 'canonical_drift'
-  `)).rows[0].total;
-  if (conflicts < 1) fail('medido: la admision de una cerrada deja un conflicto canonical_drift (P-1)');
-  // La decision vista no la levanta (D-P3.5) ...
+  // La decision vista no la levanta (D-P3.5). La reanudacion vigente por
+  // mensaje entrante (que no mira el estado) SI revive una 'completed' a
+  // 'active': es parte de la deuda (b), reabrir a mano; se fija lo medido.
   const seen = await byOperator(after, 260, 'resume:260:label:' + 'c'.repeat(32));
-  if (seen?.outcome !== 'not_paused' || (await handoffRow(after, handoffId)).attended_at !== null) {
-    fail('la decision vista sobre una cerrada tenia que dar not_paused sin marcar', seen);
-  }
-  // ... y la reanudacion por mensaje entrante la trata como a una pausada:
-  // frena con la derivacion sin atender y, atendida, reanuda.
-  const waiting = await vigente(after, 260, 'resume:260:9001', 'inbound_after_quiet_period', 30000);
-  if (waiting?.outcome !== 'blocked_pending_handoff') {
-    fail('la vigente sobre la cerrada tenia que frenar con la derivacion sin atender', waiting);
-  }
-  await after.query('select * from public.mark_human_handoff_attended(260::bigint, now(), now())');
-  const resumed = await vigente(after, 260, 'resume:260:9002', 'inbound_after_quiet_period', 30000);
-  if (resumed?.outcome !== 'resumed') fail('atendida, la vigente tenia que reanudar la cerrada', resumed);
-  const readmitted = await admit(after, 260);
-  if (readmitted?.outcome === 'blocked' || readmitted?.outcome === 'evidence_conflict') {
-    fail('reanudada, la admision tenia que volver', readmitted);
+  if (seen?.outcome !== 'not_paused') fail('la decision vista sobre una cerrada tenia que dar not_paused', seen);
+  const revived = await vigente(after, 260, 'resume:260:9002', 'inbound_after_quiet_period', 30000);
+  if (revived?.outcome !== 'resumed' || (await conversation(after, 260)).status !== 'active') {
+    fail('medido: la vigente revive la cerrada a active (deuda b)', revived);
   }
 }
 
@@ -300,7 +333,7 @@ for (const [conv, status] of [[262, 'requested'], [263, 'projection_failed']]) {
 
 // ---------------------------------------------------------------------------
 // B2. Lo que no frena: una derivacion en dead_letter (el proyector ya se
-// rindio) o ya atendida cierra, y la atendida no cuenta como sin atender.
+// rindio) o ya atendida cierra, y ninguna de las dos se vuelve a marcar.
 // ---------------------------------------------------------------------------
 for (const [conv, status, unattended] of [[268, 'dead_letter', 0], [269, 'attended', 0]]) {
   const { handoffId } = await derive(after, conv, status === 'attended' ? 'projected' : status,
@@ -312,8 +345,8 @@ for (const [conv, status, unattended] of [[268, 'dead_letter', 0], [269, 'attend
   const result = await close(after, conv, closeKey(conv, 'a'));
   const row = await conversation(after, conv);
   const [event] = await closeEvents(after, row.id);
-  if (result?.outcome !== 'closed' || row.status !== 'closed'
-      || event?.data.unattended_projected_handoffs !== unattended) {
+  if (result?.outcome !== 'closed' || row.status !== 'completed' || row.human_takeover !== false
+      || event?.data.handoffs_marked_attended !== unattended) {
     fail(`la ${conv} (${status}) tenia que cerrarse`, { result, row, event });
   }
 }

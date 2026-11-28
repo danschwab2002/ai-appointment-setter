@@ -6074,8 +6074,9 @@ class SupabaseClient:
 
         Parte 3 de E-539: ``close_resolved_conversation_v1`` (migracion
         20261128300000) cierra solo una conversacion que tomo el equipo
-        (``human_takeover``) y no toca ``human_takeover``,
-        ``automation_status``, el caso ni las derivaciones.
+        (``human_takeover``) y libera al contacto: ``completed``, sin
+        ``human_takeover``, ``draft_only`` y la derivacion ``projected``
+        atendida. No toca el caso.
         """
         operation = "conversation_close_resolved"
         response = await self._request(

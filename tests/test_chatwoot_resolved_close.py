@@ -31,6 +31,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from pathlib import Path
 
 import httpx
 import pytest
@@ -210,10 +211,63 @@ class _SupabaseResuelta:
         return False
 
 
-def _resuelta_en_chatwoot() -> _Chatwoot173:
+_SIN_CLAVE = object()
+
+
+def _bandeja(lock: object) -> dict[str, object]:
+    """El GET del inbox 9, con ``lock_to_single_conversation``.
+
+    DEUDA DE FIXTURE: el GET del inbox de la API no se capturo (la sonda de
+    solo lectura del 28/11 la freno el modo automatico). La forma sale del
+    precedente capturado ``inbox_binding_version/chatwoot_inboxes_20261025.json``
+    (la fila de ``inboxes`` de la base de Chatwoot, con la columna
+    ``lock_to_single_conversation`` en ``columns_inboxes``), que el serializer
+    del inbox devuelve con el mismo nombre. Si la clave no viene, el bridge no
+    cierra (falla cerrado).
+    """
+    capturado = json.loads(
+        (
+            Path(__file__).parent
+            / "fixtures"
+            / "inbox_binding_version"
+            / "chatwoot_inboxes_20261025.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert "lock_to_single_conversation" in capturado["columns_inboxes"]
+    bandeja: dict[str, object] = {
+        "id": 9,
+        "channel_type": capturado["inboxes"][0]["channel_type"],
+    }
+    if lock is not _SIN_CLAVE:
+        bandeja["lock_to_single_conversation"] = lock
+    return bandeja
+
+
+class _Chatwoot173ConBandeja(_Chatwoot173):
+    """El transporte de la 173 mas el GET del inbox 9."""
+
+    def __init__(self, fixture: dict[str, object], *, lock: object = False, inbox_status: int = 200) -> None:
+        super().__init__(fixture)
+        self.lock = lock
+        self.inbox_status = inbox_status
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/accounts/1/inboxes/9":
+            self.requests.append(request)
+            if self.inbox_status != 200:
+                return httpx.Response(self.inbox_status, json={"error": "caido"})
+            return httpx.Response(200, json=_bandeja(self.lock))
+        return super().__call__(request)
+
+    @property
+    def inbox_read(self) -> bool:
+        return any(r.url.path == "/api/v1/accounts/1/inboxes/9" for r in self.requests)
+
+
+def _resuelta_en_chatwoot(**bandeja: object) -> _Chatwoot173ConBandeja:
     fixture = _fixture_173()
     fixture["conversation"] = {**fixture["conversation"], "status": "resolved"}
-    return _Chatwoot173(fixture)
+    return _Chatwoot173ConBandeja(fixture, **bandeja)
 
 
 @pytest.mark.parametrize(
@@ -279,6 +333,7 @@ def test_a_resolution_closes_the_setter_conversation(
     assert supabase.cierres == [{"external_conversation_id": 173, "command_key": CLAVE}]
     assert supabase.reanudaciones == []
     assert transport.macro_executed is False
+    assert transport.inbox_read
     # Con el flag prendido se captura, para conseguir el fixture real.
     captured = list(tmp_path.glob("*.json"))
     assert len(captured) == 1
@@ -290,6 +345,40 @@ def test_a_resolution_closes_the_setter_conversation(
         for m in caplog.messages
     )
     assert not [m for m in caplog.messages if "chatwoot_work_failed" in m]
+
+
+@pytest.mark.parametrize(
+    ("lock", "reason"),
+    [(True, "inbox_lock_true"), (_SIN_CLAVE, "inbox_lock_missing"), (None, "inbox_lock_none"), ("false", "inbox_lock_false")],
+)
+def test_an_inbox_that_locks_or_does_not_say_is_never_closed(
+    tmp_path, monkeypatch, caplog, lock, reason
+) -> None:
+    """P-1 (Dan, 28/11): solo se cierra con lock_to_single_conversation exactamente False."""
+    monkeypatch.setattr("bridge.app.time.time", lambda: AHORA_173)
+    transport = _resuelta_en_chatwoot(lock=lock)
+    supabase = _SupabaseResuelta()
+    app = _app(tmp_path, transport, supabase, chatwoot_resolved_close_enabled=True)
+    caplog.set_level(logging.INFO)
+    [response] = _enviar(app, _resuelta(), (ENTREGA,))
+    assert response.status_code == 202
+    assert transport.inbox_read
+    assert supabase.cierres == []
+    assert any(f"reason={reason}" in m for m in caplog.messages)
+    assert not [m for m in caplog.messages if "chatwoot_work_failed" in m]
+
+
+def test_an_inbox_read_failure_is_retried_without_closing(tmp_path, monkeypatch, caplog) -> None:
+    monkeypatch.setattr("bridge.app.time.time", lambda: AHORA_173)
+    transport = _resuelta_en_chatwoot(inbox_status=503)
+    supabase = _SupabaseResuelta()
+    app = _app(tmp_path, transport, supabase, chatwoot_resolved_close_enabled=True)
+    caplog.set_level(logging.WARNING)
+    [response] = _enviar(app, _resuelta(), (ENTREGA,))
+    assert response.status_code == 202
+    assert supabase.cierres == []
+    fallos = [m for m in caplog.messages if "chatwoot_work_failed" in m]
+    assert fallos and "LabelRemovalResumeTransientError" in fallos[0]
 
 
 def test_with_the_flag_on_reopen_and_snooze_are_still_ignored(tmp_path, monkeypatch) -> None:

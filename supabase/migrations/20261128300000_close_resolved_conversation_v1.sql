@@ -4,43 +4,45 @@
 -- Que problema resuelve. Resolver una conversacion en Chatwoot nunca llega
 -- al setter: con lock_to_single_conversation = false en las bandejas 11 y 13,
 -- cuando la persona vuelve a escribir Chatwoot abre otra conversacion y la
--- resuelta queda 'paused_human' para siempre en la base (25 de 50 el
--- 2026-11-13, diagnostico E-539). No existe una RPC que cierre una
--- conversacion del setter.
+-- resuelta queda 'paused_human' con human_takeover para siempre (25 de 50 el
+-- 2026-11-13, diagnostico E-539). Y como toda lectura por contacto mira todas
+-- sus conversaciones, ese contacto queda «derivado» para siempre: sin primer
+-- contacto (_portable_precheckout_stop_reason), sin disparadores nativos por
+-- audiencia ni por palabra clave (conversacion_derivada), sin agente de
+-- recupero (any_conversation_human_takeover) y con el AE mostrandolo tomado.
 --
 -- Que hace. Suma close_resolved_conversation_v1(conversacion, command_key,
 -- now), que llama solo el bridge con CHATWOOT_RESOLVED_CLOSE_ENABLED cuando
--- un conversation_updated pasa la conversacion a 'resolved':
+-- un conversation_updated pasa la conversacion a 'resolved' en una bandeja
+-- sin lock_to_single_conversation (Dan, 28/11, P-1 = c):
 --   - cierra solo una conversacion que el equipo tomo (human_takeover), fuera
 --     de 'completed', 'closed' y 'blocked'; si no, 'not_paused' sin escribir;
---   - la pasa a status 'closed' con closed_at, version + 1, y deja el evento
---     'chatwoot_resolved_conversation_closed' en conversation_events con el
---     command_key, el estado anterior y cuantas derivaciones 'projected'
---     quedaban sin atender;
+--   - LIBERA al contacto (Dan, 28/11): la conversacion pasa a status
+--     'completed' (no 'closed': _portable_precheckout_stop_reason frena el
+--     primer contacto ante cualquier conversacion 'closed' del contacto, y
+--     'completed' no lo frena en ninguna lectura por contacto), con
+--     closed_at, human_takeover = false, automation_status = 'draft_only' y
+--     version + 1; y marca atendidas (attended_at = now, nunca antes de su
+--     created_at) las derivaciones 'projected' sin atender de sus casos: el
+--     equipo que resuelve atendio la derivacion (el AE deja de mostrarla
+--     pendiente y el aviso de derivacion sin atender deja de salir);
+--   - deja el evento 'chatwoot_resolved_conversation_closed' en
+--     conversation_events con el command_key, el estado anterior y cuantas
+--     derivaciones marco;
 --   - con una derivacion 'requested' o 'projection_failed' (el proyector
 --     trabajando) devuelve 'blocked_pending_projection' sin escribir: el
 --     bridge reintenta;
---   - la clave ya usada da 'replayed'; una ya cerrada, 'already_closed'; sin
---     conversacion, 'not_found'.
+--   - la clave ya usada da 'replayed'; una ya cerrada por este camino,
+--     'already_closed'; sin conversacion, 'not_found'.
 --
--- Lo que NO toca, a proposito (D-P3.2 y D-P3.3): human_takeover,
--- automation_status, el caso comercial y las derivaciones. Todas las
--- lecturas que deciden si a un contacto se le puede escribir (la admision,
--- el primer contacto, los disparadores nativos por audiencia y palabra
--- clave, el agente de recupero, la reactivacion, el AE) miran
--- human_takeover, automation_status o tratan 'closed' igual que
--- 'paused_human'. Asi, cerrar no cambia lo que ve ningun lead. Liberar al
--- contacto (apagar human_takeover, cerrar o atender la derivacion) cambia
--- que cuenta como «persona derivada» y lo decide Dan.
+-- Lo que NO toca: el caso comercial (su guarda solo deja pausar y reanudar,
+-- y ninguna lectura por contacto mira el caso inbound) ni las derivaciones en
+-- otro estado. No crea tablas, columnas ni indices, no cambia ninguna funcion
+-- vigente, no siembra filas. Correrla dos veces aborta con 55000.
 --
--- Lo que no hace: no crea tablas, columnas ni indices, no cambia ninguna
--- funcion vigente, no siembra filas. Correrla dos veces aborta con 55000 sin
--- cambiar nada.
---
--- Vuelta atras: drop de la funcion. Las conversaciones que haya cerrado
--- quedan cerradas: el estado anterior esta en el evento, y la reanudacion
--- por mensaje entrante (resume_paused_conversation) las sigue levantando
--- igual que a una 'paused_human'.
+-- Vuelta atras: drop de la funcion. Las conversaciones que haya cerrado y
+-- las attended_at que haya marcado quedan: son el registro de que el equipo
+-- resolvio; el estado anterior esta en el evento.
 --
 -- Errores: 22023 entrada invalida; 55000 un estado que no lo permite.
 
@@ -54,7 +56,15 @@ begin
     if to_regclass('public.conversations') is null
        or to_regclass('public.conversation_events') is null
        or to_regclass('public.human_handoff_requests') is null
-       or to_regclass('public.commercial_cases') is null then
+       or to_regclass('public.commercial_cases') is null
+       or not exists (
+           select 1
+           from pg_attribute
+           where attrelid = to_regclass('public.human_handoff_requests')
+             and attname = 'attended_at'
+             and attnum > 0
+             and not attisdropped
+       ) then
         raise exception using errcode = '55000',
             message = 'close_resolved_conversation_missing';
     end if;
@@ -82,7 +92,7 @@ as $function$
 declare
     v_conversation public.conversations%rowtype;
     v_existing_event_id uuid;
-    v_unattended integer;
+    v_attended integer;
     v_event_id uuid;
     v_now timestamptz;
 begin
@@ -123,7 +133,14 @@ begin
         return;
     end if;
 
-    if v_conversation.status = 'closed' then
+    -- Ya cerrada por este camino (otra entrega de la misma resolucion).
+    if v_conversation.status = 'completed'
+       and exists (
+           select 1
+           from public.conversation_events event
+           where event.conversation_id = v_conversation.id
+             and event.event_type = 'chatwoot_resolved_conversation_closed'
+       ) then
         outcome := 'already_closed';
         closed_conversation_id := v_conversation.id;
         return next;
@@ -131,12 +148,9 @@ begin
     end if;
 
     -- Solo la conversacion que quedo con las personas (D-P3.4): es el estado
-    -- muerto que deja una resuelta. Una que maneja el agente no se cierra, y
-    -- una 'paused_human' sin human_takeover tampoco: al dejar de ser
-    -- 'paused_human' los disparadores nativos por audiencia y palabra clave,
-    -- que no miran 'closed', podrian volver a escribirle.
+    -- muerto que deja una resuelta. Una que maneja el agente no se cierra.
     if not v_conversation.human_takeover
-       or v_conversation.status in ('completed', 'blocked') then
+       or v_conversation.status in ('completed', 'closed', 'blocked') then
         outcome := 'not_paused';
         closed_conversation_id := v_conversation.id;
         return next;
@@ -159,18 +173,33 @@ begin
         return;
     end if;
 
-    select count(*) into v_unattended
-    from public.human_handoff_requests request
-    join public.commercial_cases commercial_case
-      on commercial_case.id = request.commercial_case_id
-    where commercial_case.conversation_id = v_conversation.id
-      and request.status = 'projected'
-      and request.attended_at is null;
-
     v_now := coalesce(p_now, clock_timestamp());
 
+    -- Primero los casos, en el orden de la reanudacion (conversacion -> caso);
+    -- despues la derivacion. El equipo que resolvio atendio la derivacion.
+    perform 1
+    from public.commercial_cases commercial_case
+    where commercial_case.conversation_id = v_conversation.id
+    order by commercial_case.id
+    for update;
+
+    update public.human_handoff_requests request
+    set attended_at = greatest(v_now, request.created_at),
+        updated_at = greatest(v_now, request.created_at)
+    from public.commercial_cases commercial_case
+    where commercial_case.id = request.commercial_case_id
+      and commercial_case.conversation_id = v_conversation.id
+      and request.status = 'projected'
+      and request.attended_at is null
+      and request.created_at <= v_now;
+    get diagnostics v_attended = row_count;
+
+    -- Liberar al contacto (Dan, 28/11): 'completed' con human_takeover y la
+    -- automatizacion sueltos no frena ninguna lectura por contacto.
     update public.conversations conversation
-    set status = 'closed',
+    set status = 'completed',
+        automation_status = 'draft_only',
+        human_takeover = false,
         closed_at = v_now,
         version = conversation.version + 1,
         updated_at = v_now
@@ -187,8 +216,8 @@ begin
             'external_conversation_id', p_external_conversation_id,
             'previous_status', v_conversation.status,
             'previous_automation_status', v_conversation.automation_status,
-            'human_takeover', v_conversation.human_takeover,
-            'unattended_projected_handoffs', v_unattended
+            'previous_human_takeover', v_conversation.human_takeover,
+            'handoffs_marked_attended', v_attended
         ),
         v_now
     )
@@ -204,8 +233,9 @@ $function$;
 comment on function public.close_resolved_conversation_v1(
     bigint, text, timestamptz) is
     'Parte 3 de E-539 (20261128300000): cierra la conversacion del setter que el '
-    'equipo resolvio en Chatwoot, si la tomo el equipo; no toca human_takeover, '
-    'automation_status, el caso ni las derivaciones. Solo service_role.';
+    'equipo resolvio en Chatwoot, si la tomo el equipo, y libera al contacto '
+    '(completed, sin human_takeover, draft_only, derivacion projected atendida). '
+    'Solo service_role.';
 
 do $roles$
 declare

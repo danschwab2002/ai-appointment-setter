@@ -2,7 +2,7 @@
 
 - **Estado:** implementado; `CONVERSATION_RESUME_ENABLED=false` por defecto. Activado en producción el 2026-09-23 (PR #174, `fe1f5f3`); la primera reanudación real sigue pendiente (ver "Lo que salió mal la segunda vez").
 - **Fecha:** 2026-09-23
-- **Versión:** 1.3 (2026-11-28). Suma la parte 3 de E-539 como propuesta detrás de `CHATWOOT_RESOLVED_CLOSE_ENABLED` (apagado): `close_resolved_conversation_v1` (migración `20261128300000`), ver "Cierre al resolver". La 1.2 sumó la parte 1 de E-539 (E-577): `resume_paused_conversation_by_operator_v1` (migración `20261128200000`), la reanudación por la decisión **vista** de una persona, que marca atendida la derivación `projected` sin contestar y devuelve `not_paused` si la conversación no estaba pausada. La usa solo el camino del `conversation_updated` que saca `automation_paused`, detrás de `CHATWOOT_LABEL_REMOVAL_RESUME_ENABLED` (apagado por defecto). Ver "Reanudación al sacar la etiqueta" e "Historial".
+- **Versión:** 1.3 (2026-11-28). Suma la parte 3 de E-539 como propuesta detrás de `CHATWOOT_RESOLVED_CLOSE_ENABLED` (apagado): `close_resolved_conversation_v1` (migración `20261128300000`) cierra la conversación resuelta en una bandeja sin lock y libera al contacto, ver "Cierre al resolver". La 1.2 sumó la parte 1 de E-539 (E-577): `resume_paused_conversation_by_operator_v1` (migración `20261128200000`), la reanudación por la decisión **vista** de una persona, que marca atendida la derivación `projected` sin contestar y devuelve `not_paused` si la conversación no estaba pausada. La usa solo el camino del `conversation_updated` que saca `automation_paused`, detrás de `CHATWOOT_LABEL_REMOVAL_RESUME_ENABLED` (apagado por defecto). Ver "Reanudación al sacar la etiqueta" e "Historial".
 - **Objetivo:** que la pausa de una conversación deje de ser terminal, sin que el agente se meta donde una persona está atendiendo.
 
 ## Por qué existe
@@ -169,46 +169,57 @@ La parte 1 la cubre `resume_paused_conversation_by_operator_v1` (E-577, ver "La 
 
 ## Cierre al resolver (propuesta, detrás de flag)
 
-- **Estado:** propuesta, parte 3 de E-539. Este documento no afirma que esté desplegada ni prendida en ninguna instancia.
+- **Estado:** propuesta, parte 3 de E-539, con las decisiones de Dan del 2026-11-28 (P-1 = cerrar solo en bandejas sin lock; liberar al contacto). Este documento no afirma que esté desplegada ni prendida en ninguna instancia.
 - **Flag:** `CHATWOOT_RESOLVED_CLOSE_ENABLED`, `false` por defecto, en `PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES` y en `.env.example`. Es propio y no `CHATWOOT_LABEL_REMOVAL_RESUME_ENABLED`: cerrar y reanudar son decisiones distintas, con su propia vuelta atrás. Apagado, el `conversation_updated` que cambia el estado sigue el camino de antes: `200 ignored` con `unsupported_event`, sin captura, sin trabajo durable y sin llamar a Chatwoot ni a la base (lo fija `tests/test_chatwoot_resolved_close.py`).
 
 ### Por qué existe
 
-Las bandejas 11 y 13 tienen `lock_to_single_conversation = false`: cuando la persona vuelve a escribir, Chatwoot abre otra conversación y la vieja queda `paused_human` para siempre en la base (25 de 50 el 2026-11-13, según E-539). No existía una RPC que cerrara una conversación del setter.
+Las bandejas 11 y 13 tienen `lock_to_single_conversation = false`: cuando la persona vuelve a escribir, Chatwoot abre otra conversación y la vieja queda `paused_human` con `human_takeover` para siempre (25 de 50 el 2026-11-13, según E-539). Como las lecturas por contacto miran todas sus conversaciones, ese contacto queda «derivado» para siempre: sin primer contacto, sin disparadores nativos por audiencia ni por palabra clave y sin agente de recupero.
 
 ### Qué cambia con el flag prendido
 
 1. **Ingreso.** `classify_chatwoot_conversation_resolved` (`src/bridge/filtering.py`) reconoce el `conversation_updated` cuyo `changed_attributes` trae `status` de otro valor a `resolved`, con el `status` de la raíz `resolved` o ausente, del inbox y la cuenta configurados y con el remitente acotado como en el resto del ingreso (la identidad sale del mismo helper que la etiqueta sacada). Ese evento se captura en `CAPTURE_DIR` y entra al trabajo durable con la entrega como clave: `202 accepted`, `reason: conversation_resolved`; una entrega repetida da `200 duplicate`. Reabrir, posponer y cualquier otra forma se ignoran como antes; una forma rota falla cerrado.
-2. **Worker.** Relee la conversación con la identidad del remitente y solo sigue si sigue `resolved` (si la reabrieron entre el evento y el trabajo, `chatwoot_resolved_close_skipped … reason=status_open` en `info`). Llama a `close_resolved_conversation_v1` con la clave `close:<conversación>:resolved:<los primeros 32 hex del sha256 de la entrega>`.
-3. **Reintentos.** Una falla de red con Chatwoot, una de la base o `blocked_pending_projection` levantan `LabelRemovalResumeTransientError` y el worker reintenta con el tope de 8. Un error de protocolo de Chatwoot (identidad que no coincide) no se reintenta. El tope son unos 3 minutos de reintentos: un proyector en `projection_failed` por más tiempo deja la entrega `failed` y la conversación como estaba (`paused_human`), sin otro disparador. Una derivación en `dead_letter` no frena el cierre.
+2. **Worker.** Relee la conversación con la identidad del remitente y solo sigue si sigue `resolved` (si no, `chatwoot_resolved_close_skipped … reason=status_open`). Después lee la bandeja (`GET /inboxes/<id>`) y **solo sigue si `lock_to_single_conversation` es exactamente `false`**: con lock, sin la clave o con otro valor no cierra (`reason=inbox_lock_<valor>`, `info`, sin reintento). Llama a `close_resolved_conversation_v1` con la clave `close:<conversación>:resolved:<los primeros 32 hex del sha256 de la entrega>`.
+3. **Reintentos.** Una falla de red con Chatwoot (la conversación o la bandeja), una de la base o `blocked_pending_projection` levantan `LabelRemovalResumeTransientError` y el worker reintenta con el tope de 8 (unos 3 minutos). Un proyector en `projection_failed` por más tiempo deja la entrega `failed` y la conversación como estaba. Un error de protocolo de Chatwoot (identidad que no coincide) no se reintenta.
 4. **Un mismo evento que resuelve y saca la etiqueta** entra por el camino de la etiqueta (si su flag está prendido): la reanudación no llega a la base porque la conversación no está `open`, y el cierre sí corre.
 
 ### La RPC (`close_resolved_conversation_v1`, migración `20261128300000`)
 
 `(p_external_conversation_id bigint, p_command_key text, p_now timestamptz)`, solo `service_role`.
 
-- **Solo una conversación que tomó el equipo** (`human_takeover`), fuera de `completed` y `blocked`. Si no, `not_paused` sin escribir.
-- **La cierra:** `status = 'closed'`, `closed_at`, `version + 1`, y el evento `chatwoot_resolved_conversation_closed` (`actor_type = human_agent`) con la clave, el estado anterior, el `automation_status`, `human_takeover` y cuántas derivaciones `projected` quedaban sin atender.
-- **No toca** `human_takeover`, `automation_status`, el caso comercial ni las derivaciones.
-- `requested` / `projection_failed` dan `blocked_pending_projection` sin escribir; la clave ya usada, `replayed`; una ya cerrada, `already_closed`; sin conversación, `not_found`; una clave fuera de `^[a-z0-9:_-]{1,200}$`, `22023`.
+- **Solo una conversación que tomó el equipo** (`human_takeover`), fuera de `completed`, `closed` y `blocked`. Si no, `not_paused` sin escribir.
+- **La cierra y libera al contacto:** `status = 'completed'`, `closed_at`, `human_takeover = false`, `automation_status = 'draft_only'`, `version + 1`; marca atendidas (`attended_at = now`, nunca antes de su `created_at`) las derivaciones `projected` sin atender de sus casos; deja el evento `chatwoot_resolved_conversation_closed` (`actor_type = human_agent`) con la clave, el estado anterior y cuántas derivaciones marcó.
+- **No toca el caso comercial**: su guarda solo deja pausar y reanudar, y ninguna lectura por contacto mira el caso inbound.
+- `requested` / `projection_failed` dan `blocked_pending_projection` sin escribir; `dead_letter` no frena. La clave ya usada da `replayed`; otra entrega sobre una ya cerrada por este camino, `already_closed`; sin conversación, `not_found`; una clave fuera de `^[a-z0-9:_-]{1,200}$`, `22023`.
 
 Salidas: `closed` · `replayed` · `already_closed` · `not_paused` · `not_found` · `blocked_pending_projection`.
 
-### Qué ve un lead
+### Qué significa «liberar», lectura por lectura
 
-Las lecturas que deciden si al contacto se le escribe miran `human_takeover`, `automation_status` o tratan `closed` igual que `paused_human` (el primer contacto, los disparadores nativos por audiencia y palabra clave, el agente de recupero, la reactivación, el AE). Como el cierre deja esos campos como estaban, **en otra conversación del mismo contacto no cambia nada**. Liberar al contacto (apagar `human_takeover`, atender o cerrar la derivación) cambia qué cuenta como «persona derivada» y lo decide Dan. Por lo mismo, una derivación sin atender de una conversación cerrada sigue apareciendo en los avisos de derivación sin atender (`list_unattended_human_handoffs_v1` no mira la conversación).
+Las lecturas vigentes que deciden si a un contacto se le escribe miran **todas** sus conversaciones:
 
-**En la misma conversación sí cambia algo, y es la pregunta abierta para Dan.** Si la conversación cerrada vuelve a recibir un mensaje (una bandeja con `lock_to_single_conversation = true` la reabre, o una persona la reabre a mano), la admisión base no acepta una `closed`: da `evidence_conflict` (con un conflicto `canonical_drift`), donde una `paused_human` daba `blocked`. Con `evidence_conflict` el bridge no pasa `durable_pause_recorded` y no vuelve a pedir la admisión, así que ese mensaje queda sin respuesta, y si la etiqueta ya no está, todos los siguientes. Lo mide `validate_close_resolved_conversation.mjs`. La reanudación vigente por silencio del equipo sí la levanta (con la etiqueta puesta y 8 h), igual que a una pausada; la decisión vista (la etiqueta sacada) da `not_paused` sobre una cerrada.
+| Lectura | Frena con | Con la conversación liberada |
+|---|---|---|
+| Primer contacto (`_portable_precheckout_stop_reason`) | `human_takeover`, `status` en `paused_human`/`closed`/`blocked`, `automation_status` en `paused`/`disabled`/`restricted`/`error` | pasa. Por eso el estado es `completed` y no `closed`: con `closed` seguiría frenado |
+| Disparadores nativos por audiencia y palabra clave (`conversacion_derivada`) | lo mismo sin `closed` | pasa |
+| Agente de recupero (`resolution.py`, `any_conversation_human_takeover`) | `human_takeover` | pasa |
+| AE (`held`, `pending_handoff`) | `human_takeover`, `paused_human`, `automation_status` frenado, una derivación sin atender | deja de mostrarlo tomado |
+| Avisos de derivación sin atender | la derivación con `attended_at` nulo | deja de avisar |
+
+Lo prueban, llamando a las funciones vigentes, `validate_close_resolved_conversation.mjs` (el primer contacto y la palabra clave frenan antes y dejan pasar después; con `closed` el primer contacto sigue frenado). **Otra conversación del mismo contacto no se toca.** El agente de recupero puede volver a escribirle al contacto, y `close_recovery_case_without_pending_touch` deja de ver la conversación como tomada: es lo que se busca al liberar.
+
+**En la misma conversación de Chatwoot** la admisión base no acepta una `completed`: da `evidence_conflict` (con un conflicto `canonical_drift`), donde una `paused_human` daba `blocked`, y ese mensaje quedaría sin respuesta. Por eso el worker solo cierra en bandejas sin lock (Dan, 28/11). **Deuda (b):** si una persona reabre a mano una conversación cerrada en una bandeja sin lock, pasa lo mismo; reabrirla en el setter con el `conversation_updated` de `resolved` a `open` queda para otro PR. Dentro de la misma deuda: la reanudación vigente por mensaje entrante no mira el estado y revive una `completed` a `active` (ese mensaje igual queda sin respuesta, porque la admisión dio `evidence_conflict`), y `claim_conversation_reactivation` tampoco mira el estado, así que en una conversación reabierta a mano, con la derivación ya atendida, la reactivación puede mandar su plantilla. La decisión vista (la etiqueta sacada) da `not_paused` sobre una cerrada.
+
+**Deuda (carrito):** una derivación de un caso de recupero de carrito pausa el `recovery_cases` (`20260810000400`), y el cierre no lo toca. Para ese producto el primer contacto sigue frenado (`superseded_by_provider_event`) y el agente de recupero lo ve abierto. Liberar cubre la derivación del entrante (`inbound_sales`); qué hacer con un caso de recupero pausado de una conversación resuelta queda para otro PR (cambia el motor de seguimientos).
 
 ### Antes de prender el flag
 
-- Un `conversation_updated` real de un cambio a `resolved`, anonimizado, como fixture con su test. El bridge nunca capturó uno: los tests derivan el evento del `webhook_data` de la conversación 173 más un `changed_attributes` con `status` en la forma del emisor (Chatwoot v4.13.0). Con el flag prendido, la primera entrega real queda capturada antes de procesarse.
-- La respuesta de Dan a la pregunta de arriba.
+- Un `conversation_updated` real de un cambio a `resolved` y un `GET` real de la bandeja, anonimizados, como fixtures con su test. Los tests derivan el primero del `webhook_data` de la conversación 173 más un `changed_attributes` con `status` en la forma del emisor (Chatwoot v4.13.0), y la bandeja de la fila capturada de la base (`inbox_binding_version/chatwoot_inboxes_20261025.json`, que tiene la columna). Con el flag prendido, la primera entrega real queda capturada antes de procesarse; si el `GET` de la bandeja no trae la clave, no se cierra nada.
 - La migración `20261128300000` aplicada y PostgREST recargado antes de subir el bridge que la llama.
 
 ## Historial
 
 - **1.0 (2026-09-23).** El contrato, con las correcciones de la primera, segunda y tercera vez (2026-09-23 al 2026-09-27) y el cambio de alcance de `blocked_pending_handoff` (`20260927000300`).
-- **1.3 (2026-11-28, parte 3 de E-539).** El cierre al resolver como propuesta detrás de `CHATWOOT_RESOLVED_CLOSE_ENABLED`: `close_resolved_conversation_v1` (migración `20261128300000`), que cierra la conversación que tomó el equipo sin tocar `human_takeover`, `automation_status`, el caso ni las derivaciones. Anota la pregunta abierta (una cerrada que recibe otro mensaje da `evidence_conflict`) y la deuda del fixture. No afirma nada desplegado.
+- **1.3 (2026-11-28, parte 3 de E-539).** El cierre al resolver como propuesta detrás de `CHATWOOT_RESOLVED_CLOSE_ENABLED`, con las decisiones de Dan del mismo día: solo en bandejas sin `lock_to_single_conversation`, y liberando al contacto (`completed`, sin `human_takeover`, `draft_only`, la derivación `projected` atendida). Deuda: reabrir al pasar de `resolved` a `open`, y los fixtures reales. No afirma nada desplegado.
 - **1.2 (2026-11-28, E-577).** La parte 1 de E-539: `resume_paused_conversation_by_operator_v1` (migración `20261128200000`), solo para el camino de la etiqueta sacada. Marca atendida la derivación `projected` sin contestar, devuelve `not_paused` si la conversación no estaba pausada y no cambia la vigente. El cliente de `resume_paused_conversation` acepta `blocked_resume_limit`, que antes rechazaba como salida inválida. Anota la forma esperada del fixture de la conversación 260. No afirma nada desplegado.
 - **1.1 (2026-11-15, E-578).** Suma el disparador por `conversation_updated` que saca `automation_paused` (E-571, PR #468), como propuesta detrás de `CHATWOOT_LABEL_REMOVAL_RESUME_ENABLED`: clave por entrega, modo `label_removal_only`, reintentos con tope de 8. Corrige "Lo que este contrato no cubre": los webhooks ya suscriben `conversation_updated` (E-539). Anota las partes 1 y 3 de E-539 como pendientes con migración (E-577). Escrito antes del merge de #468: no afirma nada desplegado.

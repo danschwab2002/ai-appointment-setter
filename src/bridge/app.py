@@ -9421,6 +9421,33 @@ def create_app(
                 snapshot.status,
             )
             return
+        # P-1 (Dan, 28/11): solo en una bandeja sin lock_to_single_conversation.
+        # Con lock, Chatwoot reabre la misma conversacion cuando la persona
+        # vuelve a escribir, y la admision base no acepta una conversacion
+        # cerrada (evidence_conflict): ese mensaje quedaria sin respuesta. Si
+        # el valor no es exactamente False (con lock, ausente o de otra
+        # forma), no se cierra.
+        try:
+            inbox = await control_client.get_inbox(inbox_id=settings.chatwoot_inbox_id)
+        except httpx.HTTPError as exc:
+            raise LabelRemovalResumeTransientError(
+                "chatwoot_resolved_close_inbox_failed"
+            ) from exc
+        except ChatwootProtocolError as exc:
+            logger.info(
+                "chatwoot_resolved_close_skipped conversation=%s reason=inbox_%s",
+                resolved.conversation_id,
+                exc,
+            )
+            return
+        lock = inbox.get("lock_to_single_conversation", "missing")
+        if lock is not False:
+            logger.info(
+                "chatwoot_resolved_close_skipped conversation=%s reason=inbox_lock_%s",
+                resolved.conversation_id,
+                str(lock).lower(),
+            )
+            return
         delivery_digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
         try:
             result = await shared_supabase.close_resolved_conversation(

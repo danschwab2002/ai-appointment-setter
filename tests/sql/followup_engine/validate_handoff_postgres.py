@@ -539,11 +539,11 @@ def verify_effective_acls(harness: PostgresHarness) -> None:
                      -- escribe solo esa columna (y updated_at).
                      'resume_paused_conversation_by_operator_v1',
                      -- El cierre de la conversacion que Chatwoot resolvio
-                     -- (migracion 20261128300000, parte 3 de E-539): solo
-                     -- LEE human_handoff_requests (cuenta las 'projected'
-                     -- sin atender y frena con 'requested' o
-                     -- 'projection_failed'); escribe conversations y
-                     -- conversation_events.
+                     -- (migracion 20261128300000, parte 3 de E-539): frena
+                     -- con 'requested' o 'projection_failed' y marca
+                     -- attended_at de las 'projected' sin atender de la
+                     -- conversacion (el equipo que resolvio atendio); de
+                     -- esta tabla escribe solo esa columna (y updated_at).
                      'close_resolved_conversation_v1'
                      ) then has_function_privilege(role_name, oid, 'EXECUTE')
                   else not has_function_privilege(role_name, oid, 'EXECUTE')
