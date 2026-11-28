@@ -38,11 +38,12 @@ from types import MappingProxyType
 from typing import Any
 
 from .flow_audience import AudienceSpecInvalid, audience_form, audience_spec
-from .flow_definition import FlowWorld, ProposalItem, parse_due_anchor
+from .flow_definition import FlowWorld, ProposalItem, is_keyword_rule_key, parse_due_anchor
 from .flow_engine import (
     ENGINE_CAPABILITIES_V1,
     EngineFlow,
     PlanNotSupported,
+    is_registration_trigger,
     native_payment_failure_paths,
     not_supported,
 )
@@ -63,14 +64,18 @@ __all__ = [
     "NEW_FLOW_COUNTS_CONTRACT",
     "build_native_audience_reach_simulation",
     "build_native_flow_simulation",
+    "build_native_uncounted_simulation",
     "build_new_audience_flow_simulation",
     "build_new_flow_simulation",
     "build_new_flows_simulation",
+    "build_new_uncounted_flow_simulation",
     "build_simulation",
     "engine_flows_from_read",
     "native_flow_counts_request",
     "native_touches",
     "new_audience_flow_form",
+    "new_uncounted_flow",
+    "uncounted_trigger",
     "same_audience",
     "summary_sha256",
 ]
@@ -261,6 +266,9 @@ def _sharing_the_event(world: FlowWorld | None, product: str, trigger: object) -
     found = []
     for flow in world.flows:
         definition = flow.active_definition
+        if uncounted_trigger(definition) is not None:
+            # Z2 3.9 y 4.3 (D-43.8): un flujo de palabra clave o de registro no comparte el evento con nadie.
+            continue
         event = simulation_trigger(definition)
         if flow.native and flow.product_ref == product and flow.state in ("prendido", "cohorte") \
                 and event == trigger:
@@ -516,6 +524,145 @@ def _messages_at_most(summary: dict[str, Any], touches: Sequence[Mapping[str, An
     summary["mensajes_cota"] = TOUCH_AT_MOST
 
 
+# Z2 3.9 y 4.3 parte 2 (deudas de #531 y #532): dos disparadores que la lectura de conteos no sabe contar.
+# * ``dispara: {palabra_clave: <regla>}``: simulation_trigger da None y la simulacion quedaba failed con
+#   simulation_new_flow_counts_invalid (la pagina no publicaba). Contar no se puede: sin un flujo de la regla
+#   la admision es sin_flujo y no deja fila (20261127400000), y read_flow_engine_native_trigger_counts_v1
+#   no acepta el disparador.
+# * ``dispara: {evento: intencion, registro: <evento>}``: simulation_trigger da intencion y la lectura contaba
+#   TODOS los formularios consentidos del producto (los comerciales), no los registros a ese evento: la base no
+#   sabe que envio es de un registro (la clave la manda el bridge, D-43.6).
+# Lo honesto, como la audiencia (E-621): nace en la cohorte vacia y al publicarse no le llega a nadie.
+UNCOUNTED_KEYWORD = "palabra_clave"
+UNCOUNTED_REGISTRATION = "registro"
+UNCOUNTED_FLOW_INVALID = "simulation_uncounted_flow_invalid"
+_UNCOUNTED_WHY = {UNCOUNTED_KEYWORD: "la_base_no_guarda_la_palabra_sin_flujo",
+                  UNCOUNTED_REGISTRATION: "la_base_no_separa_los_registros"}
+
+
+def uncounted_trigger(definition: object) -> tuple[str, str] | None:
+    """``("palabra_clave", <regla>)`` o ``("registro", <evento>)`` si el disparador no se cuenta; si no, None."""
+    if not isinstance(definition, Mapping):
+        return None
+    trigger = definition.get("dispara")
+    if not isinstance(trigger, Mapping):
+        return None
+    if set(trigger) == {UNCOUNTED_KEYWORD} and is_keyword_rule_key(trigger.get(UNCOUNTED_KEYWORD)):
+        return UNCOUNTED_KEYWORD, trigger[UNCOUNTED_KEYWORD]
+    if is_registration_trigger(trigger):
+        return UNCOUNTED_REGISTRATION, trigger["registro"]
+    return None
+
+
+def new_uncounted_flow(items: Any) -> tuple[str, str] | None:
+    """Lo de ``uncounted_trigger`` si la propuesta es un solo ``nuevo`` con ese disparador; si no, None.
+
+    Recibe los items guardados o ya leidos, como ``new_audience_flow_form``. La gemela es ``_new_uncounted_flow``
+    de ``scripts/flow_change_operator.py``.
+    """
+    if not isinstance(items, (list, tuple)) or len(items) != 1:
+        return None
+    item = items[0]
+    if isinstance(item, ProposalItem):
+        kind, definition = item.tipo, item.definicion
+    elif isinstance(item, Mapping):
+        kind, definition = item.get("tipo"), item.get("definicion")
+    else:
+        return None
+    return uncounted_trigger(definition) if kind == "nuevo" else None
+
+
+def _sharing_the_key(world: FlowWorld | None, product: str, found: tuple[str, str], own: str | None = None
+                     ) -> list[dict[str, str]]:
+    """Los flujos abiertos que arrancan con la misma regla (de cualquier producto, D-39.16: el segundo de un
+    mensaje no arranca) o con el mismo registro del mismo producto (D-43.8: una confirmacion por evento)."""
+    if world is None:
+        return []
+    out = []
+    for flow in world.flows:
+        name = f"{flow.product_ref}/{flow.flow_key}"
+        if not flow.is_native or flow.state not in ("prendido", "cohorte") or name == own:
+            continue
+        if uncounted_trigger(flow.active_definition) == found \
+                and (found[0] == UNCOUNTED_KEYWORD or flow.product_ref == product):
+            out.append({"flujo": name, "estado": flow.state})
+    return sorted(out, key=lambda entry: entry["flujo"])
+
+
+def build_new_uncounted_flow_simulation(items: Sequence[ProposalItem], *,
+                                        world: FlowWorld | None = None) -> dict[str, Any]:
+    """La simulacion de un ``nuevo`` de palabra clave o de registro, sin leer nada. Nunca levanta.
+
+    ``{"status": "built", "summary": {flujo_nuevo, disparador, clave, sin_lectura, nace_en: "cohorte",
+    cohorte_al_nacer: 0, alcance_al_nacer: 0[, comparte_el_evento_con]}, "summary_sha256", "cambios": []}``.
+    """
+    try:
+        found = new_uncounted_flow(items)
+        if found is None or not items[0].is_new_flow:
+            raise _Failed(NEW_FLOW_MIXED)
+        item = items[0]
+        kind, key = found
+        summary: dict[str, Any] = {
+            "flujo_nuevo": f"{item.producto}/{item.flujo}", "disparador": kind, "clave": key,
+            "sin_lectura": _UNCOUNTED_WHY[kind], "nace_en": "cohorte", "cohorte_al_nacer": 0, "alcance_al_nacer": 0,
+        }
+        sharing = _sharing_the_key(world, item.producto, found)
+        if sharing:
+            summary["comparte_el_evento_con"] = sharing
+        return {"status": "built", "summary": summary, "summary_sha256": summary_sha256(summary), "cambios": []}
+    except _Failed as failed:
+        return {"status": "failed", "reason_code": failed.reason_code}
+    except Exception:  # noqa: BLE001 - la vista previa no se cae por la simulacion
+        return {"status": "failed", "reason_code": SIMULATION_ERROR}
+
+
+def build_native_uncounted_simulation(items: Sequence[ProposalItem], *, world: FlowWorld | None) -> dict[str, Any]:
+    """Un ``prender``, ``apagar``, ``version`` o ``volver`` de un flujo de palabra clave o de registro, sin conteo.
+
+    Lo mismo que ``build_native_flow_simulation`` sin ``disparos`` ni ``personas`` (no hay lectura que los cuente
+    bien): el cambio, a quien llega hoy y, con una version, si cambia la estructura. Nunca levanta.
+    """
+    try:
+        if world is None or len(items) != 1:
+            raise _Failed(NATIVE_FLOW_MIXED)
+        item = items[0]
+        flow = world.flow(item.flow_id) if item.flow_id is not None else None
+        if item.tipo not in NATIVE_ITEM_TYPES or flow is None or not flow.is_native:
+            raise _Failed(NATIVE_FLOW_MIXED)
+        if item.tipo == "version":
+            definition: object = item.definicion
+        elif item.tipo == "volver":
+            definition = flow.versions.get(item.version) if item.version is not None else None
+        else:
+            definition = flow.active_definition
+        found = uncounted_trigger(definition)
+        if found is None:
+            raise _Failed(UNCOUNTED_FLOW_INVALID)
+        summary: dict[str, Any] = {
+            "flujo": f"{item.producto}/{item.flujo}", "tipo": item.tipo, "estado_hoy": flow.state,
+            "queda_en": flow.state if item.tipo in ("version", "volver")
+            else ("apagado" if item.tipo == "apagar" else (item.a or "prendido")),
+            "disparador": found[0], "clave": found[1], "sin_lectura": _UNCOUNTED_WHY[found[0]],
+        }
+        if item.tipo in ("version", "volver"):
+            summary["alcance"] = _REACH_BY_STATE.get(flow.state, "nadie_hoy")
+            if item.tipo == "volver":
+                summary["vuelve_a_version"] = item.version
+            active = flow.active_definition
+            if isinstance(active, Mapping) and isinstance(definition, Mapping):
+                changes = structural_changes(active, definition)
+                if changes:
+                    summary["cambia_estructura"] = list(changes)
+        sharing = _sharing_the_key(world, item.producto, found, own=f"{flow.product_ref}/{flow.flow_key}")
+        if sharing:
+            summary["comparte_el_evento_con"] = sharing
+        return {"status": "built", "summary": summary, "summary_sha256": summary_sha256(summary), "cambios": []}
+    except _Failed as failed:
+        return {"status": "failed", "reason_code": failed.reason_code}
+    except Exception:  # noqa: BLE001 - la vista previa no se cae por la simulacion
+        return {"status": "failed", "reason_code": SIMULATION_ERROR}
+
+
 def simulation_trigger(definition: object) -> str | None:
     """El ``p_trigger`` de la lectura de conteos para una definicion: su evento, ``silencio`` o None."""
     if not isinstance(definition, Mapping):
@@ -557,6 +704,8 @@ def build_new_flows_simulation(inputs: Any, items: Sequence[ProposalItem], *,
                 raise _Failed(unavailable)
             if data.get("new_flow_audience") is True:
                 one = build_new_audience_flow_simulation([item])
+            elif data.get("new_flow_uncounted") is True:
+                one = build_new_uncounted_flow_simulation([item], world=world)
             elif "new_flow_counts" in data:
                 one = build_new_flow_simulation(data.get("new_flow_counts"), [item], world=world)
             else:
@@ -567,7 +716,7 @@ def build_new_flows_simulation(inputs: Any, items: Sequence[ProposalItem], *,
         if len(built) == 1:
             return built[0]
         summaries = [dict(one["summary"]) for one in built]
-        events = [None if data.get("new_flow_audience") is True else simulation_trigger(item.definicion)
+        events = [None if data.get("new_flow_audience") is True else _twin_key(data, item)
                   for data, item in zip(inputs, items)]
         for index, summary in enumerate(summaries):
             twins = [{"flujo": f"{other.producto}/{other.flujo}", "estado": "nuevo"}
@@ -582,6 +731,17 @@ def build_new_flows_simulation(inputs: Any, items: Sequence[ProposalItem], *,
         return {"status": "failed", "reason_code": failed.reason_code}
     except Exception:  # noqa: BLE001 - la vista previa no se cae por la simulacion
         return {"status": "failed", "reason_code": SIMULATION_ERROR}
+
+
+def _twin_key(data: Mapping[str, Any], item: ProposalItem) -> object:
+    """Con que se comparan dos nuevos de la misma propuesta: el evento; la regla de una palabra clave (de cualquier
+    producto, D-39.16: con un mensaje arranca uno solo); o el registro con su producto (D-43.8)."""
+    if data.get("new_flow_uncounted") is True:
+        found = uncounted_trigger(item.definicion)
+        if found is None:
+            return None
+        return found if found[0] == UNCOUNTED_KEYWORD else (*found, item.producto)
+    return simulation_trigger(item.definicion)
 
 
 def native_flow_counts_request(store: Any, items: Any) -> dict[str, Any] | None:
@@ -628,6 +788,9 @@ def native_flow_counts_request(store: Any, items: Any) -> dict[str, Any] | None:
         definition = versions.get(str(flow.get("active_version")))
     product = item.get("producto")
     active = versions.get(str(flow.get("active_version")))
+    if uncounted_trigger(definition) is not None:
+        # Z2 3.9 y 4.3: la palabra clave o el registro no se cuentan; se simula sin lectura.
+        return {"native_uncounted": True}
     if item["tipo"] in AUDIENCE_VERSION_ITEM_TYPES and (_is_audience(definition) or _is_audience(active)):
         # E-668: una version o un volver de un flujo de audiencia tampoco tiene evento. Con la misma
         # audiencia que la version activa (D1) se cuenta la de hoy; si cambia, no hay lectura que la cuente.

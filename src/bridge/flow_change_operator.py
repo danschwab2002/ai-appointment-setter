@@ -56,9 +56,11 @@ from .flow_change_preview import build_preview
 from .flow_change_simulation import (
     build_native_audience_reach_simulation,
     build_native_flow_simulation,
+    build_native_uncounted_simulation,
     build_new_audience_flow_simulation,
     build_new_flow_simulation,
     build_new_flows_simulation,
+    build_new_uncounted_flow_simulation,
     build_simulation,
 )
 from .flow_definition import (
@@ -261,6 +263,11 @@ def validate_proposal(payload: object, *, environ: Mapping[str, str]) -> dict[st
         elif data.get("new_flow_audience") is True:
             # Un nuevo con disparo por audiencia: sin evento que contar, nace en cohorte vacia (E-621).
             simulacion = build_new_audience_flow_simulation(items)
+        elif data.get("new_flow_uncounted") is True:
+            # Un nuevo de palabra clave o de registro: sin lectura que lo cuente, nace en cohorte vacia.
+            simulacion = build_new_uncounted_flow_simulation(items, world=world)
+        elif data.get("native_uncounted") is True:
+            simulacion = build_native_uncounted_simulation(items, world=world)
         elif "new_flow_counts" in data:
             simulacion = build_new_flow_simulation(data.get("new_flow_counts"), items, world=world)
         elif "native_audience_reach" in data:

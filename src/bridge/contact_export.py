@@ -719,12 +719,12 @@ def page_routes(*, labels: LabelIndex | None, clock: Callable[[], datetime] | No
                 return not_found(TITLE)
             who = await tools.who(request)
             if who is None:
-                return tools.logged_out(_login(None))
+                return tools.logged_out(_login(None, export=export_id))
             user, secret = who
             try:
                 view = await read(_sha(secret), export_id)
             except SessionInvalid:
-                return tools.logged_out(_login(None))
+                return tools.logged_out(_login(None, export=export_id))
             except PageStoreRejected as rejected:
                 if rejected.code == "contact_export_not_found":
                     return not_found(TITLE)
@@ -741,7 +741,7 @@ def page_routes(*, labels: LabelIndex | None, clock: Callable[[], datetime] | No
             title = "Bajar la lista"
             if not _canonical_uuid(export_id):
                 return not_found(title)
-            checked = await tools.write_form(request, title=title, fields={"csrf_token"})
+            checked = await tools.write_form(request, title=title, fields={"csrf_token"}, export=export_id)
             if isinstance(checked, Response):
                 return checked
             _, secret, _ = checked
@@ -775,7 +775,7 @@ def page_routes(*, labels: LabelIndex | None, clock: Callable[[], datetime] | No
                 if marked.get("ok") is not True:
                     raise _Refused(str(marked.get("reason_code")))
             except SessionInvalid:
-                return tools.logged_out(_login(None))
+                return tools.logged_out(_login(None, export=export_id))
             except PageStoreRejected as rejected:
                 if rejected.code == "contact_export_not_found":
                     return not_found(title)
