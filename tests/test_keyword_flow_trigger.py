@@ -355,3 +355,203 @@ def test_the_flow_page_names_the_rule_that_starts_the_flow() -> None:
     assert _trigger_text({"dispara": {"palabra_clave": "soporte"}}) == (
         "cuando alguien empieza la conversación con el link de la regla «soporte»")
     assert _trigger_text({"dispara": {"silencio": {}}}) == "cuando una conversación queda en silencio"
+
+
+# ---------------------------------------------------------------------------
+# La simulacion de la vista previa (deuda de #531).
+# ---------------------------------------------------------------------------
+
+INSTANCE = {"tenant_ref": "lancemos", "ally_ref": "att1"}
+
+
+class _NoCounts:
+    """La tienda de flow_change_api: una palabra clave no tiene conteos que leer."""
+
+    def __init__(self) -> None:
+        self.asked: list[str] = []
+
+    async def read_new_flow_counts(self, instance: Any, product: str, trigger: str, since: Any) -> Any:
+        self.asked.append(trigger)
+        raise AssertionError("la palabra clave no se cuenta")
+
+
+def _new_keyword_item() -> dict[str, Any]:
+    return {"producto": "att1", "flujo": "soporte", "tipo": "nuevo", "definicion": _keyword(), "prender": "cohorte"}
+
+
+def test_a_new_keyword_flow_simulates_without_counting_and_the_page_can_publish_it() -> None:
+    from bridge import flow_change_api
+    from bridge.flow_approval import _simulation_summary
+    from bridge.flow_change_simulation import build_new_flows_simulation
+
+    store = _NoCounts()
+    data = asyncio.run(flow_change_api._new_flow_input(store, INSTANCE, "att1", _new_keyword_item()))  # noqa: SLF001
+    # Antes: {"simulation_unavailable": "simulation_new_flow_counts_invalid"}, y la pagina no publicaba.
+    assert data == {"new_flow_uncounted": True} and store.asked == []
+    [item] = fd.parse_items([_new_keyword_item()])
+    other = fd.WorldFlow(flow_id=FLOW_ID, product_ref="att1", flow_key="bienvenida_soporte", state="cohorte",
+                         active_version=1, versions={1: _keyword()}, native=True)
+    built = build_new_flows_simulation([data], [item], world=fv.FlowWorld(flows=(other,)))
+    assert built["status"] == "built", built
+    summary = built["summary"]
+    assert (summary["disparador"], summary["clave"], summary["nace_en"], summary["cohorte_al_nacer"],
+            summary["alcance_al_nacer"]) == ("palabra_clave", "soporte", "cohorte", 0, 0)
+    assert "disparos" not in summary and "personas" not in summary
+    assert summary["comparte_el_evento_con"] == [{"flujo": "att1/bienvenida_soporte", "estado": "cohorte"}]
+    html = _simulation_summary(built)
+    assert "no se pudo armar" not in html and "--sin-simulacion" not in html
+    assert "<strong>0</strong> contactos" in html and "<strong>soporte</strong>" in html
+
+
+def test_turning_on_a_keyword_flow_simulates_without_counting() -> None:
+    from bridge.flow_change_simulation import native_flow_counts_request
+
+    store = {"flows": [{"flow_id": FLOW_ID, "product_ref": "att1", "flow_key": "soporte", "state": "cohorte",
+                        "native": True, "active_version": 1, "versions": {"1": _keyword()}}]}
+    raw = {"producto": "att1", "flujo": "soporte", "tipo": "prender", "flow_id": FLOW_ID}
+    # Antes: {"simulation_unavailable": "simulation_native_flow_counts_invalid"}.
+    assert native_flow_counts_request(store, [raw]) == {"native_uncounted": True}
+    from bridge.flow_change_simulation import build_native_uncounted_simulation
+
+    world = fv.FlowWorld(flows=(fd.WorldFlow(flow_id=FLOW_ID, product_ref="att1", flow_key="soporte",
+                                             state="cohorte", active_version=1, versions={1: _keyword()},
+                                             native=True),))
+    built = build_native_uncounted_simulation(fd.parse_items([raw]), world=world)
+    assert built["status"] == "built", built
+    assert (built["summary"]["tipo"], built["summary"]["queda_en"]) == ("prender", "prendido")
+
+
+def test_the_operator_script_agrees_on_what_is_not_counted() -> None:
+    from test_flow_change_operator_script import script
+
+    from bridge.flow_change_simulation import new_uncounted_flow
+
+    bad = {**_new_keyword_item(), "definicion": _keyword(dispara={"palabra_clave": "Soporte!"})}
+    registration = {**_new_keyword_item(), "definicion": _keyword(
+        dispara={"evento": "intencion", "registro": "clase-28-11"})}
+    short = {**_new_keyword_item(), "definicion": _keyword(dispara={"evento": "intencion", "registro": "ab"})}
+    for items in ([_new_keyword_item()], [bad], [{**_new_keyword_item(), "tipo": "version"}], [],
+                  [registration], [short]):
+        assert script._new_uncounted_flow(items) == new_uncounted_flow(items), items  # noqa: SLF001
+    assert new_uncounted_flow([registration]) == ("registro", "clase-28-11")
+    assert new_uncounted_flow([short]) is None
+
+
+# -- Las piezas de punta a punta (revision de las deudas de Z1) -----------------------------------------------
+
+_VALIDATE_ENV = {"SETTER_VERSION": "1.40.1", "GIT_SHA": "0386f8b"}
+_INSTANCE_IN = {"tenant_ref": "lancemos", "ally_ref": "att1", "products": ["att1"],
+                "time_zone": "America/Mexico_City"}
+
+
+def _keyword_store(state: str = "cohorte", key: str = "soporte", product: str = "att1",
+                   flow_key: str = "soporte", flow_id: str = FLOW_ID) -> dict[str, Any]:
+    return {"flow_id": flow_id, "product_ref": product, "flow_key": flow_key, "state": state, "native": True,
+            "active_version": 1, "generation": 2, "changed_at": "2026-11-27T14:00:00Z",
+            "changed_by_kind": "operador",
+            "versions": {"1": {**_keyword(dispara={"palabra_clave": key}), "version": 1, "estado": "publicada"}}}
+
+
+def _validate(inputs: dict[str, Any], items: list[dict[str, Any]], store: dict[str, Any]) -> dict[str, Any]:
+    from bridge.flow_change_operator import validate_proposal
+
+    return validate_proposal({
+        **inputs, "instance": _INSTANCE_IN, "store": store,
+        "proposal": {"id": "00000000-0000-4000-8000-000000000531", "revision": 1, "items": items,
+                     "draft_base": {}, "purpose": "el flujo de soporte", "requested_by_kind": "automation_expert"},
+        "catalog": None,
+    }, environ=_VALIDATE_ENV)["preview"]["simulacion"]
+
+
+def test_the_validator_builds_the_simulation_of_a_new_and_of_an_existing_keyword_flow() -> None:
+    new = _validate({"new_flow_uncounted": True}, [_new_keyword_item()], {"flows": []})
+    assert new["status"] == "built", new
+    assert (new["summary"]["disparador"], new["summary"]["alcance_al_nacer"]) == ("palabra_clave", 0)
+    raw = {"producto": "att1", "flujo": "soporte", "tipo": "prender", "flow_id": FLOW_ID}
+    native = _validate({"native_uncounted": True}, [raw], {"flows": [_keyword_store()]})
+    assert native["status"] == "built", native
+    assert (native["summary"]["tipo"], native["summary"]["clave"]) == ("prender", "soporte")
+
+
+def test_the_bridge_asks_for_no_reading_to_turn_on_a_keyword_flow() -> None:
+    from bridge import flow_change_api
+
+    raw = {"producto": "att1", "flujo": "soporte", "tipo": "prender", "flow_id": FLOW_ID}
+    data = asyncio.run(flow_change_api._simulation_inputs(  # noqa: SLF001
+        _NoCounts(), INSTANCE, [raw], {"flows": [_keyword_store()]}))
+    assert data == {"native_uncounted": True}
+
+
+def test_the_operator_script_reads_nothing_for_a_keyword_flow() -> None:
+    import io
+
+    from test_flow_change_new_flow import _ENV
+    from test_flow_change_operator_script import FakeDocker, FakeTerminal, script
+
+    docker = FakeDocker()
+    ops = script.Ops(script.Config.from_env({**_ENV}), docker=docker, terminal=FakeTerminal(), out=io.StringIO(),
+                     code=lambda: "abc123")
+    assert ops.read_engine_inputs([_new_keyword_item()]) == {"new_flow_uncounted": True}
+    raw = {"producto": "att1", "flujo": "soporte", "tipo": "prender", "flow_id": FLOW_ID}
+    assert ops.read_engine_inputs([raw], {"flows": [_keyword_store()]}) == {"native_uncounted": True}
+    assert script._native_flow_counts_request({"flows": [_keyword_store()]}, [raw]) == \
+        {"native_uncounted": True}  # noqa: SLF001
+    assert not [stdin for _, stdin in docker.calls if "read_flow_engine_native_trigger_counts_v1" in stdin]
+
+
+def _world_flow(state: str = "cohorte", key: str = "soporte", product: str = "att1", flow_key: str = "soporte",
+                flow_id: str = FLOW_ID) -> fd.WorldFlow:
+    return fd.WorldFlow(flow_id=flow_id, product_ref=product, flow_key=flow_key, state=state, active_version=1,
+                        versions={1: _keyword(dispara={"palabra_clave": key})}, native=True)
+
+
+def test_the_same_rule_is_shared_across_products_and_a_flow_does_not_share_with_itself() -> None:
+    from bridge.flow_change_simulation import build_native_uncounted_simulation
+
+    other_id = "0bf45aa4-4dfe-4ab7-88ed-49d2f25af3a3"
+    third_id = "0bf45aa4-4dfe-4ab7-88ed-49d2f25af3a4"
+    world = fv.FlowWorld(flows=(_world_flow(), _world_flow("prendido", product="maribel", flow_key="otro",
+                                                           flow_id=other_id),
+                                _world_flow("prendido", key="ventas", flow_key="ventas", flow_id=third_id)))
+    raw = {"producto": "att1", "flujo": "soporte", "tipo": "prender", "flow_id": FLOW_ID}
+    built = build_native_uncounted_simulation(fd.parse_items([raw]), world=world)
+    assert built["status"] == "built", built
+    # D-39.16: la misma regla en otro producto comparte; la otra regla no; el flujo mismo tampoco.
+    assert built["summary"]["comparte_el_evento_con"] == [{"flujo": "maribel/otro", "estado": "prendido"}]
+
+
+def test_a_keyword_version_says_the_reach_and_the_structure_without_counting() -> None:
+    from bridge.flow_approval import _simulation_summary
+    from bridge.flow_change_simulation import build_native_uncounted_simulation
+
+    world = fv.FlowWorld(flows=(_world_flow("prendido"),))
+    changed = _keyword(dispara={"palabra_clave": "soporte"}, nombre="Soporte nuevo")
+    raw = {"producto": "att1", "flujo": "soporte", "tipo": "version", "flow_id": FLOW_ID, "definicion": changed,
+           "en_curso": "seguir"}
+    built = build_native_uncounted_simulation(fd.parse_items([raw]), world=world)
+    assert built["status"] == "built", built
+    summary = built["summary"]
+    assert (summary["tipo"], summary["queda_en"], summary["alcance"]) == ("version", "prendido", "todos")
+    assert "disparos" not in summary and "comparte_el_evento_con" not in summary
+    html = _simulation_summary(built)
+    assert "le llega a todos" in html
+    # El flujo ya existe: el porque no dice que falta un flujo de la regla.
+    assert "mientras no hay un flujo de la regla" not in html
+    assert "no cuenta los arranques por palabra clave" in html
+    cohort = build_native_uncounted_simulation(fd.parse_items([raw]), world=fv.FlowWorld(flows=(_world_flow(),)))
+    assert "solo le llega a la cohorte" in _simulation_summary(cohort)
+
+
+def test_two_new_flows_with_the_same_rule_name_each_other() -> None:
+    from bridge.flow_change_simulation import build_new_flows_simulation
+
+    second = {**_new_keyword_item(), "flujo": "soporte_dos"}
+    third = {**_new_keyword_item(), "flujo": "ventas", "definicion": _keyword(dispara={"palabra_clave": "ventas"})}
+    items = fd.parse_items([_new_keyword_item(), second, third])
+    built = build_new_flows_simulation([{"new_flow_uncounted": True}] * 3, items, world=fv.FlowWorld(flows=()))
+    assert built["status"] == "built", built
+    first, two, other = built["summary"]["flujos"]
+    # D-39.16: con un mensaje arranca uno solo; la otra regla no es gemela.
+    assert first["comparte_el_evento_con"] == [{"flujo": "att1/soporte_dos", "estado": "nuevo"}]
+    assert two["comparte_el_evento_con"] == [{"flujo": "att1/soporte", "estado": "nuevo"}]
+    assert "comparte_el_evento_con" not in other

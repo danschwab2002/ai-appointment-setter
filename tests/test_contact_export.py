@@ -27,6 +27,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -45,6 +46,7 @@ from test_flow_approval_page import (
     SlackEmulator,
     _Clock,
     _NoSupabase,
+    _claims,
     _settings,
     _sign_in,
 )
@@ -644,3 +646,29 @@ def test_the_expiry_shown_is_thirty_minutes() -> None:
     assert ce.EXPIRES_MINUTES == 30
     created = datetime.fromisoformat(ExportDb().export["created_at"])
     assert datetime.fromisoformat(ExportDb().export["expires_at"]) - created == timedelta(minutes=30)
+
+
+def test_after_signing_in_the_page_comes_back_to_the_request() -> None:
+    # #520 dejaba volver a la portada (D-13.8): el aprobador tenia que abrir el link de nuevo, con el pedido
+    # venciendo a los 30 minutos. Ahora el id viaja en el state («e», como «t», «c» e «i») y la vuelta es el pedido.
+    harness = Harness()
+    export_id = harness.db.export_id
+    page = harness.client.get(f"{PAGE}/{export_id}", follow_redirects=False)
+    assert page.status_code == 401
+    assert f"/flow-approval/auth/slack/start?e={export_id}" in page.text
+    start = harness.client.get("/flow-approval/auth/slack/start", params={"e": export_id}, follow_redirects=False)
+    assert start.status_code == 303
+    query = {key: values[0] for key, values in parse_qs(urlsplit(start.headers["location"]).query).items()}
+    assert query["state"].startswith(f"e{export_id}")
+    _claims(harness.slack, harness.clock, query["nonce"])
+    back = harness.client.get("/flow-approval/auth/slack/callback",
+                              params={"code": "codigo-de-slack", "state": query["state"]}, follow_redirects=False)
+    assert back.status_code == 303 and back.headers["location"] == f"{PAGE}/{export_id}"
+    assert harness.client.get(back.headers["location"]).status_code == 200
+    # Bajar sin sesion tambien vuelve al pedido; un id que no es un uuid no abre el ingreso.
+    harness.client.cookies.clear()
+    lost = harness.client.post(f"{PAGE}/{export_id}/csv", headers=FORM, content="csrf_token=" + "0" * 64)
+    assert lost.status_code == 401 and f"?e={export_id}" in lost.text
+    assert harness.client.get("/flow-approval/auth/slack/start?e=otra-cosa", follow_redirects=False).status_code == 404
+    assert harness.client.get("/flow-approval/auth/slack/start", params={"e": export_id, "i": export_id},
+                              follow_redirects=False).status_code == 404

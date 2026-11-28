@@ -21,7 +21,10 @@ log.
 3. Al hilo vuelven **solo el conteo y el link** de la pagina (`/flow-approval/exportar/<id>`), con su vencimiento.
 4. En la pagina entra un aprobador con «Entrar con Slack» (la misma sesion y la misma lista de aprobadores que la
    pagina de aprobacion de flujos y la del masivo). Ve los filtros, cuantas coincidian al pedirlo y un boton
-   «Bajar el CSV».
+   «Bajar el CSV». Si entra sin sesion (o con la sesion vencida, tambien al apretar «Bajar el CSV»), el id del
+   pedido viaja en el `state` de OAuth con el prefijo `e` (`e<id><secreto>`, como `t`, `c` e `i` en las otras
+   paginas) y el callback lo devuelve a `/flow-approval/exportar/<id>`, no a la portada. Esto supera D-13.8
+   («se abre el link de nuevo»): ya no hace falta volver a abrir el link del hilo (deuda de #520).
 5. Al bajarlo, el bridge vuelve a leer la base y las etiquetas en ese momento (el CSV es de ahora, no del momento
    del pedido), arma el CSV y recien despues marca el pedido como bajado. **Se baja una vez**: un segundo intento,
    o uno pasados **30 minutos** desde el pedido, no baja nada.

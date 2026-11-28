@@ -406,3 +406,115 @@ def test_the_client_refuses_another_route_and_says_when_the_entry_is_missing(att
         _call(_client(legacy), att1_instance)
     with pytest.raises(SupabaseRpcMissing):
         _call(_client(lambda request: httpx.Response(404, json={"code": "PGRST202"})), att1_instance)
+
+
+# -- La simulacion de la vista previa (deuda de #532) ----------------------------------------------------------
+
+
+def _new_confirmation_item() -> dict:
+    definition = {key: value for key, value in _confirmation().items()
+                  if key not in ("esquema", "flujo", "producto", "estado")}
+    return {"producto": "att1", "flujo": "confirmacion_registro", "tipo": "nuevo", "definicion": definition,
+            "prender": "cohorte"}
+
+
+class _AllForms:
+    """La lectura de conteos de hoy: con intencion cuenta TODOS los formularios consentidos del producto."""
+
+    def __init__(self) -> None:
+        self.asked: list[str] = []
+
+    async def read_new_flow_counts(self, instance: object, product: str, trigger: str, since: object) -> dict:
+        self.asked.append(trigger)
+        return {"contract": "flow-engine-v2", "trigger": trigger, "product_ref": product,
+                "since": "2026-11-20T00:00:00Z", "until": "2026-11-27T00:00:00Z", "events": 1020, "people": 1001}
+
+
+def test_a_new_registration_flow_is_not_simulated_with_the_commercial_forms() -> None:
+    from bridge import flow_change_api
+    from bridge.flow_change_simulation import build_new_flows_simulation
+    from bridge.flow_definition import FlowWorld, WorldFlow, parse_items
+
+    store = _AllForms()
+    data = asyncio.run(flow_change_api._new_flow_input(  # noqa: SLF001
+        store, {"tenant_ref": "lancemos", "ally_ref": "att1"}, "att1", _new_confirmation_item()))
+    # Antes: pedia los conteos de intencion (1.020 formularios comerciales de ATT1) y decia que la confirmacion
+    # le habria llegado a 1.001 personas.
+    assert store.asked == [] and data == {"new_flow_uncounted": True}
+    commercial = {key: value for key, value in FIRST_CONTACT.items()
+                  if key not in ("esquema", "flujo", "producto", "estado")}
+    world = FlowWorld(flows=(WorldFlow(flow_id=FLOW_ID, product_ref="att1", flow_key="primer_contacto",
+                                       state="prendido", active_version=1, versions={1: commercial},
+                                       native=True),))
+    built = build_new_flows_simulation([data], parse_items([_new_confirmation_item()]), world=world)
+    assert built["status"] == "built", built
+    summary = built["summary"]
+    assert (summary["disparador"], summary["clave"], summary["alcance_al_nacer"]) == ("registro", EVENT, 0)
+    assert "personas" not in summary and "mensajes_si_fuera_para_todos" not in summary
+    # D-43.8: el primer contacto comercial no toma un registro, asi que no comparte el evento.
+    assert "comparte_el_evento_con" not in summary
+
+
+def _registration_world_flow(product: str = "att1", flow_key: str = "confirmacion_registro",
+                             flow_id: str = FLOW_ID, state: str = "prendido", event: str = EVENT):
+    from bridge.flow_definition import WorldFlow
+
+    definition = {key: value for key, value in _confirmation(dispara={"evento": "intencion", "registro": event}).items()
+                  if key not in ("esquema", "flujo", "producto", "estado")}
+    return WorldFlow(flow_id=flow_id, product_ref=product, flow_key=flow_key, state=state, active_version=1,
+                     versions={1: definition}, native=True)
+
+
+def test_a_new_commercial_flow_does_not_share_the_event_with_a_registration_flow() -> None:
+    from bridge.flow_change_simulation import build_new_flow_simulation
+    from bridge.flow_definition import FlowWorld, parse_items
+
+    commercial = {key: value for key, value in FIRST_CONTACT.items()
+                  if key not in ("esquema", "flujo", "producto", "estado")}
+    item = {"producto": "att1", "flujo": "otro_contacto", "tipo": "nuevo", "definicion": commercial,
+            "prender": "cohorte"}
+    counts = {"contract": "flow-engine-v2", "trigger": "intencion", "product_ref": "att1",
+              "since": "2026-11-20T00:00:00Z", "until": "2026-11-27T00:00:00Z", "events": 1020, "people": 1001}
+    world = FlowWorld(flows=(_registration_world_flow(),))
+    built = build_new_flow_simulation(counts, parse_items([item]), world=world)
+    assert built["status"] == "built", built
+    # D-43.8: el registro prendido no arranca con el formulario comercial.
+    assert "att1/confirmacion_registro" not in [
+        entry["flujo"] for entry in built["summary"].get("comparte_el_evento_con") or []]
+
+
+def test_a_registration_shares_only_with_the_same_event_of_the_same_product() -> None:
+    from bridge.flow_change_simulation import build_new_flows_simulation, build_native_uncounted_simulation
+    from bridge.flow_definition import FlowWorld, parse_items
+
+    world = FlowWorld(flows=(
+        _registration_world_flow(),
+        _registration_world_flow(product="maribel", flow_key="confirmacion_maribel",
+                                 flow_id="00000000-0000-4000-8000-00000000d432"),
+        _registration_world_flow(flow_key="otra_clase", flow_id="00000000-0000-4000-8000-00000000d433",
+                                 event="clase-30-11"),
+    ))
+    built = build_new_flows_simulation([{"new_flow_uncounted": True}], parse_items([_new_confirmation_item()]),
+                                       world=world)
+    assert built["summary"]["comparte_el_evento_con"] == [{"flujo": "att1/confirmacion_registro",
+                                                           "estado": "prendido"}]
+    raw = {"producto": "att1", "flujo": "confirmacion_registro", "tipo": "apagar", "flow_id": FLOW_ID}
+    native = build_native_uncounted_simulation(parse_items([raw]), world=world)
+    assert native["status"] == "built", native
+    summary = native["summary"]
+    assert (summary["disparador"], summary["clave"], summary["queda_en"]) == ("registro", EVENT, "apagado")
+    # El flujo no se nombra a si mismo, y el registro de otro producto o de otro evento no comparte.
+    assert "comparte_el_evento_con" not in summary
+
+
+def test_two_new_registrations_to_the_same_event_name_each_other_only_in_the_same_product() -> None:
+    from bridge.flow_change_simulation import build_new_flows_simulation
+    from bridge.flow_definition import FlowWorld, parse_items
+
+    second = {**_new_confirmation_item(), "flujo": "confirmacion_dos"}
+    built = build_new_flows_simulation([{"new_flow_uncounted": True}] * 2,
+                                       parse_items([_new_confirmation_item(), second]), world=FlowWorld(flows=()))
+    assert built["status"] == "built", built
+    first, two = built["summary"]["flujos"]
+    assert first["comparte_el_evento_con"] == [{"flujo": "att1/confirmacion_dos", "estado": "nuevo"}]
+    assert two["comparte_el_evento_con"] == [{"flujo": "att1/confirmacion_registro", "estado": "nuevo"}]

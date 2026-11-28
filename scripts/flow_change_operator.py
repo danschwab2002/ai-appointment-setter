@@ -320,6 +320,9 @@ class Ops:
             # Un disparo por audiencia no tiene evento que contar: el validador arma la simulacion
             # de la definicion, sin leer la base (E-621).
             return {"new_flow_audience": True}
+        if _new_uncounted_flow([item]) is not None:
+            # La palabra clave o un registro: el validador la arma sin leer la base.
+            return {"new_flow_uncounted": True}
         trigger = _simulation_trigger(item.get("definicion"))
         try:
             counts = self.sql_json(SQL_NEW_FLOW_COUNTS, {**args, "product": product, "trigger": trigger},
@@ -349,7 +352,7 @@ class Ops:
             return reads[0] if len(reads) == 1 else {"new_flows": reads}
         native = _native_flow_counts_request(store, items)
         if native is not None:
-            if "simulation_unavailable" in native:
+            if "simulation_unavailable" in native or "native_uncounted" in native:
                 return native
             if "audience_reach" in native:
                 # Prender o apagar un flujo de audiencia: sin evento, cuenta su audiencia de hoy (E-622).
@@ -611,6 +614,36 @@ def _same_audience(active: object, destination: object) -> bool:
         and active.get("producto") == destination.get("producto")  # type: ignore[union-attr]
 
 
+# Gemela de flow_change_simulation.uncounted_trigger (deudas de #531 y #532): la palabra clave y el registro no
+# se cuentan. Las formas de las claves son las de flow_definition (_KEYWORD_RULE_KEY) y flow_engine
+# (REGISTRATION_EVENT); test_the_operator_script_agrees_on_what_is_not_counted (tests/test_keyword_flow_trigger.py)
+# fija que las dos contesten lo mismo.
+_KEYWORD_RULE_KEY = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
+_REGISTRATION_EVENT = re.compile(r"[a-z0-9][a-z0-9-]{2,39}")
+
+
+def _uncounted_trigger(definition: object) -> tuple[str, str] | None:
+    if not isinstance(definition, Mapping) or not isinstance(definition.get("dispara"), Mapping):
+        return None
+    trigger = definition["dispara"]
+    key = trigger.get("palabra_clave")
+    if set(trigger) == {"palabra_clave"} and isinstance(key, str) and _KEYWORD_RULE_KEY.fullmatch(key):
+        return "palabra_clave", key
+    event = trigger.get("registro")
+    if set(trigger) == {"evento", "registro"} and trigger.get("evento") == "intencion" \
+            and isinstance(event, str) and _REGISTRATION_EVENT.fullmatch(event):
+        return "registro", event
+    return None
+
+
+def _new_uncounted_flow(items: object) -> tuple[str, str] | None:
+    """Gemela de flow_change_simulation.new_uncounted_flow."""
+    if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], Mapping) \
+            or items[0].get("tipo") != "nuevo":
+        return None
+    return _uncounted_trigger(items[0].get("definicion"))
+
+
 def _new_audience_flow_form(items: object) -> str | None:
     """Gemela de flow_change_simulation.new_audience_flow_form (E-621): la forma del disparo por audiencia
     de un solo ``nuevo`` (``manual``, ``fecha`` o ``cada``, la unica clave de ``dispara``), o None."""
@@ -653,6 +686,8 @@ def _native_flow_counts_request(store: object, items: object) -> dict[str, Any] 
         definition = versions.get(str(flow.get("active_version")))
     product = item.get("producto")
     active = versions.get(str(flow.get("active_version")))
+    if _uncounted_trigger(definition) is not None:
+        return {"native_uncounted": True}
     if item["tipo"] in _AUDIENCE_VERSION_ITEM_TYPES and (_is_audience(definition) or _is_audience(active)):
         # Gemela de E-668: con otra audiencia que la activa no hay lectura que la cuente.
         if not _same_audience(active, definition):

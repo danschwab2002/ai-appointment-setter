@@ -56,7 +56,12 @@ from fastapi.responses import JSONResponse
 
 from .flow_change_operator import OperatorInputError, validate_proposal, world_from_store
 from .flow_change_preview import template_view
-from .flow_change_simulation import native_flow_counts_request, new_audience_flow_form, simulation_trigger
+from .flow_change_simulation import (
+    native_flow_counts_request,
+    new_audience_flow_form,
+    new_uncounted_flow,
+    simulation_trigger,
+)
 from .flow_definition import (
     InstanceRuntime,
     InstanceView,
@@ -261,6 +266,9 @@ async def _new_flow_input(store: FlowChangeStore, instance: Mapping[str, str], p
         # Un disparo por audiencia (manual, fecha, cada) no tiene evento que contar: la simulacion
         # sale de la definicion y de que nace en cohorte, sin leer nada (E-621).
         return {"new_flow_audience": True}
+    if new_uncounted_flow([item]) is not None:
+        # La palabra clave (Z2 3.9) o un registro (4.3): no hay lectura que los cuente bien; sin leer nada.
+        return {"new_flow_uncounted": True}
     # Su evento, o el silencio del agente (P22-3, E-269), que se cuenta con la vara del legado.
     trigger = simulation_trigger(item.get("definicion"))
     if not isinstance(trigger, str):
@@ -299,7 +307,7 @@ async def _simulation_inputs(store: FlowChangeStore, instance: Mapping[str, str]
         return reads[0] if len(reads) == 1 else {"new_flows": reads}
     native = native_flow_counts_request(snapshot, items)
     if native is not None:
-        if "simulation_unavailable" in native:
+        if "simulation_unavailable" in native or "native_uncounted" in native:
             return native
         if "audience_reach" in native:
             # Prender o apagar un flujo de audiencia: sin evento, cuenta su audiencia de hoy (E-622).
