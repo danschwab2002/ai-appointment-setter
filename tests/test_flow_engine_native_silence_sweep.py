@@ -55,6 +55,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from test_flow_engine_native_silence import FOLLOWUP
 
+from bridge.chatwoot import ChatwootProtocolError
 from bridge.flow_change_simulation import build_new_flow_simulation, native_flow_counts_request, simulation_trigger
 from bridge.flow_definition import parse_items
 from bridge.flow_engine import native_not_supported
@@ -197,7 +198,7 @@ def test_the_second_layer_refuses_a_window_even_if_rule_14_let_it_pass(
     monkeypatch: pytest.MonkeyPatch, path: tuple[Any, ...], value: Any, reason: str
 ) -> None:
     # La regla 14 lo frena al publicar; el barredor lo vuelve a mirar por si una definicion vieja paso.
-    monkeypatch.setattr("bridge.native_silence.native_not_supported", lambda definition: ())
+    monkeypatch.setattr("bridge.native_silence.native_not_supported", lambda definition, **_: ())
     with pytest.raises(NativeSilenceRefused) as refusal:
         native_silence_spec(_silence(_changed(path, value)), product_ref="att1")
     assert refusal.value.reason == reason
@@ -290,6 +291,7 @@ def _native_sweeper(spec: NativeSilenceSpec, chatwoot: _Chatwoot, supabase: _Sup
         refuse_unsafe_greeting=True, phone_equivalence=True, external_user_id_resolver=_stored_identity,
         native_run=spec.run, send_window=spec.window, conversation_statuses=spec.conversation_statuses,
         only_conversation_ids=spec.cohort_conversation_ids, log_prefix="flow_engine_silence",
+        template_text=spec.template_text,
         clock=lambda: now, ulid_factory=lambda: "01K5ABCDEFX2VYB4M6X9CDPTF1",
     )
 
@@ -672,3 +674,112 @@ def test_a_new_silence_flow_builds_its_simulation() -> None:
     assert result["status"] == "built"
     assert result["summary"]["disparador"] == "silencio"
     assert result["summary"]["mensajes_si_fuera_para_todos"] == 6
+
+
+# ---------------------------------------------------------------------------
+# U4 (flow-engine-v2 §37): el texto fijo como tercera variable del seguimiento.
+# ---------------------------------------------------------------------------
+#
+# La U4 (maribel_seguimiento_consulta_01) todavia no esta pedida a Meta: la de la prueba es la
+# att1_seguimiento_descuento_01 capturada con el cuerpo del borrador del 27/11 (UTILITY). Fabricada y declarada.
+U4 = "att1_seguimiento_consulta_01"
+U4_BODY = ("Hola {{1}}, te escribimos por tu consulta sobre {{2}}.\n\nDetalle: {{3}}\n\n"
+           "Si ya no lo necesitas, no tienes que hacer nada.")
+U4_TEXT = ("queríamos retomar nuestra conversación. Para ayudarte a dar ese paso, te reservamos un "
+           "*10 % de descuento*: toca el botón de abajo y queda activado al instante. Si todavía tienes "
+           "alguna duda, responde a este mensaje y te ayudamos.")
+# Sin texto fijo, el nativo manda lo mismo que el legado de ATT1 (test_followup_discount, medido en c932fd41).
+ATT1_FOLLOWUP_SENT_SHA256 = "54aecbf6c344ecf102e1a927e1ba6529575acc359ec5fb558bf2302d1db0d482"
+
+
+def _with_literal(text: str = U4_TEXT) -> dict[str, Any]:
+    definition = copy.deepcopy(ATT1_FOLLOWUP)
+    definition["pasos"][0]["plantilla"] = U4
+    definition["pasos"][0]["variables"] = ["nombre", "producto", {"texto": text}]
+    return definition
+
+
+class _U4Chatwoot(_Chatwoot):
+    async def get_inbox(self, *, inbox_id: int) -> dict[str, Any]:
+        self.inbox_reads += 1
+        payload = copy.deepcopy(CATALOG)
+        u4 = copy.deepcopy(next(t for t in payload["message_templates"] if t["name"] == TEMPLATE))
+        u4["name"], u4["category"] = U4, "UTILITY"
+        next(c for c in u4["components"] if c["type"] == "BODY")["text"] = U4_BODY
+        payload["message_templates"].append(u4)
+        return payload
+
+
+def _sent_sha256(sent: dict[str, Any]) -> str:
+    blob = json.dumps({"content": sent["content"], "template_params": sent["template_params"]},
+                      ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def test_without_a_literal_the_native_followup_goes_out_byte_for_byte_as_in_1_43_0() -> None:
+    chatwoot, supabase = _Chatwoot(), _Supabase()
+    spec = native_silence_spec(_silence(), product_ref="att1", literal_variables=True)
+    assert spec.template_text is None
+    assert asyncio.run(_native_sweeper(spec, chatwoot, supabase, now=OPEN_NOW).run_once()) == 1
+    [sent] = chatwoot.sent
+    assert _sent_sha256(sent) == ATT1_FOLLOWUP_SENT_SHA256
+
+
+def test_with_the_flag_the_spec_carries_the_literal() -> None:
+    spec = native_silence_spec(_silence(_with_literal()), product_ref="att1", literal_variables=True)
+    assert (spec.template_name, spec.template_text, spec.coupon_code) == (U4, U4_TEXT, "TIROIDES10")
+
+
+def test_without_the_flag_a_silence_with_a_literal_does_not_run() -> None:
+    with pytest.raises(NativeSilenceRefused) as refusal:
+        native_silence_spec(_silence(_with_literal()), product_ref="att1")
+    assert refusal.value.reason == "no_ejecutable:engine_not_supported:variable_texto"
+
+
+@pytest.mark.parametrize("text", ["escribinos al +52 55 1234 5678", "hola\u200bchau"])
+def test_the_second_layer_refuses_a_literal_rule_14_would_let_pass(text: str) -> None:
+    # La regla 14 mira la forma; el barredor vuelve a mirar el texto (identificadores y control, D-F4.2).
+    with pytest.raises(NativeSilenceRefused) as refusal:
+        native_silence_spec(_silence(_with_literal(text)), product_ref="att1", literal_variables=True)
+    assert refusal.value.reason == "paso"
+
+
+def test_the_native_sweeper_sends_the_literal_in_the_third_marker() -> None:
+    chatwoot, supabase = _U4Chatwoot(), _Supabase()
+    spec = native_silence_spec(_silence(_with_literal()), product_ref="att1", literal_variables=True)
+    assert asyncio.run(_native_sweeper(spec, chatwoot, supabase, now=OPEN_NOW).run_once()) == 1
+    [claim] = supabase.claims
+    assert (claim["template_name"], claim["coupon_code"]) == (U4, "TIROIDES10")
+    [sent] = chatwoot.sent
+    assert sent["template_params"]["name"] == U4
+    assert sent["template_params"]["processed_params"] == {
+        "body": {"1": "Lucia", "2": PRODUCT, "3": U4_TEXT},
+        "buttons": [{"type": "url", "parameter": AGENT_LINK.removeprefix("https://pay.hotmart.com/")
+                     + "&offDiscount=TIROIDES10"}],
+    }
+    assert f"Detalle: {U4_TEXT}" in sent["content"] and "TIROIDES10" not in sent["content"]
+    assert [s["status"] for s in supabase.settled] == ["sent"]
+
+
+def test_the_literal_on_a_two_marker_template_never_reserves() -> None:
+    # La definicion apunta a una plantilla sin {{3}}: el barrido falla al leer el catalogo, antes de reservar.
+    chatwoot, supabase = _Chatwoot(), _Supabase()
+    definition = _with_literal()
+    definition["pasos"][0]["plantilla"] = TEMPLATE
+    spec = native_silence_spec(_silence(definition), product_ref="att1", literal_variables=True)
+    sweeper = _native_sweeper(spec, chatwoot, supabase, now=OPEN_NOW)
+    with pytest.raises(ChatwootProtocolError, match="followup_template_unexpected_placeholders"):
+        asyncio.run(sweeper.run_once())
+    assert supabase.claims == [] and chatwoot.sent == []
+
+
+def test_without_the_flag_the_sweepers_publish_the_refusal() -> None:
+    sweepers, built = _sweepers(_Reads(_silence(_with_literal())))
+    asyncio.run(sweepers.refresh_once())
+    assert built == []
+    assert sweepers.refused == {"att1/seguimiento_cupon": "no_ejecutable:engine_not_supported:variable_texto"}
+    on = NativeSilenceSweepers(supabase=_Reads(_silence(_with_literal())),
+                               instance={"tenant_ref": "lancemos", "ally_ref": "att1"}, product_ref="att1",
+                               build=lambda spec: _Built(spec), literal_variables=True)
+    asyncio.run(on.refresh_once())
+    assert on.refused == {} and [spec.template_text for spec, _ in on._running.values()] == [U4_TEXT]

@@ -239,6 +239,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261127400000",
         # La confirmacion de registro (20261127500000, 4.3).
         "20261127500000",
+        # El texto fijo tercero del seguimiento por silencio (U4), que no toca la puerta.
+        "20261128100000",
     ]
 
     sql = _sql()

@@ -35,6 +35,7 @@ import copy
 import importlib.util
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,7 @@ from test_flow_engine_native_payment_failure import PAYMENT
 from test_flow_validator import (
     CATALOG,
     INBOX_11,
+    INSTANCE,
     catalog_with,
     check,
     flow,
@@ -396,3 +398,66 @@ def test_the_canvas_lists_the_flows_of_contesto_a() -> None:
     nodos, _ = armar.traducir(_followup(entra={"permiso": "conversacion", "contesto_a": ["carrito", "pago_fallido"]}),
                               {}, "propuesto")
     assert "carrito, pago_fallido" in json.dumps(nodos, ensure_ascii=False)
+
+
+# -- U4 (flow-engine-v2 §37): el texto fijo como tercera variable --------------------
+#
+# Con FLOW_LITERAL_VARIABLES_ENABLED, ``variables: [nombre, producto, {texto: …}]`` para una plantilla con
+# {{1}}, {{2}} y {{3}}. La U4 todavia no esta pedida a Meta: la del catalogo es la att1_seguimiento_descuento_01
+# capturada con el cuerpo del borrador del 27/11 (UTILITY), fabricada y declarada.
+U4 = "att1_seguimiento_consulta_01"
+U4_TEXT = ("queríamos retomar nuestra conversación. Para ayudarte a dar ese paso, te reservamos un "
+           "*10 % de descuento*: toca el botón de abajo y queda activado al instante. Si todavía tienes "
+           "alguna duda, responde a este mensaje y te ayudamos.")
+
+
+def _u4_followup(variables: list[Any] | None = None) -> dict[str, Any]:
+    step = {**copy.deepcopy(FOLLOWUP["pasos"][0]), "plantilla": U4,
+            "variables": variables if variables is not None else ["nombre", "producto", {"texto": U4_TEXT}]}
+    return _followup(pasos=[step])
+
+
+def _with_u4(payload: dict[str, Any]) -> None:
+    u4 = copy.deepcopy(next(t for t in payload["message_templates"] if t["name"] == TEMPLATE))
+    u4["name"], u4["category"] = U4, "UTILITY"
+    next(c for c in u4["components"] if c["type"] == "BODY")["text"] = (
+        "Hola {{1}}, te escribimos por tu consulta sobre {{2}}.\n\nDetalle: {{3}}\n\n"
+        "Si ya no lo necesitas, no tienes que hacer nada.")
+    payload["message_templates"].append(u4)
+
+
+def test_rule_14_takes_the_literal_as_third_only_with_the_flag() -> None:
+    assert native_not_supported(_u4_followup(), literal=True) == ()
+    without = native_not_supported(_u4_followup())
+    assert "engine_not_supported:variable_texto" in without
+    assert "engine_not_supported:variables_seguimiento" in without
+
+
+@pytest.mark.parametrize("variables", [
+    ["nombre", {"texto": U4_TEXT}, "producto"],
+    ["producto", "nombre", {"texto": U4_TEXT}],
+    ["nombre", "producto", {"texto": U4_TEXT}, {"texto": U4_TEXT}],
+    ["nombre", {"texto": U4_TEXT}],
+    ["nombre", "producto", "precio"],
+    [{"texto": U4_TEXT}],
+], ids=["en_el_medio", "otro_orden", "dos_textos", "sin_producto", "un_nombre_tercero", "solo_el_texto"])
+def test_rule_14_takes_only_name_product_and_one_literal(variables: list[Any]) -> None:
+    assert "engine_not_supported:variables_seguimiento" in native_not_supported(_u4_followup(variables), literal=True)
+
+
+def test_the_flag_changes_nothing_for_a_followup_without_a_literal() -> None:
+    assert native_not_supported(FOLLOWUP, literal=True) == native_not_supported(FOLLOWUP) == ()
+    for definition in (CART, PAYMENT):
+        assert native_not_supported(definition, literal=True) == native_not_supported(definition)
+
+
+def test_the_cycle_validates_the_u4_followup_with_the_flag() -> None:
+    catalog = catalog_with(_with_u4)
+    on = replace(INSTANCE, literal_variables=True)
+    assert _blocks(_u4_followup(), in_world=world(keys=()), catalog=catalog, instance=on) == set()
+    # Sin el flag, el esquema lo rechaza (invalid_value) y la regla 14 tambien.
+    off = _blocks(_u4_followup(), in_world=world(keys=()), catalog=catalog)
+    assert "invalid_value" in off
+    # Con el flag y nombre y producto solos, la regla 13 cuenta tres marcadores y dos variables.
+    two = _blocks(_u4_followup(["nombre", "producto"]), in_world=world(keys=()), catalog=catalog, instance=on)
+    assert two and "invalid_value" not in two

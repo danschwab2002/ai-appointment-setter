@@ -2428,10 +2428,13 @@ class _Run:
         # E-528 (C4, 20261113200000): la ficha, solo con FLOW_ENGINE_NATIVE_PAYMENT_SLIP_ENABLED.
         # Z2 3.9 (20261127400000): la palabra clave, solo con los tres flags (NativeRuntime.native_keyword).
         # 4.3 (20261127500000): la confirmacion de un registro, solo con los flags del registro.
+        # U4 (20261128100000): el {{3}} del seguimiento por silencio, solo con FLOW_LITERAL_VARIABLES_ENABLED.
         codes = native_not_supported(definition, audience=runtime_runs_multitouch(self.instance.runtime),
                                      payment_slip=runtime_runs_payment_slip(self.instance.runtime),
                                      keyword=runtime_runs_keyword(self.instance.runtime),
-                                     registration=runtime_runs_registration(self.instance.runtime))
+                                     registration=runtime_runs_registration(self.instance.runtime),
+                                     # U4 (20261128100000): el texto fijo como tercera del seguimiento.
+                                     literal=self.instance.literal_variables)
         if self.actor == "automation_expert" and f"{NOT_SUPPORTED}:{TOO_MANY_SENDS}" in codes:
             # Dos mensajes seguidos son dos problemas para el motor (la espera en el medio y el segundo envio) y
             # uno solo para el dueno: el del mensaje de mas. Los dos caen en el mismo camino y se contaria solo el primero.

@@ -11470,6 +11470,8 @@ def create_app(
                     conversation_statuses=spec.conversation_statuses,
                     only_conversation_ids=spec.cohort_conversation_ids,
                     log_prefix="flow_engine_silence",
+                    # U4 (flow-engine-v2 §37): el texto fijo del {{3}}, o None.
+                    template_text=spec.template_text,
                     segment_catalog=segment_catalog,
                     other_product_labels=followup_other_labels,
                     own_product_label=followup_own_label,
@@ -11483,6 +11485,8 @@ def create_app(
                 },
                 product_ref=native_manifest.funnel_ref,
                 build=build_native_silence_sweeper,
+                # U4: sin el flag, un silencio con texto fijo no arma barredor.
+                literal_variables=settings.flow_literal_variables_enabled,
             )
             app.state.native_silence_sweepers = native_silence_sweepers
 

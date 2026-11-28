@@ -2669,14 +2669,25 @@ def test_flow_engine_keyword_trigger_fingerprint() -> None:
     assert "nothas_function_privilege('service_role',oid,'EXECUTE')" in compact
 
 
-def test_own_forms_registration_confirmation_fingerprint_is_last() -> None:
+def test_own_forms_registration_confirmation_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261127500000 (4.3, segunda parte): la entrada del registro solo de service_role y el
     # disparador que reconoce dispara.registro.
-    row = sql.split("'20261127500000'", 1)[1].split("select\n    version,", 1)[0]
+    row = sql.split("'20261127500000'", 1)[1].split("'20261128100000'", 1)[0].rsplit("union all", 1)[0]
     compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
 
-    assert compact.endswith(",2,'own_forms_registration_confirmation')")
+    assert compact.endswith(",2,'own_forms_registration_confirmation'")
     assert "admit_and_route_registration_lead_precheckout_v1(text,text,integer,text,jsonb,jsonb,text,text)" in compact
     assert "own_forms_registration_trigger" in compact
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact
+
+
+def test_flow_engine_native_silence_literal_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261128100000 (U4): la marca del texto fijo tercero en la forma que abre la base.
+    row = sql.split("'20261128100000'", 1)[1].split("select\n    version,", 1)[0]
+    compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
+
+    assert compact.endswith(",1,'flow_engine_native_silence_literal')")
+    assert "position('flow_silence_literal:eltextofijo'indefinition)>0" in compact
+    assert "_flow_engine_native_unsupported(jsonb)" in compact

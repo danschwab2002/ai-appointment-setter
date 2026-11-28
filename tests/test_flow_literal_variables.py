@@ -355,7 +355,8 @@ def test_the_flag_is_off_by_default_and_portable() -> None:
     assert app_module.Settings.__dataclass_fields__["flow_literal_variables_enabled"].default is False
     assert "flow_literal_variables_enabled" in app_module.PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES
     source = (ROOT / "src" / "bridge" / "app.py").read_text(encoding="utf-8")
-    assert source.count("literal_variables=settings.flow_literal_variables_enabled") == 2
+    # La validacion de la propuesta, la de la pagina y (U4) el barrido nativo del seguimiento.
+    assert source.count("literal_variables=settings.flow_literal_variables_enabled") == 3
     assert "native_literal_variables_enabled=settings.flow_literal_variables_enabled" in source
 
 
@@ -363,7 +364,8 @@ def test_the_ae_knows_the_literal() -> None:
     skills = ROOT / "profiles" / "automation-expert" / "skills" / "flujos"
     create = (skills / "crear-un-flujo" / "SKILL.md").read_text(encoding="utf-8")
     assert "{texto: \"…\"}" in create and "FLOW_LITERAL_VARIABLES_ENABLED" in create
-    assert "no en la ficha ni en el seguimiento a 24 h" in create
+    # U4: en el seguimiento a 24 h, solo como tercera, despues de nombre y producto.
+    assert "no en la ficha; en el seguimiento a 24 h va solo como tercera" in create
     template = (skills / "pedir-plantilla-a-meta" / "SKILL.md").read_text(encoding="utf-8")
     assert "template_utility_sounds_promotional" in template
     plugin = ROOT / "profiles" / "automation-expert" / "plugins" / "automation-expert-change"

@@ -210,6 +210,8 @@ def test_the_native_silence_sweep_is_built_by_the_engine_with_the_manifest_optio
     assert sweeper._phone_equivalence is True and sweeper._refuse_unsafe_greeting is True
     assert sweeper._external_user_id_resolver is not None
     assert sweeper._log_prefix == "flow_engine_silence"
+    # U4: sin texto fijo en la definicion no hay {{3}}, y sin FLOW_LITERAL_VARIABLES_ENABLED no se ejecuta uno.
+    assert sweeper._template_text is None and sweepers._literal_variables is False
     assert sweeper.send_hours is None and sweeper._send_window is not None
     # La ventana y las conversaciones de la definicion, y el alcance del legado (ALLOWED_WHATSAPP_JID).
     assert (sweeper._min_inbound_age_seconds, sweeper._max_inbound_age_seconds) == (108_000, 259_200)

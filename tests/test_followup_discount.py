@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
 import logging
 from datetime import datetime
@@ -1252,3 +1253,45 @@ def test_an_invalid_audience_or_schedule_never_builds_a_sweeper(options: dict) -
             product_name=ATT1_PRODUCT,
             **options,
         )
+
+
+# --- U4 (flow-engine-v2 §37): sin texto fijo, nada cambia --------------------------
+#
+# Lo que manda el barrido sin ``template_text`` es identico byte a byte a la v1.43.0:
+# el sha256 del ``content`` y los ``template_params`` (json con sort_keys y sin
+# escapar), medidos sobre ``origin/main`` (c932fd41) antes del cambio, con estas
+# mismas capturas (la 21 de ATT1 y la 194 de Johanna).
+ATT1_FOLLOWUP_SENT_SHA256 = "54aecbf6c344ecf102e1a927e1ba6529575acc359ec5fb558bf2302d1db0d482"
+JOHANNA_FOLLOWUP_SENT_SHA256 = "a3f7108f15a38f7f8983eb1e82dcb25b2c70f5b6bd1fb8013fb32923de9788cf"
+
+
+def _sent_sha256(sent: dict) -> str:
+    blob = json.dumps(
+        {"content": sent["content"], "template_params": sent["template_params"]},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def test_without_a_literal_the_att1_followup_goes_out_byte_for_byte_as_in_1_43_0() -> None:
+    chatwoot = _att1_chatwoot()
+    supabase = _FakeSupabase(issued_url=ATT1_AGENT_LINK)
+    sweeper = _att1_sweeper(chatwoot, supabase, now=ATT1_LEAD_REPLIED_AT + 30 * HOUR)
+    assert asyncio.run(sweeper.run_once()) == 1
+    [sent] = chatwoot.sent
+    assert _sent_sha256(sent) == ATT1_FOLLOWUP_SENT_SHA256
+    assert list(sent["template_params"]["processed_params"]["body"]) == ["1", "2"]
+
+
+def test_without_a_literal_johanna_still_sends_the_coupon_as_the_third_parameter() -> None:
+    chatwoot, supabase = _FakeChatwoot(["194"]), _FakeSupabase()
+    assert asyncio.run(_sweeper(chatwoot, supabase, hours_after=25).run_once()) == 1
+    assert _sent_sha256(chatwoot.sent[0]) == JOHANNA_FOLLOWUP_SENT_SHA256
+    assert chatwoot.sent[0]["template_params"]["processed_params"]["body"]["3"] == COUPON
+
+
+def test_the_legacy_sweeper_does_not_take_a_literal() -> None:
+    # D-U4.4: el texto fijo del {{3}} lo trae solo un silencio nativo (con native_run).
+    with pytest.raises(ValueError, match="invalid conversation followup configuration"):
+        _sweeper(_FakeChatwoot(["194"]), _FakeSupabase(), template_text="retomemos tu consulta")
