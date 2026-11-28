@@ -55,10 +55,12 @@ const PILOT = JSON.parse(readFileSync(join(root, 'tests/fixtures/instances/att1/
 const results = {};
 
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
-// Despues va solo el texto fijo tercero del seguimiento por silencio (20261128100000, U4), que toca solo
-// _flow_engine_native_unsupported.
-if (names.at(-2) !== MIGRATION || names.at(-1) !== '20261128100000_flow_engine_native_silence_literal_v1.sql') {
-  fail(`despues de ${MIGRATION} va solo la del texto fijo del seguimiento`, names.slice(-3));
+// Despues van solo el texto fijo tercero del seguimiento por silencio (20261128100000, U4), que toca solo
+// _flow_engine_native_unsupported, y la reanudacion por la decision vista de una persona (20261128200000, E-577).
+if (JSON.stringify(names.slice(names.indexOf(MIGRATION) + 1))
+    !== JSON.stringify(['20261128100000_flow_engine_native_silence_literal_v1.sql',
+      '20261128200000_operator_resume_attends_handoff_v1.sql'])) {
+  fail(`despues de ${MIGRATION} van solo la del texto fijo del seguimiento y la de E-577`, names.slice(-3));
 }
 
 // ---------------------------------------------------------------------------

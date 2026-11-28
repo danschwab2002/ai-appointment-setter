@@ -18,6 +18,17 @@ que es el mismo `webhook_data` que Chatwoot v4.13.0 manda en la raiz de un
 Es la misma derivacion que usa
 `test_a_conversation_updated_with_a_label_change_is_captured_and_nothing_else`.
 Cuando se capture el payload real anonimizado, estos tests pasan a usarlo.
+La forma que se espera de esa entrega (cuenta 3, bandeja 13, conversacion
+260) esta en el contrato `resume-paused-conversation-v1.md`, «Antes de
+prender el flag». La 260 llego ademas resuelta (el cambio de estado entro un
+segundo antes): `test_a_resolved_conversation_is_not_resumed` cubre ese caso.
+
+E-577 (parte 1 de E-539, migracion 20261128200000): el camino de la etiqueta
+llama a `resume_paused_conversation_by_operator_v1`, que marca atendida una
+derivacion `projected` sin contestar y devuelve `not_paused` si la
+conversacion no estaba pausada; el del mensaje entrante sigue con la vigente.
+Lo que la base hace de verdad lo prueba
+`tests/sql/followup_engine/validate_operator_resume_attends_handoff.mjs`.
 """
 
 from __future__ import annotations
@@ -210,6 +221,9 @@ def test_a_supabase_failure_is_retried_instead_of_swallowed() -> None:
         async def resume_paused_conversation(self, **_: object):
             raise SupabaseError("conversation_resume_failed: HTTP 503")
 
+        async def resume_paused_conversation_by_operator(self, **_: object):
+            raise SupabaseError("conversation_resume_by_operator_failed: HTTP 503")
+
     with pytest.raises(LabelRemovalResumeTransientError):
         asyncio.run(
             _resume_paused_conversation(
@@ -270,7 +284,14 @@ class _SupabaseConPausa:
         raise AssertionError("un cambio de etiqueta no abre ni admite un caso")
 
     async def resume_paused_conversation(self, **kwargs: object):
-        self.reanudaciones.append(kwargs)
+        self.reanudaciones.append({"rpc": "vigente", **kwargs})
+        return self._resultado()
+
+    async def resume_paused_conversation_by_operator(self, **kwargs: object):
+        self.reanudaciones.append({"rpc": "by_operator", **kwargs})
+        return self._resultado()
+
+    def _resultado(self) -> ConversationResumeResult:
         return ConversationResumeResult(
             outcome=self.outcome,
             conversation_id="conversation-173",
@@ -430,9 +451,14 @@ def test_a_person_removing_the_label_resumes_the_setter_right_away(
     assert repetida.status_code == 200
     assert repetida.json()["status"] == "duplicate"
     assert [r["command_key"] for r in supabase.reanudaciones] == [CLAVE]
-    assert supabase.reanudaciones[0]["reason_code"] == "operator_request"
-    assert supabase.reanudaciones[0]["external_conversation_id"] == 173
-    assert supabase.reanudaciones[0]["quiet_seconds"] is None
+    # E-577: la decision vista va por la RPC que la respeta (el motivo,
+    # operator_request, lo pone la base al delegar en la vigente).
+    assert supabase.reanudaciones[0] == {
+        "rpc": "by_operator",
+        "external_conversation_id": 173,
+        "command_key": CLAVE,
+        "max_resumes": 3,
+    }
     assert supabase.admisiones == []
     assert transport.macro_executed is False, "no hay etiqueta que sacar"
     assert not [m for m in caplog.messages if "chatwoot_work_failed" in m]
@@ -442,13 +468,12 @@ def test_a_person_removing_the_label_resumes_the_setter_right_away(
     )
 
 
-def test_the_rpc_still_decides_an_unattended_handoff_stays_paused(
+def test_the_rpc_still_decides_when_the_projector_is_working(
     tmp_path, monkeypatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Hoy la RPC exige `attended_at` aun con `operator_request` (parte 1 de E-539).
-
-    Este camino no la rodea: con la derivacion sin atender, la RPC dice
-    `blocked_pending_handoff` y la conversacion sigue con las personas.
+    """La base sigue mandando (E-577): con la derivacion `requested` o
+    `projection_failed` (el proyector trabajando) dice `blocked_pending_handoff`
+    y la conversacion sigue con las personas, a la vista con un warning.
     """
     monkeypatch.setattr("bridge.app.time.time", lambda: AHORA_173)
     transport = _Chatwoot173(_fixture_173())
@@ -462,6 +487,12 @@ def test_the_rpc_still_decides_an_unattended_handoff_stays_paused(
     assert len(supabase.reanudaciones) == 1
     assert any("outcome=blocked_pending_handoff" in m for m in caplog.messages)
     assert any("resumed=False" in m for m in caplog.messages)
+    assert any(
+        r.levelno == logging.WARNING
+        and "chatwoot_label_removal_not_resumed conversation=173 outcome=blocked_pending_handoff"
+        in r.getMessage()
+        for r in caplog.records
+    )
 
 
 def test_the_bridge_echo_after_its_own_resume_changes_nothing(
@@ -469,12 +500,14 @@ def test_the_bridge_echo_after_its_own_resume_changes_nothing(
 ) -> None:
     """El bridge saca la etiqueta tras reanudar por silencio y le llega el eco.
 
-    La RPC ya esta admisible ('already_active'): una sola llamada, sin macro y
-    sin otra reanudacion. No hay loop.
+    La conversacion ya no esta pausada: desde E-577 la base dice 'not_paused'
+    sin escribir. Una sola llamada, sin macro, sin otra reanudacion y sin
+    warning (es lo que pasa despues de cada reanudacion que salio bien). No
+    hay loop.
     """
     monkeypatch.setattr("bridge.app.time.time", lambda: AHORA_173)
     transport = _Chatwoot173(_fixture_173())
-    supabase = _SupabaseConPausa(outcome="already_active")
+    supabase = _SupabaseConPausa(outcome="not_paused")
     app = _app(
         tmp_path, transport, supabase, chatwoot_label_removal_resume_enabled=True
     )
@@ -482,8 +515,15 @@ def test_the_bridge_echo_after_its_own_resume_changes_nothing(
     [response] = _enviar(app, _cambio_de_etiqueta(["automation_paused"], []))
     assert response.status_code == 202
     assert len(supabase.reanudaciones) == 1
+    assert supabase.reanudaciones[0]["rpc"] == "by_operator"
     assert transport.macro_executed is False
     assert supabase.admisiones == []
+    assert not [m for m in caplog.messages if "chatwoot_work_failed" in m]
+    assert not [
+        r for r in caplog.records
+        if r.levelno >= logging.WARNING and "chatwoot_label_removal_not_resumed" in r.getMessage()
+    ]
+    assert any("conversation_resume_skipped outcome=not_paused" in m for m in caplog.messages)
 
 
 def test_a_failed_resume_is_retried_by_the_worker(
@@ -499,7 +539,7 @@ def test_a_failed_resume_is_retried_by_the_worker(
         supabase.reanudaciones.append(kwargs)
         raise SupabaseError("conversation_resume_failed: HTTP 503")
 
-    supabase.resume_paused_conversation = caido  # type: ignore[method-assign]
+    supabase.resume_paused_conversation_by_operator = caido  # type: ignore[method-assign]
     app = _app(
         tmp_path, transport, supabase, chatwoot_label_removal_resume_enabled=True
     )
@@ -568,3 +608,142 @@ def test_the_flag_is_off_by_default_and_portable(monkeypatch: pytest.MonkeyPatch
     assert Settings.from_env().chatwoot_label_removal_resume_enabled is True
 
 
+
+
+# ------------------------------------------------- E-577: las dos vias, la base
+
+
+def test_the_inbound_path_keeps_the_current_rpc() -> None:
+    """El mensaje entrante deduce la decision por la ausencia de la etiqueta.
+
+    Como una etiqueta que nunca se llego a poner se ve igual que una sacada,
+    ese camino NO usa la RPC que marca atendida la derivacion: sigue con la
+    vigente, donde una derivacion sin atender bloquea (conversacion 186).
+    """
+    supabase = _SupabaseConPausa(outcome="blocked_pending_handoff")
+    resumed = asyncio.run(
+        _resume_paused_conversation(
+            control_client=_cliente_173(_Chatwoot173(_fixture_173())),
+            supabase=supabase,
+            settings=_settings_resume(),
+            conversation_id=173,
+            message_id=2373,
+            expected_jid=JID_DEL_LEAD_173,
+            durable_pause_recorded=True,
+        )
+    )
+    assert resumed is False
+    assert [r["rpc"] for r in supabase.reanudaciones] == ["vigente"]
+    assert supabase.reanudaciones[0]["reason_code"] == "operator_request"
+    assert supabase.reanudaciones[0]["command_key"] == "resume:173:2373"
+
+
+@pytest.mark.parametrize("outcome", ["blocked_resume_limit", "blocked_contact"])
+def test_a_person_decision_the_base_refuses_is_logged_and_not_retried(
+    outcome: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    supabase = _SupabaseConPausa(outcome=outcome)
+    caplog.set_level(logging.INFO)
+    resumed = asyncio.run(
+        _resume_paused_conversation(
+            control_client=_cliente_173(_Chatwoot173(_fixture_173())),
+            supabase=supabase,
+            settings=_settings_resume(),
+            conversation_id=173,
+            expected_jid=JID_DEL_LEAD_173,
+            durable_pause_recorded=True,
+            command_key=CLAVE,
+            label_removal_only=True,
+        )
+    )
+    assert resumed is False
+    assert [r["rpc"] for r in supabase.reanudaciones] == ["by_operator"]
+    assert any(
+        r.levelno == logging.WARNING
+        and f"chatwoot_label_removal_not_resumed conversation=173 outcome={outcome}"
+        in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def _cliente_supabase(respuesta: object, vistos: list[httpx.Request]):
+    from bridge.supabase import SupabaseClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        vistos.append(request)
+        return httpx.Response(200, json=respuesta)
+
+    return SupabaseClient(
+        base_url="https://supabase.example.test",
+        service_role_key="test-service-role",
+        transport=httpx.MockTransport(handler),
+    )
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "resumed",
+        "replayed",
+        "already_active",
+        "not_paused",
+        "blocked_contact",
+        "blocked_resume_limit",
+        "blocked_pending_handoff",
+        "not_found",
+    ],
+)
+def test_the_client_calls_the_operator_rpc_with_its_three_arguments(outcome: str) -> None:
+    import json
+
+    vistos: list[httpx.Request] = []
+    fila = {
+        "outcome": outcome,
+        "resumed_conversation_id": None,
+        "resumed_commercial_case_id": None,
+        "resume_event_id": None,
+    }
+    cliente = _cliente_supabase([fila], vistos)
+    result = asyncio.run(
+        cliente.resume_paused_conversation_by_operator(
+            external_conversation_id=173, command_key=CLAVE, max_resumes=3
+        )
+    )
+    assert result.outcome == outcome
+    assert result.resumed is (outcome in {"resumed", "replayed", "already_active"})
+    [request] = vistos
+    assert request.method == "POST"
+    assert request.url.path == "/rest/v1/rpc/resume_paused_conversation_by_operator_v1"
+    assert json.loads(request.content) == {
+        "p_external_conversation_id": 173,
+        "p_command_key": CLAVE,
+        "p_max_resumes": 3,
+    }
+
+
+def test_the_client_rejects_an_unknown_operator_outcome() -> None:
+    from bridge.supabase import SupabaseError
+
+    cliente = _cliente_supabase([{"outcome": "resumido"}], [])
+    with pytest.raises(SupabaseError, match="conversation_resume_by_operator_invalid_outcome"):
+        asyncio.run(
+            cliente.resume_paused_conversation_by_operator(
+                external_conversation_id=173, command_key=CLAVE
+            )
+        )
+
+
+def test_the_current_rpc_client_accepts_the_resume_limit() -> None:
+    """La RPC devuelve `blocked_resume_limit` desde 20260923000100; el cliente
+    lo rechazaba con `conversation_resume_invalid_outcome` (E-577)."""
+    cliente = _cliente_supabase([{"outcome": "blocked_resume_limit"}], [])
+    result = asyncio.run(
+        cliente.resume_paused_conversation(
+            external_conversation_id=173,
+            command_key="resume:173:2373",
+            reason_code="operator_request",
+            quiet_seconds=None,
+        )
+    )
+    assert result.outcome == "blocked_resume_limit"
+    assert result.resumed is False

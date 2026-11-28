@@ -3763,13 +3763,28 @@ async def _resume_paused_conversation(
             return False
         reason_code = "inbound_after_quiet_period"
     try:
-        result = await supabase.resume_paused_conversation(
-            external_conversation_id=conversation_id,
-            command_key=command_key,
-            reason_code=reason_code,
-            quiet_seconds=quiet_seconds,
-            max_resumes=settings.conversation_resume_max,
-        )
+        if label_removal_only:
+            # E-577 (parte 1 de E-539 y D-2 del PR #468): la decision de la
+            # persona se VIO (el conversation_updated que saca la etiqueta),
+            # asi que va por la RPC que la respeta aun con una derivacion
+            # 'projected' sin atender (la marca atendida) y que devuelve
+            # 'not_paused' sin escribir si la conversacion no estaba pausada.
+            # El camino del mensaje entrante no la usa: ahi la decision se
+            # deduce por la ausencia de la etiqueta, y una etiqueta que nunca
+            # se llego a poner se ve igual (conversacion 186).
+            result = await supabase.resume_paused_conversation_by_operator(
+                external_conversation_id=conversation_id,
+                command_key=command_key,
+                max_resumes=settings.conversation_resume_max,
+            )
+        else:
+            result = await supabase.resume_paused_conversation(
+                external_conversation_id=conversation_id,
+                command_key=command_key,
+                reason_code=reason_code,
+                quiet_seconds=quiet_seconds,
+                max_resumes=settings.conversation_resume_max,
+            )
     except SupabaseError as exc:
         if label_removal_only:
             raise LabelRemovalResumeTransientError(
@@ -3777,6 +3792,16 @@ async def _resume_paused_conversation(
             ) from exc
         return False
     if not result.resumed:
+        if label_removal_only and result.outcome != "not_paused":
+            # Una persona saco la etiqueta y el setter sigue pausado (tope,
+            # contacto, el proyector trabajando): que quede a la vista.
+            # 'not_paused' es el eco de la remocion que hace el propio bridge
+            # al reanudar, y va a info.
+            logger.warning(
+                "chatwoot_label_removal_not_resumed conversation=%s outcome=%s",
+                conversation_id,
+                result.outcome,
+            )
         logger.info("conversation_resume_skipped outcome=%s", result.outcome)
         return False
     if not label_removed_by_person:
@@ -9289,12 +9314,11 @@ def create_app(
         if settings.conversation_resume_enabled and isinstance(
             control_client, ChatwootClient
         ):
-            # D-2 del PR: sin una lectura de la pausa durable (sin migracion
-            # no hay RPC de lectura por conversacion), la RPC es la que
-            # decide: con la conversacion ya admisible da 'already_active',
-            # sin caso 'not_found', y con una derivacion sin atender
-            # 'blocked_pending_handoff'. La parte (1) de E-539 suma ahi la
-            # guarda de "solo si estaba pausada".
+            # D-2 del PR #468, cerrado por E-577: la base decide si habia
+            # pausa (resume_paused_conversation_by_operator_v1, migracion
+            # 20261128200000): sin pausa da 'not_paused' sin escribir nada;
+            # pausada, marca atendida una derivacion 'projected' que nadie
+            # contesto (parte 1 de E-539) y reanuda con operator_request.
             resumed = await _resume_paused_conversation(
                 control_client=control_client,
                 supabase=shared_supabase,

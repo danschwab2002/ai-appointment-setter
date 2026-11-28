@@ -320,7 +320,9 @@ expected_service_role(signature) as (
         ('public.claim_meta_enforcement_notices_v1(jsonb, integer)'),
         ('public.finish_meta_enforcement_notice_v1(jsonb, uuid, text, text)'),
         -- 20261127500000: la entrada del registro a un evento (4.3, own-forms-v1).
-        ('public.admit_and_route_registration_lead_precheckout_v1(text, text, integer, text, jsonb, jsonb, text, text)')
+        ('public.admit_and_route_registration_lead_precheckout_v1(text, text, integer, text, jsonb, jsonb, text, text)'),
+        -- 20261128200000: la reanudacion por la decision vista de una persona (E-577).
+        ('public.resume_paused_conversation_by_operator_v1(bigint, text, integer, timestamp with time zone)')
 ),
 functions as (
     select

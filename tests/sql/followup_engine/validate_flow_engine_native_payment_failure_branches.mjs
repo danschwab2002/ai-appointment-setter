@@ -181,7 +181,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026110300100
     // La confirmacion de registro (20261127500000, 4.3).
     '20261127500000_own_forms_registration_confirmation_v1.sql',
     // El texto fijo tercero del seguimiento por silencio (20261128100000, U4).
-    '20261128100000_flow_engine_native_silence_literal_v1.sql'])) {
+    '20261128100000_flow_engine_native_silence_literal_v1.sql',
+    // La reanudacion por la decision vista de una persona (20261128200000, E-577).
+    '20261128200000_operator_resume_attends_handoff_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la del aviso de derivaciones sin atender`, names.slice(position + 1));
 }
 if (TEMPLATES.length !== 4 || REFUSALS.length !== 3 || REFUSALS[1].persona !== REFUSALS[2].persona) {

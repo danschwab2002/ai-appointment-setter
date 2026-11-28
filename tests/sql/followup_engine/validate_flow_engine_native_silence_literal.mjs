@@ -38,7 +38,11 @@ const fail = (message, detail) => {
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
 const position = names.indexOf(MIGRATION);
 if (position < 0) fail(`falta la migracion ${MIGRATION}`);
-if (position !== names.length - 1) fail(`${MIGRATION} es la ultima`, names.slice(position + 1));
+// Despues va solo la reanudacion por la decision vista de una persona (20261128200000, E-577).
+if (JSON.stringify(names.slice(position + 1))
+    !== JSON.stringify(['20261128200000_operator_resume_attends_handoff_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de E-577`, names.slice(position + 1));
+}
 
 const boot = async (files) => {
   const db = new PGlite();

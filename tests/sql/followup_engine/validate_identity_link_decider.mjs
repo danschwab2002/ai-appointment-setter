@@ -121,7 +121,9 @@ if (JSON.stringify(names.slice(position + 2)) !== JSON.stringify(['2026111400030
     // La confirmacion de registro (20261127500000, 4.3).
     '20261127500000_own_forms_registration_confirmation_v1.sql',
     // El texto fijo tercero del seguimiento por silencio (20261128100000, U4).
-    '20261128100000_flow_engine_native_silence_literal_v1.sql'])) fail('despues de la pregunta van solo la de E-565, la de E-569, la de E-575, la de E-622, la de E-627, la de E-661, la de E-665, la de E-666 y la de E-656', names.slice(position + 2));
+    '20261128100000_flow_engine_native_silence_literal_v1.sql',
+    // La reanudacion por la decision vista de una persona (20261128200000, E-577).
+    '20261128200000_operator_resume_attends_handoff_v1.sql'])) fail('despues de la pregunta van solo la de E-565, la de E-569, la de E-575, la de E-622, la de E-627, la de E-661, la de E-665, la de E-666 y la de E-656', names.slice(position + 2));
 const readMigration = (name) => readFileSync(join(root, 'supabase/migrations', name), 'utf8')
   .replace(/create extension if not exists pgcrypto;/gi, '-- pgcrypto is built into PGlite');
 
