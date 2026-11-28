@@ -59,7 +59,9 @@ const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.end
 // _flow_engine_native_unsupported, y la reanudacion por la decision vista de una persona (20261128200000, E-577).
 if (JSON.stringify(names.slice(names.indexOf(MIGRATION) + 1))
     !== JSON.stringify(['20261128100000_flow_engine_native_silence_literal_v1.sql',
-      '20261128200000_operator_resume_attends_handoff_v1.sql'])) {
+      '20261128200000_operator_resume_attends_handoff_v1.sql',
+      // El cierre de la conversacion que Chatwoot resolvio (20261128300000, parte 3 de E-539).
+      '20261128300000_close_resolved_conversation_v1.sql'])) {
   fail(`despues de ${MIGRATION} van solo la del texto fijo del seguimiento y la de E-577`, names.slice(-3));
 }
 

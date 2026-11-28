@@ -500,7 +500,9 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261127100000 (los frenos ante Meta, F1) suma sus siete.
     # 20261127500000 (la confirmacion de registro, 4.3) suma su entrada.
     # 20261128200000 (la reanudacion por la decision vista de una persona, E-577) suma la suya.
-    assert len(allowlisted) == 275
+    # 20261128300000 (el cierre de la conversacion que Chatwoot resolvio, parte 3 de E-539) suma el suyo.
+    assert len(allowlisted) == 276
+    assert "close_resolved_conversation_v1(bigint, text, timestamp with time zone)" in allowlisted
     assert "resume_paused_conversation_by_operator_v1(bigint, text, integer, timestamp with time zone)" in allowlisted
     assert "admit_and_route_registration_lead_precheckout_v1(text, text, integer, text, jsonb, jsonb, text, text)" in allowlisted
     assert "act_on_meta_enforcement_v1(jsonb, text, text, jsonb, text, text)" in allowlisted
@@ -2695,16 +2697,31 @@ def test_flow_engine_native_silence_literal_fingerprint() -> None:
     assert "_flow_engine_native_unsupported(jsonb)" in compact
 
 
-def test_operator_resume_attends_handoff_fingerprint_is_last() -> None:
+def test_operator_resume_attends_handoff_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261128200000 (E-577, parte 1 de E-539): la reanudacion por la decision vista de una
     # persona, solo de service_role, con la marca de la atencion y el deshacer.
-    row = sql.split("'20261128200000'", 1)[1].split("select\n    version,", 1)[0]
+    row = sql.split("'20261128200000'", 1)[1].split("'20261128300000'", 1)[0].rsplit("union all", 1)[0]
     compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
 
-    assert compact.endswith(",1,'operator_resume_attends_handoff')")
+    assert compact.endswith(",1,'operator_resume_attends_handoff'")
     assert "resume_paused_conversation_by_operator_v1(bigint,text,integer,timestamptz)" in compact
     assert "position('operator_resume_attends_handoff'indefinition)>0" in compact
     assert "position('E5770'indefinition)>0" in compact
+    assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact
+    assert "nothas_function_privilege('authenticated',oid,'EXECUTE')" in compact
+
+
+def test_close_resolved_conversation_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261128300000 (parte 3 de E-539): el cierre de la conversacion que Chatwoot
+    # resolvio, solo de service_role, con el evento del cierre.
+    row = sql.split("'20261128300000'", 1)[1].split("select\n    version,", 1)[0]
+    compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
+
+    assert compact.endswith(",1,'close_resolved_conversation')")
+    assert "close_resolved_conversation_v1(bigint,text,timestamptz)" in compact
+    assert "position('close_resolved_conversation_invalid_input'indefinition)>0" in compact
+    assert "position('chatwoot_resolved_conversation_closed'indefinition)>0" in compact
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact
     assert "nothas_function_privilege('authenticated',oid,'EXECUTE')" in compact

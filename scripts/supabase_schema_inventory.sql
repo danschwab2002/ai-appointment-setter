@@ -8177,6 +8177,26 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         ), 0),
         1,
         'operator_resume_attends_handoff'
+    union all
+    select
+        '20261128300000',
+        '20261128300000_close_resolved_conversation_v1.sql',
+        -- El cierre de la conversacion que Chatwoot resolvio (parte 3 de E-539): security definer,
+        -- search_path fijo, solo service_role, con el evento del cierre.
+        coalesce((
+            select (prosecdef
+                    and array_to_string(proconfig, ',') = 'search_path=pg_catalog, public, pg_temp'
+                    and position('close_resolved_conversation_invalid_input' in definition) > 0
+                    and position('chatwoot_resolved_conversation_closed' in definition) > 0
+                    and has_function_privilege('service_role', oid, 'EXECUTE')
+                    and not has_function_privilege('anon', oid, 'EXECUTE')
+                    and not has_function_privilege('authenticated', oid, 'EXECUTE'))::int
+            from functions
+            where oid = to_regprocedure(
+                'public.close_resolved_conversation_v1(bigint,text,timestamptz)')
+        ), 0),
+        1,
+        'close_resolved_conversation'
 )
 select
     version,

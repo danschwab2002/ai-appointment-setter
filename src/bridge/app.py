@@ -102,7 +102,7 @@ from bridge.product_label import ProductLabeler
 from bridge.product_routes import HotmartUnrouted, ProductRoute, ProductRoutes, followup_product_labels
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
 from bridge.payment_link_coupon import coupon_applied_in_context, fixed_coupon_fits_product, mark_payment_link_coupon, mark_segment_link_coupon, segment_cart_discount_brake, segment_coupon_fits_product, segment_coupon_for_labels, segment_link_coupon, segment_link_offer, SegmentOfferLink, validate_payment_link_coupon_code  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
-from bridge.filtering import EventDecision, LabelRemoval, classify_chatwoot_event, classify_chatwoot_label_removal
+from bridge.filtering import ConversationResolved, EventDecision, LabelRemoval, classify_chatwoot_conversation_resolved, classify_chatwoot_event, classify_chatwoot_label_removal  # noqa: E501
 from bridge.agent_provenance import AgentTurn, CONTEXT_BUILDER_VERSION
 from bridge.hermes import AGENT_TURN_FAILED_REASON_CODE, HermesShadowProcessor, agent_turn_failure_to_hand_off, payment_link_product  # noqa: E501 - una sola linea: las citas por linea de app.py (flow_parity.py) no se corren
 from bridge.hotmart import (
@@ -405,6 +405,9 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # E-571: la misma reanudacion, disparada por el conversation_updated que
     # saca la etiqueta; no depende del aliado.
     "chatwoot_label_removal_resume_enabled",
+    # Parte 3 de E-539: cerrar la conversacion del setter que el equipo
+    # resolvio en Chatwoot; no depende del aliado.
+    "chatwoot_resolved_close_enabled",
     # Reactivar tampoco depende del aliado: lo especifico es el nombre de la
     # plantilla aprobada, que ya es configuracion por runtime.
     "conversation_reactivation_enabled",
@@ -974,6 +977,11 @@ class Settings:
     # momento, con las reglas de la reanudacion. Exige ademas
     # conversation_resume_enabled y la admision durable (cut B).
     chatwoot_label_removal_resume_enabled: bool = False
+    # Parte 3 de E-539: el conversation_updated que resuelve la conversacion en
+    # Chatwoot cierra la del setter si la tomo el equipo
+    # (close_resolved_conversation_v1, migracion 20261128300000). Exige ademas
+    # la admision durable (cut B). Apagado, el evento sigue ignorado como hoy.
+    chatwoot_resolved_close_enabled: bool = False
     conversation_resume_quiet_seconds: int = 28800
     conversation_resume_max: int = 3
     conversation_reactivation_enabled: bool = False
@@ -2199,6 +2207,12 @@ class Settings:
             .lower()
             == "true"
         )
+        chatwoot_resolved_close_enabled = (
+            os.environ.get("CHATWOOT_RESOLVED_CLOSE_ENABLED", "false")
+            .strip()
+            .lower()
+            == "true"
+        )
         conversation_resume_quiet_seconds = int(
             os.environ.get("CONVERSATION_RESUME_QUIET_SECONDS", "28800")
         )
@@ -2573,6 +2587,7 @@ class Settings:
             chatwoot_label_removal_resume_enabled=(
                 chatwoot_label_removal_resume_enabled
             ),
+            chatwoot_resolved_close_enabled=chatwoot_resolved_close_enabled,
             conversation_resume_quiet_seconds=conversation_resume_quiet_seconds,
             conversation_resume_max=conversation_resume_max,
             conversation_reactivation_enabled=conversation_reactivation_enabled,
@@ -9338,6 +9353,126 @@ def create_app(
                 resumed,
             )
 
+    def resolution_to_close(
+        payload: dict[str, object],
+    ) -> ConversationResolved | None:
+        """Parte 3 de E-539: el ``conversation_updated`` que resuelve la conversacion.
+
+        Con el flag apagado (default) devuelve None siempre y el evento sigue
+        el camino de hoy (``unsupported_event``, 200 ignorado, sin captura).
+        Prendido, exige la admision durable (cut B), el cliente de control y
+        Supabase.
+        """
+        if not (
+            settings.chatwoot_resolved_close_enabled
+            and settings.chatwoot_cut_b_admission_enabled
+            and isinstance(control_client, ChatwootClient)
+            and shared_supabase is not None
+            and chatwoot_inbox is not None
+        ):
+            return None
+        return classify_chatwoot_conversation_resolved(
+            payload,
+            expected_inbox_id=settings.chatwoot_inbox_id,
+            expected_account_id=settings.chatwoot_account_id,
+            allowed_jid=settings.allowed_jid,
+            allow_any_scoped_sender=(
+                settings.chatwoot_scoped_inbound_senders_enabled
+            ),
+        )
+
+    async def close_after_resolution(
+        delivery_id: str, resolved: ConversationResolved
+    ) -> None:
+        """Cierra la conversacion del setter que el equipo resolvio (parte 3 de E-539).
+
+        Antes relee la conversacion: si ya no esta resuelta (la reabrieron
+        entre el evento y el trabajo) no se cierra nada. La identidad se
+        verifica como en la reanudacion. Una falla de red con Chatwoot, una de
+        Supabase o el proyector de notas trabajando se reintentan (tope de 8);
+        la clave por entrega hace seguro el reintento.
+        """
+        if not isinstance(control_client, ChatwootClient) or shared_supabase is None:
+            return
+        if settings.chatwoot_inbox_id is None:
+            return
+        try:
+            snapshot = await control_client.get_canonical_conversation_snapshot(
+                conversation_id=resolved.conversation_id,
+                expected_inbox_id=settings.chatwoot_inbox_id,
+                anchor_message_id=None,
+                expected_jid=resolved.sender_jid,
+            )
+        except httpx.HTTPError as exc:
+            raise LabelRemovalResumeTransientError(
+                "chatwoot_resolved_close_snapshot_failed"
+            ) from exc
+        except ChatwootProtocolError as exc:
+            logger.info(
+                "chatwoot_resolved_close_skipped conversation=%s reason=%s",
+                resolved.conversation_id,
+                exc,
+            )
+            return
+        if snapshot.status != "resolved":
+            logger.info(
+                "chatwoot_resolved_close_skipped conversation=%s reason=status_%s",
+                resolved.conversation_id,
+                snapshot.status,
+            )
+            return
+        # P-1 (Dan, 28/11): solo en una bandeja sin lock_to_single_conversation.
+        # Con lock, Chatwoot reabre la misma conversacion cuando la persona
+        # vuelve a escribir, y la admision base no acepta una conversacion
+        # cerrada (evidence_conflict): ese mensaje quedaria sin respuesta. Si
+        # el valor no es exactamente False (con lock, ausente o de otra
+        # forma), no se cierra.
+        try:
+            inbox = await control_client.get_inbox(inbox_id=settings.chatwoot_inbox_id)
+        except httpx.HTTPError as exc:
+            raise LabelRemovalResumeTransientError(
+                "chatwoot_resolved_close_inbox_failed"
+            ) from exc
+        except ChatwootProtocolError as exc:
+            logger.info(
+                "chatwoot_resolved_close_skipped conversation=%s reason=inbox_%s",
+                resolved.conversation_id,
+                exc,
+            )
+            return
+        lock = inbox.get("lock_to_single_conversation", "missing")
+        if lock is not False:
+            logger.info(
+                "chatwoot_resolved_close_skipped conversation=%s reason=inbox_lock_%s",
+                resolved.conversation_id,
+                str(lock).lower(),
+            )
+            return
+        delivery_digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
+        try:
+            result = await shared_supabase.close_resolved_conversation(
+                external_conversation_id=resolved.conversation_id,
+                command_key=(
+                    f"close:{resolved.conversation_id}:resolved:"
+                    f"{delivery_digest[:32]}"
+                ),
+            )
+        except SupabaseError as exc:
+            raise LabelRemovalResumeTransientError(
+                "chatwoot_resolved_close_rpc_failed"
+            ) from exc
+        if result.outcome == "blocked_pending_projection":
+            # El proyector de notas todavia trabaja: se reintenta (tope de 8)
+            # en vez de dejar la 'paused_human' muerta para siempre.
+            raise LabelRemovalResumeTransientError(
+                "chatwoot_resolved_close_pending_projection"
+            )
+        logger.info(
+            "chatwoot_resolved_close conversation=%s outcome=%s",
+            resolved.conversation_id,
+            result.outcome,
+        )
+
     async def process_chatwoot_work(
         delivery_id: str,
         payload: dict[str, object],
@@ -9405,6 +9540,12 @@ def create_app(
             removal = label_removal_to_resume(payload)
             if removal is not None:
                 await resume_after_label_removal(delivery_id, removal)
+            # Parte 3 de E-539: un mismo evento puede resolver y sacar la
+            # etiqueta; la reanudacion ya no aplica a una resuelta (no esta
+            # 'open').
+            resolution = resolution_to_close(payload)
+            if resolution is not None:
+                await close_after_resolution(delivery_id, resolution)
             return
         if decision.reason == "invalid_message_id":
             raise RuntimeError("chatwoot_invalid_message_id")
@@ -13555,6 +13696,33 @@ def create_app(
                 return {
                     "status": "accepted",
                     "reason": "conversation_label_removal",
+                    "delivery_id": x_chatwoot_delivery,
+                }
+            response.status_code = status.HTTP_200_OK
+            return {
+                "status": "duplicate",
+                "delivery_id": x_chatwoot_delivery,
+            }
+        if (
+            decision.reason == "unsupported_event"
+            and resolution_to_close(payload) is not None
+        ):
+            # Parte 3 de E-539: el equipo resolvio la conversacion en Chatwoot.
+            # Va al trabajo durable con la entrega como clave, para cerrar la
+            # del setter si la tomo el equipo (la 'paused_human' muerta).
+            assert chatwoot_inbox is not None
+            _capture_payload(
+                capture_dir=settings.capture_dir,
+                delivery_id=x_chatwoot_delivery,
+                payload=payload,
+            )
+            if chatwoot_inbox.admit(
+                delivery_id=x_chatwoot_delivery,
+                payload=payload,
+            ):
+                return {
+                    "status": "accepted",
+                    "reason": "conversation_resolved",
                     "delivery_id": x_chatwoot_delivery,
                 }
             response.status_code = status.HTTP_200_OK
