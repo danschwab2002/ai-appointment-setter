@@ -340,6 +340,11 @@ ENGINE_CAPABILITIES_NATIVE_SILENCE = EngineCapabilities(
     exits=frozenset({"compra", "contesta"}),
     relations_between_engine_flows_only=True,
 )
+# U4 (flow-engine-v2 §37, 20261128100000): con FLOW_LITERAL_VARIABLES_ENABLED, el seguimiento manda un texto fijo
+# como tercera variable (``[nombre, producto, {texto: …}]``, el ``{{3}}`` de FollowupTemplate.params). Sin el flag,
+# las de arriba: el texto fijo es ``variable_texto``.
+ENGINE_CAPABILITIES_NATIVE_SILENCE_LITERAL = dataclasses.replace(
+    ENGINE_CAPABILITIES_NATIVE_SILENCE, literal_variables=True)
 # El pago rechazado nativo con sus ramas (P-16, E-306, flow-engine-v2 §27): lo de los eventos, mas la
 # condicion (solo con los datos del pago rechazado, en una cadena al final, cada rama con una sola
 # plantilla) y el boton del checkout, sin cupon o con un cupon fijo (el link nuestro con
@@ -427,6 +432,17 @@ ENGINE_CAPABILITIES_NATIVE_PAYMENT_SLIP = EngineCapabilities(
 )
 # Las variables del seguimiento, en su orden: las que manda el barrido (FollowupTemplate.params).
 FOLLOWUP_VARIABLES = ("nombre", "producto")
+
+
+def is_followup_literal_variables(variables: object) -> bool:
+    """U4 (§37): ``[nombre, producto, {texto: …}]``, el texto fijo en el ``{{3}}`` del seguimiento.
+
+    El barrido manda siempre el nombre en ``{{1}}`` y el producto en ``{{2}}`` (FollowupTemplate.params): el texto
+    va tercero y es uno solo (D-U4.2).
+    """
+    return (isinstance(variables, list) and len(variables) == len(FOLLOWUP_VARIABLES) + 1
+            and variables[:len(FOLLOWUP_VARIABLES)] == list(FOLLOWUP_VARIABLES)
+            and is_literal_variable(variables[-1]))
 # La ventana del silencio nativo, en minutos (P22-3, E-269): la del barrido del legado, de 24 a 72 h.
 NATIVE_SILENCE_MIN_MINUTES = 24 * 60
 NATIVE_SILENCE_MAX_MINUTES = 72 * 60
@@ -613,7 +629,8 @@ def native_trigger_key(definition: Mapping[str, Any], *, audience: bool = False,
     return key if key in NATIVE_CAPABILITIES_BY_TRIGGER else None
 
 
-def _native_silence_not_supported(definition: Mapping[str, Any], add: Callable[[str], None]) -> None:
+def _native_silence_not_supported(definition: Mapping[str, Any], add: Callable[[str], None], *,
+                                  literal: bool = False) -> None:
     """Lo que el silencio nativo exige ademas de sus capacidades: la conversacion adoptada y el cupon fijo.
 
     La reserva del legado, que el nativo reusa (P22-2), solo manda en una conversacion adoptada, de
@@ -647,8 +664,10 @@ def _native_silence_not_supported(definition: Mapping[str, Any], add: Callable[[
     for step in _walk_steps(definition.get("pasos")):
         if step_type(step) != "plantilla" or not isinstance(step, Mapping):
             continue
-        # FollowupTemplate.params manda siempre {{1}} nombre y {{2}} producto (followup_discount.py:129-153).
-        if step.get("variables") != list(FOLLOWUP_VARIABLES):
+        # FollowupTemplate.params manda siempre {{1}} nombre y {{2}} producto (followup_discount.py:129-153) y,
+        # con ``literal`` (U4, FLOW_LITERAL_VARIABLES_ENABLED), un texto fijo en el {{3}}.
+        variables = step.get("variables")
+        if variables != list(FOLLOWUP_VARIABLES) and not (literal and is_followup_literal_variables(variables)):
             add(f"{NOT_SUPPORTED}:variables_seguimiento")
         button = step.get("boton")
         if not isinstance(button, Mapping) or button.get("link") != "checkout" or "cupon" not in button:
@@ -905,7 +924,8 @@ def _native_payment_slip_not_supported(definition: Mapping[str, Any], add: Calla
 
 
 def native_not_supported(definition: Mapping[str, Any], *, audience: bool = False,
-                         payment_slip: bool = False, keyword: bool = False, registration: bool = False) -> tuple[str, ...]:
+                         payment_slip: bool = False, keyword: bool = False, registration: bool = False,
+                         literal: bool = False) -> tuple[str, ...]:
     """Lo que el motor nativo no ejecuta de una definicion, en orden; vacio si la ejecuta.
 
     Es la regla 14 de un flujo nativo (flow-engine-v2 §9): lo que la base mira al abrirlo y al admitirlo
@@ -938,6 +958,11 @@ def native_not_supported(definition: Mapping[str, Any], *, audience: bool = Fals
     ``FLOW_ENGINE_NATIVE_INTENT_ENABLED``): con ellos, ``dispara: {evento: intencion, registro: <clave>}`` tiene
     las capacidades de ``ENGINE_CAPABILITIES_NATIVE_REGISTRATION`` (una sola confirmacion); sin ellos,
     ``motor_nativo:disparador`` como antes.
+
+    ``literal`` (U4, §37, 20261128100000) es FLOW_LITERAL_VARIABLES_ENABLED: con el, el silencio del agente acepta
+    un texto fijo como tercera variable (``ENGINE_CAPABILITIES_NATIVE_SILENCE_LITERAL`` e
+    ``is_followup_literal_variables``); sin el, ``variable_texto`` y ``variables_seguimiento`` como antes. Los
+    demas disparadores no cambian: sus capacidades ya traen el texto fijo (F4).
     """
     found: list[str] = []
 
@@ -951,6 +976,9 @@ def native_not_supported(definition: Mapping[str, Any], *, audience: bool = Fals
     capabilities = ENGINE_CAPABILITIES_NATIVE_AUDIENCE if key == NATIVE_AUDIENCE_TRIGGER \
         else ENGINE_CAPABILITIES_NATIVE_KEYWORD if key == NATIVE_KEYWORD_TRIGGER \
         else NATIVE_CAPABILITIES_BY_TRIGGER.get(key or "", ENGINE_CAPABILITIES_NATIVE)
+    if key == NATIVE_SILENCE_TRIGGER and literal:
+        # U4: el texto fijo como tercera variable del seguimiento (la forma la mira _native_silence_not_supported).
+        capabilities = ENGINE_CAPABILITIES_NATIVE_SILENCE_LITERAL
     entry = definition.get("entra")
     permission = entry.get("permiso") if isinstance(entry, Mapping) else None
     if key == NATIVE_AUDIENCE_TRIGGER:
@@ -984,7 +1012,7 @@ def native_not_supported(definition: Mapping[str, Any], *, audience: bool = Fals
         add(code)
     _native_multitouch_not_supported(definition, key, add)
     if key == NATIVE_SILENCE_TRIGGER:
-        _native_silence_not_supported(definition, add)
+        _native_silence_not_supported(definition, add, literal=literal)
     if key == NATIVE_PAYMENT_FAILURE_TRIGGER:
         _native_payment_failure_not_supported(definition, add)
     if key == NATIVE_PAYMENT_SLIP_TRIGGER:

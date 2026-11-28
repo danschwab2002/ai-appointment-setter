@@ -74,7 +74,9 @@ const ONLY_CALLS = new Set(['20261108004100_flow_change_publish_native_version_g
     '20261125000200_bulk_send_store_v1.sql',
     // La confirmacion de registro (20261127500000, 4.3): suma una rama solo para dispara.registro con mas de
     // una plantilla (motor_nativo:forma); revisada, la etiqueta de un toque sin registro no pasa por ahi.
-    '20261127500000_own_forms_registration_confirmation_v1.sql']);
+    '20261127500000_own_forms_registration_confirmation_v1.sql',
+    // El texto fijo tercero del seguimiento por silencio (20261128100000, U4).
+    '20261128100000_flow_engine_native_silence_literal_v1.sql']);
 for (const name of names.slice(position + 1).filter((candidate) => !ONLY_CALLS.has(candidate))) {
   if (readFileSync(join(root, 'supabase/migrations', name), 'utf8').includes('_flow_engine_native_unsupported')) {
     fail(`${name} toca _flow_engine_native_unsupported: revisar esta prueba`);

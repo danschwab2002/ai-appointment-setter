@@ -285,3 +285,73 @@ def test_the_followup_request_with_checkout_and_opt_out_passes_and_without_it_is
         result,
     )
     assert result.blocks == []
+
+
+# --- U4 (flow-engine-v2 §37): el texto fijo en el {{3}} ----------------------------
+#
+# La U4 (``maribel_seguimiento_consulta_01``, borradores del 27/11) todavia no esta
+# pedida a Meta: la de la prueba es la _02 de arriba (la _01 capturada del inbox 11
+# con la baja del A1) con el cuerpo del borrador y la categoria UTILITY. Fabricada y
+# declarada, sin inventar la forma de los botones.
+U4 = "att1_seguimiento_consulta_01"
+U4_BODY = (
+    "Hola {{1}}, te escribimos por tu consulta sobre {{2}}.\n\nDetalle: {{3}}\n\n"
+    "Si ya no lo necesitas, no tienes que hacer nada."
+)
+U4_TEXT = (
+    "queríamos retomar nuestra conversación. Para ayudarte a dar ese paso, te reservamos un "
+    "*10 % de descuento*: toca el botón de abajo y queda activado al instante. Si todavía tienes "
+    "alguna duda, responde a este mensaje y te ayudamos."
+)
+
+
+def _catalog_with_u4() -> dict[str, Any]:
+    payload = _catalog_with_02()
+    u4 = copy.deepcopy(_template(payload, NEW))
+    u4["name"] = U4
+    u4["category"] = "UTILITY"
+    next(c for c in u4["components"] if c["type"] == "BODY")["text"] = U4_BODY
+    payload["message_templates"].append(u4)
+    return payload
+
+
+def test_the_literal_goes_in_the_third_marker_and_the_coupon_only_in_the_button() -> None:
+    template = parse_followup_template(
+        _catalog_with_u4(), template_name=U4, expected_language="es_MX", literal_text=U4_TEXT
+    )
+    assert (template.carries_coupon, template.literal_text, template.has_opt_out_button) == (
+        False, U4_TEXT, True)
+    assert template.category == "UTILITY"
+    suffix = followup_button_suffix(LINK, "TIROIDES10")
+    params = template.params(
+        first_name="María", product_name="Alimenta tu Tiroides", coupon_code="TIROIDES10", button_suffix=suffix
+    )
+    assert params["processed_params"] == {
+        "body": {"1": "María", "2": "Alimenta tu Tiroides", "3": U4_TEXT},
+        "buttons": [{"type": "url", "parameter": suffix}],
+    }
+    assert list(params["processed_params"]["body"]) == ["1", "2", "3"]
+    rendered = template.render(first_name="María", product_name="Alimenta tu Tiroides", coupon_code="TIROIDES10")
+    assert f"Detalle: {U4_TEXT}" in rendered
+    assert "{{" not in rendered and "TIROIDES10" not in rendered
+
+
+def test_a_literal_on_a_two_marker_template_fails_closed() -> None:
+    # Mandaria un parametro de mas (#132000): falla en el barrido, antes de reservar.
+    with pytest.raises(ChatwootProtocolError, match="followup_template_unexpected_placeholders"):
+        parse_followup_template(_catalog_with_02(), template_name=NEW, literal_text=U4_TEXT)
+
+
+def test_without_the_literal_a_three_marker_template_still_reads_the_coupon() -> None:
+    # Lo de hoy, fijado (D-U4.6): sin texto, el {{3}} es el cupon (la forma de Johanna). Por eso el
+    # seguimiento del legado no tiene que apuntar a la U4.
+    template = parse_followup_template(_catalog_with_u4(), template_name=U4)
+    assert (template.carries_coupon, template.literal_text) == (True, None)
+
+
+@pytest.mark.parametrize(
+    "bad", ["", "   ", "a\nb", "a\rb", "a\tb", "a     b", "hola {{3}}", "x" * 401, "pagá en https://x.co"]
+)
+def test_a_malformed_literal_never_parses(bad: str) -> None:
+    with pytest.raises(ValueError, match="followup_template_literal_invalid"):
+        parse_followup_template(_catalog_with_u4(), template_name=U4, literal_text=bad)

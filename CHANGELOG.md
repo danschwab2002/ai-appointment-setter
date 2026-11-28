@@ -12,6 +12,10 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Agregado (apagado por defecto)
+
+- **Un texto fijo como tercera variable del seguimiento por silencio nativo (U4, `flow-engine-v2` §37), detrás de `FLOW_LITERAL_VARIABLES_ENABLED` (apagado), el flag de F4.** El paso del seguimiento a 24 h acepta `variables: [nombre, producto, {texto: "…"}]` (en ese orden, un solo texto, las reglas de §36) para una plantilla con `{{1}}`, `{{2}}` y `{{3}}`: el barrido manda el texto tal cual en el `{{3}}` y el cupón solo en el botón. Es lo que necesita la plantilla de utilidad `maribel_seguimiento_consulta_01` (D17 del mapa del 27/11). Con el flag apagado, la validación lo rechaza y el barrido nativo no ejecuta un silencio con texto; sin texto fijo, el seguimiento sale idéntico byte a byte a la 1.43.0 (fijado por sha256 en los tests, legado y nativo). El seguimiento del legado (`CONVERSATION_FOLLOWUP_*`) no lleva texto. Guía `crear-un-flujo` del AE actualizada. **Quien actualiza:** correr la migración `20261128100000_flow_engine_native_silence_literal_v1.sql` (un reemplazo contado en `_flow_engine_native_unsupported`, sin tablas ni permisos) y reinstalar el profile del AE; con el flag apagado no cambia nada.
+
 ### Cambiado
 
 - **`.env.example` lista los 38 flags `*_ENABLED` del bridge que no figuraban** (de `AGENT_CUSTOMER_STATUS_ENABLED` a `SEGMENT_LABEL_INHERITANCE_ENABLED`), cada uno con su default y una línea de qué hace y qué exige. Todos apagados salvo `PORTABLE_HOTMART_PAYMENT_SLIP_LEGACY_ENABLED`, que en el código vale `true` si no se escribe y así queda escrito. `tests/test_env_example_flags.py` cruza los literales `"…_ENABLED"` de `src/bridge` contra `.env.example` y `deploy/*.env.example` y falla si un flag nuevo no tiene su línea. No cambia nada al subir: ninguna instancia lee `.env.example`.

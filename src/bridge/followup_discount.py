@@ -48,6 +48,7 @@ from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from bridge.business_auto_reply import TEMPLATE_MARKERS
+from bridge.flow_definition import literal_text_problem
 from bridge.flow_schedule import Franja, is_open
 from bridge.chatwoot import (
     DEFAULT_CONVERSATION_SCAN_PAGES,
@@ -179,15 +180,23 @@ class FollowupTemplate:
     # ``_02``, E-272). False es la forma vieja, de un solo boton: se acepta con
     # un aviso en el log hasta que se corte (ver FOLLOWUP_TEMPLATE_WITHOUT_OPT_OUT).
     has_opt_out_button: bool = False
+    # U4 (flow-engine-v2 §37, D-U4.3): el texto fijo del ``{{3}}``, el tercero
+    # de ``variables`` de un silencio nativo (``{"texto": …}``, con
+    # FLOW_LITERAL_VARIABLES_ENABLED). Con el, el cupon va solo en el boton.
+    # None es lo de siempre: el ``{{3}}``, si esta, es el cupon (Johanna).
+    literal_text: str | None = None
 
     def render(self, *, first_name: str, product_name: str, coupon_code: str) -> str:
         """El texto que se ve en Chatwoot, con los marcadores reemplazados.
 
         Sin ``{{3}}`` el codigo no aparece en el texto: va solo en el boton.
+        Con ``literal_text`` (U4), el ``{{3}}`` es ese texto, tal cual.
         """
         _require_parameters(first_name, product_name, coupon_code)
         text = self.body.replace("{{1}}", first_name).replace("{{2}}", product_name)
-        if self.carries_coupon:
+        if self.literal_text is not None:
+            text = text.replace("{{3}}", self.literal_text)
+        elif self.carries_coupon:
             text = text.replace("{{3}}", coupon_code)
         return text
 
@@ -218,13 +227,16 @@ class FollowupTemplate:
         plantilla, y lo hace despues de que Chatwoot acepto el mensaje (medido
         con uno de menos el 2026-08-31,
         ``docs/operations/2026-08-31-precheckout-production-activation.md``):
-        el seguimiento quedaria gastado sin haber llegado.
+        el seguimiento quedaria gastado sin haber llegado. Con ``literal_text``
+        (U4), el ``"3"`` es ese texto y el cupon va solo en el boton.
         """
         _require_parameters(first_name, product_name, coupon_code)
         if not isinstance(button_suffix, str) or not button_suffix:
             raise ValueError("followup_button_suffix_empty")
         body: dict[str, str] = {"1": first_name, "2": product_name}
-        if self.carries_coupon:
+        if self.literal_text is not None:
+            body["3"] = self.literal_text
+        elif self.carries_coupon:
             body["3"] = coupon_code
         return {
             "name": self.name,
@@ -250,6 +262,7 @@ def parse_followup_template(
     *,
     template_name: str,
     expected_language: str | None = None,
+    literal_text: str | None = None,
 ) -> FollowupTemplate:
     """Extraer la plantilla del seguimiento del catalogo que publica Chatwoot.
 
@@ -266,9 +279,16 @@ def parse_followup_template(
     apruebe las nuevas). El checkout va primero en las dos: Chatwoot 4.13
     indexa el boton de URL por su posicion en ``processed_params.buttons`` y
     el bridge lo manda en el 0 (ver ``FollowupTemplate.params``).
+
+    Con ``literal_text`` (U4, flow-engine-v2 §37: el texto fijo de un silencio
+    nativo), el cuerpo tiene que traer exactamente ``{{1}}``, ``{{2}}`` y
+    ``{{3}}``: el ``{{3}}`` es ese texto y el cupon va solo en el boton. Sin
+    el, las dos formas de siempre.
     """
     if not isinstance(template_name, str) or not template_name.strip():
         raise ValueError("followup_template_name_missing")
+    if literal_text is not None and literal_text_problem(literal_text) is not None:
+        raise ValueError("followup_template_literal_invalid")
     if not isinstance(inbox_payload, dict):
         raise ChatwootProtocolError("invalid_inbox_payload")
     templates = inbox_payload.get("message_templates")
@@ -320,7 +340,13 @@ def parse_followup_template(
     # marcador conocido, y con uno de mas o de menos Meta rechaza el envio
     # (#132000, ver FollowupTemplate.params).
     placeholders = sorted(set(_PLACEHOLDER_RE.findall(body)))
-    if placeholders == ["1", "2", "3"]:
+    if literal_text is not None:
+        # U4: nombre, producto y el texto fijo. Con otra cantidad de marcadores
+        # iria un parametro de mas o de menos (#132000).
+        if placeholders != ["1", "2", "3"]:
+            raise ChatwootProtocolError("followup_template_unexpected_placeholders")
+        carries_coupon = False
+    elif placeholders == ["1", "2", "3"]:
         carries_coupon = True
     elif placeholders == ["1", "2"]:
         carries_coupon = False
@@ -365,6 +391,7 @@ def parse_followup_template(
         body=body,
         carries_coupon=carries_coupon,
         has_opt_out_button=len(buttons) == 2,
+        literal_text=literal_text,
     )
 
 
@@ -851,7 +878,7 @@ class ConversationFollowupSweeper:
       candidatas se cuenta como ``held_only_phone``: una cota superior, ver
       ``run_once``.
 
-    Cinco mas existen para el barrido nativo (P22-3 de M16, E-269: un silencio
+    Seis mas existen para el barrido nativo (P22-3 de M16, E-269: un silencio
     nativo del agente publicado, ``native_silence.NativeSilenceSweepers``). Sus
     defaults dejan el barredor del legado como estaba.
 
@@ -866,6 +893,10 @@ class ConversationFollowupSweeper:
       sin releer ni reservar.
     * ``log_prefix``: el prefijo de cada linea del log, para que el nativo y el
       legado se cuenten por separado.
+    * ``template_text`` (U4, flow-engine-v2 §37): el texto fijo del ``{{3}}``
+      de la definicion (exige ``native_run``: el legado no lo lleva, D-U4.4).
+      Con el, la plantilla tiene que traer ``{{1}}``, ``{{2}}`` y ``{{3}}`` y
+      el cupon va solo en el boton.
 
     Y ``segment_catalog`` (E-339, D6 de E-338): los segmentos del agente, None
     con ``AGENT_SEGMENTS_ENABLED`` apagado. Una candidata con un segmento vigente
@@ -901,6 +932,7 @@ class ConversationFollowupSweeper:
         conversation_statuses: tuple[str, ...] = FOLLOWUP_CONVERSATION_STATUSES,
         only_conversation_ids: frozenset[int] | None = None,
         log_prefix: str = "conversation_followup",
+        template_text: str | None = None,
         segment_catalog: object | None = None,
         other_product_labels: frozenset[str] = frozenset(),
         own_product_label: str | None = None,
@@ -980,6 +1012,11 @@ class ConversationFollowupSweeper:
             )
             or not isinstance(log_prefix, str)
             or re.fullmatch(r"[a-z][a-z0-9_]{0,63}", log_prefix) is None
+            # U4: el texto del {{3}} lo trae solo un silencio nativo (D-U4.4).
+            or (
+                template_text is not None
+                and (native_run is None or literal_text_problem(template_text) is not None)
+            )
         ):
             raise ValueError("invalid conversation followup configuration")
         self._chatwoot = chatwoot
@@ -1008,6 +1045,7 @@ class ConversationFollowupSweeper:
         self._conversation_statuses = conversation_statuses
         self._only_conversation_ids = only_conversation_ids
         self._log_prefix = log_prefix
+        self._template_text = template_text
         self._segment_catalog = segment_catalog
         self._clock = clock
         self._ulid_factory = ulid_factory
@@ -1149,6 +1187,7 @@ class ConversationFollowupSweeper:
             inbox_payload,
             template_name=self._template_name,
             expected_language=self._expected_template_language,
+            literal_text=self._template_text,
         )
         if not template.has_opt_out_button and not self._legacy_template_logged:
             # Una vez por proceso: la forma vieja sigue saliendo, pero se ve.

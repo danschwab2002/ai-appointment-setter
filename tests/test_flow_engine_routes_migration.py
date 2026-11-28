@@ -228,6 +228,8 @@ def test_it_is_one_transaction_and_comes_right_after_the_t4b() -> None:
         "20261127400000_flow_engine_keyword_trigger_v1.sql",
         # La confirmacion de registro (20261127500000, 4.3).
         "20261127500000_own_forms_registration_confirmation_v1.sql",
+        # El texto fijo tercero del seguimiento por silencio (20261128100000, U4).
+        "20261128100000_flow_engine_native_silence_literal_v1.sql",
     ]
 
 

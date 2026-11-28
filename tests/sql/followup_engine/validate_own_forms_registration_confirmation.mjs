@@ -55,7 +55,11 @@ const PILOT = JSON.parse(readFileSync(join(root, 'tests/fixtures/instances/att1/
 const results = {};
 
 const names = readdirSync(join(root, 'supabase/migrations')).filter((n) => n.endsWith('.sql')).sort();
-if (names.at(-1) !== MIGRATION) fail(`${MIGRATION} tiene que ser la ultima`, names.slice(-3));
+// Despues va solo el texto fijo tercero del seguimiento por silencio (20261128100000, U4), que toca solo
+// _flow_engine_native_unsupported.
+if (names.at(-2) !== MIGRATION || names.at(-1) !== '20261128100000_flow_engine_native_silence_literal_v1.sql') {
+  fail(`despues de ${MIGRATION} va solo la del texto fijo del seguimiento`, names.slice(-3));
+}
 
 // ---------------------------------------------------------------------------
 // 0. La forma de la migracion.

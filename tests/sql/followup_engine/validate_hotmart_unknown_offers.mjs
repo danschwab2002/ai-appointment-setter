@@ -101,7 +101,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026111500010
     // El flujo de la palabra clave (20261127400000, Z2 3.9).
     '20261127400000_flow_engine_keyword_trigger_v1.sql',
     // La confirmacion de registro (20261127500000, 4.3).
-    '20261127500000_own_forms_registration_confirmation_v1.sql'])) fail(`despues de ${MIGRATION} van solo la de E-569, la de E-575 y la de E-622`, names.slice(position + 1));
+    '20261127500000_own_forms_registration_confirmation_v1.sql',
+    // El texto fijo tercero del seguimiento por silencio (20261128100000, U4).
+    '20261128100000_flow_engine_native_silence_literal_v1.sql'])) fail(`despues de ${MIGRATION} van solo la de E-569, la de E-575 y la de E-622`, names.slice(position + 1));
 const apply = async (file) => db.exec(readFileSync(file, 'utf8').replace(
   /create extension if not exists pgcrypto;/gi,
   '-- pgcrypto is built into PGlite',

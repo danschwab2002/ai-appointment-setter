@@ -131,6 +131,8 @@ const DERIVED_FROM_MIGRATION = [
   '20261127400000_flow_engine_keyword_trigger_v1.sql',
   // La confirmacion de registro (20261127500000, 4.3): parcha la forma nativa sobre la de 20261112210000.
   '20261127500000_own_forms_registration_confirmation_v1.sql',
+  // El texto fijo tercero del seguimiento (20261128100000, U4): exige la forma del silencio de 20261101000200.
+  '20261128100000_flow_engine_native_silence_literal_v1.sql',
 ];
 for (const name of DERIVED_FROM_MIGRATION) {
   if (!MIGRATIONS.includes(name) || name <= MIGRATION) {

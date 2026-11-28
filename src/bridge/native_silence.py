@@ -16,6 +16,8 @@ emision del link y el envio), parametrizado con la definicion publicada en vez
 de las variables ``CONVERSATION_FOLLOWUP_*``:
 
 * la plantilla y el idioma de ``pasos[0]``, el cupon de ``boton.cupon``;
+* con FLOW_LITERAL_VARIABLES_ENABLED (U4, flow-engine-v2 §37), el texto fijo del
+  ``{{3}}``, el tercero de ``variables``;
 * ``desde``, ``hasta`` y ``conversaciones`` del silencio;
 * el horario (una franja con minutos, ``flow_schedule``);
 * la reserva nativa, con el flujo, la version activa y su sha256.
@@ -44,7 +46,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
-from bridge.flow_definition import parse_duration
+from bridge.flow_definition import literal_from_variable, parse_duration
 from bridge.flow_engine import NATIVE_SILENCE_TRIGGER, native_not_supported, native_trigger_key
 from bridge.flow_schedule import Franja, franja_of
 from bridge.followup_discount import (
@@ -107,20 +109,25 @@ class NativeSilenceSpec:
     conversation_statuses: tuple[str, ...]
     window: Franja
     cohort_conversation_ids: frozenset[int] | None
+    # U4 (§37): el texto fijo del {{3}} (``variables[2]``), o None: nombre y producto, como siempre.
+    template_text: str | None = None
 
 
-def native_silence_spec(flow: FlowEngineNativeSilence, *, product_ref: str) -> NativeSilenceSpec:
+def native_silence_spec(flow: FlowEngineNativeSilence, *, product_ref: str,
+                        literal_variables: bool = False) -> NativeSilenceSpec:
     """La configuracion del barredor de un silencio, o ``NativeSilenceRefused`` con el motivo.
 
     Lo vuelve a mirar todo, aunque la base y el validador ya lo miraron al
     publicar: el barredor solo corre una definicion que sabe ejecutar entera.
+    ``literal_variables`` es FLOW_LITERAL_VARIABLES_ENABLED: sin el, un silencio
+    con un texto fijo en las variables no se ejecuta (U4, D-U4.1).
     """
     if flow.product_ref != product_ref:
         raise NativeSilenceRefused(REFUSED_OTHER_PRODUCT)
     definition = flow.definition
     if native_trigger_key(definition) != NATIVE_SILENCE_TRIGGER:
         raise NativeSilenceRefused(REFUSED_NOT_EXECUTABLE)
-    codes = native_not_supported(definition)
+    codes = native_not_supported(definition, literal=literal_variables)
     if codes:
         raise NativeSilenceRefused(f"{REFUSED_NOT_EXECUTABLE}:{codes[0]}")
     steps = definition.get("pasos")
@@ -139,6 +146,15 @@ def native_silence_spec(flow: FlowEngineNativeSilence, *, product_ref: str) -> N
         or COUPON_CODE_RE.fullmatch(coupon) is None
     ):
         raise NativeSilenceRefused(REFUSED_STEP)
+    # U4: el texto fijo del {{3}}. La regla 14 ya miro la forma; esto es la segunda capa (D-F4.2, sin
+    # caracteres de control ni telefonos o mails: literal_from_variable).
+    variables = step.get("variables")
+    template_text: str | None = None
+    if isinstance(variables, list) and len(variables) == 3:
+        literal = literal_from_variable(variables[2])
+        if literal is None:
+            raise NativeSilenceRefused(REFUSED_STEP)
+        template_text = literal.text
     silence = definition["dispara"]["silencio"]
     since, until = parse_duration(silence.get("desde")), parse_duration(silence.get("hasta"))
     if since is None or until is None:
@@ -176,6 +192,7 @@ def native_silence_spec(flow: FlowEngineNativeSilence, *, product_ref: str) -> N
         cohort_conversation_ids=(
             flow.cohort_conversation_ids if flow.state == "cohorte" else None
         ),
+        template_text=template_text,
     )
 
 
@@ -209,10 +226,13 @@ class NativeSilenceSweepers:
         build: Callable[[NativeSilenceSpec], ConversationFollowupSweeper],
         refresh_seconds: float = REFRESH_SECONDS,
         clock: Callable[[], float] = time.monotonic,
+        literal_variables: bool = False,
     ) -> None:
         if not isinstance(product_ref, str) or not product_ref or not callable(build) \
-                or not refresh_seconds > 0:
+                or not refresh_seconds > 0 or not isinstance(literal_variables, bool):
             raise ValueError("invalid native silence sweepers configuration")
+        # U4: FLOW_LITERAL_VARIABLES_ENABLED. Sin el, un silencio con texto fijo queda sin barredor.
+        self._literal_variables = literal_variables
         self._supabase = supabase
         self._instance = dict(instance)
         self._product_ref = product_ref
@@ -253,7 +273,8 @@ class NativeSilenceSweepers:
         refused: dict[str, str] = {}
         for flow in flows:
             try:
-                wanted[flow.flow_id] = native_silence_spec(flow, product_ref=self._product_ref)
+                wanted[flow.flow_id] = native_silence_spec(flow, product_ref=self._product_ref,
+                                                           literal_variables=self._literal_variables)
             except NativeSilenceRefused as refusal:
                 refused[f"{flow.product_ref}/{flow.flow_key}"] = refusal.reason
         for flow_key, reason in refused.items():

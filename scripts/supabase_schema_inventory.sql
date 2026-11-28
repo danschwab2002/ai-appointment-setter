@@ -8145,6 +8145,18 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         ), 0),
         2,
         'own_forms_registration_confirmation'
+    union all
+    select
+        '20261128100000',
+        '20261128100000_flow_engine_native_silence_literal_v1.sql',
+        -- El texto fijo tercero del seguimiento por silencio (U4), en la forma que abre la base.
+        coalesce((
+            select (position('flow_silence_literal: el texto fijo' in definition) > 0)::int
+            from functions
+            where oid = to_regprocedure('public._flow_engine_native_unsupported(jsonb)')
+        ), 0),
+        1,
+        'flow_engine_native_silence_literal'
 )
 select
     version,

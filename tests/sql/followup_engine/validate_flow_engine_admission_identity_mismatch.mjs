@@ -71,7 +71,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026112500020
     // El flujo de la palabra clave (20261127400000, Z2 3.9).
     '20261127400000_flow_engine_keyword_trigger_v1.sql',
     // La confirmacion de registro (20261127500000, 4.3).
-    '20261127500000_own_forms_registration_confirmation_v1.sql'])) {
+    '20261127500000_own_forms_registration_confirmation_v1.sql',
+    // El texto fijo tercero del seguimiento por silencio (20261128100000, U4).
+    '20261128100000_flow_engine_native_silence_literal_v1.sql'])) {
   fail(`despues de ${MIGRATION} van solo las del masivo`, names.slice(position + 1));
 }
 if (shape.rechazos.reason !== 'error_interno:23514' || shape.identidad_del_destino.es_de_otro_contacto !== true
