@@ -234,6 +234,8 @@ def test_it_is_one_transaction_and_comes_before_the_bridge_reads() -> None:
         "20261127500000_own_forms_registration_confirmation_v1.sql",
         # El texto fijo tercero del seguimiento por silencio (20261128100000, U4).
         "20261128100000_flow_engine_native_silence_literal_v1.sql",
+        # La reanudacion por la decision vista de una persona (20261128200000, E-577).
+        "20261128200000_operator_resume_attends_handoff_v1.sql",
     ]
     later = (MIGRATIONS / names[position + 1]).read_text(encoding="utf-8")
     assert "create or replace" not in later.lower()

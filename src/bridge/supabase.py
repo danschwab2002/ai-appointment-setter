@@ -946,6 +946,22 @@ class ConversationResumeResult:
         return self.outcome in {"resumed", "replayed", "already_active"}
 
 
+# Las salidas de resume_paused_conversation_by_operator_v1 (20261128200000,
+# E-577): las de la vigente, a la que delega, mas not_paused.
+CONVERSATION_RESUME_BY_OPERATOR_OUTCOMES = frozenset(
+    {
+        "resumed",
+        "replayed",
+        "already_active",
+        "not_paused",
+        "blocked_contact",
+        "blocked_resume_limit",
+        "blocked_pending_handoff",
+        "not_found",
+    }
+)
+
+
 @dataclass(frozen=True)
 class HumanHandoffAttendance:
     """Resultado de marcar que una persona del equipo atendio la derivacion."""
@@ -5958,10 +5974,62 @@ class SupabaseClient:
             "replayed",
             "already_active",
             "blocked_contact",
+            # La RPC la devuelve desde 20260923000100 (el tope anti-loop) y el
+            # cliente no la aceptaba: daba SupabaseError, y en el camino de la
+            # etiqueta (E-571) eso reintentaba la entrega 8 veces (E-577).
+            "blocked_resume_limit",
             "blocked_pending_handoff",
             "not_found",
         }:
             raise SupabaseError("conversation_resume_invalid_outcome")
+        return ConversationResumeResult(
+            outcome=outcome,
+            conversation_id=row.get("resumed_conversation_id"),
+            commercial_case_id=row.get("resumed_commercial_case_id"),
+            resume_event_id=row.get("resume_event_id"),
+        )
+
+    async def resume_paused_conversation_by_operator(
+        self,
+        *,
+        external_conversation_id: int,
+        command_key: str,
+        max_resumes: int = 3,
+    ) -> ConversationResumeResult:
+        """Reanudar por una decision vista de una persona (la etiqueta sacada).
+
+        E-577 (parte 1 de E-539 y D-2 del PR #468):
+        ``resume_paused_conversation_by_operator_v1`` (migracion
+        20261128200000) devuelve ``not_paused`` sin escribir nada si la
+        conversacion del setter no estaba pausada (o esta cerrada, completada
+        o bloqueada); si lo estaba, marca atendida la derivacion ``projected``
+        que nadie contesto y delega en ``resume_paused_conversation`` con
+        ``operator_request``.
+        """
+        operation = "conversation_resume_by_operator"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/resume_paused_conversation_by_operator_v1",
+            content=json.dumps(
+                {
+                    "p_external_conversation_id": external_conversation_id,
+                    "p_command_key": command_key,
+                    "p_max_resumes": max_resumes,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(
+                f"conversation_resume_by_operator_failed: HTTP {response.status_code}"
+            )
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError("conversation_resume_by_operator_invalid_shape")
+        row = rows[0]
+        outcome = row.get("outcome")
+        if outcome not in CONVERSATION_RESUME_BY_OPERATOR_OUTCOMES:
+            raise SupabaseError("conversation_resume_by_operator_invalid_outcome")
         return ConversationResumeResult(
             outcome=outcome,
             conversation_id=row.get("resumed_conversation_id"),

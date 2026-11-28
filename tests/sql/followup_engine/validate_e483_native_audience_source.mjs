@@ -121,7 +121,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026111222000
     // La confirmacion de registro (20261127500000, 4.3).
     '20261127500000_own_forms_registration_confirmation_v1.sql',
     // El texto fijo tercero del seguimiento por silencio (20261128100000, U4).
-    '20261128100000_flow_engine_native_silence_literal_v1.sql'])) {
+    '20261128100000_flow_engine_native_silence_literal_v1.sql',
+    // La reanudacion por la decision vista de una persona (20261128200000, E-577).
+    '20261128200000_operator_resume_attends_handoff_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de la lista congelada de E-484`, names.slice(position + 1));
 }
 

@@ -8157,6 +8157,26 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         ), 0),
         1,
         'flow_engine_native_silence_literal'
+    union all
+    select
+        '20261128200000',
+        '20261128200000_operator_resume_attends_handoff_v1.sql',
+        -- La reanudacion por la decision vista de una persona (E-577, parte 1 de E-539): security
+        -- definer, search_path fijo, solo service_role, con la marca de la atencion y el deshacer.
+        coalesce((
+            select (prosecdef
+                    and array_to_string(proconfig, ',') = 'search_path=pg_catalog, public, pg_temp'
+                    and position('operator_resume_attends_handoff' in definition) > 0
+                    and position('E5770' in definition) > 0
+                    and has_function_privilege('service_role', oid, 'EXECUTE')
+                    and not has_function_privilege('anon', oid, 'EXECUTE')
+                    and not has_function_privilege('authenticated', oid, 'EXECUTE'))::int
+            from functions
+            where oid = to_regprocedure(
+                'public.resume_paused_conversation_by_operator_v1(bigint,text,integer,timestamptz)')
+        ), 0),
+        1,
+        'operator_resume_attends_handoff'
 )
 select
     version,

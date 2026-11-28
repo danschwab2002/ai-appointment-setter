@@ -2,7 +2,7 @@
 
 - **Estado:** implementado; `CONVERSATION_RESUME_ENABLED=false` por defecto. Activado en producción el 2026-09-23 (PR #174, `fe1f5f3`); la primera reanudación real sigue pendiente (ver "Lo que salió mal la segunda vez").
 - **Fecha:** 2026-09-23
-- **Versión:** 1.1 (2026-11-15). Suma, como propuesta detrás de `CHATWOOT_LABEL_REMOVAL_RESUME_ENABLED` (apagado por defecto), el segundo disparador: el `conversation_updated` que saca `automation_paused` (E-571, PR #468, sin mergear al escribir esto). Ver "Reanudación al sacar la etiqueta" e "Historial".
+- **Versión:** 1.2 (2026-11-28). Suma la parte 1 de E-539 (E-577): `resume_paused_conversation_by_operator_v1` (migración `20261128200000`), la reanudación por la decisión **vista** de una persona, que marca atendida la derivación `projected` sin contestar y devuelve `not_paused` si la conversación no estaba pausada. La usa solo el camino del `conversation_updated` que saca `automation_paused`, detrás de `CHATWOOT_LABEL_REMOVAL_RESUME_ENABLED` (apagado por defecto). Ver "Reanudación al sacar la etiqueta" e "Historial".
 - **Objetivo:** que la pausa de una conversación deje de ser terminal, sin que el agente se meta donde una persona está atendiendo.
 
 ## Por qué existe
@@ -57,6 +57,20 @@ El **límite anti-loop** (por defecto 3 por conversación) existe porque el cicl
 El efecto es que **la respuesta del lead ya no levanta la pausa** mientras el equipo no lo haya atendido. Antes si: la conversacion 186 se despauso dos veces (26/09 17:08 y 27/09 18:11) sobre una derivacion por pedido explicito de humano que nadie habia contestado, y el agente retomaba a quien habia pedido no hablar con el agente. Ver el [contrato de la atencion](handoff-attendance-v1.md) y el [ADR-0019](../decisions/0019-handoff-attendance-gates-automation.md).
 
 Sólo los tres primeros habilitan reintentar la admisión.
+
+### La RPC de la decisión vista (`resume_paused_conversation_by_operator_v1`, migración `20261128200000`)
+
+La llama solo el camino de la etiqueta sacada ("Reanudación al sacar la etiqueta"), con `p_external_conversation_id`, `p_command_key` (la clave por entrega) y `p_max_resumes`. Es solo de `service_role`.
+
+- **Solo una conversación pausada:** `human_takeover` o `paused_human`, y fuera de `completed`, `closed` y `blocked`. Si no, devuelve **`not_paused`** sin escribir nada. Es también lo que contesta al eco de la remoción que hace el propio bridge al reanudar.
+- **Pausada:** marca atendidas (`attended_at = now`, nunca antes de su `created_at`) las derivaciones `projected` sin atender de los casos de la conversación, y delega en `resume_paused_conversation` con `operator_request`. La traza de quién atendió es esa fila de `conversation_resume_events`, escrita en la misma transacción.
+- **`requested` y `projection_failed` siguen bloqueando** (`blocked_pending_handoff`, sin marcar nada): el proyector de notas está trabajando.
+- **Si la vigente no reanuda** (`blocked_resume_limit`, `blocked_contact`, …), la marca se deshace y la salida es la de la vigente. El tope anti-loop también cuenta las decisiones de una persona.
+- Con la clave ya usada da `replayed`; sin conversación, `not_found`. Una clave fuera de `^[a-z0-9:_-]{1,200}$` da `22023`.
+
+Salidas: `resumed` · `replayed` · `already_active` · `not_paused` · `blocked_contact` · `blocked_pending_handoff` · `blocked_resume_limit` · `not_found`.
+
+**Por qué es una RPC aparte y la vigente no cambia.** El camino del mensaje entrante deduce `operator_request` por la **ausencia** de la etiqueta. Pero la etiqueta y la pausa durable se escriben por caminos distintos: la etiqueta la pone el bridge después de pedir la derivación, y la nota la proyecta otro worker. Una etiqueta que nunca se llegó a poner se ve igual que una que sacó una persona. Si la vigente liberara la derivación sin atender con `operator_request`, devolvería al agente derivaciones que nadie atendió, como pasó con la conversación 186. Por eso la liberación vive solo en la vía de la decisión vista, el `conversation_updated`.
 
 ## Qué ve el agente al retomar
 
@@ -124,7 +138,7 @@ Lo que no cambia: la conversación sigue esperando el siguiente mensaje del lead
 Cuando una persona saca `automation_paused` de una conversación, a mano o con el macro de reanudación, el bridge reanudaría en el momento, sin esperar el próximo mensaje del lead:
 
 1. **Ingreso.** `classify_chatwoot_label_removal` (`src/bridge/filtering.py`) reconoce el `conversation_updated` cuyo `changed_attributes` saca `automation_paused` de `label_list`, del inbox y la cuenta configurados (la cuenta se chequea si viene en el payload) y con el remitente acotado como en el resto del ingreso. Ese evento se captura igual que hoy y además entra al trabajo durable con la entrega (`X-Chatwoot-Delivery`) como clave: `202 accepted`, `reason: conversation_label_removal`; una entrega repetida da `200 duplicate`. Cualquier otro cambio de etiqueta, y todos con el flag apagado, solo se capturan.
-2. **Worker.** `process_chatwoot_work` llama a `_resume_paused_conversation` con `durable_pause_recorded=True`, el motivo `operator_request` y la clave por entrega de "Idempotencia y límite", en el modo `label_removal_only`:
+2. **Worker.** `process_chatwoot_work` llama a `_resume_paused_conversation` con `durable_pause_recorded=True` y la clave por entrega de "Idempotencia y límite", en el modo `label_removal_only`, que llama a `resume_paused_conversation_by_operator_v1` (ver "La RPC de la decisión vista"; el motivo, `operator_request`, lo pone la base al delegar):
    - relee la conversación y **solo reanuda si la etiqueta sigue afuera**: si volvió, no hay decisión de una persona que respetar y no hace nada;
    - **nunca mide el silencio del equipo**: ese camino lo dispara solo un mensaje del lead;
    - no ejecuta el macro (no hay etiqueta que sacar) ni pide los mensajes de la conversación.
@@ -134,22 +148,27 @@ Cuando una persona saca `automation_paused` de una conversación, a mano o con e
 
 - **Las reglas de la reanudación son las mismas de "Cuándo se reactiva"**, salvo las del silencio del equipo: la conversación `open` y `can_reply`, sin assignee humano, sin `automation_opted_out`, el contacto sin baja, sin derivación a medio proyectar y dentro del límite de reactivaciones.
 - **Exige además** `CONVERSATION_RESUME_ENABLED` y la admisión durable (cut B, `CHATWOOT_CUT_B_ADMISSION_ENABLED`), el cliente de control de Chatwoot y Supabase. Si falta alguno, el flag queda inerte: no falla el arranque y el evento solo se captura.
-- **La RPC decide.** El bridge no lee la pausa durable antes de llamar (no hay una RPC de lectura por conversación sin migración): con la conversación ya admisible la RPC da `already_active`, sin caso `not_found`, y con una derivación `projected` sin atender `blocked_pending_handoff`. Esto último es la parte 1 pendiente, abajo: **sin esa migración, sacar la etiqueta de una derivación que nadie contestó sigue sin reanudar, también con el flag prendido.**
-- El eco del propio bridge (la remoción que hace el sistema al reanudar) cuesta un snapshot y una RPC que da `already_active`. No hay loop.
+- **La base decide.** El bridge no lee la pausa durable antes de llamar: la RPC de la decisión vista devuelve `not_paused` sin escribir si la conversación no estaba pausada y, si lo estaba, marca atendida la derivación `projected` sin contestar y reanuda (parte 1 de E-539). `requested` y `projection_failed` siguen dando `blocked_pending_handoff`.
+- **Lo que no reanuda queda a la vista.** Cualquier salida que no reanuda, salvo `not_paused`, deja `chatwoot_label_removal_not_resumed conversation=… outcome=…` en `warning`, sin reintento: el tope, un contacto con baja o el proyector trabajando.
+- El eco del propio bridge (la remoción que hace el sistema al reanudar) cuesta un snapshot y una RPC que da `not_paused`, en `info`. No hay loop.
 
 ### Antes de prender el flag
 
 - Los tests de E-571 (`tests/test_chatwoot_label_removal_resume.py`) derivan el evento del webhook capturado de la conversación 173 más un `changed_attributes` con la forma del emisor (Chatwoot v4.13.0). El payload real de la entrega `7afec902-8c33-4239-b0a1-875ad3ada59d` (Maribel, conversación 260, 2026-11-12) está en la captura del bridge y no entró al repo. **Antes de prender el flag hay que sumarlo anonimizado como fixture con su test:** si `label_list` llega con otra forma, el clasificador falla cerrado y el flag no hace nada.
-- Conviene prenderlo junto con la migración de la parte 1, por lo de `blocked_pending_handoff`.
+  - La forma que se espera de esa entrega: un `conversation_updated` de la cuenta 3, bandeja 13 y conversación 260. En la raíz trae el `webhook_data` de la conversación (`id`, `inbox_id`, `labels: []`, `contact_inbox.source_id`, `meta.sender`) y `changed_attributes: [{"label_list": {"previous_value": ["automation_paused"], "current_value": []}}]`. Esa conversación llegó además resuelta: el cambio de estado entró un segundo antes, a las 23:57:04Z, como `unsupported_event`.
+  - Al anonimizarla: reemplazar nombre, teléfono, mail, `identifier`, avatar, `pubsub_token`, `source_id` e ids de contacto, y conservar ids de conversación, cuenta y bandeja, `labels`, `changed_attributes`, `status`, `can_reply`, horas y equipo. Documentarlo en un `_capture` con fecha y origen.
+  - El test sobre el fixture tiene que probar dos cosas: que el clasificador la reconoce y que, por estar resuelta, no se llama a ninguna RPC.
+- **La migración `20261128200000` tiene que estar aplicada, y PostgREST recargado, antes de subir el bridge que la llama.** Sin ella, la RPC da `404` (`PGRST202`) y la entrega se reintenta 8 veces y falla. Con el flag apagado no se llama.
 
-## Pendiente: necesita migración (partes 1 y 3 de E-539)
+## Pendiente: necesita migración (parte 3 de E-539)
 
-Ninguna de las dos está construida; las prepara E-577. Se describen acá como propuesta, para que el contrato diga qué falta.
+La parte 1 la cubre `resume_paused_conversation_by_operator_v1` (E-577, ver "La RPC de la decisión vista"). La parte 3 no está construida; se describe acá como propuesta, para que el contrato diga qué falta.
 
-- **Parte 1: `attended_at` al reanudar por decisión de una persona.** Hoy la RPC `resume_paused_conversation` (definida por última vez en `20261001000500_commercial_case_lookups_by_inbound_kind.sql`) corta con `blocked_pending_handoff` ante una derivación `projected` con `attended_at` nulo **sin mirar `p_reason_code`**, en contra del [ADR-0019](../decisions/0019-handoff-attendance-gates-automation.md), que promete que sacar la etiqueta o correr el macro libera la pausa. La propuesta: una migración nueva que, con `p_reason_code = 'operator_request'`, marque esa derivación `attended_at = now()` (opcional: una columna `attended_via` con `team_reply` u `operator_resume`) y siga con la reanudación; `requested` y `projection_failed` seguirían bloqueando. Sumaría el parámetro `p_require_paused boolean default false`: con `true`, una conversación que no está `paused_human` ni con `human_takeover` devolvería `not_paused`, un resultado nuevo que el camino por etiqueta usaría y que `supabase.py` tendría que aceptar. Hasta entonces, la lista de "Resultados de la RPC" no cambia.
+- **Parte 1 (cubierta en 1.2).** Se construyó como una RPC aparte, y no con el parámetro `p_require_paused` sobre la vigente que proponía la 1.1. Una firma nueva habría dejado dos sobrecargas que PostgREST no sabe elegir y habría roto las huellas del inventario de la vigente. No se agregó la columna `attended_via`: la traza es la fila `operator_request` de `conversation_resume_events`.
 - **Parte 3: cerrar la conversación del setter cuando Chatwoot la resuelve.** Las bandejas 11 y 13 tienen `lock_to_single_conversation = false`: cuando la persona vuelve a escribir, Chatwoot abre otra conversación y la vieja queda `paused_human` para siempre en la base (25 de 50 el 2026-11-13, según E-539). No existe una RPC que cierre una conversación del setter. La propuesta: `close_resolved_conversation_v1(p_external_conversation_id, p_command_key)`, que la pase a `closed` y deje constancia en `conversation_events`, llamada por un `conversation_updated` con `changed_attributes.status.current_value = 'resolved'`, detrás de su propio flag. Hoy ese evento cae como `unsupported_event` antes de la captura, así que primero hay que capturar uno real. Si una derivación abierta se cierra junto con la conversación es una decisión de Dan, porque cambia qué cuenta como «persona derivada».
 
 ## Historial
 
 - **1.0 (2026-09-23).** El contrato, con las correcciones de la primera, segunda y tercera vez (2026-09-23 al 2026-09-27) y el cambio de alcance de `blocked_pending_handoff` (`20260927000300`).
+- **1.2 (2026-11-28, E-577).** La parte 1 de E-539: `resume_paused_conversation_by_operator_v1` (migración `20261128200000`), solo para el camino de la etiqueta sacada. Marca atendida la derivación `projected` sin contestar, devuelve `not_paused` si la conversación no estaba pausada y no cambia la vigente. El cliente de `resume_paused_conversation` acepta `blocked_resume_limit`, que antes rechazaba como salida inválida. Anota la forma esperada del fixture de la conversación 260. No afirma nada desplegado.
 - **1.1 (2026-11-15, E-578).** Suma el disparador por `conversation_updated` que saca `automation_paused` (E-571, PR #468), como propuesta detrás de `CHATWOOT_LABEL_REMOVAL_RESUME_ENABLED`: clave por entrega, modo `label_removal_only`, reintentos con tope de 8. Corrige "Lo que este contrato no cubre": los webhooks ya suscriben `conversation_updated` (E-539). Anota las partes 1 y 3 de E-539 como pendientes con migración (E-577). Escrito antes del merge de #468: no afirma nada desplegado.

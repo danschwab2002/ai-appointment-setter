@@ -499,7 +499,9 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261126800000 (las fases del lanzamiento, 4.8) suma la lectura del reposo.
     # 20261127100000 (los frenos ante Meta, F1) suma sus siete.
     # 20261127500000 (la confirmacion de registro, 4.3) suma su entrada.
-    assert len(allowlisted) == 274
+    # 20261128200000 (la reanudacion por la decision vista de una persona, E-577) suma la suya.
+    assert len(allowlisted) == 275
+    assert "resume_paused_conversation_by_operator_v1(bigint, text, integer, timestamp with time zone)" in allowlisted
     assert "admit_and_route_registration_lead_precheckout_v1(text, text, integer, text, jsonb, jsonb, text, text)" in allowlisted
     assert "act_on_meta_enforcement_v1(jsonb, text, text, jsonb, text, text)" in allowlisted
     assert "start_agent_campaign_judge_run_v1(jsonb, uuid, text, timestamp with time zone, integer)" in allowlisted
@@ -2682,12 +2684,27 @@ def test_own_forms_registration_confirmation_fingerprint() -> None:
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact
 
 
-def test_flow_engine_native_silence_literal_fingerprint_is_last() -> None:
+def test_flow_engine_native_silence_literal_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261128100000 (U4): la marca del texto fijo tercero en la forma que abre la base.
-    row = sql.split("'20261128100000'", 1)[1].split("select\n    version,", 1)[0]
+    row = sql.split("'20261128100000'", 1)[1].split("'20261128200000'", 1)[0].rsplit("union all", 1)[0]
     compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
 
-    assert compact.endswith(",1,'flow_engine_native_silence_literal')")
+    assert compact.endswith(",1,'flow_engine_native_silence_literal'")
     assert "position('flow_silence_literal:eltextofijo'indefinition)>0" in compact
     assert "_flow_engine_native_unsupported(jsonb)" in compact
+
+
+def test_operator_resume_attends_handoff_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261128200000 (E-577, parte 1 de E-539): la reanudacion por la decision vista de una
+    # persona, solo de service_role, con la marca de la atencion y el deshacer.
+    row = sql.split("'20261128200000'", 1)[1].split("select\n    version,", 1)[0]
+    compact = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", row))
+
+    assert compact.endswith(",1,'operator_resume_attends_handoff')")
+    assert "resume_paused_conversation_by_operator_v1(bigint,text,integer,timestamptz)" in compact
+    assert "position('operator_resume_attends_handoff'indefinition)>0" in compact
+    assert "position('E5770'indefinition)>0" in compact
+    assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact
+    assert "nothas_function_privilege('authenticated',oid,'EXECUTE')" in compact

@@ -384,7 +384,9 @@ const rows = await db.query(`
       ('claim_meta_enforcement_notices_v1(jsonb,integer)'),
       ('finish_meta_enforcement_notice_v1(jsonb,uuid,text,text)'),
       -- 20261127500000: la entrada del registro a un evento (4.3, own-forms-v1).
-      ('admit_and_route_registration_lead_precheckout_v1(text,text,integer,text,jsonb,jsonb,text,text)')
+      ('admit_and_route_registration_lead_precheckout_v1(text,text,integer,text,jsonb,jsonb,text,text)'),
+      -- 20261128200000: la reanudacion por la decision vista de una persona (E-577).
+      ('resume_paused_conversation_by_operator_v1(bigint,text,integer,timestamp with time zone)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -435,6 +437,7 @@ const result = rows.rows[0];
 // 20261126800000 (las fases del lanzamiento, 4.8) suma la lectura del reposo: 255.
 // 20261127100000 (los frenos ante Meta, F1) suma sus siete: 273.
 // 20261127500000 (la confirmacion de registro, 4.3) suma su entrada: 274.
+// 20261128200000 (la reanudacion por la decision vista, E-577) suma la suya: 275.
 // Historical baseline guard was `result.expected_count !== 63`; the current
 // baseline is 68 RPCs, daily feedback adds fourteen, payment links add three,
 // the one-shot operator disposition adds one, and correlation event context
@@ -486,7 +489,7 @@ const result = rows.rows[0];
 // claim, settle and block the retry, and mark the 131026 notice.
 // The personal coupon of a native step (20261112210500, E-483, C2) adds the read of the bridge.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 274) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 275) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

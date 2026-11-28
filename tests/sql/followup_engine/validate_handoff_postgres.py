@@ -531,7 +531,13 @@ def verify_effective_acls(harness: PostgresHarness) -> None:
                      -- 20260927000300). Es la unica funcion de esta
                      -- lista que escribe en la tabla, y solo esa
                      -- columna.
-                     'mark_human_handoff_attended'
+                     'mark_human_handoff_attended',
+                     -- La reanudacion por la decision vista de una persona
+                     -- (migracion 20261128200000, E-577): marca attended_at
+                     -- de las derivaciones 'projected' sin atender de la
+                     -- conversacion y delega en resume_paused_conversation;
+                     -- escribe solo esa columna (y updated_at).
+                     'resume_paused_conversation_by_operator_v1'
                      ) then has_function_privilege(role_name, oid, 'EXECUTE')
                   else not has_function_privilege(role_name, oid, 'EXECUTE')
                 end
