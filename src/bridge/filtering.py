@@ -178,6 +178,29 @@ def classify_chatwoot_label_removal(
             removed = True
     if not removed:
         return None
+    identity = _conversation_updated_identity(
+        event,
+        allowed_jid=allowed_jid,
+        allow_any_scoped_sender=allow_any_scoped_sender,
+    )
+    if identity is None:
+        return None
+    return LabelRemoval(conversation_id=conversation_id, sender_jid=identity[0])
+
+
+def _conversation_updated_identity(
+    event: dict[str, object],
+    *,
+    allowed_jid: str | None,
+    allow_any_scoped_sender: bool,
+) -> tuple[str | None] | None:
+    """La identidad de un ``conversation_updated``, como en ``classify_chatwoot_event``.
+
+    Devuelve ``(jid,)``: con remitentes acotados por scope, el JID canonico;
+    sin scope, ``(None,)`` cuando coincide con ``allowed_jid`` (el cliente la
+    verifica contra ``ALLOWED_WHATSAPP_JID``). ``None`` si no se puede
+    resolver o no coincide (falla cerrado).
+    """
     contact_inbox_value = event.get("contact_inbox")
     if contact_inbox_value is not None and not isinstance(contact_inbox_value, dict):
         return None
@@ -197,7 +220,7 @@ def classify_chatwoot_label_removal(
             canonical = _canonical_whatsapp_jid_from_e164(sender_phone)
         if canonical is None:
             return None
-        return LabelRemoval(conversation_id=conversation_id, sender_jid=canonical)
+        return (canonical,)
     using_phone_fallback = sender_jid is None and matches_allowed_whatsapp_phone(
         sender_phone, allowed_jid=allowed_jid
     )
@@ -207,7 +230,84 @@ def classify_chatwoot_label_removal(
         allow_e164=using_phone_fallback,
     ):
         return None
-    return LabelRemoval(conversation_id=conversation_id, sender_jid=None)
+    return (None,)
+
+
+@dataclass(frozen=True)
+class ConversationResolved:
+    """Un ``conversation_updated`` en el que el equipo resolvio la conversacion."""
+
+    conversation_id: int
+    sender_jid: str | None
+
+
+def classify_chatwoot_conversation_resolved(
+    payload: object,
+    *,
+    expected_inbox_id: int | None,
+    allowed_jid: str | None,
+    allow_any_scoped_sender: bool = False,
+    expected_account_id: int | None = None,
+) -> ConversationResolved | None:
+    """El cambio de estado que resuelve la conversacion, o None (parte 3 de E-539).
+
+    Misma forma del emisor que ``classify_chatwoot_label_removal`` (Chatwoot
+    v4.13.0): ``changed_attributes`` trae ``{status: {previous_value,
+    current_value}}`` y solo cuenta el que pasa de otro estado a
+    ``resolved``. Inbox, cuenta e identidad se resuelven igual. Cualquier
+    forma inesperada devuelve None (falla cerrado).
+
+    DEUDA DE FIXTURE: el emisor manda este evento como ``conversation_updated``
+    (E-539 lo vio llegar a las 23:57:04Z como ``unsupported_event``), pero el
+    bridge nunca capturo uno: la forma de ``status`` sale del mismo
+    ``extract_changed_attributes`` que la de ``label_list``.
+    """
+    event = _json_object(payload)
+    if event.get("event") != "conversation_updated":
+        return None
+    expected = _canonical_positive_id(expected_inbox_id)
+    if expected is None or _canonical_positive_id(event.get("inbox_id")) != expected:
+        return None
+    conversation_id = _canonical_positive_id(event.get("id"))
+    if conversation_id is None:
+        return None
+    account_id = _canonical_positive_id(expected_account_id)
+    for observed_account in (
+        event.get("account_id"),
+        _json_object(event.get("account")).get("id"),
+    ):
+        if (
+            account_id is not None
+            and observed_account is not None
+            and _canonical_positive_id(observed_account) != account_id
+        ):
+            return None
+    changes = event.get("changed_attributes")
+    if not isinstance(changes, list):
+        return None
+    resolved = False
+    for change in changes:
+        if not isinstance(change, dict) or "status" not in change:
+            continue
+        status_change = change.get("status")
+        if not isinstance(status_change, dict):
+            return None
+        previous = status_change.get("previous_value")
+        current = status_change.get("current_value")
+        if not isinstance(previous, str) or not isinstance(current, str):
+            return None
+        if current == "resolved" and previous != "resolved":
+            resolved = True
+    if not resolved or event.get("status") not in (None, "resolved"):
+        return None
+    identity = _conversation_updated_identity(
+        event,
+        allowed_jid=allowed_jid,
+        allow_any_scoped_sender=allow_any_scoped_sender,
+    )
+    if identity is None:
+        return None
+    return ConversationResolved(conversation_id=conversation_id, sender_jid=identity[0])
 
 
 def classify_chatwoot_event(

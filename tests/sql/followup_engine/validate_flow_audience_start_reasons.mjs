@@ -83,7 +83,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026111800030
     // El texto fijo tercero del seguimiento por silencio (20261128100000, U4).
     '20261128100000_flow_engine_native_silence_literal_v1.sql',
     // La reanudacion por la decision vista de una persona (20261128200000, E-577).
-    '20261128200000_operator_resume_attends_handoff_v1.sql'])) {
+    '20261128200000_operator_resume_attends_handoff_v1.sql',
+    // El cierre de la conversacion que Chatwoot resolvio (20261128300000, parte 3 de E-539).
+    '20261128300000_close_resolved_conversation_v1.sql'])) {
   fail(`despues de ${MIGRATION} va solo la de E-656`, names.slice(position + 1));
 }
 

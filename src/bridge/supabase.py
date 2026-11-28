@@ -962,6 +962,33 @@ CONVERSATION_RESUME_BY_OPERATOR_OUTCOMES = frozenset(
 )
 
 
+# Las salidas de close_resolved_conversation_v1 (20261128300000, parte 3 de
+# E-539).
+CONVERSATION_CLOSE_OUTCOMES = frozenset(
+    {
+        "closed",
+        "replayed",
+        "already_closed",
+        "not_paused",
+        "not_found",
+        "blocked_pending_projection",
+    }
+)
+
+
+@dataclass(frozen=True)
+class ConversationCloseResult:
+    """Cierre de la conversacion del setter que Chatwoot resolvio (parte 3 de E-539)."""
+
+    outcome: str
+    conversation_id: str | None
+    close_event_id: str | None
+
+    @property
+    def closed(self) -> bool:
+        return self.outcome in {"closed", "replayed"}
+
+
 @dataclass(frozen=True)
 class HumanHandoffAttendance:
     """Resultado de marcar que una persona del equipo atendio la derivacion."""
@@ -6035,6 +6062,48 @@ class SupabaseClient:
             conversation_id=row.get("resumed_conversation_id"),
             commercial_case_id=row.get("resumed_commercial_case_id"),
             resume_event_id=row.get("resume_event_id"),
+        )
+
+    async def close_resolved_conversation(
+        self,
+        *,
+        external_conversation_id: int,
+        command_key: str,
+    ) -> ConversationCloseResult:
+        """Cerrar la conversacion del setter que el equipo resolvio en Chatwoot.
+
+        Parte 3 de E-539: ``close_resolved_conversation_v1`` (migracion
+        20261128300000) cierra solo una conversacion que tomo el equipo
+        (``human_takeover``) y no toca ``human_takeover``,
+        ``automation_status``, el caso ni las derivaciones.
+        """
+        operation = "conversation_close_resolved"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/close_resolved_conversation_v1",
+            content=json.dumps(
+                {
+                    "p_external_conversation_id": external_conversation_id,
+                    "p_command_key": command_key,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(
+                f"conversation_close_resolved_failed: HTTP {response.status_code}"
+            )
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError("conversation_close_resolved_invalid_shape")
+        row = rows[0]
+        outcome = row.get("outcome")
+        if outcome not in CONVERSATION_CLOSE_OUTCOMES:
+            raise SupabaseError("conversation_close_resolved_invalid_outcome")
+        return ConversationCloseResult(
+            outcome=outcome,
+            conversation_id=row.get("closed_conversation_id"),
+            close_event_id=row.get("close_event_id"),
         )
 
     async def claim_conversation_reactivation(

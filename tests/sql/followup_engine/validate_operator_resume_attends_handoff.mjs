@@ -43,7 +43,11 @@ const fail = (error, detail) => {
   process.exit(1);
 };
 if (!names.includes(MIGRATION)) fail(`falta ${MIGRATION}`);
-if (names.at(-1) !== MIGRATION) fail(`${MIGRATION} tiene que ser la ultima`, names.slice(-3));
+// Despues va solo el cierre de la conversacion que Chatwoot resolvio (20261128300000, parte 3 de E-539).
+if (JSON.stringify(names.slice(names.indexOf(MIGRATION) + 1))
+    !== JSON.stringify(['20261128300000_close_resolved_conversation_v1.sql'])) {
+  fail(`despues de ${MIGRATION} va solo la de la parte 3 de E-539`, names.slice(names.indexOf(MIGRATION) + 1));
+}
 
 const migrationSql = (name) => readFileSync(join(root, 'supabase/migrations', name), 'utf8')
   .replace(/create extension if not exists pgcrypto;/gi, '-- pgcrypto is built into PGlite');

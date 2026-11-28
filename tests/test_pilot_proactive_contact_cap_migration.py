@@ -243,6 +243,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261128100000",
         # La reanudacion por la decision vista de una persona (20261128200000, E-577).
         "20261128200000",
+        # El cierre de la conversacion que Chatwoot resolvio (20261128300000, parte 3 de E-539).
+        "20261128300000",
     ]
 
     sql = _sql()

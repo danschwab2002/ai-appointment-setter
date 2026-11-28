@@ -12,6 +12,10 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Agregado (apagado por defecto)
+
+- **Resolver en Chatwoot cierra la conversación del setter (parte 3 de E-539, `resume-paused-conversation-v1` «Cierre al resolver»), detrás de `CHATWOOT_RESOLVED_CLOSE_ENABLED` (apagado).** Prendido, el `conversation_updated` que pasa la conversación a `resolved` entra al trabajo durable con la entrega como clave; el worker relee la conversación (solo cierra si sigue resuelta y es del remitente) y llama a `close_resolved_conversation_v1` (migración `20261128300000`), que pasa a `closed` una conversación que tomó el equipo (`human_takeover`) y deja el evento `chatwoot_resolved_conversation_closed`. No toca `human_takeover`, `automation_status`, el caso ni las derivaciones. Con el proyector trabajando, una falla de red o de la base, reintenta con tope de 8. Apagado, el evento se ignora como antes (200 `unsupported_event`, sin captura). **Quien actualiza:** correr la migración y recargar PostgREST antes de subir el bridge que la llama; el flag queda apagado.
+
 ## [1.44.0] - 2026-11-28
 
 Una menor sobre la 1.43.0, con 4 PR (#535 a #538) y 2 migraciones. **El texto fijo como tercera variable del seguimiento por silencio nativo** (U4, #537, la plantilla de utilidad del seguimiento de Maribel), **la reanudación por la decisión vista de una persona** (E-577, #538: sacar `automation_paused` de una derivación sin contestar devuelve la conversación al agente), las tres deudas de la serie Z1 (#536) y `.env.example` con los flags del bridge que faltaban (#535). **Llega apagado:** U4 va detrás de `FLOW_LITERAL_VARIABLES_ENABLED` y la reanudación detrás de `CHATWOOT_LABEL_REMOVAL_RESUME_ENABLED`, que valen `false` por defecto; los tres arreglos de #536 no tienen flag.

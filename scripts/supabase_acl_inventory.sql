@@ -322,7 +322,9 @@ expected_service_role(signature) as (
         -- 20261127500000: la entrada del registro a un evento (4.3, own-forms-v1).
         ('public.admit_and_route_registration_lead_precheckout_v1(text, text, integer, text, jsonb, jsonb, text, text)'),
         -- 20261128200000: la reanudacion por la decision vista de una persona (E-577).
-        ('public.resume_paused_conversation_by_operator_v1(bigint, text, integer, timestamp with time zone)')
+        ('public.resume_paused_conversation_by_operator_v1(bigint, text, integer, timestamp with time zone)'),
+        -- 20261128300000: el cierre de la conversacion que Chatwoot resolvio (parte 3 de E-539).
+        ('public.close_resolved_conversation_v1(bigint, text, timestamp with time zone)')
 ),
 functions as (
     select

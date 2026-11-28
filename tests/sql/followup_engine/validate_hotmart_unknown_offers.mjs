@@ -105,7 +105,9 @@ if (JSON.stringify(names.slice(position + 1)) !== JSON.stringify(['2026111500010
     // El texto fijo tercero del seguimiento por silencio (20261128100000, U4).
     '20261128100000_flow_engine_native_silence_literal_v1.sql',
     // La reanudacion por la decision vista de una persona (20261128200000, E-577).
-    '20261128200000_operator_resume_attends_handoff_v1.sql'])) fail(`despues de ${MIGRATION} van solo la de E-569, la de E-575 y la de E-622`, names.slice(position + 1));
+    '20261128200000_operator_resume_attends_handoff_v1.sql',
+    // El cierre de la conversacion que Chatwoot resolvio (20261128300000, parte 3 de E-539).
+    '20261128300000_close_resolved_conversation_v1.sql'])) fail(`despues de ${MIGRATION} van solo la de E-569, la de E-575 y la de E-622`, names.slice(position + 1));
 const apply = async (file) => db.exec(readFileSync(file, 'utf8').replace(
   /create extension if not exists pgcrypto;/gi,
   '-- pgcrypto is built into PGlite',
