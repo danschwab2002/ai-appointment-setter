@@ -12,6 +12,10 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Cambiado
+
+- **`.env.example` lista los 38 flags `*_ENABLED` del bridge que no figuraban** (de `AGENT_CUSTOMER_STATUS_ENABLED` a `SEGMENT_LABEL_INHERITANCE_ENABLED`), cada uno con su default y una línea de qué hace y qué exige. Todos apagados salvo `PORTABLE_HOTMART_PAYMENT_SLIP_LEGACY_ENABLED`, que en el código vale `true` si no se escribe y así queda escrito. `tests/test_env_example_flags.py` cruza los literales `"…_ENABLED"` de `src/bridge` contra `.env.example` y `deploy/*.env.example` y falla si un flag nuevo no tiene su línea. No cambia nada al subir: ninguna instancia lee `.env.example`.
+
 ## [1.43.0] - 2026-11-27
 
 Una menor sobre la 1.42.0, con 18 PR (#516 a #533) y 12 migraciones. **Lo que el Automation Expert le saca de las manos al equipo** (la serie Z1, #517 a #526, y sus segundas partes #531 a #533): pausar al agente para todas, la instrucción temporal, exportar contactos, las reglas de palabra clave y el flujo que arranca con ellas, el juez de una campaña y la prueba conversando, el conocimiento vivo con su arnés, el envío a una audiencia por país y con la hora en la zona de cada persona, la confirmación de registro a un evento y el lanzamiento por fechas. **Los frenos ante Meta** (#527, #528 y #530): retirar una plantilla recategorizada y congelar la instancia ante una restricción, el calentamiento del masivo y el texto fijo en un marcador. **Llega apagado:** cada pieza queda detrás de su flag, que vale `false` por defecto; con los flags apagados el bridge no cambia, salvo `meta_enforcement: disabled` en `/ready`. Lo único que cambia sin flag son dos arreglos: el selector de país de un formulario propio que no declara `paises` (#529) y el aviso de una plantilla sin hilo de Slack (#517). #516 es del coordinador de claims del repo y no toca el producto.
